@@ -1,0 +1,291 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/qiangli/ycode/internal/api"
+	"github.com/qiangli/ycode/internal/commands"
+	"github.com/qiangli/ycode/internal/runtime/config"
+	"github.com/qiangli/ycode/internal/runtime/conversation"
+	"github.com/qiangli/ycode/internal/runtime/prompt"
+	"github.com/qiangli/ycode/internal/runtime/session"
+	"github.com/qiangli/ycode/internal/tools"
+)
+
+// App is the main interactive application.
+type App struct {
+	config       *config.Config
+	provider     api.Provider
+	providerKind string
+	session      *session.Session
+	renderer     *Renderer
+	commands     *commands.Registry
+	toolRegistry *tools.Registry
+	promptCtx    *prompt.ProjectContext
+	planMode       tools.PlanModeController
+	stdout         io.Writer
+	printMode      bool // plain text output, no markdown rendering
+	version        string
+	workDir        string
+	userConfigPath string // path to user settings.json for persisting preferences
+}
+
+// AppOptions holds optional configuration for App creation.
+type AppOptions struct {
+	WorkDir      string
+	ConfigDirs   commands.ConfigDirs
+	MemoryDir    string
+	Version      string
+	ProviderKind string
+	PlanMode       tools.PlanModeController
+	ToolRegistry   *tools.Registry
+	PromptCtx      *prompt.ProjectContext
+	UserConfigPath string
+}
+
+// NewApp creates a new app instance.
+func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, opts ...AppOptions) (*App, error) {
+	renderer, err := NewRenderer("")
+	if err != nil {
+		return nil, err
+	}
+
+	var o AppOptions
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	if o.WorkDir == "" {
+		o.WorkDir, _ = os.Getwd()
+	}
+	if o.Version == "" {
+		o.Version = "dev"
+	}
+
+	app := &App{
+		config:       cfg,
+		provider:     provider,
+		providerKind: o.ProviderKind,
+		session:      sess,
+		renderer:     renderer,
+		toolRegistry: o.ToolRegistry,
+		promptCtx:    o.PromptCtx,
+		planMode:     o.PlanMode,
+		stdout:       os.Stdout,
+		version:        o.Version,
+		workDir:        o.WorkDir,
+		userConfigPath: o.UserConfigPath,
+	}
+
+	// Set up command registry.
+	cmdRegistry := commands.NewRegistry()
+	commands.RegisterBuiltins(cmdRegistry, &commands.RuntimeDeps{
+		SessionID:     sess.ID,
+		MessageCount:  sess.MessageCount,
+		Model:         func() string { return app.config.Model },
+		ProviderKind:  func() string { return app.providerKind },
+		CostSummary:   func() string { return "Cost tracking not yet available" },
+		Version:       o.Version,
+		WorkDir:       o.WorkDir,
+		Config:        cfg,
+		ConfigDirs:    o.ConfigDirs,
+		MemoryDir:     o.MemoryDir,
+		Session:       sess,
+		ModelSwitcher: app.SwitchModel,
+	})
+	app.commands = cmdRegistry
+
+	return app, nil
+}
+
+// SetPrintMode enables plain text output mode (no markdown rendering).
+func (a *App) SetPrintMode(enabled bool) {
+	a.printMode = enabled
+}
+
+// conversationRuntime creates a conversation.Runtime from the current app state.
+func (a *App) conversationRuntime() *conversation.Runtime {
+	return conversation.NewRuntime(a.config, a.provider, a.session, a.toolRegistry, a.promptCtx)
+}
+
+// maxToolIterations is the maximum number of tool-use round-trips per turn.
+const maxToolIterations = 25
+
+// RunPrompt executes a one-shot prompt with the full agentic loop
+// (system prompt, tools, multi-turn tool execution).
+func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
+	rt := a.conversationRuntime()
+
+	// Build conversation history from session + new user message.
+	messages := a.sessionMessages()
+	messages = append(messages, api.Message{
+		Role: api.RoleUser,
+		Content: []api.ContentBlock{
+			{Type: api.ContentTypeText, Text: userPrompt},
+		},
+	})
+
+	// Save user message to session.
+	_ = a.session.AddMessage(session.ConversationMessage{
+		Role: session.RoleUser,
+		Content: []session.ContentBlock{
+			{Type: session.ContentTypeText, Text: userPrompt},
+		},
+	})
+
+	// Agentic loop: send → receive → execute tools → repeat until end_turn.
+	for i := 0; i < maxToolIterations; i++ {
+		result, err := rt.Turn(ctx, messages)
+		if err != nil {
+			return fmt.Errorf("turn %d: %w", i+1, err)
+		}
+
+		// Print text output.
+		if result.TextContent != "" {
+			fmt.Fprint(a.stdout, result.TextContent)
+		}
+
+		// Save assistant message to session.
+		if result.TextContent != "" {
+			_ = a.session.AddMessage(session.ConversationMessage{
+				Role: session.RoleAssistant,
+				Content: []session.ContentBlock{
+					{Type: session.ContentTypeText, Text: result.TextContent},
+				},
+			})
+		}
+
+		// If no tool calls, we're done.
+		if len(result.ToolCalls) == 0 {
+			fmt.Fprintln(a.stdout)
+			return nil
+		}
+
+		// Build assistant message with tool_use blocks.
+		var assistantBlocks []api.ContentBlock
+		if result.ThinkingContent != "" {
+			assistantBlocks = append(assistantBlocks, api.ContentBlock{
+				Type: api.ContentTypeThinking,
+				Text: result.ThinkingContent,
+			})
+		}
+		if result.TextContent != "" {
+			assistantBlocks = append(assistantBlocks, api.ContentBlock{
+				Type: api.ContentTypeText,
+				Text: result.TextContent,
+			})
+		}
+		for _, tc := range result.ToolCalls {
+			assistantBlocks = append(assistantBlocks, api.ContentBlock{
+				Type:  api.ContentTypeToolUse,
+				ID:    tc.ID,
+				Name:  tc.Name,
+				Input: tc.Input,
+			})
+		}
+		messages = append(messages, api.Message{
+			Role:    api.RoleAssistant,
+			Content: assistantBlocks,
+		})
+
+		// Execute tools.
+		toolResults := rt.ExecuteTools(ctx, result.ToolCalls)
+
+		// Build tool result message and append to conversation.
+		messages = append(messages, api.Message{
+			Role:    api.RoleUser,
+			Content: toolResults,
+		})
+	}
+
+	fmt.Fprintln(a.stdout)
+	return nil
+}
+
+// RunTurn executes a single agentic turn (used by TUI).
+// Returns the result and any tool results that need to be fed back.
+func (a *App) RunTurn(ctx context.Context, messages []api.Message) (*conversation.TurnResult, error) {
+	rt := a.conversationRuntime()
+	return rt.Turn(ctx, messages)
+}
+
+// ExecuteTools runs tool calls and returns tool result content blocks.
+func (a *App) ExecuteTools(ctx context.Context, calls []conversation.ToolCall) []api.ContentBlock {
+	rt := a.conversationRuntime()
+	return rt.ExecuteTools(ctx, calls)
+}
+
+// sessionMessages converts session history to API messages.
+func (a *App) sessionMessages() []api.Message {
+	var msgs []api.Message
+	for _, sm := range a.session.Messages {
+		var blocks []api.ContentBlock
+		for _, b := range sm.Content {
+			blocks = append(blocks, api.ContentBlock{
+				Type: api.ContentType(b.Type),
+				Text: b.Text,
+			})
+		}
+		msgs = append(msgs, api.Message{
+			Role:    api.MessageRole(sm.Role),
+			Content: blocks,
+		})
+	}
+	return msgs
+}
+
+// SwitchModel switches the active model and provider at runtime and persists
+// the choice to the user config file so it survives restarts.
+func (a *App) SwitchModel(name string) (string, error) {
+	resolved := api.ResolveModelWithAliases(name, a.config.Aliases)
+	providerCfg, err := api.DetectProvider(resolved)
+	if err != nil {
+		return "", fmt.Errorf("switch model: %w", err)
+	}
+	a.provider = api.NewProvider(providerCfg)
+	a.config.Model = resolved
+	a.providerKind = providerCfg.DisplayKind()
+
+	// Persist to user config so the choice survives restarts.
+	if a.userConfigPath != "" {
+		if err := config.SetLocalConfigField(a.userConfigPath, "model", resolved); err != nil {
+			fmt.Fprintf(a.stdout, "warning: could not save model preference: %v\n", err)
+		}
+	}
+
+	return fmt.Sprintf("Switched to %s (%s)", resolved, a.providerKind), nil
+}
+
+// Model returns the current model ID.
+func (a *App) Model() string { return a.config.Model }
+
+// ProviderKind returns the current provider kind.
+func (a *App) ProviderKind() string { return a.providerKind }
+
+// InPlanMode returns whether plan mode is active.
+func (a *App) InPlanMode() bool {
+	if a.planMode == nil {
+		return false
+	}
+	return a.planMode.InPlanMode()
+}
+
+// Commands returns the command registry.
+func (a *App) Commands() *commands.Registry { return a.commands }
+
+// RunInteractive starts the interactive TUI.
+func (a *App) RunInteractive(ctx context.Context) error {
+	// Discard log output during TUI mode. The default slog handler writes
+	// to stdout/stderr which corrupts the bubbletea alt-screen display.
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	m := NewTUIModel(a)
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
+	_, err := p.Run()
+	return err
+}
