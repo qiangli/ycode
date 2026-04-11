@@ -114,6 +114,24 @@ pkg/ycode/                  Public embedding API
 - **Recursive agent delegation** -- agents spawn child agents up to configurable depth
 - **Executable skills** -- scripts and resources alongside markdown instructions
 
+## Prior art & acknowledgments
+
+ycode draws inspiration from several excellent open-source projects, included as git submodules under `priorart/` for reference:
+
+| Project | License | Description |
+|---------|---------|-------------|
+| [Aider](https://github.com/aider-ai/aider) | Apache-2.0 | AI pair programming in the terminal |
+| [Claw Code](https://github.com/ultraworkers/claw-code) | -- | Rust-based CLI agent harness (direct ancestor of ycode) |
+| [Cline](https://github.com/cline/cline) | Apache-2.0 | Autonomous coding agent for IDEs |
+| [Codex](https://github.com/openai/codex) | Apache-2.0 | OpenAI's CLI coding agent |
+| [Continue](https://github.com/continuedev/continue) | Apache-2.0 | Open-source AI code assistant |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Apache-2.0 | Google's CLI for Gemini models |
+| [OpenClaw](https://github.com/openclaw/openclaw) | MIT | Open-source CLI agent harness |
+| [OpenCode](https://github.com/anomalyco/opencode) | MIT | Terminal-based AI coding assistant |
+| [OpenHands](https://github.com/OpenHands/OpenHands) | MIT | Platform for AI software agents |
+
+We are grateful to the authors and communities behind these projects.
+
 ## License
 
 MIT
