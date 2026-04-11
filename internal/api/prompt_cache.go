@@ -29,8 +29,8 @@ type PromptFingerprint struct {
 type PromptCache struct {
 	mu sync.Mutex
 
-	lastFingerprint *PromptFingerprint
-	lastFingerprintAt time.Time
+	lastFingerprint     *PromptFingerprint
+	lastFingerprintAt   time.Time
 	lastCacheReadTokens int
 
 	// Stats

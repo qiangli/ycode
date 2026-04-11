@@ -48,21 +48,21 @@ type GrepResult struct {
 
 // typeExtensions maps file types to extensions.
 var typeExtensions = map[string][]string{
-	"go":     {".go"},
-	"py":     {".py"},
-	"js":     {".js"},
-	"ts":     {".ts", ".tsx"},
-	"rust":   {".rs"},
-	"java":   {".java"},
-	"c":      {".c", ".h"},
-	"cpp":    {".cpp", ".cc", ".cxx", ".hpp", ".hxx"},
-	"rb":     {".rb"},
-	"sh":     {".sh", ".bash", ".zsh"},
-	"yaml":   {".yaml", ".yml"},
-	"json":   {".json"},
-	"md":     {".md"},
-	"html":   {".html", ".htm"},
-	"css":    {".css"},
+	"go":   {".go"},
+	"py":   {".py"},
+	"js":   {".js"},
+	"ts":   {".ts", ".tsx"},
+	"rust": {".rs"},
+	"java": {".java"},
+	"c":    {".c", ".h"},
+	"cpp":  {".cpp", ".cc", ".cxx", ".hpp", ".hxx"},
+	"rb":   {".rb"},
+	"sh":   {".sh", ".bash", ".zsh"},
+	"yaml": {".yaml", ".yml"},
+	"json": {".json"},
+	"md":   {".md"},
+	"html": {".html", ".htm"},
+	"css":  {".css"},
 }
 
 // GrepSearch searches file contents for a regex pattern.

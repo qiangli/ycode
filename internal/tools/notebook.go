@@ -9,10 +9,10 @@ import (
 
 // NotebookCell represents a Jupyter notebook cell.
 type NotebookCell struct {
-	CellType string   `json:"cell_type"`
-	Source   []string `json:"source"`
+	CellType string         `json:"cell_type"`
+	Source   []string       `json:"source"`
 	Metadata map[string]any `json:"metadata,omitempty"`
-	Outputs  []any    `json:"outputs,omitempty"`
+	Outputs  []any          `json:"outputs,omitempty"`
 }
 
 // Notebook represents a Jupyter notebook.

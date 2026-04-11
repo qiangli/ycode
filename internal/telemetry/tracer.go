@@ -7,22 +7,22 @@ import (
 
 // SessionTraceRecord represents a single trace entry in a session.
 type SessionTraceRecord struct {
-	ID          string    `json:"id"`
-	Type        string    `json:"type"` // api_call, tool_use, command, compaction, error
-	Name        string    `json:"name,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
-	CompletedAt time.Time `json:"completed_at,omitempty"`
-	Duration    string    `json:"duration,omitempty"`
+	ID          string         `json:"id"`
+	Type        string         `json:"type"` // api_call, tool_use, command, compaction, error
+	Name        string         `json:"name,omitempty"`
+	StartedAt   time.Time      `json:"started_at"`
+	CompletedAt time.Time      `json:"completed_at,omitempty"`
+	Duration    string         `json:"duration,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
-	Error       string    `json:"error,omitempty"`
+	Error       string         `json:"error,omitempty"`
 }
 
 // SessionTracer records traces for a conversation session.
 type SessionTracer struct {
-	mu       sync.Mutex
-	records  []SessionTraceRecord
-	sink     Sink
-	nextID   int
+	mu      sync.Mutex
+	records []SessionTraceRecord
+	sink    Sink
+	nextID  int
 }
 
 // NewSessionTracer creates a session tracer with an optional sink.

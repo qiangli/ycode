@@ -9,11 +9,11 @@ import (
 type RecipeKind string
 
 const (
-	RecipeRetry        RecipeKind = "retry"
-	RecipeRollback     RecipeKind = "rollback"
-	RecipeSkip         RecipeKind = "skip"
-	RecipeEscalate     RecipeKind = "escalate"
-	RecipeAlternative  RecipeKind = "alternative"
+	RecipeRetry       RecipeKind = "retry"
+	RecipeRollback    RecipeKind = "rollback"
+	RecipeSkip        RecipeKind = "skip"
+	RecipeEscalate    RecipeKind = "escalate"
+	RecipeAlternative RecipeKind = "alternative"
 )
 
 // Recipe describes a recovery action for a specific failure.

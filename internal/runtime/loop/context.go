@@ -10,22 +10,22 @@ import (
 
 // IterationContext holds state carried between loop iterations.
 type IterationContext struct {
-	Iteration      int       `json:"iteration"`
-	StartedAt      time.Time `json:"started_at"`
-	LastRunAt      time.Time `json:"last_run_at"`
-	LastDuration   string    `json:"last_duration"`
-	TotalRuns      int       `json:"total_runs"`
-	SuccessCount   int       `json:"success_count"`
-	FailureCount   int       `json:"failure_count"`
-	LastError      string    `json:"last_error,omitempty"`
-	SessionID      string    `json:"session_id,omitempty"`
-	Improvements   []string  `json:"improvements,omitempty"`
+	Iteration    int       `json:"iteration"`
+	StartedAt    time.Time `json:"started_at"`
+	LastRunAt    time.Time `json:"last_run_at"`
+	LastDuration string    `json:"last_duration"`
+	TotalRuns    int       `json:"total_runs"`
+	SuccessCount int       `json:"success_count"`
+	FailureCount int       `json:"failure_count"`
+	LastError    string    `json:"last_error,omitempty"`
+	SessionID    string    `json:"session_id,omitempty"`
+	Improvements []string  `json:"improvements,omitempty"`
 }
 
 // ContextCarryover manages state persistence between loop iterations.
 type ContextCarryover struct {
-	dir  string
-	ctx  *IterationContext
+	dir string
+	ctx *IterationContext
 }
 
 // NewContextCarryover creates a new context carryover manager.

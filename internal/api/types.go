@@ -105,8 +105,8 @@ type StreamEvent struct {
 
 	// Parsed from SSE data fields.
 	ContentBlock *ContentBlock `json:"content_block,omitempty"`
-	Message      *Response    `json:"message,omitempty"`
-	Usage        *Usage       `json:"usage,omitempty"`
+	Message      *Response     `json:"message,omitempty"`
+	Usage        *Usage        `json:"usage,omitempty"`
 }
 
 // StopReason constants.

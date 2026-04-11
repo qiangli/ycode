@@ -16,10 +16,10 @@ type StaleBranch struct {
 
 // StaleBase detects if the current branch's base (e.g., main) has moved forward.
 type StaleBase struct {
-	BaseBranch     string
-	CurrentBranch  string
-	CommitsBehind  int
-	MergeBaseAge   time.Duration
+	BaseBranch    string
+	CurrentBranch string
+	CommitsBehind int
+	MergeBaseAge  time.Duration
 }
 
 // DetectStaleBase checks if the current branch needs rebasing on its base.

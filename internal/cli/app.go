@@ -22,14 +22,14 @@ import (
 
 // App is the main interactive application.
 type App struct {
-	config       *config.Config
-	provider     api.Provider
-	providerKind string
-	session      *session.Session
-	renderer     *Renderer
-	commands     *commands.Registry
-	toolRegistry *tools.Registry
-	promptCtx    *prompt.ProjectContext
+	config         *config.Config
+	provider       api.Provider
+	providerKind   string
+	session        *session.Session
+	renderer       *Renderer
+	commands       *commands.Registry
+	toolRegistry   *tools.Registry
+	promptCtx      *prompt.ProjectContext
 	planMode       tools.PlanModeController
 	stdout         io.Writer
 	printMode      bool // plain text output, no markdown rendering
@@ -44,11 +44,11 @@ type App struct {
 
 // AppOptions holds optional configuration for App creation.
 type AppOptions struct {
-	WorkDir      string
-	ConfigDirs   commands.ConfigDirs
-	MemoryDir    string
-	Version      string
-	ProviderKind string
+	WorkDir        string
+	ConfigDirs     commands.ConfigDirs
+	MemoryDir      string
+	Version        string
+	ProviderKind   string
 	PlanMode       tools.PlanModeController
 	ToolRegistry   *tools.Registry
 	PromptCtx      *prompt.ProjectContext
@@ -74,15 +74,15 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 	}
 
 	app := &App{
-		config:       cfg,
-		provider:     provider,
-		providerKind: o.ProviderKind,
-		session:      sess,
-		renderer:     renderer,
-		toolRegistry: o.ToolRegistry,
-		promptCtx:    o.PromptCtx,
-		planMode:     o.PlanMode,
-		stdout:       os.Stdout,
+		config:         cfg,
+		provider:       provider,
+		providerKind:   o.ProviderKind,
+		session:        sess,
+		renderer:       renderer,
+		toolRegistry:   o.ToolRegistry,
+		promptCtx:      o.PromptCtx,
+		planMode:       o.PlanMode,
+		stdout:         os.Stdout,
 		version:        o.Version,
 		workDir:        o.WorkDir,
 		userConfigPath: o.UserConfigPath,
@@ -161,10 +161,19 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 			result.Usage.CacheReadInput,
 		)
 
-		// Show recovery info if compaction occurred
-		if recovery != nil && recovery.RetrySuccessful {
-			fmt.Fprintf(a.stdout, "\n⚠ Context compacted: %d messages summarized, %d recent messages preserved.\n\n",
-				recovery.CompactedCount, recovery.PreservedCount)
+		// Show recovery info if context management occurred.
+		if recovery != nil {
+			if recovery.Pruned {
+				fmt.Fprintf(a.stdout, "\n⟳ Context pruned: %d tool results trimmed to save context.\n", recovery.PrunedCount)
+			}
+			if recovery.CompactedCount > 0 {
+				fmt.Fprintf(a.stdout, "\n⚠ Context compacted: %d messages summarized, %d recent messages preserved.\n",
+					recovery.CompactedCount, recovery.PreservedCount)
+			}
+			if recovery.Flushed {
+				fmt.Fprintf(a.stdout, "\n⚠ Emergency context flush: conversation restarted with summary + last request.\n")
+			}
+			fmt.Fprintln(a.stdout)
 		}
 
 		// Show LLM call metrics.

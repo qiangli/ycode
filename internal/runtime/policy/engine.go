@@ -17,19 +17,19 @@ const (
 
 // LaneEvent is a policy lane event for tracking decisions.
 type LaneEvent struct {
-	Tool       string   `json:"tool"`
-	Decision   Decision `json:"decision"`
-	Reason     string   `json:"reason,omitempty"`
-	AppliedBy  string   `json:"applied_by,omitempty"` // rule name
+	Tool      string   `json:"tool"`
+	Decision  Decision `json:"decision"`
+	Reason    string   `json:"reason,omitempty"`
+	AppliedBy string   `json:"applied_by,omitempty"` // rule name
 }
 
 // Rule defines a single policy rule.
 type Rule struct {
-	Name       string   `json:"name"`
-	Tools      []string `json:"tools"`       // tool name patterns (* for wildcard)
-	Paths      []string `json:"paths"`       // path patterns (optional)
-	Decision   Decision `json:"decision"`
-	Priority   int      `json:"priority"`    // higher = evaluated first
+	Name     string   `json:"name"`
+	Tools    []string `json:"tools"` // tool name patterns (* for wildcard)
+	Paths    []string `json:"paths"` // path patterns (optional)
+	Decision Decision `json:"decision"`
+	Priority int      `json:"priority"` // higher = evaluated first
 }
 
 // Engine evaluates policy rules to determine tool access.

@@ -20,11 +20,11 @@ const (
 
 // ExecParams configures bash execution.
 type ExecParams struct {
-	Command      string `json:"command"`
-	Timeout      int    `json:"timeout,omitempty"`       // milliseconds
-	Background   bool   `json:"run_in_background,omitempty"`
-	Description  string `json:"description,omitempty"`
-	WorkDir      string `json:"-"`
+	Command     string `json:"command"`
+	Timeout     int    `json:"timeout,omitempty"` // milliseconds
+	Background  bool   `json:"run_in_background,omitempty"`
+	Description string `json:"description,omitempty"`
+	WorkDir     string `json:"-"`
 }
 
 // ExecResult holds the result of a bash execution.

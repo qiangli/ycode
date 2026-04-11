@@ -21,13 +21,13 @@ type ToolFunc func(ctx context.Context, input json.RawMessage) (string, error)
 
 // ToolSpec defines a tool's metadata and behavior.
 type ToolSpec struct {
-	Name            string              `json:"name"`
-	Description     string              `json:"description"`
-	InputSchema     json.RawMessage     `json:"input_schema"`
-	RequiredMode    permission.Mode     `json:"-"`
-	Source          ToolSource          `json:"-"`
-	Handler         ToolFunc            `json:"-"`
-	AlwaysAvailable bool                `json:"-"` // sent in every request vs deferred
+	Name            string          `json:"name"`
+	Description     string          `json:"description"`
+	InputSchema     json.RawMessage `json:"input_schema"`
+	RequiredMode    permission.Mode `json:"-"`
+	Source          ToolSource      `json:"-"`
+	Handler         ToolFunc        `json:"-"`
+	AlwaysAvailable bool            `json:"-"` // sent in every request vs deferred
 }
 
 // RuntimeToolDefinition is the API-facing tool definition.

@@ -34,9 +34,9 @@ const (
 
 // Token represents a stored OAuth token set.
 type Token struct {
-	AccessToken  string `json:"accessToken"`
-	RefreshToken string `json:"refreshToken,omitempty"`
-	ExpiresAt    int64  `json:"expiresAt,omitempty"`
+	AccessToken  string   `json:"accessToken"`
+	RefreshToken string   `json:"refreshToken,omitempty"`
+	ExpiresAt    int64    `json:"expiresAt,omitempty"`
 	Scopes       []string `json:"scopes,omitempty"`
 }
 

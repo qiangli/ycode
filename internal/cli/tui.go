@@ -29,11 +29,11 @@ const (
 
 // TUIModel is the top-level bubbletea model for interactive mode.
 type TUIModel struct {
-	app      *App
-	viewport viewport.Model
-	textarea textarea.Model
-	width    int
-	height   int
+	app         *App
+	viewport    viewport.Model
+	textarea    textarea.Model
+	width       int
+	height      int
 	output      strings.Builder
 	outputDirty bool // true when output changed since last syncViewport
 	ready       bool
@@ -353,10 +353,10 @@ func (m *TUIModel) welcomeText() string {
 	var b strings.Builder
 
 	// Styles.
-	logoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6d28d9"))       // purple
-	accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#a78bfa"))     // light purple
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#737373"))      // dim
-	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#e5e5e5"))      // bright
+	logoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6d28d9"))   // purple
+	accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#a78bfa")) // light purple
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#737373"))  // dim
+	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#e5e5e5"))  // bright
 	hintBold := lipgloss.NewStyle().Foreground(lipgloss.Color("#a78bfa")).Bold(true)
 	hintDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#737373"))
 

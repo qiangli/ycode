@@ -39,8 +39,8 @@ func testSession() *session.Session {
 					},
 				},
 				Usage: &session.TokenUsage{
-					InputTokens:  1500,
-					OutputTokens: 200,
+					InputTokens:    1500,
+					OutputTokens:   200,
 					CacheReadInput: 500,
 				},
 			},

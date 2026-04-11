@@ -10,10 +10,10 @@ import (
 
 // TodoItem represents a task in the todo list.
 type TodoItem struct {
-	ID          string `json:"id"`
-	Content     string `json:"content"`
-	Status      string `json:"status"` // pending, in_progress, completed
-	Priority    string `json:"priority,omitempty"`
+	ID       string `json:"id"`
+	Content  string `json:"content"`
+	Status   string `json:"status"` // pending, in_progress, completed
+	Priority string `json:"priority,omitempty"`
 }
 
 // RegisterTodoHandler registers the TodoWrite tool handler.

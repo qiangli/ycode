@@ -25,9 +25,9 @@ func (d Decision) String() string {
 
 // Rule matches a tool name and specifies a decision.
 type Rule struct {
-	Tool     string   `json:"tool"`               // tool name or glob pattern
-	Decision Decision `json:"decision"`           // allow, deny, ask
-	Args     []string `json:"args,omitempty"`      // optional arg patterns
+	Tool     string   `json:"tool"`           // tool name or glob pattern
+	Decision Decision `json:"decision"`       // allow, deny, ask
+	Args     []string `json:"args,omitempty"` // optional arg patterns
 }
 
 // Policy holds a set of permission rules.

@@ -19,15 +19,15 @@ type AnalyticsEvent struct {
 
 // PromptCacheEvent records prompt caching behavior.
 type PromptCacheEvent struct {
-	Timestamp      time.Time `json:"timestamp"`
-	Model          string    `json:"model"`
-	CacheHit       bool      `json:"cache_hit"`
-	CacheWrite     bool      `json:"cache_write"`
-	CacheMiss      bool      `json:"cache_miss"`
-	CacheBreak     bool      `json:"cache_break"`
-	TokensSaved    int       `json:"tokens_saved,omitempty"`
-	TokensDelta    int       `json:"tokens_delta,omitempty"`
-	FingerPrint    string    `json:"fingerprint,omitempty"`
+	Timestamp   time.Time `json:"timestamp"`
+	Model       string    `json:"model"`
+	CacheHit    bool      `json:"cache_hit"`
+	CacheWrite  bool      `json:"cache_write"`
+	CacheMiss   bool      `json:"cache_miss"`
+	CacheBreak  bool      `json:"cache_break"`
+	TokensSaved int       `json:"tokens_saved,omitempty"`
+	TokensDelta int       `json:"tokens_delta,omitempty"`
+	FingerPrint string    `json:"fingerprint,omitempty"`
 }
 
 // AnalyticsCollector aggregates analytics events.
@@ -65,13 +65,13 @@ func (ac *AnalyticsCollector) RecordPrompt(model string, tokensIn, tokensOut int
 // RecordToolUse records a tool invocation event.
 func (ac *AnalyticsCollector) RecordToolUse(toolName string, duration string, success bool, errMsg string) {
 	event := &AnalyticsEvent{
-		SessionID:   ac.sessionID,
-		EventType:   "tool_use",
-		Timestamp:   time.Now(),
-		ToolName:    toolName,
-		Duration:    duration,
-		Success:     success,
-		Error:       errMsg,
+		SessionID: ac.sessionID,
+		EventType: "tool_use",
+		Timestamp: time.Now(),
+		ToolName:  toolName,
+		Duration:  duration,
+		Success:   success,
+		Error:     errMsg,
 	}
 	ac.emit(event)
 }

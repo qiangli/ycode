@@ -10,8 +10,8 @@ import (
 // Config holds all runtime configuration.
 type Config struct {
 	// API settings
-	Model       string  `json:"model,omitempty"`
-	MaxTokens   int     `json:"maxTokens,omitempty"`
+	Model       string   `json:"model,omitempty"`
+	MaxTokens   int      `json:"maxTokens,omitempty"`
 	Temperature *float64 `json:"temperature,omitempty"`
 
 	// Permission mode

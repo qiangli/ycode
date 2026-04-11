@@ -105,6 +105,50 @@ The most durable layer. Implementation: `internal/runtime/memory/store.go`.
 
 ---
 
+## Three-Layer Context Defense
+
+ycode implements a three-layer defense against context overflow, inspired by OpenClaw's architecture. Each layer is progressively more aggressive. Implementation: `internal/runtime/conversation/runtime.go` (`TurnWithRecovery`).
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│ Layer 1: Context Pruning                                      │
+│ ─ In-memory only (does not modify persisted session)          │
+│ ─ Soft trim: truncate old tool results keeping head + tail    │
+│ ─ Hard clear: replace old tool results with placeholder       │
+│ ─ Trigger: 60% of compaction threshold (60K tokens)           │
+│ ─ Managed by: session/pruning.go                              │
+├───────────────────────────────────────────────────────────────┤
+│ Layer 2: Session Compaction                                   │
+│ ─ Generates structured 7-field summary of old messages        │
+│ ─ Preserves last 4 messages verbatim                          │
+│ ─ Re-injects critical CLAUDE.md sections after compaction     │
+│ ─ Trigger: 100% of threshold (100K tokens) or API rejection   │
+│ ─ Managed by: session/compact.go, prompt/refresh.go           │
+├───────────────────────────────────────────────────────────────┤
+│ Layer 3: Emergency Memory Flush                               │
+│ ─ Creates minimal continuation: summary + last user message   │
+│ ─ Trigger: compaction + retry still fails                     │
+│ ─ Managed by: conversation/runtime.go (emergencyFlush)        │
+└───────────────────────────────────────────────────────────────┘
+```
+
+### Context Health Monitoring
+
+`CheckContextHealth()` in `session/pruning.go` evaluates the current state:
+
+| Level | Threshold | Action |
+| :--- | :--- | :--- |
+| Healthy | < 60% | No action |
+| Warning | 60-80% | Soft/hard trim old tool results |
+| Critical | 80-100% | Pruning active, compaction imminent |
+| Overflow | > 100% | Proactive compaction before API call |
+
+### Post-Compaction Context Refresh
+
+After compaction removes message history, `PostCompactionRefresh()` in `prompt/refresh.go` re-injects critical sections from CLAUDE.md (Build & Test, Key Design Decisions) into the continuation message. This prevents the agent from losing project-specific operational instructions. Budget: 3,000 chars max.
+
+---
+
 ## Memory Types
 
 Four persistent memory types are defined in `internal/runtime/memory/types.go`. Each type has a different staleness threshold reflecting how quickly that kind of information typically becomes outdated.
@@ -324,4 +368,7 @@ ycode avoids external databases entirely -- no vector store, no graph DB, no Red
 | Prompt file discovery | `internal/runtime/prompt/discovery.go` |
 | Dynamic boundary marker | `internal/runtime/prompt/boundary.go` |
 | Prompt cache fingerprinting | `internal/api/prompt_cache.go` |
+| Context pruning (Layer 1) | `internal/runtime/session/pruning.go` |
+| Post-compaction refresh | `internal/runtime/prompt/refresh.go` |
+| 3-layer defense (TurnWithRecovery) | `internal/runtime/conversation/runtime.go` |
 | Auto-checkpointing | `internal/runtime/scratchpad/auto.go` |

@@ -166,3 +166,15 @@ Track progress here. Check off items as they are completed.
 - [x] 8.14 CI/CD pipeline (GitHub Actions)
 - [x] 8.15 README.md, USAGE.md documentation
 - [x] 8.16 Final end-to-end validation against all verification steps
+
+## Phase 9: Best-in-Class Memory & Context Management
+- [x] 9.1 Context pruning (Layer 1): soft trim + hard clear of old tool results (`session/pruning.go`)
+- [x] 9.2 Context health monitoring: token estimation, level tracking (healthy/warning/critical/overflow)
+- [x] 9.3 Proactive auto-compaction: trigger at 100K threshold before API rejection
+- [x] 9.4 Post-compaction context refresh: re-inject critical CLAUDE.md sections (`prompt/refresh.go`)
+- [x] 9.5 Emergency memory flush (Layer 3): minimal continuation with summary + last user message
+- [x] 9.6 3-layer defense integration in TurnWithRecovery (prune → compact → flush)
+- [x] 9.7 User-visible context management notifications in CLI (prune/compact/flush indicators)
+- [x] 9.8 Tests for pruning, context health, and post-compaction refresh
+- [x] 9.9 Verify docs: memory-clawcode.md (accurate), memory-openclaw.md (1 fix), memory-opencode.md (accurate)
+- [x] 9.10 Full build + test suite passes

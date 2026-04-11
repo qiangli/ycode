@@ -134,7 +134,7 @@ OpenClaw implements a **two-tier prompt structure** for cache optimization:
 │  ─ Skills guidance                  │
 │  ─ Safety constraints               │
 ├─────────────────────────────────────┤
-│  __SYSTEM_PROMPT_DYNAMIC_BOUNDARY__ │  ← Cache invalidation point
+│  <!-- OPENCLAW_CACHE_BOUNDARY -->   │  ← Cache invalidation point
 ├─────────────────────────────────────┤
 │  Dynamic Sections (not cached)      │
 │  ─ HEARTBEAT.md                     │

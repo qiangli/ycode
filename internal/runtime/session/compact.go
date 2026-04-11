@@ -38,9 +38,9 @@ func EstimateMessageTokens(msg ConversationMessage) int {
 		case ContentTypeText:
 			total += len(block.Text)/4 + 1
 		case ContentTypeToolUse:
-			total += (len(block.Name) + len(block.Input))/4 + 1
+			total += (len(block.Name)+len(block.Input))/4 + 1
 		case ContentTypeToolResult:
-			total += (len(block.Name) + len(block.Content))/4 + 1
+			total += (len(block.Name)+len(block.Content))/4 + 1
 		}
 	}
 	return total

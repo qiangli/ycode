@@ -7,11 +7,11 @@ import (
 
 // ResearchTask represents a sub-task in an auto-research workflow.
 type ResearchTask struct {
-	ID          string `json:"id"`
-	Query       string `json:"query"`
-	Status      string `json:"status"` // pending, in_progress, completed, failed
-	Result      string `json:"result,omitempty"`
-	AgentType   string `json:"agent_type"`
+	ID        string `json:"id"`
+	Query     string `json:"query"`
+	Status    string `json:"status"` // pending, in_progress, completed, failed
+	Result    string `json:"result,omitempty"`
+	AgentType string `json:"agent_type"`
 }
 
 // ResearchPlan is a structured breakdown of a research request.

@@ -81,12 +81,12 @@ func (c *OpenAICompatClient) Send(ctx context.Context, req *Request) (<-chan *St
 
 // openaiRequest is the OpenAI chat completion request format.
 type openaiRequest struct {
-	Model         string              `json:"model"`
-	Messages      []openaiMessage     `json:"messages"`
-	MaxTokens     int                 `json:"max_tokens,omitempty"`
-	Temperature   *float64            `json:"temperature,omitempty"`
-	Stream        bool                `json:"stream"`
-	Tools         []openaiTool        `json:"tools,omitempty"`
+	Model         string               `json:"model"`
+	Messages      []openaiMessage      `json:"messages"`
+	MaxTokens     int                  `json:"max_tokens,omitempty"`
+	Temperature   *float64             `json:"temperature,omitempty"`
+	Stream        bool                 `json:"stream"`
+	Tools         []openaiTool         `json:"tools,omitempty"`
 	StreamOptions *openaiStreamOptions `json:"stream_options,omitempty"`
 }
 
@@ -326,7 +326,7 @@ func (c *OpenAICompatClient) readStream(body io.Reader, events chan<- *StreamEve
 			// Handle reasoning/thinking content.
 			if choice.Delta.ReasoningContent != "" {
 				delta, _ := json.Marshal(map[string]string{
-					"type":    "thinking_delta",
+					"type":     "thinking_delta",
 					"thinking": choice.Delta.ReasoningContent,
 				})
 				events <- &StreamEvent{
@@ -420,7 +420,7 @@ func (c *OpenAICompatClient) readNonStream(body io.Reader, events chan<- *Stream
 			Message struct {
 				Content          string           `json:"content"`
 				ReasoningContent string           `json:"reasoning_content"`
-				ToolCalls        []openaiToolCall  `json:"tool_calls"`
+				ToolCalls        []openaiToolCall `json:"tool_calls"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -435,7 +435,7 @@ func (c *OpenAICompatClient) readNonStream(body io.Reader, events chan<- *Stream
 		// Emit reasoning/thinking content.
 		if choice.Message.ReasoningContent != "" {
 			delta, _ := json.Marshal(map[string]string{
-				"type":    "thinking_delta",
+				"type":     "thinking_delta",
 				"thinking": choice.Message.ReasoningContent,
 			})
 			events <- &StreamEvent{

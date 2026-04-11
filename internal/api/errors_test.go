@@ -10,8 +10,8 @@ func TestParseTokenLimitError(t *testing.T) {
 		name      string
 		body      string
 		wantError bool
-		wantReq   int  // 0 means don't check
-		wantMax   int  // 0 means don't check
+		wantReq   int // 0 means don't check
+		wantMax   int // 0 means don't check
 	}{
 		{
 			name:      "OpenAI style - exceeded model token limit",

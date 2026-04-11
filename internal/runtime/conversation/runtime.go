@@ -17,12 +17,12 @@ import (
 
 // Runtime manages the conversation turn loop.
 type Runtime struct {
-	config      *config.Config
-	provider    api.Provider
-	session     *session.Session
-	registry    *tools.Registry
-	promptCtx   *prompt.ProjectContext
-	logger      *slog.Logger
+	config    *config.Config
+	provider  api.Provider
+	session   *session.Session
+	registry  *tools.Registry
+	promptCtx *prompt.ProjectContext
+	logger    *slog.Logger
 }
 
 // NewRuntime creates a new conversation runtime.
@@ -203,79 +203,180 @@ func joinParts(parts []string) string {
 	return s
 }
 
-// RecoveryResult contains information about a successful recovery from token limit error.
+// RecoveryResult contains information about context management actions taken.
 type RecoveryResult struct {
-	CompactedCount   int
-	PreservedCount   int
-	RetrySuccessful  bool
-	SummaryPreview   string
+	CompactedCount  int
+	PreservedCount  int
+	RetrySuccessful bool
+	SummaryPreview  string
+	Pruned          bool // Layer 1: tool results were pruned
+	PrunedCount     int  // Number of tool results pruned
+	Flushed         bool // Layer 3: emergency flush was performed
 }
 
-// TurnWithRecovery executes a turn with automatic recovery from token limit errors.
-// If the request exceeds the model's token limit, it compacts older messages and retries.
+// TurnWithRecovery executes a turn with the 3-layer context defense:
+//
+//	Layer 1 (Prune):   Soft/hard trim old tool results when approaching threshold
+//	Layer 2 (Compact): Full semantic compaction when exceeding threshold
+//	Layer 3 (Flush):   Emergency minimal continuation when compaction isn't enough
+//
+// This is called before each API request to proactively manage context.
 func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) (*TurnResult, *RecoveryResult, error) {
-	// First attempt
+	sessionMsgs := r.apiMessagesToSession(messages)
+	health := session.CheckContextHealth(sessionMsgs)
+	recovery := &RecoveryResult{}
+
+	r.logger.Info("context health", "tokens", health.EstimatedTokens, "level", health.Level.String())
+
+	// --- Layer 1: Pruning (in-memory tool result trimming) ---
+	if health.NeedsPruning() && !health.NeedsCompactionNow() {
+		pruned, pruneResult := session.PruneMessages(sessionMsgs)
+		if pruneResult != nil {
+			r.logger.Info("layer 1: pruned tool results",
+				"soft_trimmed", pruneResult.SoftTrimmed,
+				"hard_cleared", pruneResult.HardCleared,
+				"tokens_before", pruneResult.TokensBefore,
+				"tokens_after", pruneResult.TokensAfter,
+			)
+			messages = r.sessionMessagesToAPI(pruned)
+			recovery.Pruned = true
+			recovery.PrunedCount = pruneResult.SoftTrimmed + pruneResult.HardCleared
+		}
+	}
+
+	// --- Layer 2: Proactive compaction (before hitting API limit) ---
+	if health.NeedsCompactionNow() {
+		compactResult := r.proactiveCompact(sessionMsgs)
+		if compactResult != nil {
+			messages = r.buildCompactedMessages(messages, compactResult)
+			recovery.CompactedCount = compactResult.CompactedCount
+			recovery.PreservedCount = compactResult.PreservedCount
+			recovery.RetrySuccessful = true
+			recovery.SummaryPreview = truncateSummary(compactResult.Summary, 200)
+
+			r.logger.Info("layer 2: proactive compaction",
+				"compacted", compactResult.CompactedCount,
+				"preserved", compactResult.PreservedCount,
+			)
+		}
+	}
+
+	// First attempt (with pruned/compacted messages).
 	result, err := r.Turn(ctx, messages)
 	if err == nil {
+		if recovery.Pruned || recovery.CompactedCount > 0 {
+			return result, recovery, nil
+		}
 		return result, nil, nil
 	}
 
-	// Check if this is a token limit error
+	// --- Reactive Layer 2: Compaction on token limit error ---
 	var tokenErr *api.TokenLimitError
 	if !errors.As(err, &tokenErr) {
-		return nil, nil, err // Not a token limit error, return as-is
+		return nil, nil, err
 	}
 
-	r.logger.Warn("token limit exceeded, attempting recovery via compaction",
+	r.logger.Warn("token limit exceeded, attempting reactive compaction",
 		"requested", tokenErr.RequestedTokens,
 		"max", tokenErr.MaxTokens,
 	)
 
-	// Convert api.Messages to session messages for compaction
-	sessionMsgs := r.apiMessagesToSession(messages)
-
-	// Check if we have enough messages to compact
-	if len(sessionMsgs) <= session.PreserveLastMessages {
-		r.logger.Error("cannot compact: not enough messages to preserve minimum",
-			"messages", len(sessionMsgs),
-			"preserve_min", session.PreserveLastMessages,
-		)
-		return nil, nil, fmt.Errorf("token limit exceeded and cannot compact further: %w", err)
-	}
-
-	// Perform compaction
-	compactResult := session.Compact(sessionMsgs, r.session.Summary)
+	sessionMsgs = r.apiMessagesToSession(messages)
+	compactResult := r.proactiveCompact(sessionMsgs)
 	if compactResult == nil {
-		return nil, nil, fmt.Errorf("token limit exceeded and compaction failed: %w", err)
+		// --- Layer 3: Emergency flush ---
+		return r.emergencyFlush(ctx, messages, err)
 	}
 
-	r.logger.Info("compacted messages for recovery",
-		"compacted_count", compactResult.CompactedCount,
-		"preserved_count", compactResult.PreservedCount,
-	)
-
-	// Update session summary
-	r.session.Summary = compactResult.Summary
-
-	// Build compacted messages: summary as system-like message + preserved messages
 	compactedMessages := r.buildCompactedMessages(messages, compactResult)
 
-	// Retry with compacted messages
 	result, retryErr := r.Turn(ctx, compactedMessages)
 	if retryErr != nil {
-		// Check if it's still a token limit error - we may need multiple compaction rounds
 		if errors.As(retryErr, &tokenErr) {
-			return nil, nil, fmt.Errorf("token limit exceeded even after compaction: %w", retryErr)
+			// Still too large — try emergency flush.
+			return r.emergencyFlush(ctx, messages, retryErr)
 		}
 		return nil, nil, retryErr
 	}
 
-	// Success! Return the result and recovery info
+	recovery.CompactedCount = compactResult.CompactedCount
+	recovery.PreservedCount = compactResult.PreservedCount
+	recovery.RetrySuccessful = true
+	recovery.SummaryPreview = truncateSummary(compactResult.Summary, 200)
+	return result, recovery, nil
+}
+
+// proactiveCompact attempts to compact messages, returning nil if not possible.
+func (r *Runtime) proactiveCompact(sessionMsgs []session.ConversationMessage) *session.CompactionResult {
+	if len(sessionMsgs) <= session.PreserveLastMessages {
+		return nil
+	}
+
+	compactResult := session.Compact(sessionMsgs, r.session.Summary)
+	if compactResult == nil {
+		return nil
+	}
+
+	// Update session summary.
+	r.session.Summary = compactResult.Summary
+	return compactResult
+}
+
+// emergencyFlush is Layer 3: when compaction isn't enough, create a minimal
+// continuation with just the summary + last user message.
+func (r *Runtime) emergencyFlush(ctx context.Context, messages []api.Message, originalErr error) (*TurnResult, *RecoveryResult, error) {
+	r.logger.Warn("layer 3: emergency flush — creating minimal continuation")
+
+	// Find the last user message.
+	var lastUserMsg *api.Message
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == api.RoleUser {
+			lastUserMsg = &messages[i]
+			break
+		}
+	}
+
+	if lastUserMsg == nil {
+		return nil, nil, fmt.Errorf("emergency flush failed: no user message found: %w", originalErr)
+	}
+
+	// Build minimal continuation: summary + last user message.
+	summary := r.session.Summary
+	if summary == "" {
+		summary = "Previous conversation context was too large and has been flushed."
+	}
+
+	continuationText := session.GetCompactContinuationMessage(summary, true, false)
+
+	// Inject post-compaction context refresh from CLAUDE.md.
+	if r.promptCtx != nil {
+		refresh := prompt.PostCompactionRefresh(r.promptCtx.ContextFiles)
+		if refresh != "" {
+			continuationText += "\n\n" + refresh
+		}
+	}
+
+	flushMessages := []api.Message{
+		{
+			Role: api.RoleUser,
+			Content: []api.ContentBlock{
+				{Type: api.ContentTypeText, Text: continuationText},
+			},
+		},
+		*lastUserMsg,
+	}
+
+	result, err := r.Turn(ctx, flushMessages)
+	if err != nil {
+		return nil, nil, fmt.Errorf("emergency flush retry failed: %w", err)
+	}
+
 	recovery := &RecoveryResult{
-		CompactedCount:  compactResult.CompactedCount,
-		PreservedCount:  compactResult.PreservedCount,
+		CompactedCount:  len(messages) - 1,
+		PreservedCount:  1,
 		RetrySuccessful: true,
-		SummaryPreview:  truncateSummary(compactResult.Summary, 200),
+		Flushed:         true,
+		SummaryPreview:  truncateSummary(summary, 200),
 	}
 
 	return result, recovery, nil
@@ -306,6 +407,31 @@ func (r *Runtime) apiMessagesToSession(messages []api.Message) []session.Convers
 	return result
 }
 
+// sessionMessagesToAPI converts session messages back to API messages.
+func (r *Runtime) sessionMessagesToAPI(messages []session.ConversationMessage) []api.Message {
+	var result []api.Message
+	for _, msg := range messages {
+		var blocks []api.ContentBlock
+		for _, b := range msg.Content {
+			blocks = append(blocks, api.ContentBlock{
+				Type:      api.ContentType(b.Type),
+				Text:      b.Text,
+				ID:        b.ID,
+				Name:      b.Name,
+				Input:     b.Input,
+				ToolUseID: b.ToolUseID,
+				Content:   b.Content,
+				IsError:   b.IsError,
+			})
+		}
+		result = append(result, api.Message{
+			Role:    api.MessageRole(msg.Role),
+			Content: blocks,
+		})
+	}
+	return result
+}
+
 // buildCompactedMessages rebuilds the API message list with compacted history.
 func (r *Runtime) buildCompactedMessages(original []api.Message, compactResult *session.CompactionResult) []api.Message {
 	if compactResult == nil || len(original) == 0 {
@@ -313,10 +439,7 @@ func (r *Runtime) buildCompactedMessages(original []api.Message, compactResult *
 	}
 
 	// Calculate how many messages to keep from the end
-	keepCount := compactResult.PreservedCount
-	if keepCount > len(original) {
-		keepCount = len(original)
-	}
+	keepCount := min(compactResult.PreservedCount, len(original))
 
 	// Start with a system-like message containing the summary
 	var result []api.Message
@@ -324,6 +447,15 @@ func (r *Runtime) buildCompactedMessages(original []api.Message, compactResult *
 	// Add the compacted summary as a user message (since most APIs don't support multiple system messages)
 	// We use a special marker to indicate this is context continuation
 	continuationMsg := session.GetCompactContinuationMessage(compactResult.Summary, true, true)
+
+	// Post-compaction context refresh: re-inject critical CLAUDE.md sections.
+	if r.promptCtx != nil {
+		refresh := prompt.PostCompactionRefresh(r.promptCtx.ContextFiles)
+		if refresh != "" {
+			continuationMsg += "\n\n" + refresh
+		}
+	}
+
 	result = append(result, api.Message{
 		Role: api.RoleUser,
 		Content: []api.ContentBlock{
@@ -332,10 +464,7 @@ func (r *Runtime) buildCompactedMessages(original []api.Message, compactResult *
 	})
 
 	// Add the preserved recent messages
-	preservedStart := len(original) - keepCount
-	if preservedStart < 0 {
-		preservedStart = 0
-	}
+	preservedStart := max(len(original)-keepCount, 0)
 	result = append(result, original[preservedStart:]...)
 
 	return result
