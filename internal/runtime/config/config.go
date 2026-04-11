@@ -34,6 +34,9 @@ type Config struct {
 	// Parallel tool execution settings
 	Parallel ParallelConfig `json:"parallel,omitempty"`
 
+	// Allowed directories for VFS (in addition to temp dir and workspace root)
+	AllowedDirectories []string `json:"allowedDirectories,omitempty"`
+
 	// Custom settings (arbitrary key-value pairs from plugins/MCP)
 	Custom map[string]any `json:"custom,omitempty"`
 }
@@ -150,6 +153,9 @@ func mergeFromFile(cfg *Config, path string) error {
 	if overlay.Parallel.MaxLLM != 0 {
 		cfg.Parallel.MaxLLM = overlay.Parallel.MaxLLM
 	}
+	if len(overlay.AllowedDirectories) > 0 {
+		cfg.AllowedDirectories = append(cfg.AllowedDirectories, overlay.AllowedDirectories...)
+	}
 	if overlay.Aliases != nil {
 		if cfg.Aliases == nil {
 			cfg.Aliases = make(map[string]string)
@@ -185,6 +191,8 @@ func (c *Config) Get(key string) (any, bool) {
 		return c.AutoCompactEnabled, true
 	case "aliases":
 		return c.Aliases, true
+	case "allowedDirectories":
+		return c.AllowedDirectories, true
 	default:
 		if c.Custom != nil {
 			v, ok := c.Custom[key]

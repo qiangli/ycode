@@ -17,6 +17,7 @@ const (
 	SectionInstructions = "instructions"
 	SectionMemory       = "memory"
 	SectionConfig       = "config"
+	SectionFilesystem   = "filesystem"
 )
 
 // FrontierModelName is the human-readable model family name for prompts.
@@ -181,6 +182,31 @@ func InstructionsSection(files []ContextFile) string {
 		sections = append(sections, content)
 	}
 	return strings.Join(sections, "\n\n")
+}
+
+// FilesystemSection returns instructions about filesystem tools and security boundaries.
+func FilesystemSection(allowedDirs []string) string {
+	if len(allowedDirs) == 0 {
+		return ""
+	}
+
+	var lines []string
+	lines = append(lines, "# Filesystem access")
+	lines = append(lines, "All filesystem operations are validated against allowed directories. Paths outside these directories are rejected.")
+	lines = append(lines, "")
+	lines = append(lines, "Allowed directories:")
+	for _, d := range allowedDirs {
+		lines = append(lines, " - "+d)
+	}
+	lines = append(lines, "")
+	lines = append(lines, "Rules:")
+	lines = append(lines, " - All paths must be absolute.")
+	lines = append(lines, " - Symbolic links that resolve within allowed directories are permitted without approval.")
+	lines = append(lines, " - Symbolic links that resolve outside allowed directories require user approval.")
+	lines = append(lines, " - Maximum file size for read/write operations: 10 MB.")
+	lines = append(lines, "")
+	lines = append(lines, "Additional filesystem tools (copy_file, move_file, delete_file, create_directory, list_directory, tree, get_file_info, read_multiple_files, list_roots) are available via ToolSearch.")
+	return strings.Join(lines, "\n")
 }
 
 // describeInstructionFile returns a description like "CLAUDE.md (scope: /path/to/project)".

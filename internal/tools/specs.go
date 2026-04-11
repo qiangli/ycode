@@ -66,6 +66,71 @@ func builtinSpecs() []*ToolSpec {
 			AlwaysAvailable: true,
 		},
 
+		// Deferred filesystem tools (discovered via ToolSearch)
+		{
+			Name:         "copy_file",
+			Description:  "Copy a file from source to destination.",
+			InputSchema:  mustJSON(copyFileSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "move_file",
+			Description:  "Move or rename a file or directory.",
+			InputSchema:  mustJSON(moveFileSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "delete_file",
+			Description:  "Delete a file or directory. Directories require recursive=true.",
+			InputSchema:  mustJSON(deleteFileSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "create_directory",
+			Description:  "Create a directory and all parent directories.",
+			InputSchema:  mustJSON(createDirectorySchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "list_directory",
+			Description:  "List the contents of a directory.",
+			InputSchema:  mustJSON(listDirectorySchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "tree",
+			Description:  "Display a tree-style directory listing with configurable depth.",
+			InputSchema:  mustJSON(treeSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "get_file_info",
+			Description:  "Get metadata about a file or directory (size, permissions, type, modification time).",
+			InputSchema:  mustJSON(getFileInfoSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "read_multiple_files",
+			Description:  "Read multiple files at once, returning their contents concatenated with headers.",
+			InputSchema:  mustJSON(readMultipleFilesSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "list_roots",
+			Description:  "List the allowed filesystem directories.",
+			InputSchema:  mustJSON(emptySchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
 		// Deferred tools
 		{
 			Name:         "WebFetch",
@@ -253,6 +318,75 @@ var (
 			"head_limit": {"type": "integer", "description": "Maximum number of results"}
 		},
 		"required": ["pattern"]
+	}`
+
+	copyFileSchema = `{
+		"type": "object",
+		"properties": {
+			"source": {"type": "string", "description": "Absolute path to the source file"},
+			"destination": {"type": "string", "description": "Absolute path to the destination"}
+		},
+		"required": ["source", "destination"]
+	}`
+
+	moveFileSchema = `{
+		"type": "object",
+		"properties": {
+			"source": {"type": "string", "description": "Absolute path to the source file or directory"},
+			"destination": {"type": "string", "description": "Absolute path to the destination"}
+		},
+		"required": ["source", "destination"]
+	}`
+
+	deleteFileSchema = `{
+		"type": "object",
+		"properties": {
+			"path": {"type": "string", "description": "Absolute path to the file or directory to delete"},
+			"recursive": {"type": "boolean", "description": "Delete directories recursively (default false)", "default": false}
+		},
+		"required": ["path"]
+	}`
+
+	createDirectorySchema = `{
+		"type": "object",
+		"properties": {
+			"path": {"type": "string", "description": "Absolute path of the directory to create"}
+		},
+		"required": ["path"]
+	}`
+
+	listDirectorySchema = `{
+		"type": "object",
+		"properties": {
+			"path": {"type": "string", "description": "Absolute path of the directory to list"}
+		},
+		"required": ["path"]
+	}`
+
+	treeSchema = `{
+		"type": "object",
+		"properties": {
+			"path": {"type": "string", "description": "Absolute path of the root directory"},
+			"depth": {"type": "integer", "description": "Maximum depth to traverse (default 3)", "default": 3},
+			"follow_symlinks": {"type": "boolean", "description": "Follow symbolic links (default false)", "default": false}
+		},
+		"required": ["path"]
+	}`
+
+	getFileInfoSchema = `{
+		"type": "object",
+		"properties": {
+			"path": {"type": "string", "description": "Absolute path to the file or directory"}
+		},
+		"required": ["path"]
+	}`
+
+	readMultipleFilesSchema = `{
+		"type": "object",
+		"properties": {
+			"paths": {"type": "array", "items": {"type": "string"}, "description": "Array of absolute file paths to read"}
+		},
+		"required": ["paths"]
 	}`
 
 	webFetchSchema = `{

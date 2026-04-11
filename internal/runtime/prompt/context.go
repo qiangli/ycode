@@ -17,6 +17,7 @@ type ProjectContext struct {
 	OSVersion     string        `json:"os_version,omitempty"`
 	Model         string        `json:"model,omitempty"`
 	ContextFiles  []ContextFile `json:"context_files,omitempty"`
+	AllowedDirs   []string      `json:"allowed_dirs,omitempty"`
 }
 
 // ContextFile is a discovered instruction file (e.g., CLAUDE.md).

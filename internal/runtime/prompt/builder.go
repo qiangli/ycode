@@ -72,6 +72,7 @@ func BuildDefault(ctx *ProjectContext) string {
 	b.AddStaticSection(SectionActions, ActionsSection())
 
 	// Dynamic sections.
+	b.AddDynamicSection(SectionFilesystem, FilesystemSection(ctx.AllowedDirs))
 	b.AddDynamicSection(SectionEnvironment, EnvironmentSection(ctx))
 	b.AddDynamicSection(SectionProject, ProjectSection(ctx))
 	b.AddDynamicSection(SectionGit, GitSection(ctx))

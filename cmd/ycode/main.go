@@ -23,6 +23,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/session"
+	"github.com/qiangli/ycode/internal/runtime/vfs"
 	"github.com/qiangli/ycode/internal/selfheal"
 	"github.com/qiangli/ycode/internal/tools"
 )
@@ -129,12 +130,21 @@ func newApp() (*cli.App, error) {
 	ycodeDir := filepath.Join(cwd, ".ycode")
 	planMode := tools.NewPlanModeManager(ycodeDir)
 
+	// Build VFS with allowed directories.
+	allowedDirs := []string{os.TempDir(), cwd}
+	allowedDirs = append(allowedDirs, cfg.AllowedDirectories...)
+	v, err := vfs.New(allowedDirs, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create vfs: %w", err)
+	}
+
 	// Initialize tool registry with handlers.
 	toolReg := tools.NewRegistry()
 	tools.RegisterBuiltins(toolReg)
 	tools.RegisterBashHandler(toolReg, cwd)
-	tools.RegisterFileHandlers(toolReg, cwd)
-	tools.RegisterSearchHandlers(toolReg)
+	tools.RegisterFileHandlers(toolReg, v)
+	tools.RegisterSearchHandlers(toolReg, v)
+	tools.RegisterVFSHandlers(toolReg, v)
 	tools.RegisterSleepHandler(toolReg)
 	tools.RegisterWebHandlers(toolReg)
 	tools.RegisterToolSearchHandler(toolReg)
@@ -165,6 +175,7 @@ func newApp() (*cli.App, error) {
 
 	// Build project context for system prompt.
 	promptCtx := buildPromptContext(cwd, cfg.Model)
+	promptCtx.AllowedDirs = v.AllowedDirs()
 
 	return cli.NewApp(cfg, provider, sess, cli.AppOptions{
 		WorkDir:      cwd,
