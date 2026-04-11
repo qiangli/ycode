@@ -27,9 +27,7 @@ Thumbs.db
 *.log
 debug/
 
-# Reference implementation (not part of ycode)
-x/
-
+#
 # Session data
 .ycode/
 

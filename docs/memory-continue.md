@@ -1,4 +1,4 @@
-# Memory Management in Continue (x/continue/)
+# Memory Management in Continue (priorart/continue/)
 
 This document summarizes how Continue (the TypeScript IDE extension) handles multi-turn conversations, context engineering, harness engineering, and memory management.
 

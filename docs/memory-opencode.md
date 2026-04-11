@@ -1,6 +1,6 @@
-# Memory Management Summary: x/opencode/
+# Memory Management Summary: priorart/opencode/
 
-This document summarizes how the ycode/x/opencode/ system handles **multi-turn conversations**, **user/system prompts**, **context engineering**, and **harness engineering** with respect to memory management.
+This document summarizes how the ycode/priorart/opencode/ system handles **multi-turn conversations**, **user/system prompts**, **context engineering**, and **harness engineering** with respect to memory management.
 
 ---
 

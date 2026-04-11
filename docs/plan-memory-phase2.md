@@ -2,12 +2,12 @@
 
 ## Problem Statement
 
-ycode's memory system (Phase 1) implemented the foundational 5-layer stack, 3-layer context defense, and background consolidation. Phase 2 studies the memory implementations of Gemini CLI (Google) and Codex (OpenAI) in `x/` and adopts their highest-impact features.
+ycode's memory system (Phase 1) implemented the foundational 5-layer stack, 3-layer context defense, and background consolidation. Phase 2 studies the memory implementations of Gemini CLI (Google) and Codex (OpenAI) in `priorart/` and adopts their highest-impact features.
 
 ## Research Sources
 
-- **Gemini CLI** (`x/gemini-cli/`): TypeScript CLI with 4-tier hierarchical memory, JIT context loading, `#import` directives, per-file content routing, intent summary tags, state snapshots, active topic tracking, tool output distillation, memory manager agent
-- **Codex** (`x/codex/`): Rust CLI with differential context injection, ghost snapshots, history normalization (call-output invariant), contextual fragment markers, multi-turn rollback, startup prewarming
+- **Gemini CLI** (`priorart/geminicli/`): TypeScript CLI with 4-tier hierarchical memory, JIT context loading, `#import` directives, per-file content routing, intent summary tags, state snapshots, active topic tracking, tool output distillation, memory manager agent
+- **Codex** (`priorart/codex/`): Rust CLI with differential context injection, ghost snapshots, history normalization (call-output invariant), contextual fragment markers, multi-turn rollback, startup prewarming
 
 ## Features Adopted (12)
 

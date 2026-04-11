@@ -1,4 +1,4 @@
-# Memory Management in Aider (x/aider/)
+# Memory Management in Aider (priorart/aider/)
 
 This document summarizes how Aider (the Python CLI coding agent) handles multi-turn conversations, context engineering, harness engineering, and memory management.
 

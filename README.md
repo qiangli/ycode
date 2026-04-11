@@ -2,7 +2,7 @@
 
 A pure Go CLI agent harness for autonomous software development. ycode provides 50+ tools, MCP/LSP integration, a plugin system, permission enforcement, multi-layered memory, and session management.
 
-ycode is a ground-up rewrite of [x/claw-code (Claw Code)](https://github.com/ultraworkers/claw-code) in Go, with only permissive-license dependencies (MIT, Apache-2.0, BSD).
+ycode is a ground-up rewrite of [priorart/clawcode (Claw Code)](https://github.com/ultraworkers/claw-code) in Go, with only permissive-license dependencies (MIT, Apache-2.0, BSD).
 
 ## Quick start
 
@@ -102,7 +102,7 @@ internal/
 pkg/ycode/                  Public embedding API
 ```
 
-## Improvements over x/claw-code
+## Improvements over priorart/clawcode
 
 - **Pure Go** with permissive-only dependencies
 - **Embeddable library API** via `pkg/ycode/`

@@ -441,4 +441,4 @@ The protection window concept (recent N tokens/turns fully protected) exploits t
 
 ---
 
-*This analysis is based on the Gemini CLI codebase (`x/gemini-cli/`) as of April 2026.*
+*This analysis is based on the Gemini CLI codebase (`priorart/geminicli/`) as of April 2026.*

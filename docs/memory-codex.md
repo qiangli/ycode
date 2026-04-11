@@ -493,4 +493,4 @@ Codex treats compaction as a proper API turn with full lifecycle events, not jus
 
 ---
 
-*This analysis is based on the Codex CLI codebase (`x/codex/`) as of April 2026.*
+*This analysis is based on the Codex CLI codebase (`priorart/codex/`) as of April 2026.*

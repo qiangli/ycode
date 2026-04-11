@@ -1,4 +1,4 @@
-# Memory Management in OpenHands (x/OpenHands/)
+# Memory Management in OpenHands (priorart/openhands/)
 
 This document summarizes how OpenHands (the Python autonomous AI agent platform, formerly OpenDevin) handles multi-turn conversations, context engineering, harness engineering, and memory management.
 

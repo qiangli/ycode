@@ -1,6 +1,6 @@
-# Memory Management in Claw Code (x/claw-code/)
+# Memory Management in Claw Code (priorart/clawcode/)
 
-This document summarizes how Claw Code (the Rust CLI agent harness in `x/claw-code/`) handles multi-turn conversation, context engineering, harness engineering, and memory management. Claw Code is the reference implementation that ycode was based on.
+This document summarizes how Claw Code (the Rust CLI agent harness in `priorart/clawcode/`) handles multi-turn conversation, context engineering, harness engineering, and memory management. Claw Code is the reference implementation that ycode was based on.
 
 ---
 

@@ -1,4 +1,4 @@
-# Memory Management in Cline (x/cline/)
+# Memory Management in Cline (priorart/cline/)
 
 This document summarizes how Cline (the TypeScript VS Code extension agent) handles multi-turn conversations, context engineering, harness engineering, and memory management.
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-ycode is a pure Go CLI agent harness for autonomous software development. It provides 50+ tools, MCP/LSP integration, a plugin system, permission enforcement, multi-layered memory, and session management. It is a ground-up rewrite of x/claw-code (Claw Code), a Rust-based CLI agent harness. The reference implementation is at `x/claw-code/` (subdirectory in this repo).
+ycode is a pure Go CLI agent harness for autonomous software development. It provides 50+ tools, MCP/LSP integration, a plugin system, permission enforcement, multi-layered memory, and session management. It is a ground-up rewrite of priorart/clawcode (Claw Code), a Rust-based CLI agent harness. The reference implementation is at `priorart/clawcode/` (subdirectory in this repo).
 
 ## Build & Test
 
@@ -80,7 +80,7 @@ Only permissive licenses (MIT, Apache-2.0, BSD). Key deps:
 - **Map-based ToolRegistry** with runtime registration (plugins/MCP add tools without recompilation) instead of Rust's static match
 - **`RuntimeContext` struct** holds all registries -- no global state
 - **`context.Context` propagation** everywhere for cancellation/timeout
-- **JSONL sessions** for interop with x/claw-code format
+- **JSONL sessions** for interop with priorart/clawcode format
 - **Section-based prompt assembly** with dynamic boundary marker for cache optimization
 - **Per-tool middleware** for permission, logging, timing as composable wrappers
 - **Recursive agent delegation** up to configurable depth (default: 3)

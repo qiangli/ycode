@@ -104,7 +104,7 @@ Track progress here. Check off items as they are completed.
 - [x] 5.14 Skills YAML frontmatter parsing, case-insensitive name matching
 - [x] 5.15 Skills executable scripts: shell scripts and Go plugin support in `scripts/` subdirectory
 - [x] 5.16 Skills resources: data files, templates, examples in `resources/` subdirectory
-- [x] 5.17 Bundled skills: remember, loop, simplify, review, commit, pr (port from x/claw-code TS archive)
+- [x] 5.17 Bundled skills: remember, loop, simplify, review, commit, pr (port from priorart/clawcode TS archive)
 - [x] 5.18 `/skills` slash command for skill discovery and management
 - [x] 5.19 Phase 5 integration: loop runs continuously, scratchpad persists, skills load and execute
 
@@ -151,7 +151,7 @@ Track progress here. Check off items as they are completed.
 
 ## Phase 8: Testing & Hardening
 - [x] 8.1 `internal/testutil/mockapi/server.go` -- Mock Anthropic service (deterministic responses)
-- [x] 8.2 Port x/claw-code's 10 parity test scenarios (streaming, file roundtrip, bash, permissions, plugins)
+- [x] 8.2 Port priorart/clawcode's 10 parity test scenarios (streaming, file roundtrip, bash, permissions, plugins)
 - [x] 8.3 Unit tests for all packages (target >80% coverage)
 - [x] 8.4 Memory system tests: save/recall/forget, ancestry discovery, staleness decay
 - [x] 8.5 Compaction tests: trigger threshold, summary extraction, multi-compaction merge

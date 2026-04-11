@@ -1,8 +1,8 @@
-# ycode: Pure Go Rewrite of x/claw-code (Claw Code)
+# ycode: Pure Go Rewrite of priorart/clawcode (Claw Code)
 
 ## Context
 
-x/claw-code (Claw Code) is a Rust-based CLI agent harness (~66K LOC, 9 crates) for autonomous software development. It provides 50 tools, MCP/LSP integration, a plugin system, permission enforcement, multi-layered memory, and session management. The goal is to rewrite it in pure Go with only permissive-license dependencies, matching all features while improving on architecture. ycode should be a capable general-purpose agent, not limited to coding.
+priorart/clawcode (Claw Code) is a Rust-based CLI agent harness (~66K LOC, 9 crates) for autonomous software development. It provides 50 tools, MCP/LSP integration, a plugin system, permission enforcement, multi-layered memory, and session management. The goal is to rewrite it in pure Go with only permissive-license dependencies, matching all features while improving on architecture. ycode should be a capable general-purpose agent, not limited to coding.
 
 ---
 
@@ -111,14 +111,14 @@ ycode/
 2. **`RuntimeContext` struct** holds all registries (no global state via `OnceLock`)
 3. **`context.Context`** propagation everywhere for cancellation/timeout
 4. **bubbletea** for REPL (unifies readline + terminal control)
-5. **JSONL sessions** (keep x/claw-code format for potential interop)
+5. **JSONL sessions** (keep priorart/clawcode format for potential interop)
 6. **Single static binary** with cobra subcommands
-7. **`pkg/ycode/`** for embedding as library (improvement over x/claw-code)
+7. **`pkg/ycode/`** for embedding as library (improvement over priorart/clawcode)
 8. **`log/slog`** for structured logging
 9. **Multi-layered memory** with file-based persistence and ancestry discovery
 10. **Section-based prompt assembly** with dynamic boundary for cache optimization
 
-## Improvements Over x/claw-code
+## Improvements Over priorart/clawcode
 
 - **Embeddable library API** via `pkg/ycode/`
 - **No global state** -- all registries on `RuntimeContext`
@@ -126,10 +126,10 @@ ycode/
 - **Explicit error handling** -- sentinel errors, no panics
 - **Runtime tool registration** -- plugins/MCP add tools without recompilation
 - **Per-tool middleware** -- permission, logging, timing as composable wrappers
-- **Full memory subsystem** -- episodic/semantic/working memory types (x/claw-code archived this from TS era, never ported to Rust)
-- **Continuous agent loop (Ralph pattern)** -- real `/loop` command + background scheduler (x/claw-code has cron registry but no execution engine)
-- **Markdown working memory (Manus pattern)** -- scratch pads, checkpoints, progress files on disk (x/claw-code has config flags but no implementation)
-- **Recursive agent delegation** -- agents can spawn child agents for auto-research chains (x/claw-code explicitly blocks this)
+- **Full memory subsystem** -- episodic/semantic/working memory types (priorart/clawcode archived this from TS era, never ported to Rust)
+- **Continuous agent loop (Ralph pattern)** -- real `/loop` command + background scheduler (priorart/clawcode has cron registry but no execution engine)
+- **Markdown working memory (Manus pattern)** -- scratch pads, checkpoints, progress files on disk (priorart/clawcode has config flags but no implementation)
+- **Recursive agent delegation** -- agents can spawn child agents for auto-research chains (priorart/clawcode explicitly blocks this)
 - **Executable skills** -- skills can include Go scripts/plugins, not just markdown instructions
 
 ---
@@ -138,7 +138,7 @@ ycode/
 
 ### Ralph Pattern: Continuous Agent Loop
 
-x/claw-code status: Infrastructure exists (CronRegistry, worker prompt replay) but no execution engine.
+priorart/clawcode status: Infrastructure exists (CronRegistry, worker prompt replay) but no execution engine.
 
 ycode implements a real continuous loop system:
 ```
@@ -157,7 +157,7 @@ internal/runtime/loop/
 
 ### Manus Pattern: Markdown Working Memory
 
-x/claw-code status: `autoMemoryEnabled`, `autoDreamEnabled`, `fileCheckpointingEnabled` flags exist but are unimplemented.
+priorart/clawcode status: `autoMemoryEnabled`, `autoDreamEnabled`, `fileCheckpointingEnabled` flags exist but are unimplemented.
 
 ycode implements real disk-based working memory:
 ```
@@ -176,7 +176,7 @@ internal/runtime/scratchpad/
 
 ### Auto-Agent / Auto-Research
 
-x/claw-code status: Agents cannot spawn child agents (explicitly blocked in allowed_tools_for_subagent).
+priorart/clawcode status: Agents cannot spawn child agents (explicitly blocked in allowed_tools_for_subagent).
 
 ycode allows controlled recursive delegation:
 - Agents can spawn child agents up to configurable depth (default: 3)
@@ -186,7 +186,7 @@ ycode allows controlled recursive delegation:
 
 ### Skills System
 
-x/claw-code status: Hierarchical filesystem discovery, markdown-only, no executable code.
+priorart/clawcode status: Hierarchical filesystem discovery, markdown-only, no executable code.
 
 ycode extends skills:
 ```
@@ -197,11 +197,11 @@ ycode extends skills:
   tests/             # Skill-specific test cases
 ```
 
-- Same discovery chain as x/claw-code (project ancestors → home → env vars)
+- Same discovery chain as priorart/clawcode (project ancestors → home → env vars)
 - YAML frontmatter for metadata (name, description, triggers, dependencies)
 - Executable scripts: shell scripts or compiled Go plugins
 - Skill dependencies: skills can reference other skills
-- Bundled skills: remember, loop, simplify, review, commit, pr (ported from x/claw-code TS archive)
+- Bundled skills: remember, loop, simplify, review, commit, pr (ported from priorart/clawcode TS archive)
 - `/skills` slash command for discovery and management
 
 ---
@@ -461,28 +461,28 @@ Each subagent type gets a tailored prompt + tool allowlist:
 
 ### Phase 7: Testing & Hardening
 33. Mock Anthropic service for integration tests
-34. Port x/claw-code's 10 parity test scenarios
+34. Port priorart/clawcode's 10 parity test scenarios
 35. Fuzz tests (SSE parser, JSON-RPC, config)
 36. Race detection in CI (`go test -race`)
 37. Documentation
 
-## Reference Files (x/claw-code)
+## Reference Files (priorart/clawcode)
 
-- `x/claw-code/rust/crates/runtime/src/lib.rs` -- runtime module structure
-- `x/claw-code/rust/crates/tools/src/lib.rs` -- all 50 tool specs + dispatch (8607 lines)
-- `x/claw-code/rust/crates/rusty-claude-cli/src/main.rs` -- CLI entry point
-- `x/claw-code/rust/crates/api/src/client.rs` -- provider client dispatch
-- `x/claw-code/rust/crates/api/src/prompt_cache.rs` -- prompt caching implementation
-- `x/claw-code/rust/crates/runtime/src/conversation.rs` -- turn loop, ApiRequest assembly
-- `x/claw-code/rust/crates/runtime/src/prompt.rs` -- system prompt builder (905 lines)
-- `x/claw-code/rust/crates/runtime/src/compact.rs` -- compaction logic, semantic summary
-- `x/claw-code/rust/crates/runtime/src/summary_compression.rs` -- summary budget enforcement
-- `x/claw-code/rust/crates/runtime/src/session.rs` -- session struct, JSONL persistence
-- `x/claw-code/rust/crates/runtime/src/git_context.rs` -- git context discovery
-- `x/claw-code/rust/crates/runtime/src/permissions.rs` -- permission policy
-- `x/claw-code/rust/crates/runtime/src/hooks.rs` -- hook system
-- `x/claw-code/rust/crates/runtime/src/mcp_tool_bridge.rs` -- MCP tool bridge
-- `x/claw-code/src/reference_data/subsystems/memdir.json` -- archived memory subsystem design
+- `priorart/clawcode/rust/crates/runtime/src/lib.rs` -- runtime module structure
+- `priorart/clawcode/rust/crates/tools/src/lib.rs` -- all 50 tool specs + dispatch (8607 lines)
+- `priorart/clawcode/rust/crates/rusty-claude-cli/src/main.rs` -- CLI entry point
+- `priorart/clawcode/rust/crates/api/src/client.rs` -- provider client dispatch
+- `priorart/clawcode/rust/crates/api/src/prompt_cache.rs` -- prompt caching implementation
+- `priorart/clawcode/rust/crates/runtime/src/conversation.rs` -- turn loop, ApiRequest assembly
+- `priorart/clawcode/rust/crates/runtime/src/prompt.rs` -- system prompt builder (905 lines)
+- `priorart/clawcode/rust/crates/runtime/src/compact.rs` -- compaction logic, semantic summary
+- `priorart/clawcode/rust/crates/runtime/src/summary_compression.rs` -- summary budget enforcement
+- `priorart/clawcode/rust/crates/runtime/src/session.rs` -- session struct, JSONL persistence
+- `priorart/clawcode/rust/crates/runtime/src/git_context.rs` -- git context discovery
+- `priorart/clawcode/rust/crates/runtime/src/permissions.rs` -- permission policy
+- `priorart/clawcode/rust/crates/runtime/src/hooks.rs` -- hook system
+- `priorart/clawcode/rust/crates/runtime/src/mcp_tool_bridge.rs` -- MCP tool bridge
+- `priorart/clawcode/src/reference_data/subsystems/memdir.json` -- archived memory subsystem design
 
 ## Verification
 
