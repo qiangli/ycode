@@ -356,6 +356,8 @@ func (r *Runtime) emergencyFlush(ctx context.Context, messages []api.Message, or
 		}
 	}
 
+	sanitizedUserMsg := sanitizeUserMessageForFlush(*lastUserMsg)
+
 	flushMessages := []api.Message{
 		{
 			Role: api.RoleUser,
@@ -363,7 +365,7 @@ func (r *Runtime) emergencyFlush(ctx context.Context, messages []api.Message, or
 				{Type: api.ContentTypeText, Text: continuationText},
 			},
 		},
-		*lastUserMsg,
+		sanitizedUserMsg,
 	}
 
 	result, err := r.Turn(ctx, flushMessages)
@@ -380,6 +382,27 @@ func (r *Runtime) emergencyFlush(ctx context.Context, messages []api.Message, or
 	}
 
 	return result, recovery, nil
+}
+
+// sanitizeUserMessageForFlush removes tool_result blocks from a user message
+// to prevent orphaned tool_call_id references after emergency flush discards
+// the assistant messages that contained the matching tool_use blocks.
+func sanitizeUserMessageForFlush(msg api.Message) api.Message {
+	var filtered []api.ContentBlock
+	for _, b := range msg.Content {
+		if b.Type != api.ContentTypeToolResult {
+			filtered = append(filtered, b)
+		}
+	}
+	if len(filtered) == 0 {
+		filtered = []api.ContentBlock{
+			{Type: api.ContentTypeText, Text: "Please continue from where we left off."},
+		}
+	}
+	return api.Message{
+		Role:    msg.Role,
+		Content: filtered,
+	}
 }
 
 // apiMessagesToSession converts API messages to session messages for compaction analysis.

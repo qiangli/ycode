@@ -310,8 +310,14 @@ func (a *App) sessionMessages() []api.Message {
 		var blocks []api.ContentBlock
 		for _, b := range sm.Content {
 			blocks = append(blocks, api.ContentBlock{
-				Type: api.ContentType(b.Type),
-				Text: b.Text,
+				Type:      api.ContentType(b.Type),
+				Text:      b.Text,
+				ID:        b.ID,
+				Name:      b.Name,
+				Input:     b.Input,
+				ToolUseID: b.ToolUseID,
+				Content:   b.Content,
+				IsError:   b.IsError,
 			})
 		}
 		msgs = append(msgs, api.Message{
