@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -17,6 +18,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/git"
 	"github.com/qiangli/ycode/internal/runtime/session"
+	"github.com/qiangli/ycode/internal/runtime/usage"
 )
 
 // Layout constants.
@@ -204,6 +206,9 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.working = false
 			m.workCancel = nil
 			m.appendOutput("\n✓ Done.\n\n")
+			// Show session summary.
+			m.appendOutput(formatSessionSummary(m.app.usageTracker, m.app.sessionStart))
+			m.appendOutput("\n")
 			cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
 			break
 		}
@@ -641,6 +646,19 @@ func formatTokenCount(n int) string {
 		return fmt.Sprintf("%.1fk", float64(n)/1000)
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+// formatSessionSummary returns a formatted session summary with total time, tokens, and estimated cost.
+func formatSessionSummary(tracker *usage.Tracker, startTime time.Time) string {
+	duration := time.Since(startTime)
+	totalTokens := tracker.InputTokens + tracker.OutputTokens
+	cost := tracker.Cost()
+	return fmt.Sprintf("  Session: %s | %s in, %s out | %s total | ~$%.4f",
+		formatDuration(duration),
+		formatTokenCount(tracker.InputTokens),
+		formatTokenCount(tracker.OutputTokens),
+		formatTokenCount(totalTokens),
+		cost)
 }
 
 // toggleMode switches between plan and build mode.

@@ -103,7 +103,7 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		case "message_start":
 			// Capture input token usage from the initial message.
 			if ev.Message != nil {
-				result.Usage.InputTokens = ev.Message.Usage.InputTokens
+				result.Usage.InputTokens = ev.Message.Usage.InputTokens + ev.Message.Usage.PromptTokens
 				result.Usage.CacheCreationInput = ev.Message.Usage.CacheCreationInput
 				result.Usage.CacheReadInput = ev.Message.Usage.CacheReadInput
 			}
@@ -151,7 +151,7 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		case "message_delta":
 			// Capture output token usage and stop reason.
 			if ev.Usage != nil {
-				result.Usage.OutputTokens = ev.Usage.OutputTokens
+				result.Usage.OutputTokens = ev.Usage.OutputTokens + ev.Usage.CompletionTokens
 			}
 			if ev.Delta != nil {
 				var delta struct {

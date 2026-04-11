@@ -89,8 +89,10 @@ type Response struct {
 
 // Usage tracks token consumption.
 type Usage struct {
-	InputTokens        int `json:"input_tokens"`
-	OutputTokens       int `json:"output_tokens"`
+	InputTokens        int `json:"input_tokens,omitempty"`
+	OutputTokens       int `json:"output_tokens,omitempty"`
+	PromptTokens       int `json:"prompt_tokens,omitempty"`
+	CompletionTokens   int `json:"completion_tokens,omitempty"`
 	CacheCreationInput int `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInput     int `json:"cache_read_input_tokens,omitempty"`
 }

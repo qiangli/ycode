@@ -298,22 +298,24 @@ func (c *OpenAICompatClient) readStream(body io.Reader, events chan<- *StreamEve
 		// Handle usage data from final chunk (when choices is empty but usage is present).
 		if chunk.Usage != nil && len(chunk.Choices) == 0 {
 			// Emit message_start with usage for input tokens.
-			if chunk.Usage.InputTokens > 0 {
+			inputTokens := chunk.Usage.InputTokens + chunk.Usage.PromptTokens
+			if inputTokens > 0 {
 				events <- &StreamEvent{
 					Type: "message_start",
 					Message: &Response{
 						Usage: Usage{
-							InputTokens: chunk.Usage.InputTokens,
+							InputTokens: inputTokens,
 						},
 					},
 				}
 			}
 			// Emit message_delta with usage for output tokens.
-			if chunk.Usage.OutputTokens > 0 {
+			outputTokens := chunk.Usage.OutputTokens + chunk.Usage.CompletionTokens
+			if outputTokens > 0 {
 				events <- &StreamEvent{
 					Type: "message_delta",
 					Usage: &Usage{
-						OutputTokens: chunk.Usage.OutputTokens,
+						OutputTokens: outputTokens,
 					},
 				}
 			}
@@ -484,23 +486,25 @@ func (c *OpenAICompatClient) readNonStream(body io.Reader, events chan<- *Stream
 
 	// Emit usage if provided.
 	if resp.Usage != nil {
-		// Emit message_start with input tokens.
-		if resp.Usage.InputTokens > 0 {
+		// Emit message_start with input tokens (handle both Anthropic and OpenAI field names).
+		inputTokens := resp.Usage.InputTokens + resp.Usage.PromptTokens
+		if inputTokens > 0 {
 			events <- &StreamEvent{
 				Type: "message_start",
 				Message: &Response{
 					Usage: Usage{
-						InputTokens: resp.Usage.InputTokens,
+						InputTokens: inputTokens,
 					},
 				},
 			}
 		}
-		// Emit message_delta with output tokens.
-		if resp.Usage.OutputTokens > 0 {
+		// Emit message_delta with output tokens (handle both Anthropic and OpenAI field names).
+		outputTokens := resp.Usage.OutputTokens + resp.Usage.CompletionTokens
+		if outputTokens > 0 {
 			events <- &StreamEvent{
 				Type: "message_delta",
 				Usage: &Usage{
-					OutputTokens: resp.Usage.OutputTokens,
+					OutputTokens: outputTokens,
 				},
 			}
 		}
