@@ -1,5 +1,6 @@
 # Binaries
-ycode
+/ycode
+bin/
 *.exe
 *.dll
 *.so
