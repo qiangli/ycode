@@ -8,6 +8,7 @@ package vector
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -23,6 +24,8 @@ type Store struct {
 	db            *chromem.DB
 	dir           string
 	embeddingFunc chromem.EmbeddingFunc
+	concurrency   int // Number of goroutines for embedding computation.
+	compress      bool
 }
 
 // Option configures a Store.
@@ -38,25 +41,46 @@ func WithEmbeddingFunc(fn storage.EmbeddingFunc) Option {
 	}
 }
 
+// WithConcurrency sets the number of goroutines used for embedding computation
+// when adding documents. Defaults to 1 (sequential).
+func WithConcurrency(n int) Option {
+	return func(s *Store) {
+		if n > 0 {
+			s.concurrency = n
+		}
+	}
+}
+
+// WithCompression enables GZIP compression for persisted vector data.
+// This reduces disk usage at the cost of slightly slower reads.
+func WithCompression(enabled bool) Option {
+	return func(s *Store) {
+		s.compress = enabled
+	}
+}
+
 // Open creates or opens a persistent vector store at the given directory.
 func Open(dir string, opts ...Option) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create vector dir: %w", err)
 	}
 
-	dbPath := filepath.Join(dir, "vectors")
-	db, err := chromem.NewPersistentDB(dbPath, false)
-	if err != nil {
-		return nil, fmt.Errorf("open chromem db: %w", err)
-	}
-
 	s := &Store{
-		db:  db,
-		dir: dir,
+		dir:         dir,
+		concurrency: 1,
+		compress:    false,
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
+
+	dbPath := filepath.Join(dir, "vectors")
+	db, err := chromem.NewPersistentDB(dbPath, s.compress)
+	if err != nil {
+		return nil, fmt.Errorf("open chromem db: %w", err)
+	}
+	s.db = db
+
 	return s, nil
 }
 
@@ -86,10 +110,8 @@ func (s *Store) AddDocuments(ctx context.Context, collection string, docs []stor
 
 	chromDocs := make([]chromem.Document, len(docs))
 	for i, doc := range docs {
-		metadata := make(map[string]string)
-		for k, v := range doc.Metadata {
-			metadata[k] = v
-		}
+		metadata := make(map[string]string, len(doc.Metadata))
+		maps.Copy(metadata, doc.Metadata)
 		chromDocs[i] = chromem.Document{
 			ID:        doc.ID,
 			Content:   doc.Content,
@@ -98,7 +120,7 @@ func (s *Store) AddDocuments(ctx context.Context, collection string, docs []stor
 		}
 	}
 
-	return col.AddDocuments(ctx, chromDocs, runtime(ctx))
+	return col.AddDocuments(ctx, chromDocs, s.concurrency)
 }
 
 // Query finds the most similar documents to the query embedding.
@@ -188,10 +210,8 @@ func (s *Store) Close() error {
 func toSearchResults(results []chromem.Result) []storage.SearchResult {
 	out := make([]storage.SearchResult, len(results))
 	for i, r := range results {
-		metadata := make(map[string]string)
-		for k, v := range r.Metadata {
-			metadata[k] = v
-		}
+		metadata := make(map[string]string, len(r.Metadata))
+		maps.Copy(metadata, r.Metadata)
 		out[i] = storage.SearchResult{
 			Document: storage.Document{
 				ID:       r.ID,
@@ -202,11 +222,6 @@ func toSearchResults(results []chromem.Result) []storage.SearchResult {
 		}
 	}
 	return out
-}
-
-// runtime returns the concurrency level from context, defaulting to 1.
-func runtime(_ context.Context) int {
-	return 1
 }
 
 // compile-time interface check.

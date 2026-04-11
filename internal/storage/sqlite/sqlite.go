@@ -41,6 +41,13 @@ func Open(dir string) (*Store, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 
+	// Connection pool tuning for SQLite.
+	// SQLite serializes writes, so limit open connections to avoid contention.
+	// One writer + a few readers is optimal for WAL mode.
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxLifetime(0) // Connections don't expire.
+
 	// Verify connection.
 	if err := db.PingContext(context.Background()); err != nil {
 		db.Close()

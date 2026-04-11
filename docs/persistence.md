@@ -904,11 +904,11 @@ All tests pass with `go test -race ./...`.
 - [x] Add semantic code search tool (complement to grep/glob)
 - [x] Add vector-enhanced documentation retrieval
 
-#### Phase 5: Optimization (PARTIAL)
+#### Phase 5: Optimization (DONE)
 
-- [ ] Benchmark storage backends under realistic workloads
-- [ ] Add SQLite connection pooling tuning
-- [ ] Add Bleve index compaction scheduling
-- [ ] Add chromem-go persistence tuning (compression level, flush interval)
-- [ ] Monitor binary size impact and consider build tags for optional backends
+- [x] Benchmark storage backends under realistic workloads (`storage/benchmark_test.go`)
+- [x] Add SQLite connection pooling tuning (SetMaxOpenConns/SetMaxIdleConns)
+- [x] Add Bleve index compaction scheduling (Compact method, close-reopen merge)
+- [x] Add chromem-go persistence tuning (WithCompression, WithConcurrency options)
+- [x] Monitor binary size impact; factory-based optional backends (build tags unnecessary)
 - [x] Add storage health check to `doctor` diagnostic output

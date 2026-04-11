@@ -211,6 +211,38 @@ func (s *Store) DeleteIndex(_ context.Context, indexName string) error {
 	return os.RemoveAll(indexPath)
 }
 
+// Compact closes and reopens all open indexes, triggering Bleve's internal
+// segment merging to reclaim disk space and optimize query performance.
+func (s *Store) Compact() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var firstErr error
+	for name, idx := range s.indexes {
+		// Close triggers internal segment merge on shutdown.
+		if err := idx.Close(); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("compact index %q: close: %w", name, err)
+			}
+			delete(s.indexes, name)
+			continue
+		}
+
+		// Reopen the index.
+		indexPath := filepath.Join(s.dir, name+".bleve")
+		reopened, err := bleve.Open(indexPath)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("compact index %q: reopen: %w", name, err)
+			}
+			delete(s.indexes, name)
+			continue
+		}
+		s.indexes[name] = reopened
+	}
+	return firstErr
+}
+
 // Close closes all open indexes.
 func (s *Store) Close() error {
 	s.mu.Lock()
