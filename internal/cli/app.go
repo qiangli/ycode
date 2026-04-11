@@ -145,6 +145,12 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 			return fmt.Errorf("turn %d: %w", i+1, err)
 		}
 
+		// Show LLM call metrics.
+		metrics := formatLLMMetrics(result)
+		if metrics != "" {
+			fmt.Fprint(a.stdout, metrics)
+		}
+
 		// Print text output.
 		if result.TextContent != "" {
 			fmt.Fprint(a.stdout, result.TextContent)
@@ -187,6 +193,8 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 				Name:  tc.Name,
 				Input: tc.Input,
 			})
+			// Show tool detail in one-shot mode.
+			fmt.Fprintf(a.stdout, "⚙ %s\n", toolDetail(tc.Name, tc.Input))
 		}
 		messages = append(messages, api.Message{
 			Role:    api.RoleAssistant,

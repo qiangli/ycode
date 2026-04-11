@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -155,6 +157,9 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		result := msg.Result
 
+		// Display LLM call metrics.
+		m.appendOutput(formatLLMMetrics(result))
+
 		// Display text output from the model.
 		if result.TextContent != "" {
 			m.appendOutput(result.TextContent)
@@ -179,8 +184,8 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Show tool calls with descriptive progress.
 		for _, tc := range result.ToolCalls {
-			label := toolLabel(tc.Name)
-			m.appendOutput(fmt.Sprintf("\n⚙ %s...\n", label))
+			detail := toolDetail(tc.Name, tc.Input)
+			m.appendOutput(fmt.Sprintf("\n⚙ %s\n", detail))
 		}
 
 		// Build assistant message with tool_use blocks for conversation history.
@@ -516,30 +521,100 @@ func (m *TUIModel) executeToolsCmd(calls []conversation.ToolCall) tea.Cmd {
 	}
 }
 
-// toolLabel returns a human-readable description for a tool invocation.
-func toolLabel(name string) string {
+// toolDetail returns a descriptive label for a tool invocation,
+// including relevant parameters like file paths and commands.
+func toolDetail(name string, input json.RawMessage) string {
+	var params map[string]any
+	_ = json.Unmarshal(input, &params)
+
+	str := func(key string) string {
+		if v, ok := params[key].(string); ok {
+			return v
+		}
+		return ""
+	}
+
+	truncate := func(s string, max int) string {
+		s = strings.ReplaceAll(s, "\n", " ")
+		if len(s) > max {
+			return s[:max-3] + "..."
+		}
+		return s
+	}
+
+	shorten := func(path string) string {
+		// Show just the filename for short display; keep relative-style paths.
+		return filepath.Base(path)
+	}
+
 	switch name {
 	case "bash":
-		return "Running shell command"
+		if cmd := str("command"); cmd != "" {
+			return fmt.Sprintf("Bash(%s)", truncate(cmd, 100))
+		}
+		return "Running shell command..."
 	case "read_file":
-		return "Reading file"
+		if fp := str("file_path"); fp != "" {
+			return fmt.Sprintf("Read(%s)", shorten(fp))
+		}
+		return "Reading file..."
 	case "write_file":
-		return "Writing file"
+		if fp := str("file_path"); fp != "" {
+			return fmt.Sprintf("Write(%s)", shorten(fp))
+		}
+		return "Writing file..."
 	case "edit_file":
-		return "Editing file"
+		if fp := str("file_path"); fp != "" {
+			return fmt.Sprintf("Edit(%s)", shorten(fp))
+		}
+		return "Editing file..."
 	case "glob_search":
-		return "Searching for files"
+		if pat := str("pattern"); pat != "" {
+			return fmt.Sprintf("Glob(%s)", pat)
+		}
+		return "Searching for files..."
 	case "grep_search":
-		return "Searching file contents"
+		if pat := str("pattern"); pat != "" {
+			return fmt.Sprintf("Grep(%s)", truncate(pat, 60))
+		}
+		return "Searching file contents..."
 	case "WebFetch":
-		return "Fetching web page"
+		if url := str("url"); url != "" {
+			return fmt.Sprintf("WebFetch(%s)", truncate(url, 80))
+		}
+		return "Fetching web page..."
 	case "WebSearch":
-		return "Searching the web"
+		if q := str("query"); q != "" {
+			return fmt.Sprintf("WebSearch(%s)", truncate(q, 60))
+		}
+		return "Searching the web..."
 	case "Agent":
-		return "Spawning sub-agent"
+		if desc := str("description"); desc != "" {
+			return fmt.Sprintf("Agent(%s)", truncate(desc, 60))
+		}
+		return "Spawning sub-agent..."
 	default:
-		return "Calling tool: " + name
+		return fmt.Sprintf("Tool(%s)", name)
 	}
+}
+
+// formatLLMMetrics returns a short summary of LLM call duration and token usage.
+func formatLLMMetrics(result *conversation.TurnResult) string {
+	dur := result.Duration.Seconds()
+	total := result.Usage.InputTokens + result.Usage.OutputTokens
+	if total == 0 && dur < 0.01 {
+		return ""
+	}
+	return fmt.Sprintf("  ↳ %.1fs | %s tokens in, %s tokens out\n",
+		dur, formatTokenCount(result.Usage.InputTokens), formatTokenCount(result.Usage.OutputTokens))
+}
+
+// formatTokenCount formats a token count with k suffix for readability.
+func formatTokenCount(n int) string {
+	if n >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 // toggleMode switches between plan and build mode.

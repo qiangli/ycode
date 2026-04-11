@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -48,6 +49,8 @@ type TurnResult struct {
 	TextContent     string
 	ThinkingContent string
 	StopReason      string
+	Usage           api.Usage
+	Duration        time.Duration
 }
 
 // ToolCall represents a tool invocation requested by the model.
@@ -84,7 +87,8 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		Stream:    true,
 	}
 
-	// Send request.
+	// Send request and track timing.
+	start := time.Now()
 	events, errc := r.provider.Send(ctx, req)
 
 	// Accumulate response.
@@ -95,6 +99,13 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 
 	for ev := range events {
 		switch ev.Type {
+		case "message_start":
+			// Capture input token usage from the initial message.
+			if ev.Message != nil {
+				result.Usage.InputTokens = ev.Message.Usage.InputTokens
+				result.Usage.CacheCreationInput = ev.Message.Usage.CacheCreationInput
+				result.Usage.CacheReadInput = ev.Message.Usage.CacheReadInput
+			}
 		case "content_block_start":
 			if ev.ContentBlock != nil {
 				block := *ev.ContentBlock
@@ -137,6 +148,10 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 				currentBlock = nil
 			}
 		case "message_delta":
+			// Capture output token usage and stop reason.
+			if ev.Usage != nil {
+				result.Usage.OutputTokens = ev.Usage.OutputTokens
+			}
 			if ev.Delta != nil {
 				var delta struct {
 					StopReason string `json:"stop_reason"`
@@ -152,6 +167,7 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		return nil, fmt.Errorf("stream: %w", err)
 	}
 
+	result.Duration = time.Since(start)
 	result.TextContent = joinParts(textParts)
 	result.ThinkingContent = joinParts(thinkingParts)
 	return result, nil

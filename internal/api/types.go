@@ -101,10 +101,10 @@ type StreamEvent struct {
 	Index int             `json:"index,omitempty"`
 	Delta json.RawMessage `json:"delta,omitempty"`
 
-	// Parsed delta fields.
-	ContentBlock *ContentBlock `json:"-"`
-	Message      *Response    `json:"-"`
-	Usage        *Usage       `json:"-"`
+	// Parsed from SSE data fields.
+	ContentBlock *ContentBlock `json:"content_block,omitempty"`
+	Message      *Response    `json:"message,omitempty"`
+	Usage        *Usage       `json:"usage,omitempty"`
 }
 
 // StopReason constants.
