@@ -55,7 +55,8 @@ type TUIModel struct {
 	confirmNo      func() tea.Cmd
 
 	// Permission prompt state (for tool invocations that need approval).
-	permChan chan bool // non-nil when a tool is waiting for permission approval
+	permChan       chan bool // non-nil when a tool is waiting for permission approval
+	permAlwaysAllow bool    // true when user chose "always allow" for this session
 }
 
 // Custom message types.
@@ -161,9 +162,14 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case permissionRequestMsg:
+		// If user previously chose "always allow", auto-approve.
+		if m.permAlwaysAllow {
+			msg.ReplyCh <- true
+			return m, nil
+		}
 		// A tool is requesting elevated permission — show confirmation dialog.
 		m.confirming = true
-		m.confirmPrompt = fmt.Sprintf("Allow tool %q (%s)? (y/n)", msg.ToolName, msg.RequiredMode)
+		m.confirmPrompt = fmt.Sprintf("Allow tool %q (%s)? (y/n/a)", msg.ToolName, msg.RequiredMode)
 		m.permChan = msg.ReplyCh
 		m.confirmYes = func() tea.Cmd {
 			if m.permChan != nil {
@@ -366,7 +372,7 @@ func (m *TUIModel) statusBar() string {
 	// Hints.
 	hintText := " alt+↑↓:history | shift+tab: mode | /help "
 	if m.confirming {
-		hintText = " " + m.confirmPrompt + " "
+		hintText = " " + m.confirmPrompt + "  y=yes n=no a=always for session "
 	}
 	hintStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#737373"))
@@ -704,8 +710,7 @@ func formatSessionSummary(tracker *usage.Tracker, startTime time.Time) string {
 }
 
 // toggleMode switches between plan and build mode.
-// Entering plan mode happens immediately. Exiting plan mode (entering build)
-// requires explicit user confirmation (HITL gate).
+// Both directions are immediate — no confirmation needed.
 func (m *TUIModel) toggleMode() tea.Cmd {
 	if m.app.planMode == nil {
 		return func() tea.Msg {
@@ -714,24 +719,12 @@ func (m *TUIModel) toggleMode() tea.Cmd {
 	}
 
 	if m.app.InPlanMode() {
-		// Exiting plan mode → entering build mode requires confirmation.
-		m.confirming = true
-		m.confirmPrompt = "Switch to BUILD mode? Write tools will be enabled. (y/n)"
-		m.confirmYes = func() tea.Cmd {
-			return func() tea.Msg {
-				result, err := m.app.planMode.ExitPlanMode()
-				return commandOutputMsg{Text: result, Err: err}
-			}
+		return func() tea.Msg {
+			result, err := m.app.planMode.ExitPlanMode()
+			return commandOutputMsg{Text: result, Err: err}
 		}
-		m.confirmNo = func() tea.Cmd {
-			return func() tea.Msg {
-				return commandOutputMsg{Text: "Staying in plan mode."}
-			}
-		}
-		return func() tea.Msg { return repaintMsg{} }
 	}
 
-	// Entering plan mode — no confirmation needed.
 	return func() tea.Msg {
 		result, err := m.app.planMode.EnterPlanMode()
 		return commandOutputMsg{Text: result, Err: err}
@@ -765,6 +758,16 @@ func (m *TUIModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.appendOutput(fmt.Sprintf("  %s n\n\n", m.confirmPrompt))
 			if m.confirmNo != nil {
 				return m, m.confirmNo()
+			}
+			return m, nil
+		}
+		if ch == "a" || ch == "A" {
+			// "Always allow" — approve this and all future permission prompts for this session.
+			m.confirming = false
+			m.permAlwaysAllow = true
+			m.appendOutput(fmt.Sprintf("  %s a (always allow for this session)\n\n", m.confirmPrompt))
+			if m.confirmYes != nil {
+				return m, m.confirmYes()
 			}
 			return m, nil
 		}

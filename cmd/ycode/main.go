@@ -147,7 +147,12 @@ func newApp() (*cli.App, error) {
 	// Wire permission enforcement: resolve current mode from the live
 	// settings.local.json file so that plan mode toggles take effect immediately.
 	localConfigPath := filepath.Join(ycodeDir, "settings.local.json")
+	skipPerms := dangerSkipPermissions
 	toolReg.SetPermissionResolver(func() permission.Mode {
+		// --danger-skip-permissions bypasses all checks.
+		if skipPerms {
+			return permission.DangerFullAccess
+		}
 		// Check local override first (plan mode writes here).
 		if val, ok := config.GetLocalConfigField(localConfigPath, "permissionMode"); ok {
 			if s, ok := val.(string); ok {
@@ -223,8 +228,9 @@ func discoverContextFiles(workDir string) []prompt.ContextFile {
 }
 
 var (
-	printFlag bool
-	modelFlag string
+	printFlag            bool
+	modelFlag            string
+	dangerSkipPermissions bool
 )
 
 var rootCmd = &cobra.Command{
@@ -595,6 +601,8 @@ var healTestCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&printFlag, "print", false, "Output response as plain text (no markdown rendering)")
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "Model to use (overrides config and env vars)")
+	rootCmd.PersistentFlags().BoolVar(&dangerSkipPermissions, "danger-skip-permissions", false, "Skip all permission checks (grants full access to all tools)")
+
 	loopCmd.Flags().String("interval", "10m", "Loop interval (e.g., 5m, 1h)")
 	loopCmd.Flags().String("prompt", "", "Path to prompt file")
 	rootCmd.AddCommand(promptCmd, versionCmd, doctorCmd, loopCmd, loginCmd, logoutCmd)
