@@ -22,6 +22,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/oauth"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/session"
+	"github.com/qiangli/ycode/internal/selfheal"
 	"github.com/qiangli/ycode/internal/tools"
 )
 
@@ -31,11 +32,49 @@ var (
 	commit  = "unknown"
 )
 
+// selfHealEnabled controls whether self-healing is active.
+// Can be disabled via YCODE_SELF_HEAL=0 environment variable.
+func selfHealEnabled() bool {
+	return os.Getenv("YCODE_SELF_HEAL") != "0"
+}
+
 func main() {
-	if err := rootCmd.Execute(); err != nil {
+	// Check if self-healing is enabled
+	if selfHealEnabled() {
+		opts := &selfheal.WrapMainOptions{
+			Config: selfheal.DefaultConfig(),
+		}
+		// Try to set up an AI provider for AI-driven healing.
+		// This is best-effort — healing still works without it (API retry only).
+		if provider := detectHealingProvider(); provider != nil {
+			opts.Provider = provider
+		}
+		exitCode := selfheal.WrapMainWithOptions(realMain, opts)
+		os.Exit(exitCode)
+	}
+
+	// Standard execution without self-healing
+	if err := realMain(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// detectHealingProvider attempts to create an API provider for self-healing.
+// Returns nil if no provider can be configured (no API keys, etc.).
+func detectHealingProvider() api.Provider {
+	// Use a small, fast model for healing to minimize cost and latency.
+	providerCfg, err := api.DetectProvider("claude-haiku-4-5-20251001")
+	if err != nil {
+		return nil
+	}
+	return api.NewProvider(providerCfg)
+}
+
+// realMain contains the actual main logic.
+// It returns errors that may be healable by the self-heal system.
+func realMain() error {
+	return rootCmd.Execute()
 }
 
 func newApp() (*cli.App, error) {
@@ -454,10 +493,98 @@ var logoutCmd = &cobra.Command{
 	},
 }
 
+var healCmd = &cobra.Command{
+	Use:   "heal",
+	Short: "Self-healing commands and diagnostics",
+	Long:  "Commands for viewing and controlling ycode's self-healing capabilities.",
+}
+
+var healStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show self-healing status",
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := selfheal.DefaultConfig()
+
+		fmt.Println("Self-Healing Status")
+		fmt.Println("===================")
+		fmt.Printf("Enabled:        %v\n", cfg.Enabled)
+		fmt.Printf("Max Attempts:   %d\n", cfg.MaxAttempts)
+		fmt.Printf("Auto Rebuild:   %v\n", cfg.AutoRebuild)
+		fmt.Printf("Auto Restart:   %v\n", cfg.AutoRestart)
+		fmt.Printf("Escalation:     %s\n", cfg.EscalationPolicy)
+		fmt.Printf("Build Command:  %s\n", cfg.BuildCommand)
+		fmt.Printf("Build Timeout:  %v\n", cfg.BuildTimeout)
+
+		fmt.Println("\nHealable Paths:")
+		for _, p := range cfg.HealablePaths {
+			fmt.Printf("  - %s\n", p)
+		}
+
+		fmt.Println("\nProtected Paths:")
+		for _, p := range cfg.ProtectedPaths {
+			fmt.Printf("  - %s\n", p)
+		}
+
+		fmt.Println("\nEnvironment:")
+		if selfHealEnabled() {
+			fmt.Println("  YCODE_SELF_HEAL: enabled (set to '0' to disable)")
+		} else {
+			fmt.Println("  YCODE_SELF_HEAL: disabled")
+		}
+	},
+}
+
+var healTestCmd = &cobra.Command{
+	Use:   "test [error-message]",
+	Short: "Test self-healing with a simulated error",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		errMsg := strings.Join(args, " ")
+		fmt.Printf("Testing self-healing with error: %s\n", errMsg)
+
+		cfg := selfheal.DefaultConfig()
+		healer := selfheal.NewHealer(cfg)
+
+		simulatedErr := fmt.Errorf("%s", errMsg)
+		canHeal := healer.CanHeal(simulatedErr)
+
+		fmt.Printf("Error Type:    %s\n", selfheal.ClassifyError(simulatedErr))
+		fmt.Printf("Can Heal:      %v\n", canHeal)
+
+		if !canHeal {
+			fmt.Println("\nThis error type is not healable.")
+			return nil
+		}
+
+		// Attempt healing (without actually applying fixes)
+		ctx := context.Background()
+		errInfo := selfheal.ErrorInfo{
+			Type:      selfheal.ClassifyError(simulatedErr),
+			Error:     simulatedErr,
+			Message:   errMsg,
+			Timestamp: time.Now(),
+		}
+
+		fmt.Println("\nAttempting healing...")
+		success, err := healer.AttemptHealing(ctx, errInfo)
+
+		if err != nil {
+			fmt.Printf("Healing error: %v\n", err)
+		}
+		fmt.Printf("Success: %v\n", success)
+
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&printFlag, "print", false, "Output response as plain text (no markdown rendering)")
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "Model to use (overrides config and env vars)")
 	loopCmd.Flags().String("interval", "10m", "Loop interval (e.g., 5m, 1h)")
 	loopCmd.Flags().String("prompt", "", "Path to prompt file")
 	rootCmd.AddCommand(promptCmd, versionCmd, doctorCmd, loopCmd, loginCmd, logoutCmd)
+
+	// Self-heal commands
+	healCmd.AddCommand(healStatusCmd, healTestCmd)
+	rootCmd.AddCommand(healCmd)
 }
