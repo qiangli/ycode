@@ -40,6 +40,11 @@ type TUIModel struct {
 	working      bool // true while the agent is processing (turn + tools)
 	workCancel   context.CancelFunc
 	turnMessages []api.Message // accumulated conversation for current agent loop
+
+	// Input history for up/down navigation.
+	history      []string // submitted inputs (oldest first)
+	historyIndex int      // -1 = not browsing history, 0+ = index in history
+	inputBuffer  string   // temp storage for current input when browsing history
 }
 
 // Custom message types.
@@ -53,6 +58,7 @@ type commandOutputMsg struct {
 // turnResultMsg is sent when a conversation turn completes.
 type turnResultMsg struct {
 	Result      *conversation.TurnResult
+	Recovery    *conversation.RecoveryResult
 	Err         error
 	ToolResults []api.ContentBlock // tool results from preceding tool execution, if any
 }
@@ -72,8 +78,10 @@ func NewTUIModel(app *App) *TUIModel {
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 
 	return &TUIModel{
-		app:      app,
-		textarea: ta,
+		app:          app,
+		textarea:     ta,
+		history:      make([]string, 0),
+		historyIndex: -1,
 	}
 }
 
@@ -128,6 +136,10 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if text == "" {
 				break
 			}
+			// Add to history and reset history navigation.
+			m.history = append(m.history, text)
+			m.historyIndex = -1
+			m.inputBuffer = ""
 			m.textarea.Reset()
 			return m, m.handleInput(text)
 		}
@@ -144,6 +156,12 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
 			break
+		}
+
+		// Show recovery info if compaction occurred
+		if msg.Recovery != nil && msg.Recovery.RetrySuccessful {
+			m.appendOutput(fmt.Sprintf("\n⚠ Context compacted: %d messages summarized, %d recent messages preserved.\n\n",
+				msg.Recovery.CompactedCount, msg.Recovery.PreservedCount))
 		}
 
 		// If this turn was preceded by tool execution, append the tool results
@@ -294,7 +312,7 @@ func (m *TUIModel) statusBar() string {
 	model := modelStyle.Render(modelText)
 
 	// Hints.
-	hintText := " shift+tab: mode | /help | /model "
+	hintText := " alt+↑↓:history | shift+tab: mode | /help "
 	hintStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#737373"))
 	hint := hintStyle.Render(hintText)
@@ -488,8 +506,8 @@ func (m *TUIModel) startAgentTurn(userPrompt string) tea.Cmd {
 
 	msgs := m.turnMessages
 	return func() tea.Msg {
-		result, err := m.app.RunTurn(ctx, msgs)
-		return turnResultMsg{Result: result, Err: err}
+		result, recovery, err := m.app.RunTurnWithRecovery(ctx, msgs)
+		return turnResultMsg{Result: result, Recovery: recovery, Err: err}
 	}
 }
 
@@ -515,9 +533,9 @@ func (m *TUIModel) executeToolsCmd(calls []conversation.ToolCall) tea.Cmd {
 			Content: toolResults,
 		})
 
-		// Run the next turn with tool results.
-		result, err := m.app.RunTurn(ctx, updatedMsgs)
-		return turnResultMsg{Result: result, Err: err, ToolResults: toolResults}
+		// Run the next turn with tool results (with recovery support).
+		result, recovery, err := m.app.RunTurnWithRecovery(ctx, updatedMsgs)
+		return turnResultMsg{Result: result, Recovery: recovery, Err: err, ToolResults: toolResults}
 	}
 }
 

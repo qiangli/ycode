@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -200,4 +201,149 @@ func joinParts(parts []string) string {
 		s += p
 	}
 	return s
+}
+
+// RecoveryResult contains information about a successful recovery from token limit error.
+type RecoveryResult struct {
+	CompactedCount   int
+	PreservedCount   int
+	RetrySuccessful  bool
+	SummaryPreview   string
+}
+
+// TurnWithRecovery executes a turn with automatic recovery from token limit errors.
+// If the request exceeds the model's token limit, it compacts older messages and retries.
+func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) (*TurnResult, *RecoveryResult, error) {
+	// First attempt
+	result, err := r.Turn(ctx, messages)
+	if err == nil {
+		return result, nil, nil
+	}
+
+	// Check if this is a token limit error
+	var tokenErr *api.TokenLimitError
+	if !errors.As(err, &tokenErr) {
+		return nil, nil, err // Not a token limit error, return as-is
+	}
+
+	r.logger.Warn("token limit exceeded, attempting recovery via compaction",
+		"requested", tokenErr.RequestedTokens,
+		"max", tokenErr.MaxTokens,
+	)
+
+	// Convert api.Messages to session messages for compaction
+	sessionMsgs := r.apiMessagesToSession(messages)
+
+	// Check if we have enough messages to compact
+	if len(sessionMsgs) <= session.PreserveLastMessages {
+		r.logger.Error("cannot compact: not enough messages to preserve minimum",
+			"messages", len(sessionMsgs),
+			"preserve_min", session.PreserveLastMessages,
+		)
+		return nil, nil, fmt.Errorf("token limit exceeded and cannot compact further: %w", err)
+	}
+
+	// Perform compaction
+	compactResult := session.Compact(sessionMsgs, r.session.Summary)
+	if compactResult == nil {
+		return nil, nil, fmt.Errorf("token limit exceeded and compaction failed: %w", err)
+	}
+
+	r.logger.Info("compacted messages for recovery",
+		"compacted_count", compactResult.CompactedCount,
+		"preserved_count", compactResult.PreservedCount,
+	)
+
+	// Update session summary
+	r.session.Summary = compactResult.Summary
+
+	// Build compacted messages: summary as system-like message + preserved messages
+	compactedMessages := r.buildCompactedMessages(messages, compactResult)
+
+	// Retry with compacted messages
+	result, retryErr := r.Turn(ctx, compactedMessages)
+	if retryErr != nil {
+		// Check if it's still a token limit error - we may need multiple compaction rounds
+		if errors.As(retryErr, &tokenErr) {
+			return nil, nil, fmt.Errorf("token limit exceeded even after compaction: %w", retryErr)
+		}
+		return nil, nil, retryErr
+	}
+
+	// Success! Return the result and recovery info
+	recovery := &RecoveryResult{
+		CompactedCount:  compactResult.CompactedCount,
+		PreservedCount:  compactResult.PreservedCount,
+		RetrySuccessful: true,
+		SummaryPreview:  truncateSummary(compactResult.Summary, 200),
+	}
+
+	return result, recovery, nil
+}
+
+// apiMessagesToSession converts API messages to session messages for compaction analysis.
+func (r *Runtime) apiMessagesToSession(messages []api.Message) []session.ConversationMessage {
+	var result []session.ConversationMessage
+	for _, msg := range messages {
+		var blocks []session.ContentBlock
+		for _, b := range msg.Content {
+			blocks = append(blocks, session.ContentBlock{
+				Type:      session.ContentType(b.Type),
+				Text:      b.Text,
+				ID:        b.ID,
+				Name:      b.Name,
+				Input:     b.Input,
+				ToolUseID: b.ToolUseID,
+				Content:   b.Content,
+				IsError:   b.IsError,
+			})
+		}
+		result = append(result, session.ConversationMessage{
+			Role:    session.MessageRole(msg.Role),
+			Content: blocks,
+		})
+	}
+	return result
+}
+
+// buildCompactedMessages rebuilds the API message list with compacted history.
+func (r *Runtime) buildCompactedMessages(original []api.Message, compactResult *session.CompactionResult) []api.Message {
+	if compactResult == nil || len(original) == 0 {
+		return original
+	}
+
+	// Calculate how many messages to keep from the end
+	keepCount := compactResult.PreservedCount
+	if keepCount > len(original) {
+		keepCount = len(original)
+	}
+
+	// Start with a system-like message containing the summary
+	var result []api.Message
+
+	// Add the compacted summary as a user message (since most APIs don't support multiple system messages)
+	// We use a special marker to indicate this is context continuation
+	continuationMsg := session.GetCompactContinuationMessage(compactResult.Summary, true, true)
+	result = append(result, api.Message{
+		Role: api.RoleUser,
+		Content: []api.ContentBlock{
+			{Type: api.ContentTypeText, Text: continuationMsg},
+		},
+	})
+
+	// Add the preserved recent messages
+	preservedStart := len(original) - keepCount
+	if preservedStart < 0 {
+		preservedStart = 0
+	}
+	result = append(result, original[preservedStart:]...)
+
+	return result
+}
+
+func truncateSummary(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

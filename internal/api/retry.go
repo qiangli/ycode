@@ -96,10 +96,18 @@ func doWithRetry(ctx context.Context, client *http.Client, makeReq func() (*http
 		// Non-200: read error body, close response, classify.
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		resp.Body.Close()
+		body := string(bodyBytes)
+
+		// Check for token limit errors first - these need special handling
+		if resp.StatusCode == 400 || resp.StatusCode == 413 || resp.StatusCode == 422 {
+			if tokenErr := ParseTokenLimitError(body); tokenErr != nil {
+				return nil, tokenErr
+			}
+		}
 
 		apiErr := &APIError{
 			StatusCode: resp.StatusCode,
-			Body:       string(bodyBytes),
+			Body:       body,
 			Retryable:  isRetryableStatus(resp.StatusCode),
 		}
 

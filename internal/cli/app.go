@@ -140,9 +140,15 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 
 	// Agentic loop: send → receive → execute tools → repeat until end_turn.
 	for i := 0; i < maxToolIterations; i++ {
-		result, err := rt.Turn(ctx, messages)
+		result, recovery, err := rt.TurnWithRecovery(ctx, messages)
 		if err != nil {
 			return fmt.Errorf("turn %d: %w", i+1, err)
+		}
+
+		// Show recovery info if compaction occurred
+		if recovery != nil && recovery.RetrySuccessful {
+			fmt.Fprintf(a.stdout, "\n⚠ Context compacted: %d messages summarized, %d recent messages preserved.\n\n",
+				recovery.CompactedCount, recovery.PreservedCount)
 		}
 
 		// Show LLM call metrics.
@@ -220,6 +226,13 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 func (a *App) RunTurn(ctx context.Context, messages []api.Message) (*conversation.TurnResult, error) {
 	rt := a.conversationRuntime()
 	return rt.Turn(ctx, messages)
+}
+
+// RunTurnWithRecovery executes a turn with automatic recovery from token limit errors.
+// Returns the result, recovery info (if compaction occurred), and any error.
+func (a *App) RunTurnWithRecovery(ctx context.Context, messages []api.Message) (*conversation.TurnResult, *conversation.RecoveryResult, error) {
+	rt := a.conversationRuntime()
+	return rt.TurnWithRecovery(ctx, messages)
 }
 
 // ExecuteTools runs tool calls and returns tool result content blocks.
