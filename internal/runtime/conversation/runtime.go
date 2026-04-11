@@ -12,6 +12,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/session"
+	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/tools"
 )
 
@@ -175,9 +176,24 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 }
 
 // ExecuteTools runs tool calls and returns tool result messages.
-func (r *Runtime) ExecuteTools(ctx context.Context, calls []ToolCall) []api.ContentBlock {
-	var results []api.ContentBlock
-	for _, call := range calls {
+// If parallel execution is enabled and there are multiple calls, they run
+// concurrently within per-category limits. Progress events are sent to the
+// progress channel if non-nil; the caller must close it after this returns.
+func (r *Runtime) ExecuteTools(ctx context.Context, calls []ToolCall, progress chan<- taskqueue.TaskEvent) []api.ContentBlock {
+	if !r.config.Parallel.Enabled || len(calls) <= 1 {
+		return r.executeToolsSequential(ctx, calls, progress)
+	}
+	return r.executeToolsParallel(ctx, calls, progress)
+}
+
+// executeToolsSequential runs tool calls one at a time (original behavior).
+func (r *Runtime) executeToolsSequential(ctx context.Context, calls []ToolCall, progress chan<- taskqueue.TaskEvent) []api.ContentBlock {
+	n := len(calls)
+	results := make([]api.ContentBlock, 0, n)
+	for i, call := range calls {
+		if progress != nil {
+			progress <- taskqueue.TaskEvent{Index: i, Name: call.Name, Status: taskqueue.StatusRunning, Total: n}
+		}
 		output, err := r.registry.Invoke(ctx, call.Name, call.Input)
 		block := api.ContentBlock{
 			Type:      api.ContentTypeToolResult,
@@ -186,13 +202,66 @@ func (r *Runtime) ExecuteTools(ctx context.Context, calls []ToolCall) []api.Cont
 		if err != nil {
 			block.Content = fmt.Sprintf("Error: %v", err)
 			block.IsError = true
+			if progress != nil {
+				progress <- taskqueue.TaskEvent{Index: i, Name: call.Name, Status: taskqueue.StatusFailed, Total: n}
+			}
 		} else {
 			block.Content = output
+			if progress != nil {
+				progress <- taskqueue.TaskEvent{Index: i, Name: call.Name, Status: taskqueue.StatusCompleted, Total: n}
+			}
 		}
 		results = append(results, block)
 		r.logger.Info("tool executed", "tool", call.Name, "error", err != nil)
 	}
 	return results
+}
+
+// executeToolsParallel runs tool calls concurrently using the task queue.
+func (r *Runtime) executeToolsParallel(ctx context.Context, calls []ToolCall, progress chan<- taskqueue.TaskEvent) []api.ContentBlock {
+	qCalls := make([]taskqueue.Call, len(calls))
+	for i, call := range calls {
+		spec, _ := r.registry.Get(call.Name)
+		cat := taskqueue.CatStandard
+		if spec != nil {
+			switch spec.Category {
+			case tools.CategoryLLM:
+				cat = taskqueue.CatLLM
+			case tools.CategoryInteractive:
+				cat = taskqueue.CatInteractive
+			}
+		}
+		c := call
+		qCalls[i] = taskqueue.Call{
+			Index:    i,
+			Name:     call.Name,
+			Detail:   call.Name,
+			Category: cat,
+			Invoke: func(ctx context.Context) (string, error) {
+				return r.registry.Invoke(ctx, c.Name, c.Input)
+			},
+		}
+	}
+
+	exec := taskqueue.NewExecutor(r.config.Parallel.MaxStandard, r.config.Parallel.MaxLLM)
+	taskResults := exec.Run(ctx, qCalls, progress)
+
+	blocks := make([]api.ContentBlock, len(calls))
+	for i, res := range taskResults {
+		block := api.ContentBlock{
+			Type:      api.ContentTypeToolResult,
+			ToolUseID: calls[i].ID,
+		}
+		if res.Err != nil {
+			block.Content = fmt.Sprintf("Error: %v", res.Err)
+			block.IsError = true
+		} else {
+			block.Content = res.Output
+		}
+		blocks[i] = block
+		r.logger.Info("tool executed", "tool", calls[i].Name, "error", res.Err != nil)
+	}
+	return blocks
 }
 
 func joinParts(parts []string) string {

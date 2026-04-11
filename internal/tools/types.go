@@ -16,6 +16,15 @@ const (
 	SourceMCP     ToolSource = "mcp"
 )
 
+// ToolCategory classifies a tool for concurrency scheduling.
+type ToolCategory int
+
+const (
+	CategoryStandard    ToolCategory = iota // file ops, search, web — default
+	CategoryLLM                             // Agent, TaskCreate — uses LLM API
+	CategoryInteractive                     // AskUserQuestion — blocks on user input
+)
+
 // ToolFunc is the handler function signature for a tool.
 type ToolFunc func(ctx context.Context, input json.RawMessage) (string, error)
 
@@ -28,6 +37,7 @@ type ToolSpec struct {
 	Source          ToolSource      `json:"-"`
 	Handler         ToolFunc        `json:"-"`
 	AlwaysAvailable bool            `json:"-"` // sent in every request vs deferred
+	Category        ToolCategory    `json:"-"` // concurrency scheduling category
 }
 
 // RuntimeToolDefinition is the API-facing tool definition.

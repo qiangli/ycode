@@ -228,8 +228,8 @@ func discoverContextFiles(workDir string) []prompt.ContextFile {
 }
 
 var (
-	printFlag            bool
-	modelFlag            string
+	printFlag             bool
+	modelFlag             string
 	dangerSkipPermissions bool
 )
 

@@ -87,6 +87,7 @@ func builtinSpecs() []*ToolSpec {
 			InputSchema:  mustJSON(askUserSchema),
 			RequiredMode: permission.ReadOnly,
 			Source:       SourceBuiltin,
+			Category:     CategoryInteractive,
 		},
 		{
 			Name:         "TodoWrite",
@@ -115,6 +116,7 @@ func builtinSpecs() []*ToolSpec {
 			InputSchema:  mustJSON(agentSchema),
 			RequiredMode: permission.DangerFullAccess,
 			Source:       SourceBuiltin,
+			Category:     CategoryLLM,
 		},
 		{
 			Name:         "TaskCreate",
@@ -122,6 +124,7 @@ func builtinSpecs() []*ToolSpec {
 			InputSchema:  mustJSON(taskCreateSchema),
 			RequiredMode: permission.DangerFullAccess,
 			Source:       SourceBuiltin,
+			Category:     CategoryLLM,
 		},
 		{
 			Name:         "TaskGet",

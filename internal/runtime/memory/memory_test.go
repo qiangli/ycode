@@ -834,10 +834,10 @@ func TestDecayScore_Table(t *testing.T) {
 	day := 24 * time.Hour
 
 	tests := []struct {
-		name     string
-		ageDays  int
-		wantMin  float64 // inclusive
-		wantMax  float64 // inclusive
+		name      string
+		ageDays   int
+		wantMin   float64 // inclusive
+		wantMax   float64 // inclusive
 		baseScore float64
 	}{
 		{"within grace period (0 days)", 0, 1.0, 1.0, 1.0},

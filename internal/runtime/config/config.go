@@ -31,8 +31,18 @@ type Config struct {
 	// Model aliases (user-defined short names → full model IDs)
 	Aliases map[string]string `json:"aliases,omitempty"`
 
+	// Parallel tool execution settings
+	Parallel ParallelConfig `json:"parallel,omitempty"`
+
 	// Custom settings (arbitrary key-value pairs from plugins/MCP)
 	Custom map[string]any `json:"custom,omitempty"`
+}
+
+// ParallelConfig controls concurrent tool execution.
+type ParallelConfig struct {
+	Enabled     bool `json:"enabled"`     // master switch (default true)
+	MaxStandard int  `json:"maxStandard"` // max concurrent standard tools (default 8)
+	MaxLLM      int  `json:"maxLLM"`      // max concurrent LLM tools (default 2)
 }
 
 // DefaultConfig returns the default configuration.
@@ -42,6 +52,11 @@ func DefaultConfig() *Config {
 		MaxTokens:          8192,
 		PermissionMode:     "ask",
 		AutoCompactEnabled: true,
+		Parallel: ParallelConfig{
+			Enabled:     true,
+			MaxStandard: 8,
+			MaxLLM:      2,
+		},
 	}
 }
 
@@ -125,6 +140,15 @@ func mergeFromFile(cfg *Config, path string) error {
 	}
 	if overlay.FileCheckpointingEnabled {
 		cfg.FileCheckpointingEnabled = true
+	}
+	if overlay.Parallel.Enabled {
+		cfg.Parallel.Enabled = true
+	}
+	if overlay.Parallel.MaxStandard != 0 {
+		cfg.Parallel.MaxStandard = overlay.Parallel.MaxStandard
+	}
+	if overlay.Parallel.MaxLLM != 0 {
+		cfg.Parallel.MaxLLM = overlay.Parallel.MaxLLM
 	}
 	if overlay.Aliases != nil {
 		if cfg.Aliases == nil {

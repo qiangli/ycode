@@ -16,6 +16,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/session"
+	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/runtime/usage"
 	"github.com/qiangli/ycode/internal/tools"
 )
@@ -248,8 +249,8 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 			Content: assistantBlocks,
 		})
 
-		// Execute tools.
-		toolResults := rt.ExecuteTools(ctx, result.ToolCalls)
+		// Execute tools (nil progress channel in one-shot mode).
+		toolResults := rt.ExecuteTools(ctx, result.ToolCalls, nil)
 
 		// Build tool result message and append to conversation.
 		messages = append(messages, api.Message{
@@ -298,9 +299,10 @@ func (a *App) RunTurnWithRecovery(ctx context.Context, messages []api.Message) (
 }
 
 // ExecuteTools runs tool calls and returns tool result content blocks.
-func (a *App) ExecuteTools(ctx context.Context, calls []conversation.ToolCall) []api.ContentBlock {
+// Progress events are sent to the progress channel if non-nil.
+func (a *App) ExecuteTools(ctx context.Context, calls []conversation.ToolCall, progress chan<- taskqueue.TaskEvent) []api.ContentBlock {
 	rt := a.conversationRuntime()
-	return rt.ExecuteTools(ctx, calls)
+	return rt.ExecuteTools(ctx, calls, progress)
 }
 
 // sessionMessages converts session history to API messages.
@@ -375,6 +377,7 @@ func (a *App) RunInteractive(ctx context.Context) error {
 
 	m := NewTUIModel(a)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
+	m.program = p
 
 	// Wire TUI-based permission prompter into the tool registry so that
 	// tools requiring elevated permissions can ask the user interactively.

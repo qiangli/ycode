@@ -42,9 +42,9 @@ type fixtureResponse struct {
 }
 
 type fixtureMessage struct {
-	ID         string               `json:"id"`
+	ID         string                `json:"id"`
 	Content    []fixtureContentBlock `json:"content"`
-	StopReason string               `json:"stop_reason"`
+	StopReason string                `json:"stop_reason"`
 }
 
 type fixtureContentBlock struct {

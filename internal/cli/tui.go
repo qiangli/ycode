@@ -18,6 +18,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/git"
 	"github.com/qiangli/ycode/internal/runtime/session"
+	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/runtime/usage"
 )
 
@@ -49,14 +50,25 @@ type TUIModel struct {
 	inputBuffer  string   // temp storage for current input when browsing history
 
 	// Confirmation dialog state.
-	confirming     bool   // true when waiting for user confirmation
-	confirmPrompt  string // the question being asked
-	confirmYes     func() tea.Cmd
-	confirmNo      func() tea.Cmd
+	confirming    bool   // true when waiting for user confirmation
+	confirmPrompt string // the question being asked
+	confirmYes    func() tea.Cmd
+	confirmNo     func() tea.Cmd
 
 	// Permission prompt state (for tool invocations that need approval).
-	permChan       chan bool // non-nil when a tool is waiting for permission approval
-	permAlwaysAllow bool    // true when user chose "always allow" for this session
+	permChan        chan bool // non-nil when a tool is waiting for permission approval
+	permAlwaysAllow bool      // true when user chose "always allow" for this session
+
+	// Parallel tool execution progress.
+	toolTasks []toolTaskProgress // per-tool status during parallel execution
+	program   *tea.Program       // set after NewProgram; used to send progress msgs
+}
+
+// toolTaskProgress tracks a single tool's execution state.
+type toolTaskProgress struct {
+	Name   string
+	Detail string
+	Status taskqueue.TaskStatus
 }
 
 // Custom message types.
@@ -74,6 +86,9 @@ type turnResultMsg struct {
 	Err         error
 	ToolResults []api.ContentBlock // tool results from preceding tool execution, if any
 }
+
+// toolProgressMsg reports a tool's status change during parallel execution.
+type toolProgressMsg taskqueue.TaskEvent
 
 // repaintMsg triggers one more Update/View cycle to flush rendering.
 type repaintMsg struct{}
@@ -255,9 +270,20 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Show tool calls with descriptive progress.
-		for _, tc := range result.ToolCalls {
-			detail := toolDetail(tc.Name, tc.Input)
-			m.appendOutput(fmt.Sprintf("\n⚙ %s\n", detail))
+		if len(result.ToolCalls) > 1 {
+			m.appendOutput(fmt.Sprintf("\n⚙ Executing %d tools in parallel...\n", len(result.ToolCalls)))
+			m.toolTasks = make([]toolTaskProgress, len(result.ToolCalls))
+			for i, tc := range result.ToolCalls {
+				detail := toolDetail(tc.Name, tc.Input)
+				m.toolTasks[i] = toolTaskProgress{Name: tc.Name, Detail: detail, Status: taskqueue.StatusQueued}
+				m.appendOutput(fmt.Sprintf("  ◻ %s\n", detail))
+			}
+		} else {
+			for _, tc := range result.ToolCalls {
+				detail := toolDetail(tc.Name, tc.Input)
+				m.appendOutput(fmt.Sprintf("\n⚙ %s\n", detail))
+			}
+			m.toolTasks = nil
 		}
 
 		// Build assistant message with tool_use blocks for conversation history.
@@ -291,6 +317,22 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Execute tools and feed results back (in a Cmd to keep TUI responsive).
 		toolCalls := result.ToolCalls
 		return m, m.executeToolsCmd(toolCalls)
+
+	case toolProgressMsg:
+		if int(msg.Index) < len(m.toolTasks) {
+			m.toolTasks[msg.Index].Status = msg.Status
+			icon := "◻"
+			switch msg.Status {
+			case taskqueue.StatusRunning:
+				icon = "⧗"
+			case taskqueue.StatusCompleted:
+				icon = "✓"
+			case taskqueue.StatusFailed:
+				icon = "✗"
+			}
+			m.appendOutput(fmt.Sprintf("  %s %s\n", icon, m.toolTasks[msg.Index].Detail))
+		}
+		return m, nil
 
 	case commandOutputMsg:
 		m.appendOutput(msg.Echo)
@@ -579,9 +621,28 @@ func (m *TUIModel) executeToolsCmd(calls []conversation.ToolCall) tea.Cmd {
 	m.workCancel = cancel
 
 	msgs := m.turnMessages
+	prog := m.program
 	return func() tea.Msg {
-		// Execute tools.
-		toolResults := m.app.ExecuteTools(ctx, calls)
+		// Set up progress reporting: forward events to the TUI via program.Send.
+		var progressSend chan<- taskqueue.TaskEvent
+		var progressCh chan taskqueue.TaskEvent
+		if prog != nil && len(calls) > 1 {
+			progressCh = make(chan taskqueue.TaskEvent, len(calls)*4)
+			progressSend = progressCh
+			go func() {
+				for ev := range progressCh {
+					prog.Send(toolProgressMsg(ev))
+				}
+			}()
+		}
+
+		// Execute tools (parallel if enabled and multiple calls).
+		toolResults := m.app.ExecuteTools(ctx, calls, progressSend)
+
+		// Close progress channel to stop the forwarder goroutine.
+		if progressCh != nil {
+			close(progressCh)
+		}
 
 		// Check for cancellation before sending the next turn.
 		if ctx.Err() != nil {
