@@ -23,7 +23,26 @@ func RegisterFileHandlers(r *Registry, v *vfs.VFS) {
 				return "", err
 			}
 			params.Path = absPath
-			return fileops.ReadFile(params)
+
+			// Check for binary files.
+			binary, err := fileops.IsBinaryFile(absPath)
+			if err == nil && binary {
+				return "File appears to be binary. Use bash to inspect it.", nil
+			}
+
+			// Check for sensitive files.
+			action := fileops.CheckSensitiveFile(absPath)
+
+			result, err := fileops.ReadFile(params)
+			if err != nil {
+				return "", err
+			}
+
+			if action == fileops.FileAskUser {
+				result = fmt.Sprintf("WARNING: This file (%s) may contain sensitive data (credentials, keys, etc.).\n\n%s", absPath, result)
+			}
+
+			return result, nil
 		}
 	}
 

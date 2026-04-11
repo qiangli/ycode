@@ -18,6 +18,20 @@ type PermissionResolver func() permission.Mode
 // that requires elevated permissions. Returns true if the user approves.
 type PermissionPrompter func(ctx context.Context, toolName string, requiredMode permission.Mode) (bool, error)
 
+// contextKey is an unexported type for context keys in this package.
+type contextKey string
+
+// permApprovedKey is set in the context when the user has explicitly approved
+// a tool invocation via the permission prompter.
+const permApprovedKey contextKey = "permissionApproved"
+
+// IsPermissionApproved returns true if the context indicates the user has
+// explicitly approved this tool invocation via the permission prompter.
+func IsPermissionApproved(ctx context.Context) bool {
+	v, _ := ctx.Value(permApprovedKey).(bool)
+	return v
+}
+
 // Registry holds all registered tools and dispatches invocations.
 type Registry struct {
 	mu    sync.RWMutex
@@ -99,7 +113,8 @@ func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessag
 					return "", fmt.Errorf("permission denied: tool %q requires %s but current mode is %s",
 						name, spec.RequiredMode, currentMode)
 				}
-				// User approved — fall through to execute.
+				// User approved — mark context so handlers can skip redundant checks.
+				ctx = context.WithValue(ctx, permApprovedKey, true)
 			} else {
 				return "", fmt.Errorf("permission denied: tool %q requires %s but current mode is %s (plan mode is active — exit plan mode to use write tools)",
 					name, spec.RequiredMode, currentMode)

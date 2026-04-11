@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/qiangli/ycode/internal/runtime/bash"
+	"github.com/qiangli/ycode/internal/runtime/permission"
 )
 
 // RegisterBashHandler registers the bash tool handler.
@@ -21,6 +22,17 @@ func RegisterBashHandler(r *Registry, workDir string) {
 		}
 		if params.WorkDir == "" {
 			params.WorkDir = workDir
+		}
+
+		// Safety analysis: validate the command against the current permission mode.
+		// If the user explicitly approved this invocation via the permission
+		// prompter, treat it as full-access (the registry already confirmed).
+		mode := resolvePermissionMode(r)
+		if IsPermissionApproved(ctx) {
+			mode = permission.DangerFullAccess
+		}
+		if err := bash.ValidateForMode(params.Command, mode); err != nil {
+			return "", fmt.Errorf("bash safety check: %w", err)
 		}
 
 		result, err := bash.Execute(ctx, params)
@@ -43,4 +55,16 @@ func RegisterBashHandler(r *Registry, workDir string) {
 		}
 		return output, nil
 	}
+}
+
+// resolvePermissionMode returns the current permission mode from the registry,
+// defaulting to WorkspaceWrite if no resolver is configured.
+func resolvePermissionMode(r *Registry) permission.Mode {
+	r.mu.RLock()
+	resolver := r.permResolver
+	r.mu.RUnlock()
+	if resolver != nil {
+		return resolver()
+	}
+	return permission.WorkspaceWrite
 }

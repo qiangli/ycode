@@ -247,6 +247,27 @@ func builtinSpecs() []*ToolSpec {
 			RequiredMode: permission.WorkspaceWrite,
 			Source:       SourceBuiltin,
 		},
+		{
+			Name:         "apply_patch",
+			Description:  "Apply a unified diff patch to one or more files. The patch should be in standard unified diff format.",
+			InputSchema:  mustJSON(applyPatchSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "view_image",
+			Description:  "Read an image file and return its contents for visual analysis. Supports PNG, JPG, GIF, SVG, WebP.",
+			InputSchema:  mustJSON(viewImageSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "view_diff",
+			Description:  "Show git diff output. Can show staged changes, unstaged changes, or diff between commits.",
+			InputSchema:  mustJSON(viewDiffSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
 	}
 }
 
@@ -518,5 +539,31 @@ var (
 			"value": {"description": "Config value (for set action)"}
 		},
 		"required": ["action", "key"]
+	}`
+
+	applyPatchSchema = `{
+		"type": "object",
+		"properties": {
+			"patch": {"type": "string", "description": "Unified diff patch content"},
+			"strip": {"type": "integer", "description": "Number of leading path components to strip (default 0)"}
+		},
+		"required": ["patch"]
+	}`
+
+	viewImageSchema = `{
+		"type": "object",
+		"properties": {
+			"file_path": {"type": "string", "description": "Absolute path to the image file"}
+		},
+		"required": ["file_path"]
+	}`
+
+	viewDiffSchema = `{
+		"type": "object",
+		"properties": {
+			"staged": {"type": "boolean", "description": "Show staged changes (--cached)"},
+			"path": {"type": "string", "description": "Limit diff to specific file or directory"},
+			"commit_range": {"type": "string", "description": "Commit range (e.g., 'HEAD~3..HEAD', 'main..feature')"}
+		}
 	}`
 )

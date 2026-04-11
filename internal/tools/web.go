@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	netutil "github.com/qiangli/ycode/internal/runtime/net"
 )
 
 // RegisterWebHandlers registers WebFetch and WebSearch handlers.
@@ -27,6 +29,10 @@ func handleWebFetch(ctx context.Context, input json.RawMessage) (string, error) 
 	}
 	if err := json.Unmarshal(input, &params); err != nil {
 		return "", fmt.Errorf("parse WebFetch input: %w", err)
+	}
+
+	if err := netutil.ValidateURL(params.URL); err != nil {
+		return "", fmt.Errorf("SSRF protection: %w", err)
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
