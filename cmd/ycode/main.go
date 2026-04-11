@@ -331,7 +331,7 @@ func newApp() (*cli.App, error) {
 		}()
 	}()
 
-	return cli.NewApp(cfg, provider, sess, cli.AppOptions{
+	app, err := cli.NewApp(cfg, provider, sess, cli.AppOptions{
 		WorkDir:      cwd,
 		ProviderKind: providerCfg.DisplayKind(),
 		ConfigDirs: commands.ConfigDirs{
@@ -347,6 +347,14 @@ func newApp() (*cli.App, error) {
 		UserConfigPath: filepath.Join(userDir, "settings.json"),
 		Storage:        storageMgr,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Register compact_context tool handler — needs the app for session access.
+	tools.RegisterCompactContextHandler(toolReg, app.CompactContext)
+
+	return app, nil
 }
 
 // buildPromptContext gathers environment and project metadata for the system prompt.

@@ -518,6 +518,7 @@ ycode avoids external databases entirely -- no vector store, no graph DB, no Red
 | Ghost snapshots | `internal/runtime/session/ghost.go` |
 | State snapshots | `internal/runtime/session/state_snapshot.go` |
 | Context pruning (Layer 1) | `internal/runtime/session/pruning.go` |
+| LLM-based summarization | `internal/runtime/session/llm_summary.go` |
 | **Prompt assembly** | |
 | Prompt builder (differential mode) | `internal/runtime/prompt/builder.go` |
 | Prompt file discovery | `internal/runtime/prompt/discovery.go` |
@@ -533,4 +534,7 @@ ycode avoids external databases entirely -- no vector store, no graph DB, no Red
 | Provider capability detection | `internal/api/capabilities.go` |
 | **Runtime** | |
 | 3-layer defense (TurnWithRecovery) | `internal/runtime/conversation/runtime.go` |
+| On-demand compaction (CompactNow) | `internal/runtime/conversation/runtime.go` |
 | Auto-checkpointing | `internal/runtime/scratchpad/auto.go` |
+| **Tools** | |
+| Agent-requested condensation | `internal/tools/compact_context.go` |

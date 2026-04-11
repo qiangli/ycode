@@ -1,7 +1,9 @@
 package session
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -608,6 +610,82 @@ func stripTagBlock(content, tag string) string {
 		return content
 	}
 	return content[:startIdx] + content[endIdx+len(end):]
+}
+
+// CompactWithLLM is like Compact but uses an LLM summarizer when available.
+// If the LLM call fails, it falls back to the heuristic buildIntentSummary.
+func CompactWithLLM(ctx context.Context, messages []ConversationMessage, previousSummary string, summarizer *LLMSummarizer) *CompactionResult {
+	if len(messages) <= PreserveLastMessages {
+		return nil
+	}
+
+	// Determine compaction boundary (same logic as Compact).
+	rawKeepFrom := len(messages) - PreserveLastMessages
+
+	compactedPrefixLen := 0
+	if len(messages) > 0 && extractExistingCompactedSummary(messages[0]) != "" {
+		compactedPrefixLen = 1
+	}
+
+	keepFrom := rawKeepFrom
+	for keepFrom > compactedPrefixLen {
+		firstPreserved := messages[keepFrom]
+		startsWithToolResult := len(firstPreserved.Content) > 0 &&
+			firstPreserved.Content[0].Type == ContentTypeToolResult
+
+		if !startsWithToolResult {
+			break
+		}
+
+		if keepFrom > 0 {
+			preceding := messages[keepFrom-1]
+			hasToolUse := false
+			for _, b := range preceding.Content {
+				if b.Type == ContentTypeToolUse {
+					hasToolUse = true
+					break
+				}
+			}
+			if hasToolUse {
+				keepFrom--
+				break
+			}
+		}
+
+		keepFrom--
+	}
+
+	toCompact := messages[compactedPrefixLen:keepFrom]
+
+	// Try LLM summarization first, fall back to heuristic.
+	var summary string
+	if summarizer != nil {
+		var err error
+		summary, err = summarizer.Summarize(ctx, toCompact)
+		if err != nil {
+			slog.Warn("llm summarization failed, falling back to heuristic", "error", err)
+			summary = buildIntentSummary(toCompact)
+		}
+	} else {
+		summary = buildIntentSummary(toCompact)
+	}
+
+	// Merge with previous summary if present.
+	if previousSummary != "" {
+		summary = mergeCompactSummaries(previousSummary, summary)
+	} else if existingSummary := extractExistingCompactedSummary(messages[0]); existingSummary != "" {
+		summary = mergeCompactSummaries(existingSummary, summary)
+	}
+
+	formatted := formatCompactSummary(summary)
+
+	return &CompactionResult{
+		Summary:          summary,
+		FormattedSummary: formatted,
+		PreservedCount:   len(messages) - keepFrom,
+		CompactedCount:   len(toCompact),
+		PreviousSummary:  previousSummary,
+	}
 }
 
 // collapseBlankLines collapses consecutive blank lines into one.

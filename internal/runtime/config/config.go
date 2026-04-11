@@ -28,6 +28,9 @@ type Config struct {
 	// File checkpointing
 	FileCheckpointingEnabled bool `json:"fileCheckpointingEnabled,omitempty"`
 
+	// LLM-based summarization for compaction (uses API call; default false)
+	LLMSummarizationEnabled bool `json:"llmSummarizationEnabled,omitempty"`
+
 	// Model aliases (user-defined short names → full model IDs)
 	Aliases map[string]string `json:"aliases,omitempty"`
 
@@ -153,6 +156,9 @@ func mergeFromFile(cfg *Config, path string) error {
 	}
 	if overlay.FileCheckpointingEnabled {
 		cfg.FileCheckpointingEnabled = true
+	}
+	if overlay.LLMSummarizationEnabled {
+		cfg.LLMSummarizationEnabled = true
 	}
 	if overlay.Parallel.Enabled {
 		cfg.Parallel.Enabled = true

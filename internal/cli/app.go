@@ -125,7 +125,11 @@ func (a *App) SetPrintMode(enabled bool) {
 
 // conversationRuntime creates a conversation.Runtime from the current app state.
 func (a *App) conversationRuntime() *conversation.Runtime {
-	return conversation.NewRuntime(a.config, a.provider, a.session, a.toolRegistry, a.promptCtx)
+	rt := conversation.NewRuntime(a.config, a.provider, a.session, a.toolRegistry, a.promptCtx)
+	if a.config.LLMSummarizationEnabled {
+		rt.SetLLMSummarizer(session.NewLLMSummarizer(a.provider, a.config.Model))
+	}
+	return rt
 }
 
 // maxToolIterations is the maximum number of tool-use round-trips per turn.
@@ -309,6 +313,18 @@ func (a *App) RunTurnWithRecovery(ctx context.Context, messages []api.Message) (
 func (a *App) ExecuteTools(ctx context.Context, calls []conversation.ToolCall, progress chan<- taskqueue.TaskEvent) []api.ContentBlock {
 	rt := a.conversationRuntime()
 	return rt.ExecuteTools(ctx, calls, progress)
+}
+
+// CompactContext triggers an immediate compaction of the session context.
+// Used by the compact_context tool to allow the agent to request compaction on demand.
+func (a *App) CompactContext(ctx context.Context) (summary string, compactedCount int, preservedCount int, err error) {
+	rt := a.conversationRuntime()
+	messages := a.sessionMessages()
+	result, err := rt.CompactNow(ctx, messages)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	return result.Summary, result.CompactedCount, result.PreservedCount, nil
 }
 
 // sessionMessages converts session history to API messages.

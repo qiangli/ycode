@@ -248,6 +248,13 @@ func builtinSpecs() []*ToolSpec {
 			Source:       SourceBuiltin,
 		},
 		{
+			Name:         "compact_context",
+			Description:  "Request immediate compaction of conversation context. Use when the conversation has accumulated irrelevant context that should be summarized to free up space.",
+			InputSchema:  mustJSON(compactContextSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
 			Name:         "apply_patch",
 			Description:  "Apply a unified diff patch to one or more files. The patch should be in standard unified diff format.",
 			InputSchema:  mustJSON(applyPatchSchema),
@@ -539,6 +546,13 @@ var (
 			"value": {"description": "Config value (for set action)"}
 		},
 		"required": ["action", "key"]
+	}`
+
+	compactContextSchema = `{
+		"type": "object",
+		"properties": {
+			"reason": {"type": "string", "description": "Brief reason for requesting compaction (e.g., 'topic shift', 'accumulated irrelevant context')"}
+		}
 	}`
 
 	applyPatchSchema = `{

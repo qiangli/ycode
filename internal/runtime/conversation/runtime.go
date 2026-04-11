@@ -28,6 +28,9 @@ type Runtime struct {
 	// Differential context injection for non-caching providers.
 	cachingSupported bool
 	contextBaseline  *prompt.ContextBaseline
+
+	// Optional LLM-based summarizer for compaction. If nil, heuristic is used.
+	llmSummarizer *session.LLMSummarizer
 }
 
 // NewRuntime creates a new conversation runtime.
@@ -54,6 +57,13 @@ func NewRuntime(
 		cachingSupported: cachingSupported,
 		contextBaseline:  prompt.NewContextBaseline(),
 	}
+}
+
+// SetLLMSummarizer enables LLM-based compaction summarization.
+// When set, compaction will use the LLM for higher-fidelity summaries,
+// falling back to heuristic extraction on failure.
+func (r *Runtime) SetLLMSummarizer(s *session.LLMSummarizer) {
+	r.llmSummarizer = s
 }
 
 // TurnResult is the outcome of a single conversation turn.
@@ -327,7 +337,7 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 
 	// --- Layer 2: Proactive compaction (before hitting API limit) ---
 	if health.NeedsCompactionNow() {
-		compactResult := r.proactiveCompact(sessionMsgs)
+		compactResult := r.proactiveCompactCtx(ctx, sessionMsgs)
 		if compactResult != nil {
 			messages = r.buildCompactedMessages(messages, compactResult)
 			recovery.CompactedCount = compactResult.CompactedCount
@@ -363,7 +373,7 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 	)
 
 	sessionMsgs = r.apiMessagesToSession(messages)
-	compactResult := r.proactiveCompact(sessionMsgs)
+	compactResult := r.proactiveCompactCtx(ctx, sessionMsgs)
 	if compactResult == nil {
 		// --- Layer 3: Emergency flush ---
 		return r.emergencyFlush(ctx, messages, err)
@@ -389,6 +399,11 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 
 // proactiveCompact attempts to compact messages, returning nil if not possible.
 func (r *Runtime) proactiveCompact(sessionMsgs []session.ConversationMessage) *session.CompactionResult {
+	return r.proactiveCompactCtx(context.Background(), sessionMsgs)
+}
+
+// proactiveCompactCtx attempts to compact messages with a context for LLM calls.
+func (r *Runtime) proactiveCompactCtx(ctx context.Context, sessionMsgs []session.ConversationMessage) *session.CompactionResult {
 	if len(sessionMsgs) <= session.PreserveLastMessages {
 		return nil
 	}
@@ -399,7 +414,12 @@ func (r *Runtime) proactiveCompact(sessionMsgs []session.ConversationMessage) *s
 		compactedPrefixLen = 1
 	}
 
-	compactResult := session.Compact(sessionMsgs, r.session.Summary)
+	var compactResult *session.CompactionResult
+	if r.llmSummarizer != nil {
+		compactResult = session.CompactWithLLM(ctx, sessionMsgs, r.session.Summary, r.llmSummarizer)
+	} else {
+		compactResult = session.Compact(sessionMsgs, r.session.Summary)
+	}
 	if compactResult == nil {
 		return nil
 	}
@@ -504,6 +524,23 @@ func sanitizeUserMessageForFlush(msg api.Message) api.Message {
 		Role:    msg.Role,
 		Content: filtered,
 	}
+}
+
+// CompactNow triggers an immediate compaction of the current session messages,
+// regardless of token count. Returns the compaction result summary.
+// This is used by the compact_context tool to allow the agent to request compaction.
+func (r *Runtime) CompactNow(ctx context.Context, messages []api.Message) (*session.CompactionResult, error) {
+	sessionMsgs := r.apiMessagesToSession(messages)
+	if len(sessionMsgs) <= session.PreserveLastMessages {
+		return nil, fmt.Errorf("too few messages to compact (have %d, need >%d)", len(sessionMsgs), session.PreserveLastMessages)
+	}
+
+	result := r.proactiveCompactCtx(ctx, sessionMsgs)
+	if result == nil {
+		return nil, fmt.Errorf("compaction produced no result")
+	}
+
+	return result, nil
 }
 
 // apiMessagesToSession converts API messages to session messages for compaction analysis.
