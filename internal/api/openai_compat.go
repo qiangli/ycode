@@ -81,12 +81,18 @@ func (c *OpenAICompatClient) Send(ctx context.Context, req *Request) (<-chan *St
 
 // openaiRequest is the OpenAI chat completion request format.
 type openaiRequest struct {
-	Model       string          `json:"model"`
-	Messages    []openaiMessage `json:"messages"`
-	MaxTokens   int             `json:"max_tokens,omitempty"`
-	Temperature *float64        `json:"temperature,omitempty"`
-	Stream      bool            `json:"stream"`
-	Tools       []openaiTool    `json:"tools,omitempty"`
+	Model         string              `json:"model"`
+	Messages      []openaiMessage     `json:"messages"`
+	MaxTokens     int                 `json:"max_tokens,omitempty"`
+	Temperature   *float64            `json:"temperature,omitempty"`
+	Stream        bool                `json:"stream"`
+	Tools         []openaiTool        `json:"tools,omitempty"`
+	StreamOptions *openaiStreamOptions `json:"stream_options,omitempty"`
+}
+
+// openaiStreamOptions enables usage reporting in streaming mode.
+type openaiStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type openaiMessage struct {
@@ -121,6 +127,11 @@ func (c *OpenAICompatClient) buildRequest(req *Request) *openaiRequest {
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 		Stream:      req.Stream,
+	}
+
+	// Enable usage reporting in streaming mode.
+	if req.Stream {
+		oReq.StreamOptions = &openaiStreamOptions{IncludeUsage: true}
 	}
 
 	// Add system message if present.
@@ -278,8 +289,34 @@ func (c *OpenAICompatClient) readStream(body io.Reader, events chan<- *StreamEve
 				Delta        openaiStreamDelta `json:"delta"`
 				FinishReason *string           `json:"finish_reason"`
 			} `json:"choices"`
+			Usage *Usage `json:"usage,omitempty"`
 		}
 		if err := json.Unmarshal([]byte(raw.Data), &chunk); err != nil {
+			continue
+		}
+
+		// Handle usage data from final chunk (when choices is empty but usage is present).
+		if chunk.Usage != nil && len(chunk.Choices) == 0 {
+			// Emit message_start with usage for input tokens.
+			if chunk.Usage.InputTokens > 0 {
+				events <- &StreamEvent{
+					Type: "message_start",
+					Message: &Response{
+						Usage: Usage{
+							InputTokens: chunk.Usage.InputTokens,
+						},
+					},
+				}
+			}
+			// Emit message_delta with usage for output tokens.
+			if chunk.Usage.OutputTokens > 0 {
+				events <- &StreamEvent{
+					Type: "message_delta",
+					Usage: &Usage{
+						OutputTokens: chunk.Usage.OutputTokens,
+					},
+				}
+			}
 			continue
 		}
 
@@ -385,6 +422,7 @@ func (c *OpenAICompatClient) readNonStream(body io.Reader, events chan<- *Stream
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
+		Usage *Usage `json:"usage,omitempty"`
 	}
 	if err := json.NewDecoder(body).Decode(&resp); err != nil {
 		errc <- fmt.Errorf("decode response: %w", err)
@@ -443,5 +481,30 @@ func (c *OpenAICompatClient) readNonStream(body io.Reader, events chan<- *Stream
 		delta, _ := json.Marshal(map[string]string{"stop_reason": stopReason})
 		events <- &StreamEvent{Type: "message_delta", Delta: delta}
 	}
+
+	// Emit usage if provided.
+	if resp.Usage != nil {
+		// Emit message_start with input tokens.
+		if resp.Usage.InputTokens > 0 {
+			events <- &StreamEvent{
+				Type: "message_start",
+				Message: &Response{
+					Usage: Usage{
+						InputTokens: resp.Usage.InputTokens,
+					},
+				},
+			}
+		}
+		// Emit message_delta with output tokens.
+		if resp.Usage.OutputTokens > 0 {
+			events <- &StreamEvent{
+				Type: "message_delta",
+				Usage: &Usage{
+					OutputTokens: resp.Usage.OutputTokens,
+				},
+			}
+		}
+	}
+
 	events <- &StreamEvent{Type: "message_stop"}
 }

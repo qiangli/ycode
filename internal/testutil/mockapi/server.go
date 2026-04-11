@@ -110,7 +110,7 @@ func (s *Server) handleStreaming(w http.ResponseWriter, resp *Response) {
 		return
 	}
 
-	// Send message_start.
+	// Send message_start with usage.
 	msgStart := map[string]any{
 		"type": "message_start",
 		"message": map[string]any{
@@ -118,6 +118,10 @@ func (s *Server) handleStreaming(w http.ResponseWriter, resp *Response) {
 			"type":  "message",
 			"role":  "assistant",
 			"model": "mock-model",
+			"usage": map[string]int{
+				"input_tokens":  100,
+				"output_tokens": 0,
+			},
 		},
 	}
 	writeSSE(w, "message_start", msgStart)
@@ -146,6 +150,22 @@ func (s *Server) handleStreaming(w http.ResponseWriter, resp *Response) {
 	writeSSE(w, "content_block_stop", map[string]any{
 		"type":  "content_block_stop",
 		"index": 0,
+	})
+	flusher.Flush()
+
+	// Send message_delta with usage.
+	outputTokens := len(resp.Content) / 4
+	if outputTokens < 5 {
+		outputTokens = 5
+	}
+	writeSSE(w, "message_delta", map[string]any{
+		"type": "message_delta",
+		"delta": map[string]string{
+			"stop_reason": resp.StopReason,
+		},
+		"usage": map[string]int{
+			"output_tokens": outputTokens,
+		},
 	})
 	flusher.Flush()
 

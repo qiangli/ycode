@@ -175,6 +175,14 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		result := msg.Result
 
+		// Track usage from this turn.
+		m.app.usageTracker.Add(
+			result.Usage.InputTokens,
+			result.Usage.OutputTokens,
+			result.Usage.CacheCreationInput,
+			result.Usage.CacheReadInput,
+		)
+
 		// Display LLM call metrics.
 		m.appendOutput(formatLLMMetrics(result))
 

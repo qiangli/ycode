@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/session"
+	"github.com/qiangli/ycode/internal/runtime/usage"
 	"github.com/qiangli/ycode/internal/tools"
 )
 
@@ -34,6 +36,10 @@ type App struct {
 	version        string
 	workDir        string
 	userConfigPath string // path to user settings.json for persisting preferences
+
+	// Session tracking for summary reporting.
+	usageTracker *usage.Tracker
+	sessionStart time.Time
 }
 
 // AppOptions holds optional configuration for App creation.
@@ -80,6 +86,8 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		version:        o.Version,
 		workDir:        o.WorkDir,
 		userConfigPath: o.UserConfigPath,
+		usageTracker:   usage.NewTracker(),
+		sessionStart:   time.Now(),
 	}
 
 	// Set up command registry.
@@ -145,6 +153,14 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 			return fmt.Errorf("turn %d: %w", i+1, err)
 		}
 
+		// Track usage from this turn.
+		a.usageTracker.Add(
+			result.Usage.InputTokens,
+			result.Usage.OutputTokens,
+			result.Usage.CacheCreationInput,
+			result.Usage.CacheReadInput,
+		)
+
 		// Show recovery info if compaction occurred
 		if recovery != nil && recovery.RetrySuccessful {
 			fmt.Fprintf(a.stdout, "\n⚠ Context compacted: %d messages summarized, %d recent messages preserved.\n\n",
@@ -175,6 +191,7 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 		// If no tool calls, we're done.
 		if len(result.ToolCalls) == 0 {
 			fmt.Fprintln(a.stdout)
+			a.printSessionSummary()
 			return nil
 		}
 
@@ -218,7 +235,28 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 	}
 
 	fmt.Fprintln(a.stdout)
+	a.printSessionSummary()
 	return nil
+}
+
+// printSessionSummary outputs a summary of the session (time and tokens).
+func (a *App) printSessionSummary() {
+	duration := time.Since(a.sessionStart)
+	summary := a.usageTracker.Summary()
+	fmt.Fprintf(a.stdout, "\nSession Summary: %s | Duration: %s\n", summary, formatDuration(duration))
+}
+
+// formatDuration formats a duration in a human-readable way.
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%.0fms", float64(d)/float64(time.Millisecond))
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	minutes := int(d.Minutes())
+	seconds := int(d.Seconds()) % 60
+	return fmt.Sprintf("%dm%ds", minutes, seconds)
 }
 
 // RunTurn executes a single agentic turn (used by TUI).
@@ -308,5 +346,11 @@ func (a *App) RunInteractive(ctx context.Context) error {
 	m := NewTUIModel(a)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	_, err := p.Run()
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Print session summary after TUI exits.
+	a.printSessionSummary()
+	return nil
 }
