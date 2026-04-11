@@ -6,12 +6,26 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+
+	"github.com/qiangli/ycode/internal/runtime/permission"
 )
+
+// PermissionResolver returns the current permission mode.
+// This is called on every tool invocation to get the live mode.
+type PermissionResolver func() permission.Mode
+
+// PermissionPrompter asks the user whether to allow a tool invocation
+// that requires elevated permissions. Returns true if the user approves.
+type PermissionPrompter func(ctx context.Context, toolName string, requiredMode permission.Mode) (bool, error)
 
 // Registry holds all registered tools and dispatches invocations.
 type Registry struct {
 	mu    sync.RWMutex
 	tools map[string]*ToolSpec
+
+	// Permission enforcement (optional — if nil, all tools are allowed).
+	permResolver PermissionResolver
+	permPrompter PermissionPrompter
 }
 
 // NewRegistry creates a new empty tool registry.
@@ -19,6 +33,20 @@ func NewRegistry() *Registry {
 	return &Registry{
 		tools: make(map[string]*ToolSpec),
 	}
+}
+
+// SetPermissionResolver sets the function that resolves the current permission mode.
+func (r *Registry) SetPermissionResolver(resolver PermissionResolver) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.permResolver = resolver
+}
+
+// SetPermissionPrompter sets the function that prompts the user for permission.
+func (r *Registry) SetPermissionPrompter(prompter PermissionPrompter) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.permPrompter = prompter
 }
 
 // Register adds a tool to the registry.
@@ -41,6 +69,8 @@ func (r *Registry) Get(name string) (*ToolSpec, bool) {
 }
 
 // Invoke executes a tool by name with the given input.
+// It checks permission before execution: if the current mode doesn't allow
+// the tool's RequiredMode, the invocation is denied (or the user is prompted).
 func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessage) (string, error) {
 	spec, ok := r.Get(name)
 	if !ok {
@@ -49,6 +79,34 @@ func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessag
 	if spec.Handler == nil {
 		return "", fmt.Errorf("tool %s has no handler", name)
 	}
+
+	// Check permission if a resolver is configured.
+	r.mu.RLock()
+	resolver := r.permResolver
+	prompter := r.permPrompter
+	r.mu.RUnlock()
+
+	if resolver != nil {
+		currentMode := resolver()
+		if !currentMode.Allows(spec.RequiredMode) {
+			// Current mode doesn't allow this tool. Try prompting the user.
+			if prompter != nil {
+				allowed, err := prompter(ctx, name, spec.RequiredMode)
+				if err != nil {
+					return "", fmt.Errorf("permission prompt for %q: %w", name, err)
+				}
+				if !allowed {
+					return "", fmt.Errorf("permission denied: tool %q requires %s but current mode is %s",
+						name, spec.RequiredMode, currentMode)
+				}
+				// User approved — fall through to execute.
+			} else {
+				return "", fmt.Errorf("permission denied: tool %q requires %s but current mode is %s (plan mode is active — exit plan mode to use write tools)",
+					name, spec.RequiredMode, currentMode)
+			}
+		}
+	}
+
 	return spec.Handler(ctx, input)
 }
 

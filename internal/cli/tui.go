@@ -47,6 +47,15 @@ type TUIModel struct {
 	history      []string // submitted inputs (oldest first)
 	historyIndex int      // -1 = not browsing history, 0+ = index in history
 	inputBuffer  string   // temp storage for current input when browsing history
+
+	// Confirmation dialog state.
+	confirming     bool   // true when waiting for user confirmation
+	confirmPrompt  string // the question being asked
+	confirmYes     func() tea.Cmd
+	confirmNo      func() tea.Cmd
+
+	// Permission prompt state (for tool invocations that need approval).
+	permChan chan bool // non-nil when a tool is waiting for permission approval
 }
 
 // Custom message types.
@@ -115,6 +124,11 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textarea.SetWidth(m.width)
 
 	case tea.KeyMsg:
+		// Handle confirmation dialog input first.
+		if m.confirming {
+			return m.handleConfirmKey(msg)
+		}
+
 		switch {
 		case msg.Type == tea.KeyCtrlC:
 			if m.working && m.workCancel != nil {
@@ -145,6 +159,27 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.textarea.Reset()
 			return m, m.handleInput(text)
 		}
+
+	case permissionRequestMsg:
+		// A tool is requesting elevated permission — show confirmation dialog.
+		m.confirming = true
+		m.confirmPrompt = fmt.Sprintf("Allow tool %q (%s)? (y/n)", msg.ToolName, msg.RequiredMode)
+		m.permChan = msg.ReplyCh
+		m.confirmYes = func() tea.Cmd {
+			if m.permChan != nil {
+				m.permChan <- true
+				m.permChan = nil
+			}
+			return func() tea.Msg { return repaintMsg{} }
+		}
+		m.confirmNo = func() tea.Cmd {
+			if m.permChan != nil {
+				m.permChan <- false
+				m.permChan = nil
+			}
+			return func() tea.Msg { return repaintMsg{} }
+		}
+		return m, nil
 
 	case turnResultMsg:
 		if msg.Err != nil {
@@ -316,6 +351,10 @@ func (m *TUIModel) statusBar() string {
 		modeText = " WORKING "
 		modeStyle = modeStyle.Background(lipgloss.Color("#60a5fa")) // blue
 	}
+	if m.confirming {
+		modeText = " CONFIRM "
+		modeStyle = modeStyle.Background(lipgloss.Color("#f472b6")) // pink
+	}
 	mode := modeStyle.Render(modeText)
 
 	// Model info.
@@ -326,6 +365,9 @@ func (m *TUIModel) statusBar() string {
 
 	// Hints.
 	hintText := " alt+↑↓:history | shift+tab: mode | /help "
+	if m.confirming {
+		hintText = " " + m.confirmPrompt + " "
+	}
 	hintStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#737373"))
 	hint := hintStyle.Render(hintText)
@@ -662,6 +704,8 @@ func formatSessionSummary(tracker *usage.Tracker, startTime time.Time) string {
 }
 
 // toggleMode switches between plan and build mode.
+// Entering plan mode happens immediately. Exiting plan mode (entering build)
+// requires explicit user confirmation (HITL gate).
 func (m *TUIModel) toggleMode() tea.Cmd {
 	if m.app.planMode == nil {
 		return func() tea.Msg {
@@ -669,14 +713,64 @@ func (m *TUIModel) toggleMode() tea.Cmd {
 		}
 	}
 
-	return func() tea.Msg {
-		var result string
-		var err error
-		if m.app.InPlanMode() {
-			result, err = m.app.planMode.ExitPlanMode()
-		} else {
-			result, err = m.app.planMode.EnterPlanMode()
+	if m.app.InPlanMode() {
+		// Exiting plan mode → entering build mode requires confirmation.
+		m.confirming = true
+		m.confirmPrompt = "Switch to BUILD mode? Write tools will be enabled. (y/n)"
+		m.confirmYes = func() tea.Cmd {
+			return func() tea.Msg {
+				result, err := m.app.planMode.ExitPlanMode()
+				return commandOutputMsg{Text: result, Err: err}
+			}
 		}
+		m.confirmNo = func() tea.Cmd {
+			return func() tea.Msg {
+				return commandOutputMsg{Text: "Staying in plan mode."}
+			}
+		}
+		return func() tea.Msg { return repaintMsg{} }
+	}
+
+	// Entering plan mode — no confirmation needed.
+	return func() tea.Msg {
+		result, err := m.app.planMode.EnterPlanMode()
 		return commandOutputMsg{Text: result, Err: err}
 	}
+}
+
+// handleConfirmKey processes key input during a confirmation dialog.
+func (m *TUIModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case msg.Type == tea.KeyCtrlC, msg.Type == tea.KeyEsc:
+		// Cancel = same as "no".
+		m.confirming = false
+		m.appendOutput(fmt.Sprintf("  %s n\n\n", m.confirmPrompt))
+		if m.confirmNo != nil {
+			return m, m.confirmNo()
+		}
+		return m, nil
+
+	case msg.Type == tea.KeyRunes:
+		ch := string(msg.Runes)
+		if ch == "y" || ch == "Y" {
+			m.confirming = false
+			m.appendOutput(fmt.Sprintf("  %s y\n\n", m.confirmPrompt))
+			if m.confirmYes != nil {
+				return m, m.confirmYes()
+			}
+			return m, nil
+		}
+		if ch == "n" || ch == "N" {
+			m.confirming = false
+			m.appendOutput(fmt.Sprintf("  %s n\n\n", m.confirmPrompt))
+			if m.confirmNo != nil {
+				return m, m.confirmNo()
+			}
+			return m, nil
+		}
+		// Ignore other keys.
+		return m, nil
+	}
+
+	return m, nil
 }

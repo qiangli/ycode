@@ -369,6 +369,14 @@ func (a *App) RunInteractive(ctx context.Context) error {
 
 	m := NewTUIModel(a)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
+
+	// Wire TUI-based permission prompter into the tool registry so that
+	// tools requiring elevated permissions can ask the user interactively.
+	if a.toolRegistry != nil {
+		prompter := NewTUIPrompter(p)
+		a.toolRegistry.SetPermissionPrompter(prompter.Prompt)
+	}
+
 	_, err := p.Run()
 	if err != nil {
 		return err

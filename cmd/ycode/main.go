@@ -20,6 +20,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/git"
 	"github.com/qiangli/ycode/internal/runtime/oauth"
+	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/selfheal"
@@ -142,6 +143,20 @@ func newApp() (*cli.App, error) {
 	tools.RegisterNotebookHandler(toolReg)
 	tools.RegisterModeHandlers(toolReg, planMode)
 	tools.RegisterConfigHandler(toolReg, cfg)
+
+	// Wire permission enforcement: resolve current mode from the live
+	// settings.local.json file so that plan mode toggles take effect immediately.
+	localConfigPath := filepath.Join(ycodeDir, "settings.local.json")
+	toolReg.SetPermissionResolver(func() permission.Mode {
+		// Check local override first (plan mode writes here).
+		if val, ok := config.GetLocalConfigField(localConfigPath, "permissionMode"); ok {
+			if s, ok := val.(string); ok {
+				return permission.ParseMode(s)
+			}
+		}
+		// Fall back to in-memory config.
+		return permission.ParseMode(cfg.PermissionMode)
+	})
 
 	// Build project context for system prompt.
 	promptCtx := buildPromptContext(cwd, cfg.Model)
