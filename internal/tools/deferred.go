@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
+
+	"github.com/qiangli/ycode/internal/storage"
 )
 
 // SearchScore represents a tool search result with relevance score.
@@ -49,12 +52,12 @@ func RegisterToolSearchHandler(r *Registry) {
 
 // SearchTools scores and ranks tools against a query.
 func SearchTools(r *Registry, query string, maxResults int) []SearchScore {
-	query = strings.ToLower(query)
-	parts := strings.Fields(query)
+	queryLower := strings.ToLower(query)
+	parts := strings.Fields(queryLower)
 
 	// Handle "select:Name1,Name2" syntax.
-	if strings.HasPrefix(query, "select:") {
-		names := strings.Split(strings.TrimPrefix(query, "select:"), ",")
+	if strings.HasPrefix(queryLower, "select:") {
+		names := strings.Split(strings.TrimPrefix(queryLower, "select:"), ",")
 		var results []SearchScore
 		for _, name := range names {
 			name = strings.TrimSpace(name)
@@ -63,6 +66,14 @@ func SearchTools(r *Registry, query string, maxResults int) []SearchScore {
 			}
 		}
 		return results
+	}
+
+	// Try Bleve-backed search when available.
+	if idx := r.SearchIndex(); idx != nil {
+		if results := idx.Search(r, query, maxResults); len(results) > 0 {
+			return results
+		}
+		// Fall through to keyword matching if Bleve returns nothing.
 	}
 
 	var scores []SearchScore
@@ -79,6 +90,62 @@ func SearchTools(r *Registry, query string, maxResults int) []SearchScore {
 
 	if len(scores) > maxResults {
 		scores = scores[:maxResults]
+	}
+	return scores
+}
+
+const toolSearchIndexName = "tools"
+
+// ToolSearchIndex provides Bleve-backed tool discovery.
+type ToolSearchIndex struct {
+	index storage.SearchIndex
+}
+
+// NewToolSearchIndex creates a Bleve-backed tool search index.
+func NewToolSearchIndex(index storage.SearchIndex) *ToolSearchIndex {
+	return &ToolSearchIndex{index: index}
+}
+
+// IndexTools indexes all registered tools in Bleve for semantic discovery.
+func (t *ToolSearchIndex) IndexTools(registry *Registry) {
+	var docs []storage.Document
+	for _, spec := range registry.All() {
+		docs = append(docs, storage.Document{
+			ID:      spec.Name,
+			Content: spec.Name + " " + spec.Description,
+			Metadata: map[string]string{
+				"name":        spec.Name,
+				"description": spec.Description,
+				"category":    fmt.Sprintf("%d", spec.Category),
+			},
+		})
+	}
+	if len(docs) > 0 {
+		ctx := context.Background()
+		if err := t.index.BatchIndex(ctx, toolSearchIndexName, docs); err != nil {
+			slog.Debug("bleve: index tools", "error", err)
+		}
+	}
+}
+
+// Search finds tools matching a query using Bleve full-text search.
+func (t *ToolSearchIndex) Search(registry *Registry, query string, maxResults int) []SearchScore {
+	ctx := context.Background()
+	results, err := t.index.Search(ctx, toolSearchIndexName, query, maxResults)
+	if err != nil {
+		slog.Debug("bleve: search tools", "error", err)
+		return nil
+	}
+
+	var scores []SearchScore
+	for _, r := range results {
+		name := r.Document.Metadata["name"]
+		if spec, ok := registry.Get(name); ok {
+			scores = append(scores, SearchScore{
+				Spec:  spec,
+				Score: int(r.Score * 10), // Scale Bleve scores to match existing scoring range.
+			})
+		}
 	}
 	return scores
 }

@@ -554,6 +554,11 @@ func truncateSummary(text string, maxChars int) string {
 	return string(runes[:maxChars]) + "…"
 }
 
+// HasCompactedPrefix returns true if the message is a compaction summary prefix.
+func HasCompactedPrefix(msg ConversationMessage) bool {
+	return extractExistingCompactedSummary(msg) != ""
+}
+
 // extractExistingCompactedSummary checks if a message is a compaction summary.
 func extractExistingCompactedSummary(msg ConversationMessage) string {
 	if msg.Role != RoleSystem {

@@ -40,6 +40,9 @@ type Registry struct {
 	// Permission enforcement (optional — if nil, all tools are allowed).
 	permResolver PermissionResolver
 	permPrompter PermissionPrompter
+
+	// Optional Bleve search index for semantic tool discovery.
+	searchIndex *ToolSearchIndex
 }
 
 // NewRegistry creates a new empty tool registry.
@@ -61,6 +64,20 @@ func (r *Registry) SetPermissionPrompter(prompter PermissionPrompter) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.permPrompter = prompter
+}
+
+// SetSearchIndex attaches a Bleve search index for semantic tool discovery.
+func (r *Registry) SetSearchIndex(idx *ToolSearchIndex) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.searchIndex = idx
+}
+
+// SearchIndex returns the attached Bleve search index, if any.
+func (r *Registry) SearchIndex() *ToolSearchIndex {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.searchIndex
 }
 
 // Register adds a tool to the registry.

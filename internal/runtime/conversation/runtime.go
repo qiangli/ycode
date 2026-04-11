@@ -393,6 +393,12 @@ func (r *Runtime) proactiveCompact(sessionMsgs []session.ConversationMessage) *s
 		return nil
 	}
 
+	// Determine which messages will be compacted (for search indexing).
+	compactedPrefixLen := 0
+	if len(sessionMsgs) > 0 && session.HasCompactedPrefix(sessionMsgs[0]) {
+		compactedPrefixLen = 1
+	}
+
 	compactResult := session.Compact(sessionMsgs, r.session.Summary)
 	if compactResult == nil {
 		return nil
@@ -400,6 +406,13 @@ func (r *Runtime) proactiveCompact(sessionMsgs []session.ConversationMessage) *s
 
 	// Update session summary.
 	r.session.Summary = compactResult.Summary
+
+	// Index compacted messages in Bleve for search (best-effort).
+	if indexer := r.session.SearchIndexer(); indexer != nil {
+		keepFrom := len(sessionMsgs) - compactResult.PreservedCount
+		compactedMessages := sessionMsgs[compactedPrefixLen:keepFrom]
+		indexer.IndexCompaction(compactResult, compactedMessages)
+	}
 
 	// Reset differential context baseline — next turn must send full context.
 	r.contextBaseline.Reset()

@@ -25,6 +25,9 @@ type Session struct {
 	Messages  []ConversationMessage `json:"messages"`
 	Dir       string                `json:"-"` // session directory
 	Summary   string                `json:"summary,omitempty"`
+
+	sqlWriter     *SQLWriter     `json:"-"` // optional SQLite dual-writer
+	searchIndexer *SearchIndexer `json:"-"` // optional Bleve indexer
 }
 
 // New creates a new session.
@@ -87,7 +90,16 @@ func (s *Session) AddMessage(msg ConversationMessage) error {
 	}
 
 	s.Messages = append(s.Messages, msg)
-	return s.appendToFile(msg)
+
+	if err := s.appendToFile(msg); err != nil {
+		return err
+	}
+
+	// Best-effort dual-write to SQLite.
+	if s.sqlWriter != nil {
+		s.sqlWriter.WriteMessage(msg)
+	}
+	return nil
 }
 
 // appendToFile writes a single message as a JSONL line.
@@ -132,6 +144,22 @@ func (s *Session) rotate(path string) error {
 
 	// Rotate current file.
 	return os.Rename(path, fmt.Sprintf("%s.1", path))
+}
+
+// SetSQLWriter attaches a SQLite dual-writer for session persistence.
+// The writer is best-effort: JSONL remains the primary persistence layer.
+func (s *Session) SetSQLWriter(w *SQLWriter) {
+	s.sqlWriter = w
+}
+
+// SetSearchIndexer attaches a Bleve indexer for session search.
+func (s *Session) SetSearchIndexer(idx *SearchIndexer) {
+	s.searchIndexer = idx
+}
+
+// SearchIndexer returns the attached search indexer, if any.
+func (s *Session) SearchIndexer() *SearchIndexer {
+	return s.searchIndexer
 }
 
 // MessageCount returns the number of messages in the session.

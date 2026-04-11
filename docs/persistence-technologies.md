@@ -816,12 +816,13 @@ Total additional binary size: ~45MB (dominated by SQLite transpilation and Bleve
 
 ### 9. Implementation Status
 
-The storage layer is **implemented** in `internal/storage/` with the following package layout:
+The storage layer is **implemented** in `internal/storage/` with full integration into the application:
 
 ```
 internal/storage/
 ├── storage.go          # Core interfaces: KVStore, SQLStore, VectorStore, SearchIndex
 ├── manager.go          # StorageManager with progressive Phase 1/2/3 init
+├── eviction.go         # Background prompt cache TTL eviction
 ├── manager_test.go     # Manager tests (mocked backends)
 ├── kv/
 │   ├── kv.go           # bbolt-backed KV store
@@ -835,9 +836,29 @@ internal/storage/
 └── vector/
     ├── vector.go       # chromem-go vector store (persistent, GZIP GOB)
     └── vector_test.go  # Add, query by text/embedding, delete tests
+
+internal/runtime/
+├── config/cache.go         # bbolt-backed config cache with fingerprinting
+├── embedding/
+│   ├── embedding.go        # Embedding provider interface + hash provider
+│   ├── api.go              # OpenAI-compatible API embedding provider
+│   └── embedder.go         # Background embedder for code, memory, sessions, docs
+├── indexer/indexer.go       # Background Bleve codebase indexer
+├── memory/
+│   ├── bleveindex.go       # Bleve-backed full-text memory search
+│   └── vectorindex.go      # Vector-backed semantic memory search
+├── permission/cache.go     # bbolt-backed permission policy + approval cache
+├── session/
+│   ├── sqlwriter.go        # SQLite dual-writer for session persistence
+│   ├── indexer.go          # JSONL→SQLite session indexer
+│   └── searchindex.go      # Bleve indexer for session compaction
+
+internal/tools/
+├── metrics.go              # Tool usage metrics recording to SQLite
+└── semantic.go             # Semantic code search tool (vector-backed)
 ```
 
-All tests pass with `go test -race ./internal/storage/...`.
+All tests pass with `go test -race ./...`.
 
 ### 10. Implementation TODO Checklist
 
@@ -853,41 +874,41 @@ All tests pass with `go test -race ./internal/storage/...`.
 - [x] Write unit tests for all backends
 - [x] Full project `go vet` and `go test -race` passing
 
-#### Phase 2: Integration (TODO)
+#### Phase 2: Integration (DONE)
 
-- [ ] Wire `StorageManager` into `cmd/ycode/main.go` initialization
-- [ ] Add `StorageManager` to `RuntimeContext` struct
-- [ ] Dual-write session metadata to JSONL + SQLite
-- [ ] Index existing JSONL sessions into SQLite on first run
-- [ ] Replace in-memory config cache with bbolt-backed cache
-- [ ] Replace in-memory permission cache with bbolt-backed cache
-- [ ] Add prompt cache table TTL eviction (background goroutine)
-- [ ] Add tool usage metrics recording to SQLite
+- [x] Wire `StorageManager` into `cmd/ycode/main.go` initialization
+- [x] Add `StorageManager` to `App` struct and `AppOptions`
+- [x] Dual-write session metadata to JSONL + SQLite
+- [x] Index existing JSONL sessions into SQLite on first run
+- [x] Replace in-memory config cache with bbolt-backed cache
+- [x] Replace in-memory permission cache with bbolt-backed cache
+- [x] Add prompt cache table TTL eviction (background goroutine)
+- [x] Add tool usage metrics recording to SQLite
 
-#### Phase 3: Search Integration (TODO)
+#### Phase 3: Search Integration (DONE)
 
-- [ ] Wire Bleve into `Grep` tool for natural-language fallback
-- [ ] Wire Bleve into `ToolSearch` deferred tool discovery
-- [ ] Background codebase indexer (watches file changes)
-- [ ] Index memory entries into Bleve on save
-- [ ] Index session messages into Bleve on compaction
-- [ ] Replace `memory.Search()` keyword matching with Bleve
+- [x] Wire Bleve into `Grep` tool for natural-language fallback
+- [x] Wire Bleve into `ToolSearch` deferred tool discovery
+- [x] Background codebase indexer (watches file changes)
+- [x] Index memory entries into Bleve on save
+- [x] Index session messages into Bleve on compaction
+- [x] Replace `memory.Search()` keyword matching with Bleve
 
-#### Phase 4: Vector Integration (TODO)
+#### Phase 4: Vector Integration (DONE)
 
-- [ ] Define embedding provider interface (pluggable: LLM API or local model)
-- [ ] Wire vector store into memory `Recall()` for semantic similarity
-- [ ] Background embedder for code chunks (function/class level)
-- [ ] Background embedder for memory entries
-- [ ] Background embedder for session summaries
-- [ ] Add semantic code search tool (complement to grep/glob)
-- [ ] Add vector-enhanced documentation retrieval
+- [x] Define embedding provider interface (pluggable: LLM API or local model)
+- [x] Wire vector store into memory `Recall()` for semantic similarity
+- [x] Background embedder for code chunks (function/class level)
+- [x] Background embedder for memory entries
+- [x] Background embedder for session summaries
+- [x] Add semantic code search tool (complement to grep/glob)
+- [x] Add vector-enhanced documentation retrieval
 
-#### Phase 5: Optimization (TODO)
+#### Phase 5: Optimization (PARTIAL)
 
 - [ ] Benchmark storage backends under realistic workloads
 - [ ] Add SQLite connection pooling tuning
 - [ ] Add Bleve index compaction scheduling
 - [ ] Add chromem-go persistence tuning (compression level, flush interval)
 - [ ] Monitor binary size impact and consider build tags for optional backends
-- [ ] Add storage health check to `/status` or diagnostic output
+- [x] Add storage health check to `doctor` diagnostic output

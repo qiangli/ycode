@@ -11,6 +11,9 @@ type Manager struct {
 	projectStore *Store
 	globalStore  *Store // may be nil if no global dir configured
 	index        *Index // project-level index
+
+	bleveSearcher  *BleveSearcher  // optional Bleve full-text search
+	vectorSearcher *VectorSearcher // optional vector semantic search
 }
 
 // NewManager creates a new memory manager with a project-scoped store.
@@ -48,6 +51,16 @@ func NewManagerWithGlobal(globalDir, projectDir string) (*Manager, error) {
 	}, nil
 }
 
+// SetBleveSearcher attaches a Bleve-backed searcher for full-text memory search.
+func (m *Manager) SetBleveSearcher(b *BleveSearcher) {
+	m.bleveSearcher = b
+}
+
+// SetVectorSearcher attaches a vector-based searcher for semantic memory search.
+func (m *Manager) SetVectorSearcher(v *VectorSearcher) {
+	m.vectorSearcher = v
+}
+
 // Save persists a memory to the appropriate store based on scope.
 func (m *Manager) Save(mem *Memory) error {
 	store := m.storeForScope(mem.EffectiveScope())
@@ -58,6 +71,11 @@ func (m *Manager) Save(mem *Memory) error {
 	filename := filepath.Base(mem.FilePath)
 	if err := m.index.AddEntry(mem.Name, filename, mem.Description); err != nil {
 		return fmt.Errorf("update index: %w", err)
+	}
+
+	// Index in Bleve for full-text search.
+	if m.bleveSearcher != nil {
+		m.bleveSearcher.IndexMemory(mem)
 	}
 
 	return nil
@@ -71,7 +89,48 @@ func (m *Manager) Recall(query string, maxResults int) ([]SearchResult, error) {
 		return nil, fmt.Errorf("list memories: %w", err)
 	}
 
-	results := Search(memories, query, maxResults*2) // over-fetch then re-rank
+	// Build a name→memory lookup for enriching search results.
+	memByName := make(map[string]*Memory, len(memories))
+	for _, mem := range memories {
+		memByName[mem.Name] = mem
+	}
+
+	// Collect results from all available search backends.
+	var results []SearchResult
+	seen := make(map[string]bool)
+
+	// Vector search (semantic similarity).
+	if m.vectorSearcher != nil {
+		vectorResults := m.vectorSearcher.Search(query, maxResults)
+		for _, r := range vectorResults {
+			if !seen[r.Memory.Name] {
+				seen[r.Memory.Name] = true
+				if full, ok := memByName[r.Memory.Name]; ok {
+					r.Memory = full
+				}
+				results = append(results, r)
+			}
+		}
+	}
+
+	// Bleve search (full-text keyword matching).
+	if m.bleveSearcher != nil {
+		bleveResults := m.bleveSearcher.Search(query, maxResults*2)
+		for _, r := range bleveResults {
+			if !seen[r.Memory.Name] {
+				seen[r.Memory.Name] = true
+				if full, ok := memByName[r.Memory.Name]; ok {
+					r.Memory = full
+				}
+				results = append(results, r)
+			}
+		}
+	}
+
+	// Fall back to keyword matching if no search backends are available.
+	if m.vectorSearcher == nil && m.bleveSearcher == nil {
+		results = Search(memories, query, maxResults*2)
+	}
 
 	// Apply decay scoring and scope boost.
 	for i := range results {
@@ -108,6 +167,9 @@ func (m *Manager) Forget(name string) error {
 			filename := filepath.Base(mem.FilePath)
 			if err := store.Delete(mem.FilePath); err != nil {
 				return fmt.Errorf("delete memory: %w", err)
+			}
+			if m.bleveSearcher != nil {
+				m.bleveSearcher.RemoveMemory(name)
 			}
 			return m.index.RemoveEntry(filename)
 		}

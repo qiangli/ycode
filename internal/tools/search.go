@@ -8,7 +8,18 @@ import (
 
 	"github.com/qiangli/ycode/internal/runtime/fileops"
 	"github.com/qiangli/ycode/internal/runtime/vfs"
+	"github.com/qiangli/ycode/internal/storage"
 )
+
+// codeSearchIndex is an optional Bleve index for natural-language code search fallback.
+var codeSearchIndex storage.SearchIndex
+
+const codeIndexName = "code"
+
+// SetCodeSearchIndex sets the Bleve index used for natural-language grep fallback.
+func SetCodeSearchIndex(idx storage.SearchIndex) {
+	codeSearchIndex = idx
+}
 
 // RegisterSearchHandlers registers glob and grep tool handlers with VFS path validation.
 func RegisterSearchHandlers(r *Registry, v *vfs.VFS) {
@@ -56,6 +67,24 @@ func RegisterSearchHandlers(r *Registry, v *vfs.VFS) {
 			result, err := fileops.GrepSearch(params)
 			if err != nil {
 				return "", err
+			}
+
+			// If ripgrep found no results and Bleve is available, try full-text search.
+			noMatches := len(result.Files) == 0 && len(result.Matches) == 0
+			if noMatches && codeSearchIndex != nil {
+				maxResults := 20
+				bleveResults, bleveErr := codeSearchIndex.Search(ctx, codeIndexName, params.Pattern, maxResults)
+				if bleveErr == nil && len(bleveResults) > 0 {
+					var lines []string
+					for _, r := range bleveResults {
+						path := r.Document.Metadata["path"]
+						if path == "" {
+							path = r.Document.ID
+						}
+						lines = append(lines, path)
+					}
+					return fmt.Sprintf("No regex matches. Full-text search results:\n%s", strings.Join(lines, "\n")), nil
+				}
 			}
 
 			switch params.OutputMode {

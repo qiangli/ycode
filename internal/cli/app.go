@@ -18,6 +18,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/runtime/usage"
+	"github.com/qiangli/ycode/internal/storage"
 	"github.com/qiangli/ycode/internal/tools"
 )
 
@@ -38,6 +39,9 @@ type App struct {
 	workDir        string
 	userConfigPath string // path to user settings.json for persisting preferences
 
+	// Storage manager for persistence layer.
+	storage *storage.Manager
+
 	// Session tracking for summary reporting.
 	usageTracker *usage.Tracker
 	sessionStart time.Time
@@ -54,6 +58,7 @@ type AppOptions struct {
 	ToolRegistry   *tools.Registry
 	PromptCtx      *prompt.ProjectContext
 	UserConfigPath string
+	Storage        *storage.Manager
 }
 
 // NewApp creates a new app instance.
@@ -87,6 +92,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		version:        o.Version,
 		workDir:        o.WorkDir,
 		userConfigPath: o.UserConfigPath,
+		storage:        o.Storage,
 		usageTracker:   usage.NewTracker(),
 		sessionStart:   time.Now(),
 	}
@@ -393,5 +399,18 @@ func (a *App) RunInteractive(ctx context.Context) error {
 
 	// Print session summary after TUI exits.
 	a.printSessionSummary()
+
+	// Close storage backends.
+	if a.storage != nil {
+		a.storage.Close()
+	}
+	return nil
+}
+
+// Close shuts down the application and releases resources.
+func (a *App) Close() error {
+	if a.storage != nil {
+		return a.storage.Close()
+	}
 	return nil
 }

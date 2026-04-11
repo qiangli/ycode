@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -18,13 +19,21 @@ import (
 	"github.com/qiangli/ycode/internal/cli"
 	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/runtime/config"
+	"github.com/qiangli/ycode/internal/runtime/embedding"
 	"github.com/qiangli/ycode/internal/runtime/git"
+	"github.com/qiangli/ycode/internal/runtime/indexer"
+	"github.com/qiangli/ycode/internal/runtime/memory"
 	"github.com/qiangli/ycode/internal/runtime/oauth"
 	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/vfs"
 	"github.com/qiangli/ycode/internal/selfheal"
+	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/internal/storage/kv"
+	"github.com/qiangli/ycode/internal/storage/search"
+	sqlstore "github.com/qiangli/ycode/internal/storage/sqlite"
+	"github.com/qiangli/ycode/internal/storage/vector"
 	"github.com/qiangli/ycode/internal/tools"
 )
 
@@ -112,6 +121,41 @@ func newApp() (*cli.App, error) {
 	}
 	provider := api.NewProvider(providerCfg)
 
+	// Initialize storage manager (Phase 1: KV store is instant).
+	storageDataDir := filepath.Join(home, ".ycode", "projects", "data")
+	storageMgr, err := storage.NewManager(context.Background(), storage.Config{
+		DataDir: storageDataDir,
+		KVFactory: func(ctx context.Context) (storage.KVStore, error) {
+			return kv.Open(storageDataDir)
+		},
+		SQLFactory: func(ctx context.Context) (storage.SQLStore, error) {
+			return sqlstore.Open(storageDataDir)
+		},
+		VectorFactory: func(ctx context.Context) (storage.VectorStore, error) {
+			return vector.Open(storageDataDir)
+		},
+		SearchFactory: func(ctx context.Context) (storage.SearchIndex, error) {
+			return search.Open(storageDataDir)
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("init storage: %w", err)
+	}
+
+	// Start background storage initialization (Phase 2: SQLite, Phase 3: vector/search).
+	storageMgr.StartBackground(context.Background())
+
+	// Cache merged config in bbolt for cross-process access and stale detection.
+	if kvStore := storageMgr.KV(); kvStore != nil {
+		configPaths := []string{
+			filepath.Join(userDir, "settings.json"),
+			filepath.Join(projectDir, "settings.json"),
+			filepath.Join(projectDir, "settings.local.json"),
+		}
+		configCache := config.NewCache(kvStore, configPaths)
+		configCache.Store(cfg)
+	}
+
 	// Create session.
 	sessionDir := cfg.SessionDir
 	if sessionDir == "" {
@@ -122,6 +166,9 @@ func newApp() (*cli.App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}
+
+	// Start background prompt cache eviction (waits for SQL to be ready).
+	go storageMgr.StartEviction(context.Background())
 
 	// Memory directory for persistent memories.
 	memoryDir := filepath.Join(home, ".ycode", "projects", "memory")
@@ -153,6 +200,7 @@ func newApp() (*cli.App, error) {
 	tools.RegisterNotebookHandler(toolReg)
 	tools.RegisterModeHandlers(toolReg, planMode)
 	tools.RegisterConfigHandler(toolReg, cfg)
+	tools.RegisterSemanticSearchHandler(toolReg)
 
 	// Wire permission enforcement: resolve current mode from the live
 	// settings.local.json file so that plan mode toggles take effect immediately.
@@ -173,9 +221,115 @@ func newApp() (*cli.App, error) {
 		return permission.ParseMode(cfg.PermissionMode)
 	})
 
+	// Persist permission policy in bbolt for cross-session approval history.
+	if kvStore := storageMgr.KV(); kvStore != nil {
+		permCache := permission.NewCache(kvStore)
+		permCache.StorePolicy(permission.NewPolicy(permission.ParseMode(cfg.PermissionMode)))
+	}
+
+	// Wire Bleve search index and background codebase indexer once search backend is ready.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		searchStore := storageMgr.Search(ctx)
+		if searchStore == nil {
+			return
+		}
+
+		// Index tool descriptions for semantic ToolSearch.
+		toolIdx := tools.NewToolSearchIndex(searchStore)
+		toolIdx.IndexTools(toolReg)
+		toolReg.SetSearchIndex(toolIdx)
+
+		// Set up Bleve fallback for Grep tool.
+		tools.SetCodeSearchIndex(searchStore)
+
+		// Attach session search indexer for compaction indexing.
+		sessIndexer := session.NewSearchIndexer(searchStore, sess.ID)
+		sess.SetSearchIndexer(sessIndexer)
+
+		// Start background codebase indexer.
+		codeIndexer := indexer.New(cwd, searchStore, storageMgr.KV())
+		go codeIndexer.Run(context.Background())
+	}()
+
+	// Attach SQLite dual-writer, index sessions, and start metrics once SQL is ready.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		sqlStore := storageMgr.SQL(ctx)
+		if sqlStore == nil {
+			return
+		}
+
+		// Attach dual-writer for current session.
+		w := session.NewSQLWriter(sqlStore, sess.ID)
+		w.EnsureSession(cfg.Model)
+		sess.SetSQLWriter(w)
+
+		// Apply tool usage metrics middleware.
+		metrics := tools.NewMetricsRecorder(sqlStore, sess.ID)
+		metrics.ApplyToRegistry(toolReg)
+
+		// Index any existing JSONL sessions not yet in SQLite.
+		indexer := session.NewIndexer(sqlStore, sessionDir)
+		if n, err := indexer.IndexAll(ctx); err != nil {
+			slog.Debug("session indexer", "error", err)
+		} else if n > 0 {
+			slog.Debug("session indexer", "indexed", n)
+		}
+	}()
+
 	// Build project context for system prompt.
 	promptCtx := buildPromptContext(cwd, cfg.Model)
 	promptCtx.AllowedDirs = v.AllowedDirs()
+
+	// Wire vector store and background embedder once vector backend is ready.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		vectorStore := storageMgr.Vector(ctx)
+		if vectorStore == nil {
+			return
+		}
+
+		// Detect embedding provider.
+		embProvider := embedding.DetectProvider()
+
+		// Wire vector store into semantic search tool.
+		tools.SetVectorStore(vectorStore)
+
+		// Set up memory vector searcher.
+		_ = memory.NewVectorSearcher(vectorStore)
+
+		// Start background code embedding and doc indexing.
+		embedder := embedding.New(embProvider, vectorStore, storageMgr.KV(), cwd)
+
+		// Embed documentation files (CLAUDE.md, README, etc.).
+		go func() {
+			embedCtx := context.Background()
+			for _, cf := range promptCtx.ContextFiles {
+				if cf.Content != "" {
+					relPath := cf.Path
+					if rel, err := filepath.Rel(cwd, cf.Path); err == nil {
+						relPath = rel
+					}
+					if err := embedder.EmbedDocFile(embedCtx, relPath, cf.Content); err != nil {
+						slog.Debug("embedder: doc file", "path", relPath, "error", err)
+					}
+				}
+			}
+		}()
+
+		// Embed code files.
+		go func() {
+			if n, err := embedder.RunCodeEmbedding(context.Background()); err != nil {
+				slog.Debug("embedder: code pass", "error", err)
+			} else if n > 0 {
+				slog.Debug("embedder: code pass", "embedded", n)
+			}
+		}()
+	}()
 
 	return cli.NewApp(cfg, provider, sess, cli.AppOptions{
 		WorkDir:      cwd,
@@ -191,6 +345,7 @@ func newApp() (*cli.App, error) {
 		ToolRegistry:   toolReg,
 		PromptCtx:      promptCtx,
 		UserConfigPath: filepath.Join(userDir, "settings.json"),
+		Storage:        storageMgr,
 	})
 }
 
@@ -430,6 +585,37 @@ var doctorCmd = &cobra.Command{
 					return dir + " exists", true
 				}
 				return dir + " (will be created on first use)", true
+			}},
+			{"Storage backends", func() (string, bool) {
+				home, _ := os.UserHomeDir()
+				dataDir := filepath.Join(home, ".ycode", "projects", "data")
+
+				var parts []string
+				// Check KV store.
+				kvPath := filepath.Join(dataDir, "ycode.kv")
+				if _, err := os.Stat(kvPath); err == nil {
+					parts = append(parts, "KV(ok)")
+				} else {
+					parts = append(parts, "KV(not initialized)")
+				}
+				// Check SQLite.
+				dbPath := filepath.Join(dataDir, "ycode.db")
+				if _, err := os.Stat(dbPath); err == nil {
+					parts = append(parts, "SQLite(ok)")
+				} else {
+					parts = append(parts, "SQLite(not initialized)")
+				}
+				// Check vector store.
+				vecPath := filepath.Join(dataDir, "vectors")
+				if _, err := os.Stat(vecPath); err == nil {
+					parts = append(parts, "Vector(ok)")
+				} else {
+					parts = append(parts, "Vector(not initialized)")
+				}
+
+				msg := strings.Join(parts, ", ")
+				allOk := !strings.Contains(msg, "not initialized")
+				return msg, allOk
 			}},
 			{"Git", func() (string, bool) {
 				if _, err := exec.LookPath("git"); err != nil {
