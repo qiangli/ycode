@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ycode Observability</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #333; }
+    h1 { border-bottom: 2px solid #0066cc; padding-bottom: 10px; }
+    a { color: #0066cc; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    li { margin: 12px 0; }
+    .desc { color: #666; font-size: 0.9em; }
+    footer { margin-top: 40px; padding-top: 10px; border-top: 1px solid #ddd; color: #999; font-size: 0.85em; }
+  </style>
+</head>
+<body>
+  <h1>ycode Observability Stack</h1>
+  <ul>
+    <li><a href="/prometheus/">Prometheus</a> <span class="desc">— Metrics database and query engine</span></li>
+    <li><a href="/alerts/">Alertmanager</a> <span class="desc">— Alert routing and silencing</span></li>
+    <li><a href="/karma/">Karma</a> <span class="desc">— Alert dashboard</span></li>
+    <li><a href="/dashboard/">Perses</a> <span class="desc">— Dashboards and visualization</span></li>
+    <li><a href="/logs/">VictoriaLogs</a> <span class="desc">— Log storage and search</span></li>
+    <li><a href="/collector/">Collector</a> <span class="desc">— OpenTelemetry Collector health</span></li>
+  </ul>
+  <p><a href="/healthz">/healthz</a> — Aggregated health check</p>
+  <footer>Powered by ycode</footer>
+</body>
+</html>

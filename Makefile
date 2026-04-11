@@ -3,7 +3,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 PACKAGES := $(shell go list ./... | grep -v '/priorart/')
 
-.PHONY: help init sync build test vet tidy clean all cross
+.PHONY: help init sync build test vet tidy clean all cross collector
 
 .DEFAULT_GOAL := help
 
@@ -50,5 +50,8 @@ dist/ycode-darwin-arm64:
 
 dist/ycode-windows-amd64.exe:
 	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $@ ./cmd/ycode/
+
+collector: ## Build minimal OTEL collector via OCB (requires ocb installed)
+	ocb --config configs/otelcol/builder-config.yaml --output-path bin/otelcol
 
 all: vet test build ## Run vet, test, and build

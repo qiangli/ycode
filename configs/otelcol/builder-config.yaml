@@ -1,0 +1,21 @@
+# OpenTelemetry Collector Builder (ocb) manifest for a minimal ycode-specific collector.
+# Build with: ocb --config configs/otelcol/builder-config.yaml --output-path bin/otelcol
+dist:
+  name: otelcol-ycode
+  description: Minimal OTEL Collector for ycode observability
+  output_path: ./bin/otelcol
+
+receivers:
+  - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.115.0
+
+processors:
+  - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.115.0
+  - gomod: go.opentelemetry.io/collector/processor/memorylimiterprocessor v0.115.0
+
+exporters:
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusexporter v0.115.0
+  - gomod: go.opentelemetry.io/collector/exporter/otlphttpexporter v0.115.0
+  - gomod: go.opentelemetry.io/collector/exporter/debugexporter v0.115.0
+
+extensions:
+  - gomod: go.opentelemetry.io/collector/extension/healthcheckextension v0.115.0

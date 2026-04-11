@@ -43,8 +43,55 @@ type Config struct {
 	// Provider capability overrides (e.g., force caching on/off).
 	ProviderCapabilities *ProviderCapabilitiesConfig `json:"providerCapabilities,omitempty"`
 
+	// Observability settings (OTEL + Prometheus stack)
+	Observability *ObservabilityConfig `json:"observability,omitempty"`
+
 	// Custom settings (arbitrary key-value pairs from plugins/MCP)
 	Custom map[string]any `json:"custom,omitempty"`
+}
+
+// ObservabilityConfig controls OTEL instrumentation and the built-in Prometheus stack.
+type ObservabilityConfig struct {
+	// OTEL SDK
+	Enabled       bool    `json:"enabled"`       // master switch, default false
+	CollectorAddr string  `json:"collectorAddr"` // default "127.0.0.1:4317"
+	SampleRate    float64 `json:"sampleRate"`    // default 1.0
+
+	// Built-in stack
+	StackEnabled  bool   `json:"stackEnabled"`  // auto-start obs stack with ycode
+	ProxyPort     int    `json:"proxyPort"`     // reverse proxy port, default 58080
+	ProxyBindAddr string `json:"proxyBindAddr"` // default "127.0.0.1"
+
+	// Remote gateway
+	RemoteWrite []RemoteWriteTarget `json:"remoteWrite,omitempty"`
+	Federation  []FederationTarget  `json:"federation,omitempty"`
+
+	// Local persistence under DataDir
+	DataDir          string `json:"dataDir"`          // default "~/.ycode/otel"
+	LogRetentionDays int    `json:"logRetentionDays"` // default 3
+	LogConversations bool   `json:"logConversations"` // log full conversations, default true when enabled
+	LogToolDetails   bool   `json:"logToolDetails"`   // log full tool input/output, default true
+	PersistTraces    bool   `json:"persistTraces"`    // write traces to disk, default true when enabled
+	PersistMetrics   bool   `json:"persistMetrics"`   // write metrics to disk, default true when enabled
+}
+
+// RemoteWriteTarget configures a Prometheus remote-write endpoint.
+type RemoteWriteTarget struct {
+	URL       string            `json:"url"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	BasicAuth *BasicAuth        `json:"basicAuth,omitempty"`
+}
+
+// BasicAuth holds username/password for remote-write authentication.
+type BasicAuth struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// FederationTarget configures a Prometheus federation upstream.
+type FederationTarget struct {
+	URL   string   `json:"url"`
+	Match []string `json:"match"` // metric selectors
 }
 
 // ProviderCapabilitiesConfig lets users override auto-detected provider capabilities.
@@ -182,6 +229,54 @@ func mergeFromFile(cfg *Config, path string) error {
 	}
 	if overlay.ProviderCapabilities != nil {
 		cfg.ProviderCapabilities = overlay.ProviderCapabilities
+	}
+	if overlay.Observability != nil {
+		if cfg.Observability == nil {
+			cfg.Observability = &ObservabilityConfig{}
+		}
+		o := overlay.Observability
+		if o.Enabled {
+			cfg.Observability.Enabled = true
+		}
+		if o.CollectorAddr != "" {
+			cfg.Observability.CollectorAddr = o.CollectorAddr
+		}
+		if o.SampleRate != 0 {
+			cfg.Observability.SampleRate = o.SampleRate
+		}
+		if o.StackEnabled {
+			cfg.Observability.StackEnabled = true
+		}
+		if o.ProxyPort != 0 {
+			cfg.Observability.ProxyPort = o.ProxyPort
+		}
+		if o.ProxyBindAddr != "" {
+			cfg.Observability.ProxyBindAddr = o.ProxyBindAddr
+		}
+		if len(o.RemoteWrite) > 0 {
+			cfg.Observability.RemoteWrite = o.RemoteWrite
+		}
+		if len(o.Federation) > 0 {
+			cfg.Observability.Federation = o.Federation
+		}
+		if o.DataDir != "" {
+			cfg.Observability.DataDir = o.DataDir
+		}
+		if o.LogRetentionDays != 0 {
+			cfg.Observability.LogRetentionDays = o.LogRetentionDays
+		}
+		if o.LogConversations {
+			cfg.Observability.LogConversations = true
+		}
+		if o.LogToolDetails {
+			cfg.Observability.LogToolDetails = true
+		}
+		if o.PersistTraces {
+			cfg.Observability.PersistTraces = true
+		}
+		if o.PersistMetrics {
+			cfg.Observability.PersistMetrics = true
+		}
 	}
 	if overlay.Custom != nil {
 		if cfg.Custom == nil {

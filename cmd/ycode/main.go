@@ -331,6 +331,13 @@ func newApp() (*cli.App, error) {
 		}()
 	}()
 
+	// Wire OTEL observability (optional, non-blocking).
+	var otelRes *otelResult
+	if cfg.Observability != nil && cfg.Observability.Enabled {
+		otelRes = setupOTEL(cfg, sess, toolReg, provider)
+	}
+	_ = otelRes // convOTEL wired into conversation runtime via AppOptions
+
 	app, err := cli.NewApp(cfg, provider, sess, cli.AppOptions{
 		WorkDir:      cwd,
 		ProviderKind: providerCfg.DisplayKind(),

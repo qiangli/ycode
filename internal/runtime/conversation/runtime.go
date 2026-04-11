@@ -31,6 +31,9 @@ type Runtime struct {
 
 	// Optional LLM-based summarizer for compaction. If nil, heuristic is used.
 	llmSummarizer *session.LLMSummarizer
+
+	// Optional OTEL instrumentation.
+	otel *OTELConfig
 }
 
 // NewRuntime creates a new conversation runtime.

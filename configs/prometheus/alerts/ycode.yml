@@ -1,0 +1,64 @@
+groups:
+  - name: ycode
+    rules:
+      - alert: YcodeAPIErrorRate
+        expr: |
+          rate(ycode_llm_call_total{success="false"}[5m])
+          / rate(ycode_llm_call_total[5m]) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ycode LLM API error rate above 10%"
+          description: "{{ $labels.model }} error rate is {{ $value | humanizePercentage }}"
+
+      - alert: YcodeAPILatencyP99
+        expr: |
+          histogram_quantile(0.99, rate(ycode_llm_call_duration_bucket[5m])) > 30000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ycode LLM API p99 latency above 30s"
+          description: "{{ $labels.model }} p99 latency is {{ $value | humanizeDuration }}"
+
+      - alert: YcodeToolFailureRate
+        expr: |
+          rate(ycode_tool_call_total{success="false"}[5m])
+          / rate(ycode_tool_call_total[5m]) > 0.25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ycode tool failure rate above 25%"
+          description: "Tool {{ $labels.tool_name }} failure rate is {{ $value | humanizePercentage }}"
+
+      - alert: YcodeTokenBudgetExhausted
+        expr: |
+          ycode_llm_context_window_used > 0.90 * 200000
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ycode context window > 90% full"
+          description: "Context window has {{ $value }} tokens used"
+
+      - alert: YcodeCostThreshold
+        expr: |
+          rate(ycode_llm_cost_dollars_total[1h]) * 24 > 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ycode estimated daily cost exceeds $10"
+          description: "Projected daily cost: ${{ $value | printf \"%.2f\" }}"
+
+      - alert: YcodeCompactionFrequency
+        expr: |
+          increase(ycode_compaction_total[1h]) > 3
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: "ycode compaction triggered frequently"
+          description: "{{ $value }} compactions in the last hour (possible prompt bloat)"
