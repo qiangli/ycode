@@ -1,0 +1,36 @@
+{
+  "description": "LLM returns a tool_use call to save feedback about testing approach",
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "content": [{"type": "text", "text": "Don't mock the database in tests, use real connections"}]
+      }
+    ]
+  },
+  "response": {
+    "id": "msg_fixture_save_feedback",
+    "type": "message",
+    "role": "assistant",
+    "model": "mock-model",
+    "stop_reason": "tool_use",
+    "content": [
+      {
+        "type": "text",
+        "text": "I'll remember that testing preference."
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_04save_feedback",
+        "name": "memory_save",
+        "input": {
+          "name": "feedback-no-db-mocks",
+          "description": "Don't mock the database in integration tests",
+          "type": "feedback",
+          "content": "Integration tests must use real database connections, not mocks.\n**Why:** Prior incident where mock/prod divergence masked a broken migration.\n**How to apply:** Use testcontainers or t.TempDir() for SQLite in tests."
+        }
+      }
+    ],
+    "usage": {"input_tokens": 45, "output_tokens": 35}
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "description": "LLM returns a tool_use call to forget a memory",
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "content": [{"type": "text", "text": "Forget my coding preferences"}]
+      }
+    ]
+  },
+  "response": {
+    "id": "msg_fixture_forget",
+    "type": "message",
+    "role": "assistant",
+    "model": "mock-model",
+    "stop_reason": "tool_use",
+    "content": [
+      {
+        "type": "text",
+        "text": "I'll remove that memory."
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_03forget",
+        "name": "memory_forget",
+        "input": {
+          "name": "user-coding-prefs"
+        }
+      }
+    ],
+    "usage": {"input_tokens": 30, "output_tokens": 20}
+  }
+}

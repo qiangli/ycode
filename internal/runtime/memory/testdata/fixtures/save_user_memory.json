@@ -1,0 +1,36 @@
+{
+  "description": "LLM returns a tool_use call to save a user preference memory",
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "content": [{"type": "text", "text": "I prefer tabs over spaces and always use Go 1.25+"}]
+      }
+    ]
+  },
+  "response": {
+    "id": "msg_fixture_save_user",
+    "type": "message",
+    "role": "assistant",
+    "model": "mock-model",
+    "stop_reason": "tool_use",
+    "content": [
+      {
+        "type": "text",
+        "text": "I'll save that preference to memory."
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_01save",
+        "name": "memory_save",
+        "input": {
+          "name": "user-coding-prefs",
+          "description": "User coding style preferences",
+          "type": "user",
+          "content": "Prefers tabs over spaces. Always uses Go 1.25+."
+        }
+      }
+    ],
+    "usage": {"input_tokens": 50, "output_tokens": 30}
+  }
+}

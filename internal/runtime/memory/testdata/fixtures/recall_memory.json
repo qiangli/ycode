@@ -1,0 +1,34 @@
+{
+  "description": "LLM returns a tool_use call to recall memories about coding preferences",
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "content": [{"type": "text", "text": "What are my coding preferences?"}]
+      }
+    ]
+  },
+  "response": {
+    "id": "msg_fixture_recall",
+    "type": "message",
+    "role": "assistant",
+    "model": "mock-model",
+    "stop_reason": "tool_use",
+    "content": [
+      {
+        "type": "text",
+        "text": "Let me check my memory for your preferences."
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_02recall",
+        "name": "memory_recall",
+        "input": {
+          "query": "coding preferences",
+          "max_results": 5
+        }
+      }
+    ],
+    "usage": {"input_tokens": 40, "output_tokens": 25}
+  }
+}
