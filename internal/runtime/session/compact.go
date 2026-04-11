@@ -97,7 +97,7 @@ func Compact(messages []ConversationMessage, previousSummary string) *Compaction
 	}
 
 	toCompact := messages[compactedPrefixLen:keepFrom]
-	summary := summarizeMessages(toCompact)
+	summary := buildIntentSummary(toCompact)
 
 	// Merge with previous summary if present.
 	if previousSummary != "" {
@@ -136,7 +136,15 @@ func formatCompactSummary(summary string) string {
 	// Strip <analysis> blocks.
 	without := stripTagBlock(summary, "analysis")
 
-	// Replace <summary>...</summary> with "Summary:\n..."
+	// Handle new <intent_summary> format.
+	if content := extractTagBlock(without, "intent_summary"); content != "" {
+		without = strings.Replace(without,
+			fmt.Sprintf("<intent_summary>%s</intent_summary>", content),
+			fmt.Sprintf("Summary:\n%s", strings.TrimSpace(content)),
+			1)
+	}
+
+	// Handle legacy <summary> format for backward compatibility.
 	if content := extractTagBlock(without, "summary"); content != "" {
 		without = strings.Replace(without,
 			fmt.Sprintf("<summary>%s</summary>", content),
@@ -147,8 +155,9 @@ func formatCompactSummary(summary string) string {
 	return strings.TrimSpace(collapseBlankLines(without))
 }
 
-// summarizeMessages produces a structured summary of compacted messages.
-func summarizeMessages(messages []ConversationMessage) string {
+// buildIntentSummary produces a structured intent summary of compacted messages.
+// The summary uses explicit categories to preserve key information across compaction.
+func buildIntentSummary(messages []ConversationMessage) string {
 	userCount, assistantCount, toolCount := 0, 0, 0
 	for _, m := range messages {
 		switch m.Role {
@@ -165,24 +174,60 @@ func summarizeMessages(messages []ConversationMessage) string {
 	}
 
 	var lines []string
-	lines = append(lines, "<summary>")
-	lines = append(lines, "Conversation summary:")
-	lines = append(lines, fmt.Sprintf("- Scope: %d earlier messages compacted (user=%d, assistant=%d, tool=%d).",
+	lines = append(lines, "<intent_summary>")
+	lines = append(lines, fmt.Sprintf("Scope: %d messages compacted (user=%d, assistant=%d, tool=%d).",
 		len(messages), userCount, assistantCount, toolCount))
 
-	// Tools mentioned.
+	// Primary Goal: infer from recent user requests.
+	if goal := inferPrimaryGoal(messages); goal != "" {
+		lines = append(lines, "Primary Goal: "+goal)
+	}
+
+	// Verified Facts: successful tool outcomes.
+	facts := extractVerifiedFacts(messages)
+	if len(facts) > 0 {
+		lines = append(lines, "Verified Facts:")
+		for _, f := range facts {
+			lines = append(lines, "- "+f)
+		}
+	}
+
+	// Working Set: files actively being edited/written (not just read).
+	workingSet := extractWorkingSet(messages)
+	if len(workingSet) > 0 {
+		lines = append(lines, "Working Set: "+strings.Join(workingSet, ", "))
+	}
+
+	// Active Blockers: errors, failures.
+	blockers := extractActiveBlockers(messages)
+	if len(blockers) > 0 {
+		lines = append(lines, "Active Blockers:")
+		for _, b := range blockers {
+			lines = append(lines, "- "+b)
+		}
+	}
+
+	// Decision Log: explicit choices made.
+	decisions := extractDecisionLog(messages)
+	if len(decisions) > 0 {
+		lines = append(lines, "Decision Log:")
+		for _, d := range decisions {
+			lines = append(lines, "- "+d)
+		}
+	}
+
+	// Key files referenced (broader than working set).
+	keyFiles := collectKeyFiles(messages)
+	if len(keyFiles) > 0 {
+		lines = append(lines, "Key Files: "+strings.Join(keyFiles, ", "))
+	}
+
+	// Tools used.
 	toolSet := make(map[string]bool)
 	for _, m := range messages {
 		for _, c := range m.Content {
-			switch c.Type {
-			case ContentTypeToolUse:
-				if c.Name != "" {
-					toolSet[c.Name] = true
-				}
-			case ContentTypeToolResult:
-				if c.Name != "" {
-					toolSet[c.Name] = true
-				}
+			if (c.Type == ContentTypeToolUse || c.Type == ContentTypeToolResult) && c.Name != "" {
+				toolSet[c.Name] = true
 			}
 		}
 	}
@@ -191,70 +236,135 @@ func summarizeMessages(messages []ConversationMessage) string {
 		for name := range toolSet {
 			names = append(names, name)
 		}
-		lines = append(lines, fmt.Sprintf("- Tools mentioned: %s.", strings.Join(names, ", ")))
+		lines = append(lines, "Tools Used: "+strings.Join(names, ", "))
 	}
 
-	// Recent user requests (last 3).
-	recentRequests := collectRecentRoleSummaries(messages, RoleUser, 3)
-	if len(recentRequests) > 0 {
-		lines = append(lines, "- Recent user requests:")
-		for _, req := range recentRequests {
-			lines = append(lines, "  - "+req)
-		}
-	}
-
-	// Pending work (inferred from keywords).
+	// Pending work.
 	pendingWork := inferPendingWork(messages)
 	if len(pendingWork) > 0 {
-		lines = append(lines, "- Pending work:")
+		lines = append(lines, "Pending Work:")
 		for _, item := range pendingWork {
-			lines = append(lines, "  - "+item)
+			lines = append(lines, "- "+item)
 		}
 	}
 
-	// Key files referenced.
-	keyFiles := collectKeyFiles(messages)
-	if len(keyFiles) > 0 {
-		lines = append(lines, fmt.Sprintf("- Key files referenced: %s.", strings.Join(keyFiles, ", ")))
-	}
-
-	// Current work.
-	if currentWork := inferCurrentWork(messages); currentWork != "" {
-		lines = append(lines, fmt.Sprintf("- Current work: %s", currentWork))
-	}
-
-	// Key timeline.
-	lines = append(lines, "- Key timeline:")
-	for _, m := range messages {
-		role := string(m.Role)
-		var blockSummaries []string
-		for _, b := range m.Content {
-			blockSummaries = append(blockSummaries, summarizeBlock(b))
-		}
-		content := strings.Join(blockSummaries, " | ")
-		lines = append(lines, fmt.Sprintf("  - %s: %s", role, content))
-	}
-
-	lines = append(lines, "</summary>")
+	lines = append(lines, "</intent_summary>")
 	return strings.Join(lines, "\n")
 }
 
-// summarizeBlock returns a truncated summary of a content block.
-func summarizeBlock(block ContentBlock) string {
-	var raw string
-	switch block.Type {
-	case ContentTypeText:
-		raw = block.Text
-	case ContentTypeToolUse:
-		raw = fmt.Sprintf("tool_use %s(%s)", block.Name, string(block.Input))
-	case ContentTypeToolResult:
-		prefix := ""
-		if block.IsError {
-			prefix = "error "
-		}
-		raw = fmt.Sprintf("tool_result %s: %s%s", block.Name, prefix, block.Content)
+// inferPrimaryGoal extracts the most likely top-level task from recent user messages.
+func inferPrimaryGoal(messages []ConversationMessage) string {
+	reqs := collectRecentRoleSummaries(messages, RoleUser, 3)
+	if len(reqs) == 0 {
+		return ""
 	}
-	return truncateSummary(raw, 160)
+	// The most recent user request is typically the primary goal.
+	return reqs[len(reqs)-1]
+}
+
+// extractVerifiedFacts scans tool results for successful outcomes.
+func extractVerifiedFacts(messages []ConversationMessage) []string {
+	var facts []string
+	seen := make(map[string]bool)
+
+	for i := len(messages) - 1; i >= 0 && len(facts) < 5; i-- {
+		for _, c := range messages[i].Content {
+			if c.Type != ContentTypeToolResult || c.IsError {
+				continue
+			}
+			content := strings.ToLower(c.Content)
+			var fact string
+			switch {
+			case strings.Contains(content, "pass") && (strings.Contains(content, "test") || strings.Contains(content, "ok ")):
+				fact = "Tests passing: " + truncateSummary(c.Content, 100)
+			case strings.Contains(content, "success") || strings.Contains(content, "build succeeded"):
+				fact = "Build succeeded: " + truncateSummary(c.Content, 100)
+			case c.Name == "write_file" || c.Name == "edit_file":
+				fact = "File modified: " + truncateSummary(c.Content, 100)
+			default:
+				continue
+			}
+			if !seen[fact] {
+				seen[fact] = true
+				facts = append(facts, fact)
+			}
+		}
+	}
+	return facts
+}
+
+// extractWorkingSet identifies files that were written or edited (not just read).
+func extractWorkingSet(messages []ConversationMessage) []string {
+	fileSet := make(map[string]bool)
+	var files []string
+
+	writeTools := map[string]bool{
+		"write_file": true, "edit_file": true,
+	}
+
+	for _, m := range messages {
+		for _, c := range m.Content {
+			if c.Type != ContentTypeToolUse || !writeTools[c.Name] {
+				continue
+			}
+			// Extract path from tool input.
+			for _, candidate := range extractFileCandidates(string(c.Input)) {
+				if !fileSet[candidate] && len(files) < 10 {
+					fileSet[candidate] = true
+					files = append(files, candidate)
+				}
+			}
+		}
+	}
+	return files
+}
+
+// extractActiveBlockers finds error outputs from recent tool executions.
+func extractActiveBlockers(messages []ConversationMessage) []string {
+	var blockers []string
+	seen := make(map[string]bool)
+
+	// Scan from newest to oldest, only look at recent messages.
+	for i := len(messages) - 1; i >= 0 && len(blockers) < 3; i-- {
+		for _, c := range messages[i].Content {
+			if c.Type != ContentTypeToolResult || !c.IsError {
+				continue
+			}
+			summary := truncateSummary(c.Content, 160)
+			if !seen[summary] {
+				seen[summary] = true
+				blockers = append(blockers, c.Name+": "+summary)
+			}
+		}
+	}
+	return blockers
+}
+
+// extractDecisionLog scans assistant messages for explicit choice language.
+func extractDecisionLog(messages []ConversationMessage) []string {
+	var decisions []string
+	decisionMarkers := []string{
+		"I'll use ", "I chose ", "I'm going with ", "chose ", "decided to ",
+		"instead of ", "rather than ", "approach: ",
+	}
+
+	for i := len(messages) - 1; i >= 0 && len(decisions) < 3; i-- {
+		if messages[i].Role != RoleAssistant {
+			continue
+		}
+		text := firstTextBlock(messages[i])
+		if text == "" {
+			continue
+		}
+		lowered := strings.ToLower(text)
+		for _, marker := range decisionMarkers {
+			if strings.Contains(lowered, marker) {
+				decisions = append(decisions, truncateSummary(text, 160))
+				break
+			}
+		}
+	}
+	return decisions
 }
 
 // collectRecentRoleSummaries collects the last N text summaries from messages of a given role.
@@ -343,17 +453,6 @@ func hasInterestingExtension(path string) bool {
 		}
 	}
 	return false
-}
-
-// inferCurrentWork finds the most recent non-empty text block.
-func inferCurrentWork(messages []ConversationMessage) string {
-	for i := len(messages) - 1; i >= 0; i-- {
-		text := firstTextBlock(messages[i])
-		if text != "" {
-			return truncateSummary(text, 200)
-		}
-	}
-	return ""
 }
 
 // firstTextBlock extracts the first non-empty text block from a message.

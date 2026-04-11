@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -61,8 +62,63 @@ func (b *Builder) Build() string {
 	return strings.Join(parts, "\n\n")
 }
 
+// BuildDifferential assembles the system prompt, omitting unchanged dynamic
+// sections when prompt caching is unavailable. Returns the prompt string and
+// the section content map (for updating the baseline after a successful call).
+func (b *Builder) BuildDifferential(baseline *ContextBaseline) (string, map[string]string) {
+	// Collect current dynamic section contents for diffing.
+	current := make(map[string]string)
+	for _, s := range b.sections {
+		if !s.Static {
+			current[s.Name] = s.Content
+		}
+	}
+
+	diff := baseline.Diff(current)
+
+	var parts []string
+
+	// Static sections always included.
+	for _, s := range b.sections {
+		if s.Static {
+			parts = append(parts, s.Content)
+		}
+	}
+
+	parts = append(parts, DynamicBoundary)
+
+	if diff.IsFirst {
+		// First turn: include everything.
+		for _, s := range b.sections {
+			if !s.Static {
+				parts = append(parts, s.Content)
+			}
+		}
+	} else {
+		// Build a set of changed section names.
+		changedSet := make(map[string]bool, len(diff.Changed))
+		for _, name := range diff.Changed {
+			changedSet[name] = true
+		}
+
+		// Include only changed sections; note omitted ones.
+		if len(diff.Unchanged) > 0 {
+			parts = append(parts, fmt.Sprintf("[Context: %d section(s) unchanged from previous turn, omitted to save tokens]", len(diff.Unchanged)))
+		}
+		for _, s := range b.sections {
+			if !s.Static && changedSet[s.Name] {
+				parts = append(parts, s.Content)
+			}
+		}
+	}
+
+	return strings.Join(parts, "\n\n"), current
+}
+
 // BuildDefault builds a system prompt with default sections and project context.
-func BuildDefault(ctx *ProjectContext) string {
+// When cachingSupported is false and a non-nil baseline is provided, uses
+// differential context injection to omit unchanged dynamic sections.
+func BuildDefault(ctx *ProjectContext, cachingSupported bool, baseline *ContextBaseline) string {
 	b := NewBuilder()
 
 	// Static sections (cacheable).
@@ -78,5 +134,14 @@ func BuildDefault(ctx *ProjectContext) string {
 	b.AddDynamicSection(SectionGit, GitSection(ctx))
 	b.AddDynamicSection(SectionInstructions, InstructionsSection(ctx.ContextFiles))
 
-	return b.Build()
+	// When caching is available (Anthropic), always send full prompt —
+	// the static/dynamic boundary handles cache optimization.
+	if cachingSupported || baseline == nil {
+		return b.Build()
+	}
+
+	// Non-caching provider: use differential injection.
+	prompt, sectionContents := b.BuildDifferential(baseline)
+	baseline.Update(sectionContents)
+	return prompt
 }

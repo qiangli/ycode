@@ -3,6 +3,7 @@ package prompt
 // ProjectContext holds metadata about the current project.
 type ProjectContext struct {
 	WorkDir       string        `json:"work_dir"`
+	ProjectRoot   string        `json:"project_root,omitempty"` // git root or WorkDir; upper bound for JIT discovery
 	CurrentDate   string        `json:"current_date,omitempty"`
 	IsGitRepo     bool          `json:"is_git_repo"`
 	GitBranch     string        `json:"git_branch,omitempty"`
@@ -18,6 +19,7 @@ type ProjectContext struct {
 	Model         string        `json:"model,omitempty"`
 	ContextFiles  []ContextFile `json:"context_files,omitempty"`
 	AllowedDirs   []string      `json:"allowed_dirs,omitempty"`
+	ActiveTopic   string        `json:"active_topic,omitempty"` // current high-level task focus
 }
 
 // ContextFile is a discovered instruction file (e.g., CLAUDE.md).

@@ -24,6 +24,10 @@ type Runtime struct {
 	registry  *tools.Registry
 	promptCtx *prompt.ProjectContext
 	logger    *slog.Logger
+
+	// Differential context injection for non-caching providers.
+	cachingSupported bool
+	contextBaseline  *prompt.ContextBaseline
 }
 
 // NewRuntime creates a new conversation runtime.
@@ -34,13 +38,21 @@ func NewRuntime(
 	registry *tools.Registry,
 	promptCtx *prompt.ProjectContext,
 ) *Runtime {
+	caps := api.DetectCapabilities(provider.Kind(), cfg.Model)
+	cachingSupported := caps.CachingSupported
+	// Allow config override for caching detection.
+	if cfg.ProviderCapabilities != nil && cfg.ProviderCapabilities.CachingSupported != nil {
+		cachingSupported = *cfg.ProviderCapabilities.CachingSupported
+	}
 	return &Runtime{
-		config:    cfg,
-		provider:  provider,
-		session:   sess,
-		registry:  registry,
-		promptCtx: promptCtx,
-		logger:    slog.Default(),
+		config:           cfg,
+		provider:         provider,
+		session:          sess,
+		registry:         registry,
+		promptCtx:        promptCtx,
+		logger:           slog.Default(),
+		cachingSupported: cachingSupported,
+		contextBaseline:  prompt.NewContextBaseline(),
 	}
 }
 
@@ -67,7 +79,7 @@ type ToolCall struct {
 // Turn executes one turn of the conversation: send messages, get response, execute tools.
 func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult, error) {
 	// Build system prompt.
-	systemPrompt := prompt.BuildDefault(r.promptCtx)
+	systemPrompt := prompt.BuildDefault(r.promptCtx, r.cachingSupported, r.contextBaseline)
 
 	// Build tool definitions.
 	var toolDefs []api.ToolDefinition
@@ -388,6 +400,10 @@ func (r *Runtime) proactiveCompact(sessionMsgs []session.ConversationMessage) *s
 
 	// Update session summary.
 	r.session.Summary = compactResult.Summary
+
+	// Reset differential context baseline — next turn must send full context.
+	r.contextBaseline.Reset()
+
 	return compactResult
 }
 
@@ -424,6 +440,9 @@ func (r *Runtime) emergencyFlush(ctx context.Context, messages []api.Message, or
 			continuationText += "\n\n" + refresh
 		}
 	}
+
+	// Reset differential context baseline — next turn must send full context.
+	r.contextBaseline.Reset()
 
 	sanitizedUserMsg := sanitizeUserMessageForFlush(*lastUserMsg)
 

@@ -32,6 +32,9 @@ func (s *Store) Save(mem *Memory) error {
 	fmt.Fprintf(&b, "name: %s\n", mem.Name)
 	fmt.Fprintf(&b, "description: %s\n", mem.Description)
 	fmt.Fprintf(&b, "type: %s\n", mem.Type)
+	if mem.Scope != "" {
+		fmt.Fprintf(&b, "scope: %s\n", mem.Scope)
+	}
 	b.WriteString("---\n\n")
 	b.WriteString(mem.Content)
 
@@ -125,6 +128,8 @@ func parseFrontmatter(data string) *Memory {
 			mem.Description = strings.TrimSpace(value)
 		case "type":
 			mem.Type = Type(strings.TrimSpace(value))
+		case "scope":
+			mem.Scope = Scope(strings.TrimSpace(value))
 		}
 	}
 

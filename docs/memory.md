@@ -93,12 +93,17 @@ The discovery system (`internal/runtime/prompt/discovery.go`) walks from CWD to 
 
 Files are deduplicated by SHA-256 content hash. Budget: 4,000 chars per file (`MaxFileContentBudget`), 12,000 chars total (`MaxTotalBudget`). Contents are injected into the system prompt below the dynamic boundary.
 
+**`#import` directives**: Instruction files support `#import <relative-path>` directives. When an instruction file contains `#import extra.md`, the referenced file's content is inlined during loading. Circular references are detected and marked with `<!-- circular import: path -->`. Maximum nesting depth is 3. Implementation: `internal/runtime/prompt/import.go`.
+
+**JIT subdirectory discovery**: When tools access files in subdirectories (e.g., `read_file` opens `internal/runtime/memory/store.go`), the JIT discovery system (`internal/runtime/prompt/jit.go`) searches for instruction files from that directory up to the project root. Newly discovered files are merged into the prompt context for the next API turn. This ensures subdirectory-specific instructions are loaded lazily, not just at startup.
+
 ### Layer 5: Persistent Memory (File-Based Store)
 
 The most durable layer. Implementation: `internal/runtime/memory/store.go`.
 
-- **Storage layout**: `~/.ycode/projects/{hash}/memory/`
-- **File format**: Markdown with YAML frontmatter containing `name`, `description`, and `type`
+- **Storage layout**: Two tiers -- global (`~/.ycode/memory/`) for cross-project preferences, project (`~/.ycode/projects/{hash}/memory/`) for project-specific facts
+- **File format**: Markdown with YAML frontmatter containing `name`, `description`, `type`, and optional `scope`
+- **Scoping**: Memories have a `scope` field (`global` or `project`). The Manager queries both stores and merges results, with project-scoped memories ranked higher (1.1x boost). Existing memories without a `scope` field default to `project` for backward compatibility.
 - **Index**: `MEMORY.md` provides a human-readable table of contents (see Section 5.2)
 - **Operations**: `Save`, `Load`, `List`, `Delete` via the `Manager` coordinator (`memory/memory.go`)
 - **Background maintenance**: the `Dreamer` goroutine prunes stale entries and merges duplicates
@@ -146,6 +151,56 @@ ycode implements a three-layer defense against context overflow, inspired by Ope
 ### Post-Compaction Context Refresh
 
 After compaction removes message history, `PostCompactionRefresh()` in `prompt/refresh.go` re-injects critical sections from CLAUDE.md (Build & Test, Key Design Decisions) into the continuation message. This prevents the agent from losing project-specific operational instructions. Budget: 3,000 chars max.
+
+### History Normalization
+
+Before each API request and on session load, `NormalizeHistory()` (`internal/runtime/session/normalize.go`) enforces the call-output pairing invariant:
+
+- Every `tool_use` block must have a corresponding `tool_result` with matching ID. Missing results (from interrupted tool calls) are synthesized as `[Aborted: tool execution was interrupted]` with `is_error: true`.
+- Orphan `tool_result` blocks (no matching `tool_use`) are removed.
+- Empty messages left after orphan removal are dropped entirely.
+
+This prevents invalid message sequences from confusing the model or breaking compaction.
+
+### Tool Output Distillation
+
+Large tool outputs are distilled at execution time (`internal/runtime/session/distill.go`) before entering the conversation history:
+
+1. **Exempt tools** (e.g., `read_file`) bypass distillation entirely -- their output IS the point.
+2. Outputs under the threshold (default 2,000 chars) pass through unchanged.
+3. **Stage 1**: Structural truncation -- keeps first 20 lines + last 10 lines with an omission count.
+4. **Stage 2**: Full output is saved to disk (`{sessionDir}/tool_outputs/{tool}_{timestamp}.txt`) so the agent can re-read it if needed. The inline version includes a pointer to the saved file.
+
+This operates at the tool execution layer (not the compaction layer), reducing context pressure from the moment a tool result enters the conversation.
+
+### Ghost Snapshots
+
+Before compaction executes, `SaveGhostSnapshot()` (`internal/runtime/session/ghost.go`) serializes the pre-compaction state to disk:
+
+- Message count, estimated tokens, compaction summary
+- UUIDs of compacted messages, key files, active topic
+- Stored as `{sessionDir}/ghosts/{timestamp}.json`
+
+Ghost snapshots are never sent to the model. They enable post-mortem analysis and debugging of what was lost during compaction.
+
+### State Snapshots
+
+Unlike compaction summaries which are append-only, the `StateSnapshot` (`internal/runtime/session/state_snapshot.go`) is a cumulative workspace state that is **updated** on each compaction:
+
+```
+<state_snapshot>
+Goal: implement authentication middleware
+Completed:
+- designed API schema
+- created handler stubs
+Current: implement authentication middleware
+Files: internal/auth/middleware.go, internal/auth/handler.go
+State: tests passing
+Compactions: 2
+</state_snapshot>
+```
+
+The snapshot tracks: primary goal, completed steps (last 10), current step, working files, environment state (e.g., "tests passing", "blocked: compilation error"), and compaction count. Persisted as `{sessionDir}/state_snapshot.json`.
 
 ---
 
@@ -206,15 +261,34 @@ The index is a markdown file with one entry per memory:
 
 Implementation: `internal/runtime/session/compact.go`.
 
-When `EstimateMessageTokens` exceeds 100K across all messages, compaction produces a structured summary with seven fields:
+When `EstimateMessageTokens` exceeds 100K across all messages, compaction produces a structured intent summary with five explicit categories:
 
-1. **Scope** -- message counts by role (user/assistant/tool)
-2. **Tools mentioned** -- deduplicated set of tool names
-3. **Recent user requests** -- last 3 requests, 160 chars each
-4. **Pending work** -- lines containing "todo", "next", "pending", "follow up", "remaining"
-5. **Key files** -- up to 8 file paths identified by common extensions
-6. **Current work** -- 200-char excerpt from the most recent non-empty text block
-7. **Key timeline** -- role-labeled one-line recap of each compacted message
+```
+<intent_summary>
+Scope: 42 messages compacted (user=15, assistant=20, tool=7).
+Primary Goal: implement authentication middleware
+Verified Facts:
+- Tests passing: ok github.com/example/auth
+- File modified: edited internal/auth/middleware.go
+Working Set: internal/auth/middleware.go, internal/auth/handler.go
+Active Blockers:
+- bash: FAIL: TestAuthTimeout — context deadline exceeded
+Decision Log:
+- I'll use the edit approach instead of rewriting the file
+Key Files: internal/auth/middleware.go, internal/auth/handler.go, go.mod
+Tools Used: read_file, edit_file, bash
+Pending Work:
+- fix the timeout issue in TestAuthTimeout
+</intent_summary>
+```
+
+The five categories are extracted by dedicated helpers:
+
+- **`inferPrimaryGoal()`** -- the most recent user request
+- **`extractVerifiedFacts()`** -- successful test runs, builds, file modifications
+- **`extractWorkingSet()`** -- files explicitly written or edited (not just read)
+- **`extractActiveBlockers()`** -- error tool results from recent messages
+- **`extractDecisionLog()`** -- assistant messages containing choice language ("I'll use", "chose", "instead of")
 
 The summary is injected as a synthetic system message with preamble: *"This session is being continued from a previous conversation..."* and instruction: *"Continue without asking follow-up questions. Resume directly."*
 
@@ -232,7 +306,7 @@ Summaries are compressed to fit within strict budgets:
 
 Lines are selected by priority tier:
 
-- **P0 (core)**: "Summary:" header, Scope, Current work, Pending work, Key files, Tools
+- **P0 (core)**: "Summary:" header, `Scope:`, `Primary Goal:`, `Verified Facts:`, `Working Set:`, `Active Blockers:`, `Decision Log:`, `Key Files:`, `Tools Used:`, `Pending Work:` (and legacy equivalents)
 - **P1 (headers)**: section headers (lines ending with `:`)
 - **P2 (details)**: bullet points (`- ` or `  - `)
 - **P3 (other)**: everything else
@@ -266,7 +340,9 @@ The checkpoint is also appended to the work log for narrative tracking, enabling
 
 ---
 
-## Prompt Cache Optimization
+## Prompt Optimization
+
+### Cache-Friendly Prompt Structure
 
 The system prompt is split at `__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__` (`internal/runtime/prompt/boundary.go`):
 
@@ -285,12 +361,57 @@ The system prompt is split at `__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__` (`internal/ru
 │  ─ Git context                    │
 │  ─ Instruction files (CLAUDE.md)  │
 │  ─ Recalled memories              │
+│  ─ Active topic (if set)          │
 └───────────────────────────────────┘
 ```
 
 Cache fingerprinting (`internal/api/prompt_cache.go`) uses SHA-256 hashes of model, system prompt, tools, and messages. A cache hit occurs when all hashes match within a 5-minute TTL. Cache read tokens cost $0.30/1M vs $3.00/1M for regular input -- a 90% discount.
 
 Memory sections are injected **below** the boundary so that adding, updating, or removing memories does not invalidate the expensive static prompt cache.
+
+### Differential Context Injection (Non-Caching Providers)
+
+The static/dynamic boundary optimization only benefits providers with explicit prompt caching (Anthropic). For OpenAI-compatible providers (OpenAI, xAI, Ollama, DashScope, etc.), the full system prompt is re-sent every turn.
+
+To address this, ycode implements **differential context injection** (`internal/runtime/prompt/baseline.go`):
+
+1. **Provider capability detection** (`internal/api/capabilities.go`): A static lookup maps `ProviderKind` + model name to capabilities. Anthropic → `CachingSupported: true`; OpenAI/Ollama/unknown → `CachingSupported: false`. Users can override via `providerCapabilities.cachingSupported` in `settings.json`.
+
+2. **Context baseline**: A `ContextBaseline` struct stores SHA-256 hashes of each dynamic section from the previous turn. Before building the system prompt, the builder compares current section contents against the baseline.
+
+3. **Differential mode**: When caching is unavailable and a baseline exists:
+   - Only **changed** dynamic sections are included in the prompt
+   - Unchanged sections are replaced with `[Context: N section(s) unchanged from previous turn, omitted to save tokens]`
+   - On the first turn, after compaction, or after emergency flush, the baseline is reset and all sections are sent
+
+The two strategies coexist: the `CachingSupported` flag routes to the appropriate path in the prompt builder. For local models (Ollama), reducing context size directly reduces inference latency, not just cost.
+
+### Active Topic Tracking
+
+The `TopicTracker` (`internal/runtime/prompt/topic.go`) maintains a lightweight focus signal that helps the model stay on track, especially after compaction:
+
+- **Extraction**: When a user message contains task-changing patterns ("Let's work on...", "help me with...", "please fix...") or is a short directive, the topic is extracted from the first sentence.
+- **Follow-up detection**: Messages that look like continuations ("yes", "ok", "thanks", "looks good") do not change the topic.
+- **Injection**: If a topic is active, `[Active Topic: {topic}]` is appended to the system prompt as the last dynamic section.
+- **Staleness**: The topic is cleared after 20 turns without an update.
+- **Recovery**: After compaction, the topic can be restored from the state snapshot.
+
+### Per-File Content Routing
+
+During context pruning, tool results are classified by the routing system (`internal/runtime/session/routing.go`) instead of being treated uniformly:
+
+| Route | Behavior | When Used |
+| :--- | :--- | :--- |
+| `FULL` | Keep verbatim | Error outputs, write confirmations, small files |
+| `PARTIAL` | Head (400 chars) + tail (200 chars) with omission marker | Large file reads, search results, bash output |
+| `SUMMARY` | One-line description with line/char counts | Very large bash outputs without diagnostic markers |
+| `EXCLUDED` | Placeholder: "Re-run the tool if needed" | Explicitly dropped content |
+
+Routing decisions are cached by content hash to avoid re-classification. Error outputs are always `FULL` regardless of size.
+
+### Startup Prewarming
+
+Session initialization tasks (instruction file discovery, memory loading) are run concurrently using goroutines (`internal/runtime/prompt/prewarm.go`). The `Prewarm()` function returns a `PrewarmResult` containing discovered files and loaded memories once all goroutines complete (or context is cancelled).
 
 ---
 
@@ -322,12 +443,29 @@ The current SOTA in AI agent memory (2025-2026) has shifted from simple chat his
 
 ### Where ycode Fits
 
-ycode is closest to OpenClaw's philosophy -- markdown-first, file-based, human-editable -- but adds structured mechanisms that OpenClaw lacks:
+ycode is closest to OpenClaw's philosophy -- markdown-first, file-based, human-editable -- but incorporates the best ideas from Gemini CLI and Codex:
 
-- **Typed staleness thresholds** (30 days to 1 year vs. OpenClaw's manual-only pruning)
-- **Relevance scoring with temporal decay** (weighted field matching + logarithmic decay vs. no query capability)
-- **Background consolidation** (automatic stale removal and duplicate merging vs. manual maintenance)
-- **Structured compaction** (7-field summary with priority-based compression vs. raw truncation)
+**From OpenClaw's lineage** (foundational):
+- Typed staleness thresholds (30 days to 1 year vs. OpenClaw's manual-only pruning)
+- Relevance scoring with temporal decay (weighted field matching + logarithmic decay)
+- Background consolidation (automatic stale removal and duplicate merging)
+
+**From Gemini CLI** (adopted):
+- JIT subdirectory context loading (discover instruction files when tools access new paths)
+- `#import` directive in instruction files (with circular-reference detection)
+- Structured intent summary with five explicit categories (Primary Goal, Verified Facts, Working Set, Active Blockers, Decision Log)
+- Cumulative state snapshots updated across compactions (not just appended)
+- Active topic tracking injected into system prompt
+- Hierarchical memory scopes (global + project tiers)
+- Per-file content routing for pruning (FULL/PARTIAL/SUMMARY/EXCLUDED)
+- Startup prewarming (concurrent initialization)
+
+**From Codex** (adopted):
+- Differential context injection for non-caching providers (baseline diffing)
+- Provider capability detection (static lookup + config override)
+- Ghost snapshots for pre-compaction state recovery
+- History normalization with call-output invariant enforcement
+- Tool output distillation with disk-backed full output
 
 ycode avoids external databases entirely -- no vector store, no graph DB, no Redis. All state lives in the filesystem, enabling `git` versioning, `grep` searching, and manual editing.
 
@@ -347,28 +485,52 @@ ycode avoids external databases entirely -- no vector store, no graph DB, no Red
 
 6. **Cache-friendly prompt structure.** Static prompt content sits above the dynamic boundary; memory, git context, and instruction files sit below. Adding or removing a memory does not invalidate the prompt cache for the expensive static sections, preserving the 90% cache read discount.
 
+7. **Provider-adaptive optimization.** Caching providers (Anthropic) use the static/dynamic boundary. Non-caching providers (OpenAI, Ollama) use differential context injection. Capability detection is automatic with user override.
+
+8. **Lazy context enrichment.** Instruction files are discovered at startup from CWD ancestry, then dynamically expanded via JIT discovery as tools access new subdirectories. The `#import` directive allows factoring instructions across files without manual concatenation.
+
+9. **Cumulative state, not append-only history.** State snapshots represent the integrated workspace state and are updated (not appended) on each compaction. Ghost snapshots preserve the pre-compaction state for debugging. Together they provide both a forward-looking view (state snapshot) and a backward-looking record (ghost snapshot).
+
+10. **History invariants.** Every tool_use must have a tool_result. Normalization enforces this on session load and before API calls. Tool output distillation operates at the execution layer, not the compaction layer, reducing context pressure early.
+
 ---
 
 ## File Reference
 
 | Concept | Source File |
 | :--- | :--- |
-| Memory manager | `internal/runtime/memory/memory.go` |
-| Memory types & struct | `internal/runtime/memory/types.go` |
+| **Memory system** | |
+| Memory manager (dual-scope) | `internal/runtime/memory/memory.go` |
+| Memory types, Scope | `internal/runtime/memory/types.go` |
 | File-based store | `internal/runtime/memory/store.go` |
 | MEMORY.md index | `internal/runtime/memory/index.go` |
 | Relevance search & scoring | `internal/runtime/memory/search.go` |
 | Age decay & staleness | `internal/runtime/memory/age.go` |
 | Background dreaming | `internal/runtime/memory/dream.go` |
 | Instruction file discovery | `internal/runtime/memory/discovery.go` |
+| **Session management** | |
 | Session JSONL persistence | `internal/runtime/session/session.go` |
-| Auto-compaction | `internal/runtime/session/compact.go` |
+| Auto-compaction (intent summary) | `internal/runtime/session/compact.go` |
 | Summary compression | `internal/runtime/session/compression.go` |
-| Prompt builder | `internal/runtime/prompt/builder.go` |
-| Prompt file discovery | `internal/runtime/prompt/discovery.go` |
-| Dynamic boundary marker | `internal/runtime/prompt/boundary.go` |
-| Prompt cache fingerprinting | `internal/api/prompt_cache.go` |
+| History normalization | `internal/runtime/session/normalize.go` |
+| Tool output distillation | `internal/runtime/session/distill.go` |
+| Per-file content routing | `internal/runtime/session/routing.go` |
+| Ghost snapshots | `internal/runtime/session/ghost.go` |
+| State snapshots | `internal/runtime/session/state_snapshot.go` |
 | Context pruning (Layer 1) | `internal/runtime/session/pruning.go` |
+| **Prompt assembly** | |
+| Prompt builder (differential mode) | `internal/runtime/prompt/builder.go` |
+| Prompt file discovery | `internal/runtime/prompt/discovery.go` |
+| JIT subdirectory discovery | `internal/runtime/prompt/jit.go` |
+| #import directive | `internal/runtime/prompt/import.go` |
+| Active topic tracking | `internal/runtime/prompt/topic.go` |
+| Context baseline (differential) | `internal/runtime/prompt/baseline.go` |
+| Startup prewarming | `internal/runtime/prompt/prewarm.go` |
+| Dynamic boundary marker | `internal/runtime/prompt/boundary.go` |
 | Post-compaction refresh | `internal/runtime/prompt/refresh.go` |
+| **API & providers** | |
+| Prompt cache fingerprinting | `internal/api/prompt_cache.go` |
+| Provider capability detection | `internal/api/capabilities.go` |
+| **Runtime** | |
 | 3-layer defense (TurnWithRecovery) | `internal/runtime/conversation/runtime.go` |
 | Auto-checkpointing | `internal/runtime/scratchpad/auto.go` |

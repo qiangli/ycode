@@ -3,29 +3,55 @@ package memory
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 )
 
-// Manager coordinates memory operations.
+// Manager coordinates memory operations across global and project scopes.
 type Manager struct {
-	store *Store
-	index *Index
+	projectStore *Store
+	globalStore  *Store // may be nil if no global dir configured
+	index        *Index // project-level index
 }
 
-// NewManager creates a new memory manager.
+// NewManager creates a new memory manager with a project-scoped store.
 func NewManager(dir string) (*Manager, error) {
 	store, err := NewStore(dir)
 	if err != nil {
 		return nil, err
 	}
 	return &Manager{
-		store: store,
-		index: NewIndex(dir),
+		projectStore: store,
+		index:        NewIndex(dir),
 	}, nil
 }
 
-// Save persists a memory and updates the index.
+// NewManagerWithGlobal creates a manager with both global and project stores.
+// Global memories are shared across all projects; project memories are scoped.
+func NewManagerWithGlobal(globalDir, projectDir string) (*Manager, error) {
+	projectStore, err := NewStore(projectDir)
+	if err != nil {
+		return nil, fmt.Errorf("project store: %w", err)
+	}
+
+	var globalStore *Store
+	if globalDir != "" {
+		globalStore, err = NewStore(globalDir)
+		if err != nil {
+			return nil, fmt.Errorf("global store: %w", err)
+		}
+	}
+
+	return &Manager{
+		projectStore: projectStore,
+		globalStore:  globalStore,
+		index:        NewIndex(projectDir),
+	}, nil
+}
+
+// Save persists a memory to the appropriate store based on scope.
 func (m *Manager) Save(mem *Memory) error {
-	if err := m.store.Save(mem); err != nil {
+	store := m.storeForScope(mem.EffectiveScope())
+	if err := store.Save(mem); err != nil {
 		return fmt.Errorf("save memory: %w", err)
 	}
 
@@ -37,34 +63,50 @@ func (m *Manager) Save(mem *Memory) error {
 	return nil
 }
 
-// Recall retrieves memories matching a query.
+// Recall retrieves memories matching a query from all scopes.
+// Project-scoped memories are ranked higher than global ones.
 func (m *Manager) Recall(query string, maxResults int) ([]SearchResult, error) {
-	memories, err := m.store.List()
+	memories, err := m.All()
 	if err != nil {
 		return nil, fmt.Errorf("list memories: %w", err)
 	}
 
-	results := Search(memories, query, maxResults)
+	results := Search(memories, query, maxResults*2) // over-fetch then re-rank
 
-	// Apply decay scoring.
+	// Apply decay scoring and scope boost.
 	for i := range results {
 		results[i].Score = DecayScore(results[i].Score, results[i].Memory)
+		// Project-scoped memories get a slight boost.
+		if results[i].Memory.EffectiveScope() == ScopeProject {
+			results[i].Score *= 1.1
+		}
+	}
+
+	// Re-sort after scope boost.
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	// Trim to requested count.
+	if len(results) > maxResults {
+		results = results[:maxResults]
 	}
 
 	return results, nil
 }
 
-// Forget removes a memory by name.
+// Forget removes a memory by name from all scopes.
 func (m *Manager) Forget(name string) error {
-	memories, err := m.store.List()
+	memories, err := m.All()
 	if err != nil {
 		return err
 	}
 
 	for _, mem := range memories {
 		if mem.Name == name {
+			store := m.storeForScope(mem.EffectiveScope())
 			filename := filepath.Base(mem.FilePath)
-			if err := m.store.Delete(mem.FilePath); err != nil {
+			if err := store.Delete(mem.FilePath); err != nil {
 				return fmt.Errorf("delete memory: %w", err)
 			}
 			return m.index.RemoveEntry(filename)
@@ -74,9 +116,35 @@ func (m *Manager) Forget(name string) error {
 	return fmt.Errorf("memory %q not found", name)
 }
 
-// All returns all stored memories.
+// All returns all stored memories from all scopes.
 func (m *Manager) All() ([]*Memory, error) {
-	return m.store.List()
+	projectMems, err := m.projectStore.List()
+	if err != nil {
+		return nil, fmt.Errorf("list project memories: %w", err)
+	}
+
+	// Tag project memories with scope if missing.
+	for _, mem := range projectMems {
+		if mem.Scope == "" {
+			mem.Scope = ScopeProject
+		}
+	}
+
+	if m.globalStore == nil {
+		return projectMems, nil
+	}
+
+	globalMems, err := m.globalStore.List()
+	if err != nil {
+		return nil, fmt.Errorf("list global memories: %w", err)
+	}
+
+	// Tag global memories.
+	for _, mem := range globalMems {
+		mem.Scope = ScopeGlobal
+	}
+
+	return append(globalMems, projectMems...), nil
 }
 
 // ReadIndex returns the MEMORY.md contents.
@@ -84,7 +152,20 @@ func (m *Manager) ReadIndex() (string, error) {
 	return m.index.Read()
 }
 
-// Store returns the underlying store.
+// Store returns the project store (for backward compatibility).
 func (m *Manager) Store() *Store {
-	return m.store
+	return m.projectStore
+}
+
+// GlobalStore returns the global store (may be nil).
+func (m *Manager) GlobalStore() *Store {
+	return m.globalStore
+}
+
+// storeForScope returns the appropriate store for a given scope.
+func (m *Manager) storeForScope(scope Scope) *Store {
+	if scope == ScopeGlobal && m.globalStore != nil {
+		return m.globalStore
+	}
+	return m.projectStore
 }

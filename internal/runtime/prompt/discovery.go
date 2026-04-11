@@ -50,8 +50,12 @@ func DiscoverInstructionFiles(startDir string) []ContextFile {
 			}
 			seen[hash] = true
 
-			// Truncate to budget.
+			// Resolve #import directives before budget enforcement.
 			text := string(content)
+			visited := map[string]bool{path: true}
+			text = ResolveImports(text, filepath.Dir(path), visited, 0)
+
+			// Truncate to budget.
 			if len(text) > MaxFileContentBudget {
 				text = text[:MaxFileContentBudget] + "\n... (truncated)"
 			}

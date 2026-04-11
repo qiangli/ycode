@@ -152,6 +152,7 @@ func linePriority(line string) int {
 
 func isCoreDetail(line string) bool {
 	prefixes := []string{
+		// Legacy format.
 		"- Scope:",
 		"- Current work:",
 		"- Pending work:",
@@ -160,6 +161,16 @@ func isCoreDetail(line string) bool {
 		"- Recent user requests:",
 		"- Previously compacted context:",
 		"- Newly compacted context:",
+		// Intent summary format.
+		"Scope:",
+		"Primary Goal:",
+		"Verified Facts:",
+		"Working Set:",
+		"Active Blockers:",
+		"Decision Log:",
+		"Key Files:",
+		"Tools Used:",
+		"Pending Work:",
 	}
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(line, prefix) {

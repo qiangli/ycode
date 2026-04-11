@@ -73,35 +73,78 @@ func TestCompact_WithPreviousSummary(t *testing.T) {
 	}
 }
 
-func TestSummarizeMessages_IncludesScope(t *testing.T) {
+func TestBuildIntentSummary_IncludesStructuredFields(t *testing.T) {
 	messages := []ConversationMessage{
-		{Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeText, Text: "fix the bug"}}},
+		{Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeText, Text: "fix the bug in auth.go"}}},
 		{Role: RoleAssistant, Content: []ContentBlock{
-			{Type: ContentTypeText, Text: "I'll fix it"},
+			{Type: ContentTypeText, Text: "I'll use the edit approach instead of rewriting"},
 			{Type: ContentTypeToolUse, Name: "read_file"},
 		}},
-		{Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeText, Text: "thanks"}}},
+		{Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeToolResult, Name: "read_file", Content: "file contents"}}},
+		{Role: RoleAssistant, Content: []ContentBlock{
+			{Type: ContentTypeToolUse, Name: "edit_file", Input: []byte(`{"path":"internal/auth.go"}`)},
+		}},
+		{Role: RoleUser, Content: []ContentBlock{
+			{Type: ContentTypeToolResult, Name: "edit_file", Content: "edited internal/auth.go"},
+		}},
 	}
 
-	summary := summarizeMessages(messages)
+	summary := buildIntentSummary(messages)
 	if summary == "" {
 		t.Fatal("summary should not be empty")
 	}
-	// Should contain scope section.
+	// Should contain intent_summary tags.
+	if !contains(summary, "<intent_summary>") {
+		t.Error("summary should contain <intent_summary> tag")
+	}
+	// Should contain Scope.
 	if !contains(summary, "Scope") {
-		t.Error("summary should contain Scope section")
+		t.Error("summary should contain Scope")
 	}
-	// Should contain summary XML tags.
-	if !contains(summary, "<summary>") {
-		t.Error("summary should contain <summary> tag")
+	// Should contain Primary Goal.
+	if !contains(summary, "Primary Goal") {
+		t.Error("summary should contain Primary Goal")
 	}
-	// Should contain key timeline.
-	if !contains(summary, "Key timeline:") {
-		t.Error("summary should contain Key timeline section")
-	}
-	// Should contain tools mentioned.
-	if !contains(summary, "read_file") {
+	// Should contain tools.
+	if !contains(summary, "read_file") || !contains(summary, "edit_file") {
 		t.Error("summary should mention tools used")
+	}
+	// Should contain Decision Log (assistant used "instead of").
+	if !contains(summary, "Decision Log") {
+		t.Error("summary should contain Decision Log")
+	}
+}
+
+func TestBuildIntentSummary_ActiveBlockers(t *testing.T) {
+	messages := []ConversationMessage{
+		{Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeText, Text: "run the tests"}}},
+		{Role: RoleUser, Content: []ContentBlock{
+			{Type: ContentTypeToolResult, Name: "bash", Content: "FAIL: TestAuth", IsError: true},
+		}},
+	}
+
+	summary := buildIntentSummary(messages)
+	if !contains(summary, "Active Blockers") {
+		t.Error("summary should contain Active Blockers when errors present")
+	}
+	if !contains(summary, "FAIL") {
+		t.Error("summary should include error content in blockers")
+	}
+}
+
+func TestBuildIntentSummary_WorkingSet(t *testing.T) {
+	messages := []ConversationMessage{
+		{Role: RoleAssistant, Content: []ContentBlock{
+			{Type: ContentTypeToolUse, Name: "write_file", Input: []byte(`{"path": "internal/api/client.go", "content": "package api"}`)},
+		}},
+		{Role: RoleAssistant, Content: []ContentBlock{
+			{Type: ContentTypeToolUse, Name: "edit_file", Input: []byte(`{"path": "internal/api/server.go", "old_string": "a", "new_string": "b"}`)},
+		}},
+	}
+
+	summary := buildIntentSummary(messages)
+	if !contains(summary, "Working Set") {
+		t.Errorf("summary should contain Working Set for write/edit operations, got:\n%s", summary)
 	}
 }
 

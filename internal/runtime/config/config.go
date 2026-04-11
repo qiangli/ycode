@@ -37,8 +37,18 @@ type Config struct {
 	// Allowed directories for VFS (in addition to temp dir and workspace root)
 	AllowedDirectories []string `json:"allowedDirectories,omitempty"`
 
+	// Provider capability overrides (e.g., force caching on/off).
+	ProviderCapabilities *ProviderCapabilitiesConfig `json:"providerCapabilities,omitempty"`
+
 	// Custom settings (arbitrary key-value pairs from plugins/MCP)
 	Custom map[string]any `json:"custom,omitempty"`
+}
+
+// ProviderCapabilitiesConfig lets users override auto-detected provider capabilities.
+type ProviderCapabilitiesConfig struct {
+	// CachingSupported overrides whether the provider supports prompt caching.
+	// nil = use auto-detection, true/false = override.
+	CachingSupported *bool `json:"cachingSupported,omitempty"`
 }
 
 // ParallelConfig controls concurrent tool execution.
@@ -163,6 +173,9 @@ func mergeFromFile(cfg *Config, path string) error {
 		for k, v := range overlay.Aliases {
 			cfg.Aliases[k] = v
 		}
+	}
+	if overlay.ProviderCapabilities != nil {
+		cfg.ProviderCapabilities = overlay.ProviderCapabilities
 	}
 	if overlay.Custom != nil {
 		if cfg.Custom == nil {
