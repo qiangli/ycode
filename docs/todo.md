@@ -178,3 +178,13 @@ Track progress here. Check off items as they are completed.
 - [x] 9.8 Tests for pruning, context health, and post-compaction refresh
 - [x] 9.9 Verify docs: memory-clawcode.md (accurate), memory-openclaw.md (1 fix), memory-opencode.md (accurate)
 - [x] 9.10 Full build + test suite passes
+
+## Phase 10: Best-in-Class Features from Aider/Cline/Continue/OpenHands
+- [x] 10.1 Loop/stuck detection with soft/hard thresholds (`conversation/loop_detector.go`)
+- [x] 10.2 Observation masking - Layer 0 lightest compaction (`session/pruning.go`)
+- [x] 10.3 Model-aware context budgets per context window size (`session/budget.go`)
+- [x] 10.4 Loop detector integration in agentic loop (`cli/app.go`)
+- [x] 10.5 Documentation: `memory-aider.md`, `memory-cline.md`, `memory-continue.md`, `memory-openhands.md`
+- [x] 10.6 Implementation plan: `plan-phase10-improvements.md`
+- [x] 10.7 Tests for loop detection, context budget, observation masking
+- [x] 10.8 Full build + test suite passes

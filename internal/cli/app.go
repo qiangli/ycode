@@ -147,6 +147,7 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 	})
 
 	// Agentic loop: send → receive → execute tools → repeat until end_turn.
+	loopDetector := conversation.NewLoopDetector()
 	for i := 0; i < maxToolIterations; i++ {
 		result, recovery, err := rt.TurnWithRecovery(ctx, messages)
 		if err != nil {
@@ -180,6 +181,20 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 		metrics := formatLLMMetrics(result)
 		if metrics != "" {
 			fmt.Fprint(a.stdout, metrics)
+		}
+
+		// Check for stuck loops.
+		if result.TextContent != "" {
+			loopStatus := loopDetector.Record(result.TextContent)
+			switch loopStatus {
+			case conversation.LoopWarning:
+				fmt.Fprintf(a.stdout, "\n⚠ Loop detected: agent may be stuck. Injecting intervention.\n\n")
+			case conversation.LoopBreak:
+				fmt.Fprintf(a.stdout, "\n✘ Loop detected: agent is stuck after %d similar responses. Breaking loop.\n\n",
+					conversation.LoopHardThreshold)
+				a.printSessionSummary()
+				return nil
+			}
 		}
 
 		// Print text output.
