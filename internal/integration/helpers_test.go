@@ -95,6 +95,15 @@ func httpPost(t *testing.T, url, contentType, payload string) (int, string) {
 	return resp.StatusCode, string(body)
 }
 
+// readBody reads the full body from an http.Response.
+func readBody(resp *http.Response) (string, error) {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
 // requireConnectivity skips the test if the server is unreachable.
 func requireConnectivity(t *testing.T) {
 	t.Helper()

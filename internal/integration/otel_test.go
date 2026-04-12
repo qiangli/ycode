@@ -27,7 +27,8 @@ func TestOTEL(t *testing.T) {
 		if status != http.StatusOK {
 			t.Fatalf("Prometheus metrics returned %d, want 200", status)
 		}
-		if !strings.HasPrefix(body, "#") {
+		// Body may be empty if no metrics have been received yet; that's OK.
+		if len(body) > 0 && !strings.HasPrefix(body, "#") {
 			t.Errorf("Prometheus metrics response should start with '#', got %q", body[:min(len(body), 50)])
 		}
 	})

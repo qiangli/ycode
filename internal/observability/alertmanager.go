@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/prometheus/alertmanager/asset"
 )
 
 // AlertmanagerComponent provides an embedded alert manager running as a goroutine.
@@ -57,8 +61,37 @@ func (a *AlertmanagerComponent) HTTPHandler() http.Handler {
 	mux.HandleFunc("/api/v2/alerts", a.handleAlerts)
 	mux.HandleFunc("/api/v1/alerts", a.handleAlerts)
 	mux.HandleFunc("/-/healthy", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "OK") })
-	mux.HandleFunc("/", a.handleUI)
+
+	// Serve the real Alertmanager web UI from embedded assets.
+	fs := http.FileServer(asset.Assets)
+	mux.HandleFunc("/script.js", func(w http.ResponseWriter, r *http.Request) {
+		disableAlertCaching(w)
+		r.URL.Path = "/static/script.js"
+		fs.ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		disableAlertCaching(w)
+		r.URL.Path = "/static/favicon.ico"
+		fs.ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/lib/", func(w http.ResponseWriter, r *http.Request) {
+		disableAlertCaching(w)
+		// Map /lib/foo → /static/lib/foo
+		r.URL.Path = path.Join("/static/lib", strings.TrimPrefix(r.URL.Path, "/lib"))
+		fs.ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		disableAlertCaching(w)
+		r.URL.Path = "/static/"
+		fs.ServeHTTP(w, r)
+	})
 	return mux
+}
+
+func disableAlertCaching(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 }
 
 func (a *AlertmanagerComponent) AddAlert(alert Alert) {
@@ -134,28 +167,4 @@ func (a *AlertmanagerComponent) handleAlerts(w http.ResponseWriter, r *http.Requ
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
-}
-
-func (a *AlertmanagerComponent) handleUI(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	alerts := a.Alerts()
-	fmt.Fprint(w, `<!DOCTYPE html><html><head><title>ycode Alerts</title>
-<style>body{font-family:sans-serif;max-width:1000px;margin:20px auto;padding:0 20px}
-table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:4px 8px;border-bottom:1px solid #ddd}
-.firing{color:#d32f2f}.resolved{color:#388e3c}</style></head><body><h2>ycode Alerts</h2>`)
-	if len(alerts) == 0 {
-		fmt.Fprint(w, "<p>No active alerts.</p>")
-	} else {
-		fmt.Fprint(w, `<table><thead><tr><th>Status</th><th>Alert</th><th>Started</th></tr></thead><tbody>`)
-		for _, al := range alerts {
-			cls := "resolved"
-			if al.Status == "firing" {
-				cls = "firing"
-			}
-			fmt.Fprintf(w, `<tr><td class="%s">%s</td><td>%s</td><td>%s</td></tr>`,
-				cls, al.Status, al.Labels["alertname"], al.StartsAt.Format(time.RFC3339))
-		}
-		fmt.Fprint(w, "</tbody></table>")
-	}
-	fmt.Fprint(w, "</body></html>")
 }

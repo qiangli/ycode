@@ -23,6 +23,7 @@ require (
 	github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusexporter v0.149.0
 	github.com/perses/perses v0.0.0-00010101000000-000000000000
 	github.com/philippgille/chromem-go v0.7.0
+	github.com/prometheus/alertmanager v0.31.0
 	github.com/prometheus/prometheus v0.310.0
 	github.com/spf13/cobra v1.10.2
 	go.etcd.io/bbolt v1.4.3
@@ -35,6 +36,7 @@ require (
 	go.opentelemetry.io/collector/otelcol v0.149.0
 	go.opentelemetry.io/collector/processor/batchprocessor v0.149.0
 	go.opentelemetry.io/collector/receiver/otlpreceiver v0.149.0
+	go.opentelemetry.io/collector/service v0.149.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.18.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.43.0
@@ -343,6 +345,8 @@ require (
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.2 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
+	github.com/shurcooL/httpfs v0.0.0-20230704072500-f1e31cf0ba5c // indirect
+	github.com/shurcooL/vfsgen v0.0.0-20230704071429-0000e147ea92 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/sorairolake/lzip-go v0.3.8 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
@@ -457,7 +461,6 @@ require (
 	go.opentelemetry.io/collector/receiver/receiverhelper v0.149.0 // indirect
 	go.opentelemetry.io/collector/receiver/receivertest v0.149.0 // indirect
 	go.opentelemetry.io/collector/receiver/xreceiver v0.149.0 // indirect
-	go.opentelemetry.io/collector/service v0.149.0 // indirect
 	go.opentelemetry.io/collector/service/hostcapabilities v0.149.0 // indirect
 	go.opentelemetry.io/contrib/bridges/otelzap v0.17.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0 // indirect

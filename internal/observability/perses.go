@@ -10,7 +10,10 @@ import (
 
 	persesembed "github.com/perses/perses/embed"
 	"github.com/perses/perses/pkg/model/api/config"
+	"github.com/perses/perses/pkg/model/api/v1/secret"
 )
+
+const persesDefaultKey = "e=dz;`M'5Pjvy^Sq3FVBkTC@N9?H/gua"
 
 // PersesComponent runs Perses in-process as a goroutine for dashboards.
 type PersesComponent struct {
@@ -48,6 +51,13 @@ func (p *PersesComponent) Start(ctx context.Context) error {
 				Extension: "json",
 			},
 		},
+		Security: config.Security{
+			EncryptionKey: secret.Hidden(persesDefaultKey),
+		},
+	}
+	// Verify() validates and hex-encodes the encryption key before use.
+	if err := conf.Security.Verify(); err != nil {
+		return fmt.Errorf("perses: verify security config: %w", err)
 	}
 
 	server, err := persesembed.Start(ctx, conf)

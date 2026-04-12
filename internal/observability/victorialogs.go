@@ -97,5 +97,14 @@ func (v *VictoriaLogsComponent) requestHandler(w http.ResponseWriter, r *http.Re
 	if vlstorage.RequestHandler(w, r) {
 		return true
 	}
+	// Redirect root to the built-in vmui web interface.
+	if r.URL.Path == "/" || r.URL.Path == "" {
+		target := "/select/vmui/"
+		if v.pathPrefix != "" {
+			target = v.pathPrefix + target
+		}
+		http.Redirect(w, r, target, http.StatusFound)
+		return true
+	}
 	return false
 }

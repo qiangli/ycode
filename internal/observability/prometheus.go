@@ -2,7 +2,9 @@ package observability
 
 import (
 	"context"
+	"embed"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -16,17 +18,22 @@ import (
 	"github.com/prometheus/prometheus/tsdb"
 )
 
+//go:embed static/prometheus
+var prometheusUI embed.FS
+
 // PrometheusComponent provides an embedded Prometheus TSDB and PromQL engine.
 // Runs entirely in-process as goroutines.
 type PrometheusComponent struct {
 	dataDir          string
 	scrapeTargetAddr string // collector's prometheus exporter (e.g. "127.0.0.1:8889")
+	pathPrefix       string // proxy path prefix (e.g. "/prometheus")
 
 	mu         sync.Mutex
 	db         *tsdb.DB
 	engine     *promql.Engine
 	server     *http.Server
 	listenAddr string
+	port       int
 	healthy    atomic.Bool
 	cancel     context.CancelFunc
 }
@@ -39,7 +46,8 @@ func NewPrometheusComponent(dataDir, scrapeTargetAddr string) *PrometheusCompone
 	}
 }
 
-func (p *PrometheusComponent) Name() string { return "prometheus" }
+func (p *PrometheusComponent) Name() string             { return "prometheus" }
+func (p *PrometheusComponent) SetPathPrefix(pfx string) { p.pathPrefix = pfx }
 
 func (p *PrometheusComponent) Start(ctx context.Context) error {
 	p.mu.Lock()
@@ -72,18 +80,24 @@ func (p *PrometheusComponent) Start(ctx context.Context) error {
 		return fmt.Errorf("prometheus: listen: %w", err)
 	}
 	p.listenAddr = listener.Addr().String()
+	p.port = listener.Addr().(*net.TCPAddr).Port
+
+	// Serve the embedded Prometheus web UI and API endpoints.
+	// The reverse proxy forwards the full path including the prefix
+	// (e.g. /prometheus/api/v1/query), so we mount under the prefix.
+	uiFS, _ := fs.Sub(prometheusUI, "static/prometheus")
+	prefix := p.pathPrefix // e.g. "/prometheus"
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/query", p.handleQuery)
-	mux.HandleFunc("/api/v1/query_range", p.handleQueryRange)
-	mux.HandleFunc("/-/healthy", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc(prefix+"/api/v1/query", p.handleQuery)
+	mux.HandleFunc(prefix+"/api/v1/query_range", p.handleQueryRange)
+	mux.HandleFunc(prefix+"/-/healthy", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "OK")
 	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, `<html><body><h2>ycode Prometheus</h2><p><a href="api/v1/query?query=up">Query API</a></p></body></html>`)
-	})
+	// Serve embedded UI static files under the prefix.
+	fileServer := http.StripPrefix(prefix, http.FileServer(http.FS(uiFS)))
+	mux.Handle(prefix+"/", fileServer)
 
 	p.server = &http.Server{Handler: mux}
 	go func() {
@@ -122,15 +136,12 @@ func (p *PrometheusComponent) Stop(ctx context.Context) error {
 
 func (p *PrometheusComponent) Healthy() bool { return p.healthy.Load() }
 
-func (p *PrometheusComponent) HTTPHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p.server != nil {
-			p.server.Handler.ServeHTTP(w, r)
-		} else {
-			http.Error(w, "prometheus not started", http.StatusServiceUnavailable)
-		}
-	})
-}
+// HTTPHandler returns nil — Prometheus runs its own HTTP server.
+// Accessed via reverse proxy from the stack manager.
+func (p *PrometheusComponent) HTTPHandler() http.Handler { return nil }
+
+// Port returns the Prometheus HTTP port for reverse proxying.
+func (p *PrometheusComponent) Port() int { return p.port }
 
 func (p *PrometheusComponent) handleQuery(w http.ResponseWriter, r *http.Request) {
 	query := r.FormValue("query")
