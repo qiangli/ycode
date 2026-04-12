@@ -114,17 +114,24 @@ func TestExportHandler(t *testing.T) {
 	})
 
 	t.Run("export with auto filename", func(t *testing.T) {
-		// Change to temp dir so auto-generated file lands there.
-		orig, _ := os.Getwd()
-		os.Chdir(dir)
-		defer os.Chdir(orig)
+		autoDir := t.TempDir()
+		autoDeps := &RuntimeDeps{
+			SessionID: sess.ID,
+			Session:   sess,
+			WorkDir:   autoDir,
+		}
+		h := exportHandler(autoDeps)
 
-		result, err := handler(context.Background(), "")
+		result, err := h(context.Background(), "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if !strings.Contains(result, "please-fix-the-login-bug.md") {
 			t.Errorf("expected auto-generated filename, got: %s", result)
+		}
+		// Verify file was written inside WorkDir, not CWD.
+		if _, err := os.Stat(filepath.Join(autoDir, "please-fix-the-login-bug.md")); err != nil {
+			t.Errorf("exported file should be in WorkDir: %v", err)
 		}
 	})
 

@@ -28,6 +28,10 @@ func exportHandler(deps *RuntimeDeps) HandlerFunc {
 		}
 
 		path := resolveExportPath(strings.TrimSpace(args), deps.Session)
+		// Resolve relative paths against the workspace directory.
+		if !filepath.IsAbs(path) && deps.WorkDir != "" {
+			path = filepath.Join(deps.WorkDir, path)
+		}
 
 		content := renderExportMarkdown(deps)
 
