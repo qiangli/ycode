@@ -82,7 +82,7 @@ func (p *PrometheusComponent) Start(ctx context.Context) error {
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, `<html><body><h2>ycode Prometheus</h2><p><a href="/api/v1/query?query=up">Query API</a></p></body></html>`)
+		fmt.Fprint(w, `<html><body><h2>ycode Prometheus</h2><p><a href="api/v1/query?query=up">Query API</a></p></body></html>`)
 	})
 
 	p.server = &http.Server{Handler: mux}

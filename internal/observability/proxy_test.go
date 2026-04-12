@@ -45,9 +45,9 @@ func TestProxyServer(t *testing.T) {
 		if resp.StatusCode != 200 {
 			t.Errorf("status = %d, want 200", resp.StatusCode)
 		}
-		// After prefix stripping, backend sees /foo.
-		if !strings.Contains(string(body), "backend:/foo") {
-			t.Errorf("body = %q, want to contain 'backend:/foo'", string(body))
+		// Backend receives the full prefixed path (no stripping).
+		if !strings.Contains(string(body), "backend:/test/foo") {
+			t.Errorf("body = %q, want to contain 'backend:/test/foo'", string(body))
 		}
 	})
 

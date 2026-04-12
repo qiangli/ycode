@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -47,6 +48,15 @@ func (s *StackManager) Start(ctx context.Context) error {
 	}
 
 	slog.Info("observability: starting stack")
+
+	// Assign path prefixes to components that need them before starting.
+	for _, c := range s.components {
+		if pc, ok := c.(PrefixConfigurable); ok {
+			if prefix, exists := componentPathMap[c.Name()]; exists {
+				pc.SetPathPrefix(strings.TrimSuffix(prefix, "/"))
+			}
+		}
+	}
 
 	// Start components in dependency order. Each Start() is non-blocking
 	// (launches work in a goroutine internally).
@@ -140,20 +150,20 @@ func (s *StackManager) ProxyAddr() string {
 	return ""
 }
 
+// componentPathMap defines the proxy path prefix for each well-known component.
+var componentPathMap = map[string]string{
+	"otel-collector": "/collector/",
+	"prometheus":     "/prometheus/",
+	"alertmanager":   "/alerts/",
+	"perses":         "/dashboard/",
+	"victoria-logs":  "/logs/",
+	"jaeger":         "/traces/",
+}
+
 // registerRoutes mounts each component's HTTP handler on the proxy mux.
 func (s *StackManager) registerRoutes() {
-	// Predefined path mappings for well-known components.
-	pathMap := map[string]string{
-		"otel-collector": "/collector/",
-		"prometheus":     "/prometheus/",
-		"alertmanager":   "/alerts/",
-		"perses":         "/dashboard/",
-		"victoria-logs":  "/logs/",
-		"jaeger":         "/traces/",
-	}
-
 	for _, c := range s.components {
-		path, ok := pathMap[c.Name()]
+		path, ok := componentPathMap[c.Name()]
 		if !ok {
 			path = "/" + c.Name() + "/"
 		}

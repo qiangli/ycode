@@ -112,16 +112,13 @@ func (p *ProxyServer) Addr() string {
 	return p.listenAddr
 }
 
-func (p *ProxyServer) reverseProxy(prefix string, target *url.URL) http.Handler {
+func (p *ProxyServer) reverseProxy(_ string, target *url.URL) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
-		// Strip the prefix so /prometheus/graph -> /graph on the backend.
-		req.URL.Path = strings.TrimPrefix(req.URL.Path, strings.TrimSuffix(prefix, "/"))
-		if req.URL.Path == "" {
-			req.URL.Path = "/"
-		}
+		// Forward the full path including the prefix. Backends are configured
+		// with their path prefix and expect to receive the prefixed path.
 		req.Host = target.Host
 	}
 	return proxy
@@ -134,25 +131,59 @@ func (p *ProxyServer) landingPage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	var b strings.Builder
-	b.WriteString("<!DOCTYPE html><html><head><title>ycode Observability</title>")
-	b.WriteString("<style>body{font-family:sans-serif;max-width:800px;margin:40px auto;padding:0 20px}")
-	b.WriteString("a{color:#0066cc;text-decoration:none}a:hover{text-decoration:underline}")
-	b.WriteString("li{margin:8px 0}</style></head><body>")
-	b.WriteString("<h1>ycode Observability Stack</h1><ul>")
+	b.WriteString(`<!DOCTYPE html><html><head><title>ycode Observability</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+background:linear-gradient(135deg,#2c3e50 0%,#3a4a5c 50%,#2c3e50 100%);
+min-height:100vh;padding:60px 20px;color:#fff}
+.container{max-width:720px;margin:0 auto}
+h1{font-size:1.4em;font-weight:500;color:rgba(255,255,255,0.85);margin-bottom:28px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,80px);gap:24px 28px}
+.tile{display:flex;flex-direction:column;align-items:center;text-decoration:none;gap:8px}
+.icon{width:60px;height:60px;border-radius:14px;display:flex;align-items:center;
+justify-content:center;font-size:26px;font-weight:600;color:#fff;
+box-shadow:0 2px 8px rgba(0,0,0,0.3);transition:transform .15s}
+.tile:hover .icon{transform:scale(1.08)}
+.label{font-size:11px;color:rgba(255,255,255,0.8);text-align:center;
+max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.footer{margin-top:48px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.15)}
+.footer a{color:rgba(255,255,255,0.5);text-decoration:none;font-size:12px}
+.footer a:hover{color:rgba(255,255,255,0.8)}
+</style></head><body><div class="container">
+<h1>Favorites</h1><div class="grid">`)
+
+	// Predefined colors for consistent icon appearance.
+	colors := []string{
+		"#3478f6", "#34c759", "#ff9500", "#ff3b30",
+		"#af52de", "#5ac8fa", "#ff2d55", "#00c7be",
+	}
 
 	p.mu.RLock()
+	allPrefixes := make([]string, 0, len(p.routes)+len(p.handlers))
 	for prefix := range p.routes {
-		name := strings.Trim(prefix, "/")
-		b.WriteString(fmt.Sprintf("<li><a href=\"%s\">%s</a></li>", prefix, name))
+		allPrefixes = append(allPrefixes, prefix)
 	}
 	for prefix := range p.handlers {
-		name := strings.Trim(prefix, "/")
-		b.WriteString(fmt.Sprintf("<li><a href=\"%s\">%s</a></li>", prefix, name))
+		allPrefixes = append(allPrefixes, prefix)
 	}
 	p.mu.RUnlock()
+	sort.Strings(allPrefixes)
 
-	b.WriteString("</ul><p><a href=\"/healthz\">/healthz</a> — aggregated health check</p>")
-	b.WriteString("</body></html>")
+	for i, prefix := range allPrefixes {
+		name := strings.Trim(prefix, "/")
+		initial := strings.ToUpper(name[:1])
+		displayName := strings.ToUpper(name[:1]) + name[1:]
+		color := colors[i%len(colors)]
+		b.WriteString(fmt.Sprintf(
+			`<a class="tile" href="%s"><div class="icon" style="background:%s">%s</div><span class="label">%s</span></a>`,
+			prefix, color, initial, displayName,
+		))
+	}
+
+	b.WriteString(`</div>
+<div class="footer"><a href="/healthz">/healthz</a></div>
+</div></body></html>`)
 	fmt.Fprint(w, b.String())
 }
 

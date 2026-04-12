@@ -19,9 +19,10 @@ import (
 // Jaeger v2 is built on the OTEL Collector framework with Jaeger-specific
 // extensions (jaeger_storage, jaeger_query, remote_sampling).
 type JaegerComponent struct {
-	otlpPort  int // OTLP gRPC port for receiving traces
-	queryPort int // Jaeger Query UI HTTP port
-	dataDir   string
+	otlpPort   int // OTLP gRPC port for receiving traces
+	queryPort  int // Jaeger Query UI HTTP port
+	dataDir    string
+	pathPrefix string // proxy path prefix (e.g. "/traces")
 
 	svc     *otelcol.Collector
 	healthy atomic.Bool
@@ -33,7 +34,8 @@ func NewJaegerComponent(otlpPort, queryPort int, dataDir string) *JaegerComponen
 	return &JaegerComponent{otlpPort: otlpPort, queryPort: queryPort, dataDir: dataDir}
 }
 
-func (j *JaegerComponent) Name() string { return "jaeger" }
+func (j *JaegerComponent) Name() string           { return "jaeger" }
+func (j *JaegerComponent) SetPathPrefix(p string) { j.pathPrefix = p }
 
 func (j *JaegerComponent) Start(ctx context.Context) error {
 	// Build Jaeger all-in-one config YAML programmatically.
@@ -101,6 +103,10 @@ func (j *JaegerComponent) QueryPort() int { return j.queryPort }
 
 // generateConfig produces a minimal Jaeger all-in-one YAML config.
 func (j *JaegerComponent) generateConfig() string {
+	basePath := j.pathPrefix
+	if basePath == "" {
+		basePath = "/"
+	}
 	return fmt.Sprintf(`receivers:
   otlp:
     protocols:
@@ -120,6 +126,7 @@ extensions:
   jaeger_query:
     storage:
       traces: memstore
+    base_path: "%s"
     http:
       endpoint: "127.0.0.1:%d"
 
@@ -134,5 +141,5 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [jaeger_storage_exporter]
-`, j.otlpPort, j.queryPort)
+`, j.otlpPort, basePath, j.queryPort)
 }

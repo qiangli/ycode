@@ -33,3 +33,10 @@ type ComponentStatus struct {
 	ProxyPath string `json:"proxy_path,omitempty"`
 	Healthy   bool   `json:"healthy"`
 }
+
+// PrefixConfigurable is implemented by components that need to know
+// their reverse-proxy path prefix (e.g. "/traces") before starting.
+// The prefix is set by StackManager before Start() is called.
+type PrefixConfigurable interface {
+	SetPathPrefix(prefix string)
+}

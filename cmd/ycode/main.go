@@ -459,9 +459,9 @@ var rootCmd = &cobra.Command{
 			runErr = app.RunInteractive(context.Background())
 		}
 
-		// On exit, prompt to keep server if this instance started it.
+		// On exit, stop the auto-started server.
 		if autoStartedServer && stackMgr != nil {
-			promptKeepServer(stackMgr)
+			stopAutoStartedServer(stackMgr)
 		}
 
 		return runErr

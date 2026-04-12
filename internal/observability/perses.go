@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ type PersesComponent struct {
 	port           int
 	prometheusAddr string // address of embedded Prometheus (e.g. "127.0.0.1:9090")
 	dataDir        string
+	pathPrefix     string // proxy path prefix (e.g. "/dashboard")
 
 	server  *persesembed.Server
 	healthy atomic.Bool
@@ -30,10 +32,16 @@ func NewPersesComponent(port int, prometheusAddr, dataDir string) *PersesCompone
 	}
 }
 
-func (p *PersesComponent) Name() string { return "perses" }
+func (p *PersesComponent) Name() string             { return "perses" }
+func (p *PersesComponent) SetPathPrefix(pfx string) { p.pathPrefix = pfx }
 
 func (p *PersesComponent) Start(ctx context.Context) error {
+	// Set the listen address flag before starting Perses. The perses/common
+	// app.Runner reads this flag to configure the echo HTTP server.
+	_ = flag.Set("web.listen-address", fmt.Sprintf(":%d", p.port))
+
 	conf := config.Config{
+		APIPrefix: p.pathPrefix,
 		Database: config.Database{
 			File: &config.File{
 				Folder:    p.dataDir + "/data",

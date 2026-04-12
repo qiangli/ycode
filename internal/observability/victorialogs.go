@@ -18,10 +18,11 @@ import (
 // VictoriaLogsComponent runs VictoriaLogs in-process as a goroutine.
 // Receives logs from the OTEL Collector via OTLP HTTP.
 type VictoriaLogsComponent struct {
-	port    int
-	dataDir string
-	healthy atomic.Bool
-	cancel  context.CancelFunc
+	port       int
+	dataDir    string
+	pathPrefix string // proxy path prefix (e.g. "/logs")
+	healthy    atomic.Bool
+	cancel     context.CancelFunc
 }
 
 // NewVictoriaLogsComponent creates an in-process VictoriaLogs component.
@@ -29,7 +30,8 @@ func NewVictoriaLogsComponent(port int, dataDir string) *VictoriaLogsComponent {
 	return &VictoriaLogsComponent{port: port, dataDir: dataDir}
 }
 
-func (v *VictoriaLogsComponent) Name() string { return "victoria-logs" }
+func (v *VictoriaLogsComponent) Name() string           { return "victoria-logs" }
+func (v *VictoriaLogsComponent) SetPathPrefix(p string) { v.pathPrefix = p }
 
 func (v *VictoriaLogsComponent) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
@@ -37,6 +39,9 @@ func (v *VictoriaLogsComponent) Start(ctx context.Context) error {
 
 	// Configure VictoriaLogs via flags (its native config mechanism).
 	_ = flag.Set("storageDataPath", v.dataDir+"/data")
+	if v.pathPrefix != "" {
+		_ = flag.Set("http.pathPrefix", v.pathPrefix)
+	}
 
 	// Initialize storage, select, and insert subsystems.
 	vlstorage.Init()

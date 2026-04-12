@@ -46,18 +46,10 @@ func maybeStartOTELServer(ctx context.Context) (*observability.StackManager, boo
 	return mgr, true
 }
 
-// promptKeepServer asks the user whether to keep the auto-started server running.
-func promptKeepServer(mgr *observability.StackManager) {
-	fmt.Print("\nKeep observability server running? [Y/n] ")
-	var answer string
-	fmt.Scanln(&answer)
-	if answer == "n" || answer == "N" {
-		fmt.Println("Stopping observability server...")
-		if err := mgr.Stop(context.Background()); err != nil {
-			slog.Warn("otel: stop server", "error", err)
-		}
-	} else {
-		fmt.Printf("Server still running at http://127.0.0.1:%d/\n", otelPort)
-		fmt.Println("Stop with: ycode serve stop")
+// stopAutoStartedServer shuts down the auto-started observability server on exit.
+func stopAutoStartedServer(mgr *observability.StackManager) {
+	slog.Info("otel: stopping auto-started server")
+	if err := mgr.Stop(context.Background()); err != nil {
+		slog.Warn("otel: stop server", "error", err)
 	}
 }
