@@ -131,26 +131,80 @@ func (p *ProxyServer) landingPage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	var b strings.Builder
-	b.WriteString(`<!DOCTYPE html><html><head><title>ycode Observability</title>
+	b.WriteString(`<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>ycode Observability</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden}
 body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
-background:linear-gradient(135deg,#2c3e50 0%,#3a4a5c 50%,#2c3e50 100%);
-min-height:100vh;padding:60px 20px;color:#fff}
-.container{max-width:720px;margin:0 auto}
-h1{font-size:1.4em;font-weight:500;color:rgba(255,255,255,0.85);margin-bottom:28px}
+background:linear-gradient(135deg,#2c3e50 0%,#3a4a5c 50%,#2c3e50 100%);color:#fff}
+
+/* Toggle button — fixed top-left */
+#btn-toggle{position:fixed;z-index:100;top:16px;left:16px;width:40px;height:40px;
+border-radius:10px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;
+background:rgba(0,0,0,0.45);color:rgba(255,255,255,0.85);
+box-shadow:0 2px 10px rgba(0,0,0,0.3);backdrop-filter:blur(8px);transition:all .15s}
+#btn-toggle:hover{background:rgba(0,0,0,0.6);color:#fff}
+#btn-toggle svg{width:18px;height:18px;fill:currentColor}
+/* Home button — fixed bottom-left */
+#btn-home{position:fixed;z-index:100;bottom:16px;left:16px;width:40px;height:40px;
+border-radius:10px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;
+background:rgba(0,0,0,0.45);color:rgba(255,255,255,0.85);
+box-shadow:0 2px 10px rgba(0,0,0,0.3);backdrop-filter:blur(8px);transition:all .15s}
+#btn-home:hover{background:rgba(0,0,0,0.6);color:#fff}
+#btn-home svg{width:18px;height:18px;fill:currentColor}
+
+/* Grid home screen */
+#grid-home{height:100%;overflow-y:auto;padding:60px 20px}
+.grid-container{max-width:720px;margin:0 auto}
+.grid-container h1{font-size:1.4em;font-weight:500;color:rgba(255,255,255,0.85);margin-bottom:28px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,80px);gap:24px 28px}
-.tile{display:flex;flex-direction:column;align-items:center;text-decoration:none;gap:8px}
-.icon{width:60px;height:60px;border-radius:14px;display:flex;align-items:center;
+.tile{display:flex;flex-direction:column;align-items:center;text-decoration:none;gap:8px;cursor:pointer}
+.tile .icon{width:60px;height:60px;border-radius:14px;display:flex;align-items:center;
 justify-content:center;font-size:26px;font-weight:600;color:#fff;
 box-shadow:0 2px 8px rgba(0,0,0,0.3);transition:transform .15s}
 .tile:hover .icon{transform:scale(1.08)}
-.label{font-size:11px;color:rgba(255,255,255,0.8);text-align:center;
+.tile .label{font-size:11px;color:rgba(255,255,255,0.8);text-align:center;
 max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.footer{margin-top:48px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.15)}
-.footer a{color:rgba(255,255,255,0.5);text-decoration:none;font-size:12px}
-.footer a:hover{color:rgba(255,255,255,0.8)}
-</style></head><body><div class="container">
+.grid-footer{margin-top:48px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.15)}
+.grid-footer a{color:rgba(255,255,255,0.5);text-decoration:none;font-size:12px}
+.grid-footer a:hover{color:rgba(255,255,255,0.8)}
+
+/* Grid iframe (full screen when an app is open) */
+#grid-frame{position:absolute;top:0;left:0;width:100%;height:100%;border:none;background:#fff}
+
+/* List view */
+#list-view{display:flex;height:100%}
+.list-panel{width:220px;min-width:220px;overflow-y:auto;padding-top:64px;
+background:rgba(0,0,0,0.25);border-right:1px solid rgba(255,255,255,0.1)}
+.list-item{display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;
+text-decoration:none;color:#fff;transition:background .12s;border-left:3px solid transparent}
+.list-item:hover{background:rgba(255,255,255,0.06)}
+.list-item.active{background:rgba(255,255,255,0.1);border-left-color:rgba(255,255,255,0.6)}
+.list-item .icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;
+justify-content:center;font-size:16px;font-weight:600;color:#fff;flex-shrink:0;
+box-shadow:0 1px 4px rgba(0,0,0,0.3)}
+.list-item .label{font-size:13px;color:rgba(255,255,255,0.9)}
+.list-content{flex:1;position:relative;background:#1a1a2e}
+.list-content iframe{width:100%;height:100%;border:none}
+.list-placeholder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+color:rgba(255,255,255,0.4);font-size:14px}
+.hidden{display:none!important}
+</style></head><body>
+
+<!-- Toggle button — top-left -->
+<button id="btn-toggle" onclick="toggleView()" title="Switch view">
+<svg id="ico-list" viewBox="0 0 16 16"><rect x="1" y="2" width="4" height="3" rx="0.5"/><rect x="7" y="2.5" width="8" height="2" rx="0.5"/><rect x="1" y="7" width="4" height="3" rx="0.5"/><rect x="7" y="7.5" width="8" height="2" rx="0.5"/><rect x="1" y="12" width="4" height="3" rx="0.5"/><rect x="7" y="12.5" width="8" height="2" rx="0.5"/></svg>
+<svg id="ico-grid" class="hidden" viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+</button>
+<!-- Home button — bottom-left (grid mode only, when app is open) -->
+<button id="btn-home" class="hidden" onclick="gridBack()" title="Back to apps">
+<svg viewBox="0 0 20 20"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z"/></svg>
+</button>
+
+<!-- Grid mode: home + iframe overlay -->
+<div id="grid-mode">
+<div id="grid-home">
+<div class="grid-container">
 <h1>Favorites</h1><div class="grid">`)
 
 	// Predefined colors for consistent icon appearance.
@@ -176,14 +230,71 @@ max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 		displayName := strings.ToUpper(name[:1]) + name[1:]
 		color := colors[i%len(colors)]
 		b.WriteString(fmt.Sprintf(
-			`<a class="tile" href="%s"><div class="icon" style="background:%s">%s</div><span class="label">%s</span></a>`,
+			`<div class="tile" onclick="gridOpen('%s')"><div class="icon" style="background:%s">%s</div><span class="label">%s</span></div>`,
 			prefix, color, initial, displayName,
 		))
 	}
 
 	b.WriteString(`</div>
-<div class="footer"><a href="/healthz">/healthz</a></div>
-</div></body></html>`)
+<div class="grid-footer"><a href="/healthz">/healthz</a></div>
+</div></div>
+<iframe id="grid-frame" class="hidden"></iframe>
+</div>
+
+<!-- List mode -->
+<div id="list-view" class="hidden">
+<div class="list-panel">`)
+
+	for i, prefix := range allPrefixes {
+		name := strings.Trim(prefix, "/")
+		initial := strings.ToUpper(name[:1])
+		displayName := strings.ToUpper(name[:1]) + name[1:]
+		color := colors[i%len(colors)]
+		b.WriteString(fmt.Sprintf(
+			`<div class="list-item" data-href="%s" onclick="selectItem(this)"><div class="icon" style="background:%s">%s</div><span class="label">%s</span></div>`,
+			prefix, color, initial, displayName,
+		))
+	}
+
+	b.WriteString(`</div>
+<div class="list-content">
+<iframe id="list-frame"></iframe>
+<div id="list-placeholder" class="list-placeholder">Select an item to view</div>
+</div></div>
+
+<script>
+var mode='grid';
+function toggleView(){
+mode=mode==='grid'?'list':'grid';
+document.getElementById('grid-mode').classList.toggle('hidden',mode!=='grid');
+document.getElementById('list-view').classList.toggle('hidden',mode!=='list');
+document.getElementById('ico-list').classList.toggle('hidden',mode==='list');
+document.getElementById('ico-grid').classList.toggle('hidden',mode==='grid');
+document.getElementById('btn-home').classList.add('hidden');
+if(mode==='list'){var f=document.querySelector('.list-item');if(f&&!document.querySelector('.list-item.active'))selectItem(f)}
+}
+function gridOpen(href){
+document.getElementById('grid-frame').src=href;
+document.getElementById('grid-frame').classList.remove('hidden');
+document.getElementById('grid-home').classList.add('hidden');
+document.getElementById('btn-home').classList.remove('hidden');
+document.getElementById('btn-toggle').classList.add('hidden');
+}
+function gridBack(){
+document.getElementById('grid-frame').classList.add('hidden');
+document.getElementById('grid-frame').src='';
+document.getElementById('grid-home').classList.remove('hidden');
+document.getElementById('btn-home').classList.add('hidden');
+document.getElementById('btn-toggle').classList.remove('hidden');
+}
+function selectItem(el){
+document.querySelectorAll('.list-item').forEach(function(e){e.classList.remove('active')});
+el.classList.add('active');
+document.getElementById('list-frame').src=el.dataset.href;
+document.getElementById('list-placeholder').classList.add('hidden');
+}
+</script>
+</body></html>`)
 	fmt.Fprint(w, b.String())
 }
 

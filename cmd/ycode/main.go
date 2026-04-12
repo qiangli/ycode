@@ -18,8 +18,8 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/cli"
+	"github.com/qiangli/ycode/internal/cluster"
 	"github.com/qiangli/ycode/internal/commands"
-	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/embedding"
 	"github.com/qiangli/ycode/internal/runtime/git"
@@ -429,11 +429,14 @@ var rootCmd = &cobra.Command{
 	Short: "ycode – autonomous agent harness for software development",
 	Long:  "ycode is a CLI agent harness that provides 50+ tools, MCP/LSP integration, a plugin system, permission enforcement, and session management.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Auto-start observability server if --no-otel is not set.
-		autoStartedServer := false
-		var stackMgr *observability.StackManager
+		// Join the OTEL cluster if --no-otel is not set.
+		var cl *cluster.Cluster
 		if !noOTEL {
-			stackMgr, autoStartedServer = maybeStartOTELServer(cmd.Context())
+			var err error
+			cl, err = joinCluster(cmd.Context())
+			if err != nil {
+				slog.Warn("cluster: join failed, continuing without OTEL clustering", "error", err)
+			}
 		}
 
 		// Check for piped input.
@@ -466,9 +469,9 @@ var rootCmd = &cobra.Command{
 			runErr = app.RunInteractive(context.Background())
 		}
 
-		// On exit, stop the auto-started server.
-		if autoStartedServer && stackMgr != nil {
-			stopAutoStartedServer(stackMgr)
+		// On exit, leave the cluster (stops OTEL stack if this instance was master).
+		if cl != nil {
+			leaveCluster(cl)
 		}
 
 		return runErr

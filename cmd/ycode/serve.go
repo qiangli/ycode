@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/qiangli/ycode/internal/cluster"
 	"github.com/qiangli/ycode/internal/collector"
 	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -72,7 +74,7 @@ var serveStopCmd = &cobra.Command{
 
 var serveStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show status of the observability server",
+	Short: "Show status of the observability server and cluster",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, dataDir, err := loadServeConfig()
 		if err != nil {
@@ -98,7 +100,31 @@ var serveStatusCmd = &cobra.Command{
 			}
 			fmt.Fprintf(w, "%s\t%s\n", s.Name, health)
 		}
-		return w.Flush()
+		w.Flush()
+
+		// Show cluster info.
+		home, _ := os.UserHomeDir()
+		clusterDir := filepath.Join(home, ".ycode", "cluster")
+		cl := cluster.New(clusterDir, "status-check", cluster.Options{})
+		fmt.Println()
+
+		if info, err := cl.LeaderInfo(); err == nil {
+			fmt.Printf("Cluster Leader: %s (PID %d, port %d)\n", info.InstanceID, info.PID, info.Port)
+		} else {
+			fmt.Println("Cluster Leader: none")
+		}
+
+		if members, err := cl.Members(); err == nil && len(members) > 0 {
+			fmt.Println()
+			mw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(mw, "MEMBER\tPID\tROLE\tHEARTBEAT")
+			for _, m := range members {
+				fmt.Fprintf(mw, "%s\t%d\t%s\t%s\n",
+					m.ID, m.PID, m.Role, m.Heartbeat.Format("15:04:05"))
+			}
+			mw.Flush()
+		}
+		return nil
 	},
 }
 
@@ -128,8 +154,9 @@ var serveResetCmd = &cobra.Command{
 		home, _ := os.UserHomeDir()
 		dataDir := filepath.Join(home, ".ycode", "observability")
 		otelDir := filepath.Join(home, ".ycode", "otel")
+		clusterDir := filepath.Join(home, ".ycode", "cluster")
 
-		fmt.Printf("This will remove all data in:\n  %s\n  %s\n", dataDir, otelDir)
+		fmt.Printf("This will remove all data in:\n  %s\n  %s\n  %s\n", dataDir, otelDir, clusterDir)
 		fmt.Print("Continue? [y/N] ")
 		var answer string
 		fmt.Scanln(&answer)
@@ -139,7 +166,8 @@ var serveResetCmd = &cobra.Command{
 		}
 		_ = os.RemoveAll(dataDir)
 		_ = os.RemoveAll(otelDir)
-		fmt.Println("Observability data removed.")
+		_ = os.RemoveAll(clusterDir)
+		fmt.Println("Observability and cluster data removed.")
 		return nil
 	},
 }
@@ -185,22 +213,45 @@ var serveAuditCmd = &cobra.Command{
 	},
 }
 
-// runServerForeground starts the stack and blocks until interrupted.
+// runServerForeground starts the stack via cluster (as forced master) and blocks until interrupted.
 func runServerForeground(ctx context.Context, cfg *config.ObservabilityConfig, dataDir string) error {
-	mgr := buildStackManager(cfg, dataDir)
-	if err := mgr.Start(ctx); err != nil {
-		return fmt.Errorf("start server: %w", err)
-	}
+	home, _ := os.UserHomeDir()
+	clusterDir := filepath.Join(home, ".ycode", "cluster")
 
 	port := cfg.ProxyPort
 	if port == 0 {
 		port = 58080
 	}
+
+	var stackMgr *observability.StackManager
+
+	cl := cluster.New(clusterDir, fmt.Sprintf("serve-%d", os.Getpid()), cluster.Options{
+		NATSPort:    port + 100,
+		ForceMaster: true,
+		OnPromoted: func(ctx context.Context) error {
+			mgr := buildStackManager(cfg, dataDir)
+			if err := mgr.Start(ctx); err != nil {
+				return err
+			}
+			stackMgr = mgr
+			return nil
+		},
+		OnDemoted: func(ctx context.Context) error {
+			if stackMgr != nil {
+				return stackMgr.Stop(ctx)
+			}
+			return nil
+		},
+	})
+
+	if err := cl.Join(ctx); err != nil {
+		return fmt.Errorf("cluster join: %w", err)
+	}
+
 	fmt.Printf("ycode observability server running at http://127.0.0.1:%d/\n", port)
 	fmt.Println("Press Ctrl+C to stop.")
 
 	// Write PID file.
-	home, _ := os.UserHomeDir()
 	pidPath := filepath.Join(home, ".ycode", "serve.pid")
 	_ = os.MkdirAll(filepath.Dir(pidPath), 0o755)
 	_ = os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644)
@@ -212,7 +263,10 @@ func runServerForeground(ctx context.Context, cfg *config.ObservabilityConfig, d
 	<-sigCh
 
 	fmt.Println("\nShutting down...")
-	return mgr.Stop(context.Background())
+	if err := cl.Leave(context.Background()); err != nil {
+		slog.Warn("cluster: leave on shutdown", "error", err)
+	}
+	return nil
 }
 
 // detachServer forks the current process as a background server.

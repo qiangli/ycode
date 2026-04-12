@@ -121,17 +121,97 @@ func (c *EmbeddedCollector) Healthy() bool {
 	return c.healthy.Load()
 }
 
-// HTTPHandler returns a health check handler for the collector.
+// HTTPHandler returns a status page handler for the collector.
 func (c *EmbeddedCollector) HTTPHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if c.Healthy() {
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, `{"status":"ok"}`)
-		} else {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprint(w, `{"status":"unavailable"}`)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+		healthy := c.Healthy()
+		status := "Running"
+		statusColor := "#34c759"
+		if !healthy {
+			status = "Unavailable"
+			statusColor = "#ff3b30"
 		}
+
+		fmt.Fprintf(w, `<!DOCTYPE html><html><head><title>OTEL Collector</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+background:#1a1a2e;color:#e0e0e0;padding:32px;min-height:100vh}
+h1{font-size:1.5em;font-weight:500;margin-bottom:24px;color:#fff}
+.status{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;
+border-radius:20px;font-size:13px;font-weight:500;margin-bottom:28px;
+background:rgba(255,255,255,0.06)}
+.dot{width:8px;height:8px;border-radius:50%%}
+.section{margin-bottom:28px}
+.section h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;
+color:rgba(255,255,255,0.5);margin-bottom:12px}
+.card{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);
+border-radius:10px;padding:16px;margin-bottom:8px}
+.row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;
+border-bottom:1px solid rgba(255,255,255,0.05)}
+.row:last-child{border-bottom:none}
+.label{color:rgba(255,255,255,0.5);font-size:13px}
+.value{font-family:SFMono-Regular,Menlo,monospace;font-size:13px;color:#5ac8fa}
+.pipeline{display:flex;align-items:center;gap:10px;padding:8px 0;
+border-bottom:1px solid rgba(255,255,255,0.05)}
+.pipeline:last-child{border-bottom:none}
+.pipe-label{font-size:13px;font-weight:500;min-width:64px}
+.arrow{color:rgba(255,255,255,0.3);font-size:12px}
+.pipe-tag{padding:3px 10px;border-radius:6px;font-size:12px;font-family:monospace;
+background:rgba(255,255,255,0.08)}
+</style></head><body>
+<h1>OTEL Collector</h1>
+<div class="status"><div class="dot" style="background:%s"></div>%s</div>
+
+<div class="section"><h2>Receivers</h2><div class="card">
+<div class="row"><span class="label">OTLP gRPC</span><span class="value">127.0.0.1:%d</span></div>
+<div class="row"><span class="label">OTLP HTTP</span><span class="value">127.0.0.1:%d</span></div>
+</div></div>
+
+<div class="section"><h2>Exporters</h2><div class="card">
+<div class="row"><span class="label">Prometheus metrics</span><span class="value">127.0.0.1:%d</span></div>`,
+			statusColor, status,
+			c.cfg.GRPCPort, c.cfg.HTTPPort, c.cfg.PrometheusPort)
+
+		if c.cfg.VictoriaLogsPort > 0 {
+			fmt.Fprintf(w, `<div class="row"><span class="label">VictoriaLogs (logs)</span><span class="value">127.0.0.1:%d</span></div>`,
+				c.cfg.VictoriaLogsPort)
+		}
+		if c.cfg.JaegerOTLPPort > 0 {
+			fmt.Fprintf(w, `<div class="row"><span class="label">Jaeger OTLP (traces)</span><span class="value">127.0.0.1:%d</span></div>`,
+				c.cfg.JaegerOTLPPort)
+		}
+		if c.cfg.RemoteOTLPEndpoint != "" {
+			fmt.Fprintf(w, `<div class="row"><span class="label">Remote OTLP</span><span class="value">%s</span></div>`,
+				c.cfg.RemoteOTLPEndpoint)
+		}
+
+		fmt.Fprint(w, `</div></div>
+
+<div class="section"><h2>Pipelines</h2><div class="card">
+<div class="pipeline"><span class="pipe-label" style="color:#5ac8fa">Metrics</span>
+<span class="arrow">&rarr;</span><span class="pipe-tag">otlp</span>
+<span class="arrow">&rarr;</span><span class="pipe-tag">batch</span>
+<span class="arrow">&rarr;</span><span class="pipe-tag">prometheus</span></div>
+<div class="pipeline"><span class="pipe-label" style="color:#af52de">Traces</span>
+<span class="arrow">&rarr;</span><span class="pipe-tag">otlp</span>
+<span class="arrow">&rarr;</span><span class="pipe-tag">batch</span>
+<span class="arrow">&rarr;</span><span class="pipe-tag">otlp/jaeger</span></div>
+<div class="pipeline"><span class="pipe-label" style="color:#34c759">Logs</span>
+<span class="arrow">&rarr;</span><span class="pipe-tag">otlp</span>
+<span class="arrow">&rarr;</span><span class="pipe-tag">batch</span>
+<span class="arrow">&rarr;</span><span class="pipe-tag">otlphttp/vlogs</span></div>
+</div></div>
+
+<div class="section"><h2>Build</h2><div class="card">
+<div class="row"><span class="label">Command</span><span class="value">ycode-collector</span></div>
+<div class="row"><span class="label">Version</span><span class="value">0.1.0</span></div>
+<div class="row"><span class="label">Processor</span><span class="value">batch (5s)</span></div>
+</div></div>
+</body></html>`)
 	})
 	return mux
 }

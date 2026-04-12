@@ -4,52 +4,65 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"time"
+	"os"
+	"path/filepath"
 
+	"github.com/qiangli/ycode/internal/cluster"
 	"github.com/qiangli/ycode/internal/observability"
 )
 
-// maybeStartOTELServer checks if a server is already running at the configured port.
-// If not, it auto-starts one in background goroutines.
-// Returns the stack manager (if started) and whether this instance started the server.
-func maybeStartOTELServer(ctx context.Context) (*observability.StackManager, bool) {
-	// Check if server is already running.
-	healthURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", otelPort)
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(healthURL)
-	if err == nil {
-		resp.Body.Close()
-		if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-			slog.Info("otel: connected to existing server", "port", otelPort)
-			return nil, false
-		}
-	}
-
-	// No server running — start one.
-	slog.Info("otel: no server found, auto-starting", "port", otelPort)
-
-	cfg, dataDir, err := loadServeConfig()
+// joinCluster registers this instance in the cluster and starts the election
+// loop. If this instance wins the election, it starts both the embedded NATS
+// server and the OTEL observability stack.
+func joinCluster(ctx context.Context) (*cluster.Cluster, error) {
+	home, err := os.UserHomeDir()
 	if err != nil {
-		slog.Warn("otel: failed to load config for auto-start", "error", err)
-		return nil, false
+		return nil, fmt.Errorf("user home dir: %w", err)
 	}
-	cfg.ProxyPort = otelPort
+	clusterDir := filepath.Join(home, ".ycode", "cluster")
 
-	mgr := buildStackManager(cfg, dataDir)
-	if err := mgr.Start(ctx); err != nil {
-		slog.Warn("otel: auto-start failed", "error", err)
-		return nil, false
+	instanceID := fmt.Sprintf("otel-%d", os.Getpid())
+
+	var stackMgr *observability.StackManager
+
+	cl := cluster.New(clusterDir, instanceID, cluster.Options{
+		NATSPort: otelPort + 100, // e.g., 58080 → 58180
+		OnPromoted: func(ctx context.Context) error {
+			cfg, dataDir, err := loadServeConfig()
+			if err != nil {
+				return err
+			}
+			cfg.ProxyPort = otelPort
+			mgr := buildStackManager(cfg, dataDir)
+			if err := mgr.Start(ctx); err != nil {
+				return err
+			}
+			stackMgr = mgr
+			slog.Info("cluster: OTEL stack started (this instance is master)", "port", otelPort)
+			return nil
+		},
+		OnDemoted: func(ctx context.Context) error {
+			if stackMgr != nil {
+				slog.Info("cluster: stopping OTEL stack (demoted)")
+				err := stackMgr.Stop(ctx)
+				stackMgr = nil
+				return err
+			}
+			return nil
+		},
+	})
+
+	if err := cl.Join(ctx); err != nil {
+		return nil, fmt.Errorf("cluster join: %w", err)
 	}
 
-	slog.Info("otel: auto-started server", "port", otelPort)
-	return mgr, true
+	return cl, nil
 }
 
-// stopAutoStartedServer shuts down the auto-started observability server on exit.
-func stopAutoStartedServer(mgr *observability.StackManager) {
-	slog.Info("otel: stopping auto-started server")
-	if err := mgr.Stop(context.Background()); err != nil {
-		slog.Warn("otel: stop server", "error", err)
+// leaveCluster gracefully exits the cluster.
+func leaveCluster(cl *cluster.Cluster) {
+	slog.Info("cluster: leaving")
+	if err := cl.Leave(context.Background()); err != nil {
+		slog.Warn("cluster: leave", "error", err)
 	}
 }
