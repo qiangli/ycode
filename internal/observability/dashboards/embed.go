@@ -3,7 +3,8 @@ package dashboards
 
 import _ "embed"
 
-// DefaultProjectJSON is the embedded default dashboard project configuration.
+// DefaultProjectsJSON is the embedded default dashboard projects configuration.
+// It contains an array of project definitions, each with its own dashboards.
 //
 //go:embed default_project.json
-var DefaultProjectJSON []byte
+var DefaultProjectsJSON []byte

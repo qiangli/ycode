@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/collector/service/telemetry/otelconftelemetry"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusexporter"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver"
 )
 
 // EmbeddedCollector runs an OTEL Collector in-process as a goroutine.
@@ -225,6 +226,7 @@ func (c *EmbeddedCollector) GRPCAddr() string {
 func (c *EmbeddedCollector) factories() (otelcol.Factories, error) {
 	receivers, err := otelcol.MakeFactoryMap(
 		otlpreceiver.NewFactory(),
+		hostmetricsreceiver.NewFactory(),
 	)
 	if err != nil {
 		return otelcol.Factories{}, fmt.Errorf("receiver factories: %w", err)

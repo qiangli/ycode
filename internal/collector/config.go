@@ -36,6 +36,19 @@ func GenerateYAML(cfg Config) string {
 	b.WriteString(fmt.Sprintf("      grpc: { endpoint: \"127.0.0.1:%d\" }\n", cfg.GRPCPort))
 	b.WriteString(fmt.Sprintf("      http: { endpoint: \"127.0.0.1:%d\" }\n", cfg.HTTPPort))
 
+	// Host metrics receiver — collects CPU, memory, disk, network, filesystem, load, and process metrics.
+	b.WriteString("  hostmetrics:\n")
+	b.WriteString("    collection_interval: 15s\n")
+	b.WriteString("    scrapers:\n")
+	b.WriteString("      cpu:\n")
+	b.WriteString("      memory:\n")
+	b.WriteString("      disk:\n")
+	b.WriteString("      network:\n")
+	b.WriteString("      filesystem:\n")
+	b.WriteString("      load:\n")
+	b.WriteString("      paging:\n")
+	b.WriteString("      processes:\n")
+
 	b.WriteString("\nprocessors:\n")
 	b.WriteString("  batch:\n")
 	b.WriteString("    timeout: 5s\n")
@@ -88,9 +101,9 @@ func GenerateYAML(cfg Config) string {
 		b.WriteString(fmt.Sprintf("      exporters: [%s]\n", strings.Join(traceExporters, ", ")))
 	}
 
-	// Metrics → Prometheus
+	// Metrics → Prometheus (includes both OTLP app metrics and host metrics)
 	b.WriteString("    metrics:\n")
-	b.WriteString("      receivers: [otlp]\n")
+	b.WriteString("      receivers: [otlp, hostmetrics]\n")
 	b.WriteString("      processors: [batch]\n")
 	b.WriteString("      exporters: [prometheus]\n")
 
