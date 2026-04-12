@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -62,6 +63,10 @@ type TUIModel struct {
 	// Parallel tool execution progress.
 	toolTasks []toolTaskProgress // per-tool status during parallel execution
 	program   *tea.Program       // set after NewProgram; used to send progress msgs
+
+	// Slash command completion.
+	completion    completionState  // popup state
+	completionAll []completionItem // all available commands (built once)
 }
 
 // toolTaskProgress tracks a single tool's execution state.
@@ -105,10 +110,11 @@ func NewTUIModel(app *App) *TUIModel {
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 
 	return &TUIModel{
-		app:          app,
-		textarea:     ta,
-		history:      make([]string, 0),
-		historyIndex: -1,
+		app:           app,
+		textarea:      ta,
+		history:       make([]string, 0),
+		historyIndex:  -1,
+		completionAll: buildCompletionItems(app.commands, app.workDir),
 	}
 }
 
@@ -145,6 +151,37 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleConfirmKey(msg)
 		}
 
+		// Handle completion popup keys when visible.
+		if m.completion.visible {
+			switch msg.Type {
+			case tea.KeyTab:
+				if name := m.completion.selectedName(); name != "" {
+					m.textarea.Reset()
+					m.textarea.SetValue("/" + name + " ")
+					m.completion.dismiss()
+					return m, nil
+				}
+			case tea.KeyUp:
+				m.completion.moveUp()
+				return m, nil
+			case tea.KeyDown:
+				m.completion.moveDown()
+				return m, nil
+			case tea.KeyEsc:
+				m.completion.dismiss()
+				return m, nil
+			case tea.KeyEnter:
+				// Accept selected completion on Enter, then submit.
+				if name := m.completion.selectedName(); name != "" {
+					m.textarea.Reset()
+					text := "/" + name
+					m.textarea.SetValue(text)
+					m.completion.dismiss()
+					// Fall through to submit logic below.
+				}
+			}
+		}
+
 		switch {
 		case msg.Type == tea.KeyCtrlC:
 			if m.working && m.workCancel != nil {
@@ -168,6 +205,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if text == "" {
 				break
 			}
+			m.completion.dismiss()
 			// Add to history and reset history navigation.
 			m.history = append(m.history, text)
 			m.historyIndex = -1
@@ -352,6 +390,9 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		cmds = append(cmds, cmd)
+
+		// Update completion state after textarea processes the keystroke.
+		m.completion.update(m.completionAll, m.textarea.Value())
 	}
 
 	// Only forward non-key messages to the viewport so that key presses
@@ -369,6 +410,16 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *TUIModel) View() string {
 	if !m.ready {
 		return "Initializing..."
+	}
+
+	popup := renderCompletion(&m.completion, m.width)
+	if popup != "" {
+		return fmt.Sprintf("%s\n%s\n%s\n%s",
+			m.viewport.View(),
+			m.statusBar(),
+			popup,
+			m.textarea.View(),
+		)
 	}
 
 	return fmt.Sprintf("%s\n%s\n%s",
@@ -403,6 +454,10 @@ func (m *TUIModel) statusBar() string {
 		modeText = " CONFIRM "
 		modeStyle = modeStyle.Background(lipgloss.Color("#f472b6")) // pink
 	}
+	if !m.working && !m.confirming && strings.HasPrefix(strings.TrimSpace(m.textarea.Value()), "!") {
+		modeText = " SHELL "
+		modeStyle = modeStyle.Background(lipgloss.Color("#f97316")) // orange
+	}
 	mode := modeStyle.Render(modeText)
 
 	// Model info.
@@ -412,7 +467,7 @@ func (m *TUIModel) statusBar() string {
 	model := modelStyle.Render(modelText)
 
 	// Hints.
-	hintText := " alt+↑↓:history | shift+tab: mode | /help "
+	hintText := " tab:complete | shift+tab:mode | /help "
 	if m.confirming {
 		hintText = " " + m.confirmPrompt + "  y=yes n=no a=always for session "
 	}
@@ -569,6 +624,21 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 			{Type: session.ContentTypeText, Text: text},
 		},
 	})
+
+	if strings.HasPrefix(text, "!") {
+		shell := strings.TrimLeft(text[1:], " ")
+		if shell == "" {
+			return func() tea.Msg {
+				return commandOutputMsg{Echo: fmt.Sprintf("> %s\n", text), Text: "Usage: ! <command>"}
+			}
+		}
+		echo := fmt.Sprintf("> %s\n", text)
+		return func() tea.Msg {
+			cmd := exec.Command("sh", "-c", shell)
+			out, err := cmd.CombinedOutput()
+			return commandOutputMsg{Echo: echo, Text: string(out), Err: err}
+		}
+	}
 
 	if strings.HasPrefix(text, "/") {
 		rest := text[1:]
