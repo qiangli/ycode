@@ -61,8 +61,7 @@ make cross                      # cross-compile all platforms
 ## Documentation
 
 - [USAGE.md](./USAGE.md) -- CLI commands, configuration, sessions, tools, and workflows
-- [docs/plan.md](./docs/plan.md) -- architecture, design decisions, and project structure
-- [docs/todo.md](./docs/todo.md) -- implementation checklist
+- [docs/architecture.md](./docs/architecture.md) -- architecture, design decisions, and component details
 
 ## Project structure
 

@@ -1,71 +1,50 @@
 ---
 name: build
-description: Build ycode binary with full quality checks (tidy, fmt, vet, unit tests)
+description: Build ycode binary with full quality checks, fix errors, and commit on success
 user_invocable: true
 ---
 
 # /build — Build ycode
 
-Build the ycode binary from source with full quality gate checks. This skill works in both serve mode and client mode.
+Build the ycode binary from source with full quality gate checks. Fix any errors encountered. Commit changes on success.
 
 ## Instructions
 
-Run the following steps **sequentially** in the project root `/Users/qiangli/projects/poc/ai/ycode`. Stop on the first failure — do NOT continue to later steps if an earlier one fails. Report the failure clearly and suggest a fix.
+Work in the project root. The goal is to make `make build` pass. If it fails, diagnose and fix the error, then retry. Repeat until it succeeds or the problem is beyond automatic repair (in which case, report to the user and stop).
 
-### Step 1: Dependency hygiene
-
-```bash
-go mod tidy
-```
-
-If `go.mod` or `go.sum` changed, report the diff so the user is aware.
-
-### Step 2: Format
+### Step 1: Run the build
 
 ```bash
-go fmt $(go list ./... | grep -v '/priorart/')
+make build
 ```
 
-Report any files that were reformatted.
+This runs: `go mod tidy` → `go fmt` → `go vet` → `go test -race` → `go build` → `bin/ycode version`.
 
-### Step 3: Static analysis
+### Step 2: If build fails — fix and retry
 
-```bash
-go vet $(go list ./... | grep -v '/priorart/')
-```
+Examine the error output. Common fixable issues:
 
-If vet reports issues, show them and stop.
+- **Formatting**: Already handled by `go fmt` in the pipeline.
+- **Vet warnings / compile errors**: Read the offending file, understand the issue, and apply the fix using the Edit tool.
+- **Test failures**: Read the failing test and the code under test. Fix the root cause (not the test, unless the test itself is wrong).
+- **Missing dependencies**: Run `go mod tidy` or `go get` as needed.
 
-### Step 4: Unit tests
+After applying a fix, re-run `make build` from the top. Do NOT skip steps — the full pipeline must pass end-to-end.
 
-```bash
-go test -race -count=1 $(go list ./... | grep -v '/priorart/')
-```
+If after 3 fix-and-retry cycles the build still fails, stop and report the unresolved error to the user.
 
-Run with race detector enabled. If any test fails, show the failure output and stop.
+### Step 3: Commit on success
 
-### Step 5: Build binary
+Once `make build` succeeds with exit code 0:
 
-```bash
-VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
-COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o bin/ycode ./cmd/ycode/
-```
-
-### Step 6: Verify
-
-Confirm the binary exists and print its version:
-
-```bash
-bin/ycode version
-```
+1. Check `git status` for any changed files (fixes applied, formatting, go.sum updates, etc.).
+2. If there are changes, stage and commit them with a descriptive message summarizing what was fixed or changed.
+3. If there are no changes (clean build on first try), skip the commit.
 
 ### On success
 
-Report a one-line summary: binary path, version, test count, and total elapsed time.
+Report: binary path, version, and whether a commit was created.
 
-### On failure
+### On failure (after retries exhausted)
 
-- Show the exact error output from the failing step.
-- If the error is a common issue (missing dependency, syntax error, failing test), suggest the fix.
-- Do NOT proceed to later steps.
+Report the exact error output and what was attempted. Do NOT commit partial fixes.

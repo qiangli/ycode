@@ -1,12 +1,12 @@
 ---
 name: deploy
-description: Deploy ycode to localhost or remote host, managing process lifecycle
+description: Deploy ycode to localhost or remote host, ensuring a successful build first
 user_invocable: true
 ---
 
 # /deploy — Deploy ycode
 
-Deploy the ycode binary to a target host and start the `ycode serve` server. Defaults to `localhost:58080` for development unless the user specifies a different `<host>:<port>`.
+Deploy the ycode binary to a target host and start the `ycode serve` server. Ensures `make build` succeeds before deploying. Defaults to `localhost:58080` for development unless the user specifies a different `<host>:<port>`.
 
 ## Arguments
 
@@ -20,6 +20,10 @@ Parse the argument accordingly. If no argument is given, use `localhost:58080`.
 
 ## Instructions
 
+### Pre-flight: Ensure successful build
+
+Run the `/build` skill first. This ensures the binary is compiled, tests pass, and any fixes are committed. If `/build` fails after its retry cycles, stop — do NOT deploy a broken build.
+
 ### Determine target
 
 Parse the user's argument to determine:
@@ -27,13 +31,11 @@ Parse the user's argument to determine:
 - **PORT**: defaults to `58080`
 - **IS_REMOTE**: true if HOST is not `localhost` and not `127.0.0.1`
 
+---
+
 ### For localhost deployment
 
-#### Step 1: Verify binary exists
-
-Check that `bin/ycode` exists in the project root. If not, tell the user to run `/build` first.
-
-#### Step 2: Kill existing instances
+#### Step 1: Kill existing instances
 
 ```bash
 # Find and kill any existing ycode serve processes on the target port
@@ -52,17 +54,22 @@ if [ -f "$PID_FILE" ]; then
 fi
 ```
 
-#### Step 3: Start server
+#### Step 2: Start server
 
 ```bash
 bin/ycode serve --port ${PORT} --detach
 ```
 
-#### Step 4: Verify
+#### Step 3: Verify
 
 Wait 2 seconds, then check health:
 ```bash
 curl -sf http://127.0.0.1:${PORT}/healthz
+```
+
+If health check fails, check the serve log for errors:
+```bash
+cat ~/.ycode/observability/serve.log | tail -20
 ```
 
 Report success with the URL: `http://localhost:${PORT}/`
@@ -107,11 +114,7 @@ If this fails, the user needs to set up passwordless SSH. Guide them through it:
 
 **Stop here** after SSH setup — ask the user to run `/deploy ${HOST}:${PORT}` again once SSH is working.
 
-#### Step 2: Verify binary exists locally
-
-Check that `bin/ycode` exists. If not, tell the user to run `/build` first.
-
-#### Step 3: Detect remote architecture
+#### Step 2: Detect remote architecture
 
 ```bash
 REMOTE_OS=$(ssh ${HOST} "uname -s" | tr '[:upper:]' '[:lower:]')
@@ -127,7 +130,7 @@ GOOS=${REMOTE_OS} GOARCH=${REMOTE_ARCH} go build -ldflags "-X main.version=$(git
 
 Use the cross-compiled binary for upload.
 
-#### Step 4: Upload binary
+#### Step 3: Upload binary
 
 ```bash
 ssh ${HOST} "mkdir -p ~/ycode/bin"
@@ -137,19 +140,19 @@ ssh ${HOST} "chmod +x ~/ycode/bin/ycode"
 
 Where `${SUFFIX}` is `-${REMOTE_OS}-${REMOTE_ARCH}` if cross-compiled, empty otherwise.
 
-#### Step 5: Kill existing instances on remote
+#### Step 4: Kill existing instances on remote
 
 ```bash
 ssh ${HOST} "lsof -ti :${PORT} | xargs kill -TERM 2>/dev/null; sleep 1; lsof -ti :${PORT} | xargs kill -9 2>/dev/null; rm -f ~/.ycode/serve.pid; true"
 ```
 
-#### Step 6: Start server on remote
+#### Step 5: Start server on remote
 
 ```bash
 ssh ${HOST} "cd ~/ycode && nohup bin/ycode serve --port ${PORT} > ~/.ycode/serve.log 2>&1 & echo \$!"
 ```
 
-#### Step 7: Verify
+#### Step 6: Verify
 
 Wait 3 seconds, then:
 ```bash
@@ -165,4 +168,4 @@ Report success with the URL: `http://${HOST}:${PORT}/`
 - Show the exact error output.
 - For SSH failures: guide through passwordless SSH setup as described above.
 - For port conflicts: show what process is using the port (`lsof -i :${PORT}`).
-- For build failures: suggest running `/build` first.
+- For build failures: the `/build` skill should have already handled this — report what `/build` reported.
