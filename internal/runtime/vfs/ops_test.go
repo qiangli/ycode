@@ -261,3 +261,34 @@ func TestListRoots(t *testing.T) {
 		t.Fatalf("expected both dirs: %s", out)
 	}
 }
+
+func TestOpenFile(t *testing.T) {
+	dir := t.TempDir()
+	v, _ := New([]string{dir}, nil)
+	ctx := context.Background()
+
+	// Happy path: open file in allowed dir.
+	path := filepath.Join(dir, "sub", "test.log")
+	f, err := v.OpenFile(ctx, path, os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	f.Write([]byte("hello"))
+	f.Close()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("got %q, want %q", data, "hello")
+	}
+
+	// Rejection: path outside allowed dirs.
+	outside := filepath.Join(os.TempDir(), "vfs-test-outside-"+t.Name())
+	_, err = v.OpenFile(ctx, outside, os.O_CREATE|os.O_WRONLY, 0o644)
+	if err == nil {
+		os.Remove(outside)
+		t.Fatal("expected error for path outside allowed dirs")
+	}
+}

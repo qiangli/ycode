@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/api"
@@ -157,13 +158,19 @@ func newApp() (*cli.App, error) {
 		configCache.Store(cfg)
 	}
 
-	// Create session.
+	// Resolve OTEL storage path (needed before VFS creation).
+	otelDataDir := resolveOTELDataDir(cfg.Observability)
+
+	// Pre-generate instance ID so session and OTEL share the same UUID.
+	instanceID := uuid.New().String()
+	instanceDir := filepath.Join(otelDataDir, "instances", instanceID)
+
+	// Create session under the instance directory.
 	sessionDir := cfg.SessionDir
 	if sessionDir == "" {
-		dataDir := filepath.Join(home, ".local", "share", "ycode", "sessions")
-		sessionDir = dataDir
+		sessionDir = filepath.Join(instanceDir, "session")
 	}
-	sess, err := session.New(sessionDir)
+	sess, err := session.NewWithID(sessionDir, instanceID)
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}
@@ -178,8 +185,8 @@ func newApp() (*cli.App, error) {
 	ycodeDir := filepath.Join(cwd, ".ycode")
 	planMode := tools.NewPlanModeManager(ycodeDir)
 
-	// Build VFS with allowed directories.
-	allowedDirs := []string{os.TempDir(), cwd}
+	// Build VFS with allowed directories (includes OTEL storage for cross-instance access).
+	allowedDirs := []string{os.TempDir(), cwd, otelDataDir}
 	allowedDirs = append(allowedDirs, cfg.AllowedDirectories...)
 	v, err := vfs.New(allowedDirs, nil)
 	if err != nil {
@@ -335,7 +342,7 @@ func newApp() (*cli.App, error) {
 	// Wire OTEL observability (optional, non-blocking).
 	var otelRes *otelResult
 	if cfg.Observability != nil && cfg.Observability.Enabled {
-		otelRes = setupOTEL(cfg, sess, toolReg, provider)
+		otelRes = setupOTEL(cfg, sess, toolReg, provider, v)
 	}
 	_ = otelRes // convOTEL wired into conversation runtime via AppOptions
 

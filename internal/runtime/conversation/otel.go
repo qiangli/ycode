@@ -16,10 +16,11 @@ import (
 
 // OTELConfig holds optional OTEL instrumentation for the conversation runtime.
 type OTELConfig struct {
-	Tracer    trace.Tracer
-	Inst      *yotel.Instruments
-	ReqLogger *yotel.RequestLogger
-	Provider  string // provider kind for logging
+	Tracer     trace.Tracer
+	Inst       *yotel.Instruments
+	ReqLogger  *yotel.RequestLogger
+	ConvLogger *yotel.ConversationLogger
+	Provider   string // provider kind for logging
 }
 
 // SetOTEL configures OTEL instrumentation on the runtime.
@@ -110,9 +111,10 @@ func (r *Runtime) InstrumentedTurnWithRecovery(ctx context.Context, messages []a
 	return result, recovery, err
 }
 
-// LogConversation logs a full conversation record via the RequestLogger.
+// LogConversation logs a full conversation record via the RequestLogger and
+// emits structured OTEL log records for VictoriaLogs.
 func (r *Runtime) LogConversation(turnIndex int, req *api.Request, result *TurnResult, toolResults []ToolCall, err error) {
-	if r.otel == nil || r.otel.ReqLogger == nil {
+	if r.otel == nil || (r.otel.ReqLogger == nil && r.otel.ConvLogger == nil) {
 		return
 	}
 
@@ -158,7 +160,17 @@ func (r *Runtime) LogConversation(turnIndex int, req *api.Request, result *TurnR
 
 	// Messages are serialized as raw JSON to avoid import cycles.
 	// This is best-effort — if it fails, we still log without messages.
-	_ = r.otel.ReqLogger.Log(record)
+	if r.otel.ReqLogger != nil {
+		_ = r.otel.ReqLogger.Log(record)
+	}
+
+	// Emit structured OTEL log records for VictoriaLogs.
+	if r.otel.ConvLogger != nil {
+		r.otel.ConvLogger.LogConversation(record)
+		for _, tc := range record.ToolCalls {
+			r.otel.ConvLogger.LogToolCall(record.SessionID, record.TurnIndex, tc)
+		}
+	}
 }
 
 // recordTurnMetrics records per-turn LLM metrics via OTEL instruments.

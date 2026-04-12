@@ -54,7 +54,48 @@ func StartRetentionCleanup(ctx context.Context, dataDir string, maxAge time.Dura
 }
 
 func runCleanup(dataDir string, maxAge time.Duration) {
-	for _, sub := range []string{"logs", "traces", "metrics"} {
+	subs := []string{"logs", "traces", "metrics"}
+
+	// Clean legacy flat paths (backward compatibility).
+	for _, sub := range subs {
 		CleanupOldFiles(filepath.Join(dataDir, sub), maxAge)
 	}
+
+	// Clean per-instance subdirectories.
+	instancesDir := filepath.Join(dataDir, "instances")
+	instances, err := os.ReadDir(instancesDir)
+	if err != nil {
+		return // no instances dir yet
+	}
+	for _, inst := range instances {
+		if !inst.IsDir() {
+			continue
+		}
+		instDir := filepath.Join(instancesDir, inst.Name())
+		for _, sub := range subs {
+			CleanupOldFiles(filepath.Join(instDir, sub), maxAge)
+		}
+		// Remove empty instance dirs (all data expired).
+		removeIfEmpty(instDir)
+	}
+}
+
+// removeIfEmpty removes a directory if it contains no files (only empty subdirs).
+func removeIfEmpty(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			return // has files, keep it
+		}
+		sub := filepath.Join(dir, e.Name())
+		subEntries, err := os.ReadDir(sub)
+		if err != nil || len(subEntries) > 0 {
+			return // subdirectory is non-empty
+		}
+	}
+	// All subdirs are empty (or dir is empty) — remove the tree.
+	os.RemoveAll(dir)
 }

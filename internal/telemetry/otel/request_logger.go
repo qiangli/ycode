@@ -1,6 +1,7 @@
 package otel
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,10 +10,16 @@ import (
 	"time"
 )
 
+// FileOpener validates a path and opens a file through a security boundary (e.g. VFS).
+type FileOpener interface {
+	OpenFile(ctx context.Context, path string, flag int, perm os.FileMode) (*os.File, error)
+}
+
 // RequestLoggerConfig configures the conversation request logger.
 type RequestLoggerConfig struct {
-	RetentionDays  int  // default 3
-	LogToolDetails bool // include full tool input/output
+	RetentionDays  int        // default 3
+	LogToolDetails bool       // include full tool input/output
+	Opener         FileOpener // optional VFS-backed file opener for path validation
 }
 
 // RequestLogger writes full conversation records to rotating JSONL files.
@@ -20,6 +27,7 @@ type RequestLogger struct {
 	dir         string
 	retention   time.Duration
 	logToolDets bool
+	opener      FileOpener
 
 	mu          sync.Mutex
 	currentFile *os.File
@@ -84,6 +92,7 @@ func NewRequestLogger(dir string, cfg RequestLoggerConfig) (*RequestLogger, erro
 		dir:         logDir,
 		retention:   retention,
 		logToolDets: cfg.LogToolDetails,
+		opener:      cfg.Opener,
 	}, nil
 }
 
@@ -140,7 +149,14 @@ func (rl *RequestLogger) fileForToday() (*os.File, error) {
 		rl.currentFile.Close()
 	}
 	filename := filepath.Join(rl.dir, fmt.Sprintf("conversations-%s.jsonl", today))
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+
+	var f *os.File
+	var err error
+	if rl.opener != nil {
+		f, err = rl.opener.OpenFile(context.Background(), filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	} else {
+		f, err = os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("open log file: %w", err)
 	}

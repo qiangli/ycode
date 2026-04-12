@@ -30,9 +30,14 @@ type Session struct {
 	searchIndexer *SearchIndexer `json:"-"` // optional Bleve indexer
 }
 
-// New creates a new session.
+// New creates a new session with a generated UUID.
 func New(dir string) (*Session, error) {
-	id := uuid.New().String()
+	return NewWithID(dir, uuid.New().String())
+}
+
+// NewWithID creates a new session with the given ID.
+// The session directory is created at dir/id/.
+func NewWithID(dir string, id string) (*Session, error) {
 	sessionDir := filepath.Join(dir, id)
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create session dir: %w", err)

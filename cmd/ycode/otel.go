@@ -23,16 +23,25 @@ type otelResult struct {
 	convOTEL *conversation.OTELConfig
 }
 
+// resolveOTELDataDir returns the OTEL storage path using the priority:
+// OTEL_STORAGE_PATH env > config dataDir > default ~/.ycode/otel.
+func resolveOTELDataDir(obs *config.ObservabilityConfig) string {
+	if v := os.Getenv("OTEL_STORAGE_PATH"); v != "" {
+		return v
+	}
+	if obs != nil && obs.DataDir != "" {
+		return obs.DataDir
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".ycode", "otel")
+}
+
 // setupOTEL initializes OTEL instrumentation and returns the result.
 // It is non-blocking — if initialization fails, it logs a warning and returns a no-op.
-func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registry, provider api.Provider) *otelResult {
+func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registry, provider api.Provider, opener yotel.FileOpener) *otelResult {
 	obs := cfg.Observability
-	home, _ := os.UserHomeDir()
 
-	dataDir := obs.DataDir
-	if dataDir == "" {
-		dataDir = filepath.Join(home, ".ycode", "otel")
-	}
+	dataDir := resolveOTELDataDir(obs)
 
 	collectorAddr := obs.CollectorAddr
 	if collectorAddr == "" && !noOTEL {
@@ -47,8 +56,8 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 
 	// Create OTEL provider.
 	ctx := context.Background()
-	// Generate a unique instance ID for this ycode process.
-	instanceID := sess.ID // Use session ID as instance identifier — unique per process.
+	instanceID := sess.ID // Session ID is the instance identifier — unique per process.
+	instanceDir := filepath.Join(dataDir, "instances", instanceID)
 
 	otelProvider, err := yotel.NewProvider(ctx, yotel.ProviderConfig{
 		CollectorAddr:  collectorAddr,
@@ -58,8 +67,10 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 		InstanceID:     instanceID,
 		SampleRate:     sampleRate,
 		DataDir:        dataDir,
+		InstanceDir:    instanceDir,
 		PersistTraces:  obs.PersistTraces,
 		PersistMetrics: obs.PersistMetrics,
+		Opener:         opener,
 	})
 	if err != nil {
 		slog.Warn("otel: init failed, continuing without telemetry", "error", err)
@@ -91,15 +102,21 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 
 	// Set up request logger for conversation audit.
 	if obs.LogConversations {
-		reqLogger, err := yotel.NewRequestLogger(dataDir, yotel.RequestLoggerConfig{
+		reqLogger, err := yotel.NewRequestLogger(instanceDir, yotel.RequestLoggerConfig{
 			RetentionDays:  obs.LogRetentionDays,
 			LogToolDetails: obs.LogToolDetails,
+			Opener:         opener,
 		})
 		if err != nil {
 			slog.Warn("otel: request logger init failed", "error", err)
 		} else {
 			convCfg.ReqLogger = reqLogger
 		}
+	}
+
+	// Wire conversation logger for structured OTEL log records to VictoriaLogs.
+	if otelProvider.LoggerProvider != nil {
+		convCfg.ConvLogger = yotel.NewConversationLogger(otelProvider.LoggerProvider, instanceID)
 	}
 
 	// Bridge slog to OTEL LoggerProvider.

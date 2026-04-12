@@ -266,6 +266,19 @@ func (v *VFS) ReadMultipleFiles(ctx context.Context, paths []string) (string, er
 	return strings.Join(sections, "\n\n"), nil
 }
 
+// OpenFile validates path against allowed directories, creates parent dirs
+// if needed, and opens the file with the given flags and permissions.
+func (v *VFS) OpenFile(ctx context.Context, path string, flag int, perm os.FileMode) (*os.File, error) {
+	absPath, err := v.ValidatePath(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		return nil, fmt.Errorf("create parent dirs: %w", err)
+	}
+	return os.OpenFile(absPath, flag, perm)
+}
+
 // ListRoots returns the list of allowed directories.
 func (v *VFS) ListRoots() string {
 	dirs := v.AllowedDirs()

@@ -9,11 +9,14 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
+	otellog "go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/metric"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -31,15 +34,18 @@ type ProviderConfig struct {
 	SampleRate     float64 // 1.0 = sample everything
 
 	// File-based persistence.
-	DataDir        string // root dir for file exporters (e.g. ~/.ycode/otel)
+	DataDir        string // root OTEL storage dir (e.g. ~/.ycode/otel) — used for retention cleanup
+	InstanceDir    string // per-instance subdir (e.g. ~/.ycode/otel/instances/{id}) — used for file exports
 	PersistTraces  bool
 	PersistMetrics bool
+	Opener         FileOpener // optional VFS-backed file opener for path validation
 }
 
 // Provider holds all three OTEL signal providers.
 type Provider struct {
 	TracerProvider *sdktrace.TracerProvider
 	MeterProvider  *sdkmetric.MeterProvider
+	LoggerProvider *sdklog.LoggerProvider
 	Instruments    *Instruments
 	shutdownFuncs  []func(context.Context) error
 }
@@ -99,7 +105,11 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 	}
 
 	if cfg.PersistTraces && cfg.DataDir != "" {
-		fileExp, shutdown, err := newRotatingTraceExporter(cfg.DataDir)
+		exportDir := cfg.InstanceDir
+		if exportDir == "" {
+			exportDir = cfg.DataDir
+		}
+		fileExp, shutdown, err := newRotatingTraceExporter(exportDir, cfg.Opener)
 		if err != nil {
 			return nil, fmt.Errorf("create trace file exporter: %w", err)
 		}
@@ -136,7 +146,11 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 	}
 
 	if cfg.PersistMetrics && cfg.DataDir != "" {
-		fileExp, shutdown, err := newRotatingMetricExporter(cfg.DataDir)
+		exportDir := cfg.InstanceDir
+		if exportDir == "" {
+			exportDir = cfg.DataDir
+		}
+		fileExp, shutdown, err := newRotatingMetricExporter(exportDir, cfg.Opener)
 		if err != nil {
 			return nil, fmt.Errorf("create metric file exporter: %w", err)
 		}
@@ -154,6 +168,24 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 	p.shutdownFuncs = append(p.shutdownFuncs, p.MeterProvider.Shutdown)
 	otel.SetMeterProvider(p.MeterProvider)
 
+	// --- Log provider (for structured log records to VictoriaLogs) ---
+	if cfg.CollectorAddr != "" {
+		grpcLogExp, err := otlploggrpc.New(ctx,
+			otlploggrpc.WithEndpoint(cfg.CollectorAddr),
+			otlploggrpc.WithInsecure(),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("create log gRPC exporter: %w", err)
+		}
+		p.LoggerProvider = sdklog.NewLoggerProvider(
+			sdklog.WithResource(res),
+			sdklog.WithProcessor(sdklog.NewBatchProcessor(grpcLogExp)),
+		)
+		p.shutdownFuncs = append(p.shutdownFuncs, grpcLogExp.Shutdown)
+		p.shutdownFuncs = append(p.shutdownFuncs, p.LoggerProvider.Shutdown)
+		otellog.SetLoggerProvider(p.LoggerProvider)
+	}
+
 	// Create pre-built instruments.
 	inst, err := NewInstruments(p.MeterProvider.Meter(cfg.ServiceName))
 	if err != nil {
@@ -165,13 +197,20 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 }
 
 // newRotatingTraceExporter creates a file-based trace exporter writing to dataDir/traces/.
-func newRotatingTraceExporter(dataDir string) (sdktrace.SpanExporter, func(context.Context) error, error) {
+func newRotatingTraceExporter(dataDir string, opener FileOpener) (sdktrace.SpanExporter, func(context.Context) error, error) {
 	dir := filepath.Join(dataDir, "traces")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, nil, err
 	}
 	filename := filepath.Join(dir, fmt.Sprintf("traces-%s.jsonl", time.Now().Format("2006-01-02")))
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+
+	var f *os.File
+	var err error
+	if opener != nil {
+		f, err = opener.OpenFile(context.Background(), filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	} else {
+		f, err = os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -191,13 +230,20 @@ func newRotatingTraceExporter(dataDir string) (sdktrace.SpanExporter, func(conte
 }
 
 // newRotatingMetricExporter creates a file-based metric exporter writing to dataDir/metrics/.
-func newRotatingMetricExporter(dataDir string) (sdkmetric.Exporter, func(context.Context) error, error) {
+func newRotatingMetricExporter(dataDir string, opener FileOpener) (sdkmetric.Exporter, func(context.Context) error, error) {
 	dir := filepath.Join(dataDir, "metrics")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, nil, err
 	}
 	filename := filepath.Join(dir, fmt.Sprintf("metrics-%s.jsonl", time.Now().Format("2006-01-02")))
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+
+	var f *os.File
+	var err error
+	if opener != nil {
+		f, err = opener.OpenFile(context.Background(), filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	} else {
+		f, err = os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	}
 	if err != nil {
 		return nil, nil, err
 	}

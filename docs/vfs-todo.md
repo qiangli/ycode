@@ -54,6 +54,34 @@ Tracking document for the Virtual Filesystem (VFS) layer described in [vfs.md](v
 - [x] HITL prompter for out-of-boundary symlinks
 - [x] Thread-safe with RWMutex
 
+## OTEL Storage Path Integration
+
+- [x] `resolveOTELDataDir()` — priority: `OTEL_STORAGE_PATH` env > config `dataDir` > default `~/.ycode/otel`
+- [x] OTEL storage path added as third default VFS allowed dir (alongside `/tmp` and `$PWD`)
+- [x] Per-instance subdirectories: `instances/{uuid}/` under OTEL storage path
+- [x] `session.NewWithID()` — constructor accepting pre-generated instance ID
+- [x] Sessions stored under `{otel_storage_path}/instances/{id}/session/`
+- [x] `VFS.OpenFile()` — validates path then opens file with parent dir creation
+- [x] `FileOpener` interface for VFS-backed file opening in OTEL components
+- [x] `RequestLogger` uses `FileOpener` for VFS-validated daily file rotation
+- [x] File-based trace/metric exporters use `FileOpener` for VFS-validated writes
+- [x] `ProviderConfig.InstanceDir` — per-instance base for file exports
+- [x] `LoggerProvider` added to OTEL Provider — gRPC log exporter to collector → VictoriaLogs
+- [x] `ConversationLogger` — emits structured OTEL log records with metadata (`log.type`, `session.id`, `instance.id`, `turn.index`, `llm.model`, etc.)
+- [x] `LogConversation()` emits both file JSONL and OTEL log records
+- [x] `LogToolCall()` emits per-tool structured log records for VictoriaLogs
+- [x] `LogChatMessage()` emits per-message structured log records
+- [x] Retention cleanup scans `instances/*/logs,traces,metrics` + removes empty instance dirs
+- [x] VFS passed through `setupOTEL` → `ProviderConfig` → `RequestLoggerConfig`
+
 ## Tests
 
 - [x] `go test -short -race ./internal/runtime/vfs/...` passes
+- [x] `TestOpenFile` — happy path + boundary rejection
+- [x] `TestNewWithID` / `TestNew` — session constructors
+- [x] `TestConversationLoggerLogConversation` — structured log record attributes
+- [x] `TestConversationLoggerLogToolCall` — tool call log records
+- [x] `TestConversationLoggerNilRecord` — nil safety
+- [x] `TestRunCleanupPerInstance` — per-instance retention cleanup
+- [x] `TestRunCleanupRemovesEmptyInstanceDir` — empty dir removal
+- [x] `make build` passes (tidy → fmt → vet → compile → test → verify)
