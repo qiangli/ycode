@@ -42,6 +42,11 @@ func (v *VictoriaLogsComponent) Start(ctx context.Context) error {
 	if v.pathPrefix != "" {
 		_ = flag.Set("http.pathPrefix", v.pathPrefix)
 	}
+	// VictoriaMetrics libraries require flag.Parse() to have been called
+	// before accessing memory limits and other flag-dependent values.
+	if !flag.Parsed() {
+		flag.Parse()
+	}
 
 	// Initialize storage, select, and insert subsystems.
 	vlstorage.Init()
