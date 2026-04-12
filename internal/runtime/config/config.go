@@ -50,15 +50,14 @@ type Config struct {
 	Custom map[string]any `json:"custom,omitempty"`
 }
 
-// ObservabilityConfig controls OTEL instrumentation and the built-in Prometheus stack.
+// ObservabilityConfig controls OTEL instrumentation and the embedded observability stack.
 type ObservabilityConfig struct {
 	// OTEL SDK
 	Enabled       bool    `json:"enabled"`       // master switch, default false
-	CollectorAddr string  `json:"collectorAddr"` // default "127.0.0.1:4317"
+	CollectorAddr string  `json:"collectorAddr"` // default "127.0.0.1:4317" (embedded collector)
 	SampleRate    float64 `json:"sampleRate"`    // default 1.0
 
-	// Built-in stack
-	StackEnabled  bool   `json:"stackEnabled"`  // auto-start obs stack with ycode
+	// Embedded server (use --no-otel flag to disable, --port to set port)
 	ProxyPort     int    `json:"proxyPort"`     // reverse proxy port, default 58080
 	ProxyBindAddr string `json:"proxyBindAddr"` // default "127.0.0.1"
 
@@ -243,9 +242,6 @@ func mergeFromFile(cfg *Config, path string) error {
 		}
 		if o.SampleRate != 0 {
 			cfg.Observability.SampleRate = o.SampleRate
-		}
-		if o.StackEnabled {
-			cfg.Observability.StackEnabled = true
 		}
 		if o.ProxyPort != 0 {
 			cfg.Observability.ProxyPort = o.ProxyPort

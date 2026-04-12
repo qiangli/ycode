@@ -39,9 +39,6 @@ func GenerateYAML(cfg Config) string {
 	b.WriteString("\nprocessors:\n")
 	b.WriteString("  batch:\n")
 	b.WriteString("    timeout: 5s\n")
-	b.WriteString("  memory_limiter:\n")
-	b.WriteString("    limit_mib: 256\n")
-	b.WriteString("    check_interval: 5s\n")
 
 	b.WriteString("\nexporters:\n")
 	b.WriteString(fmt.Sprintf("  prometheus:\n    endpoint: \"127.0.0.1:%d\"\n", cfg.PrometheusPort))
@@ -60,11 +57,8 @@ func GenerateYAML(cfg Config) string {
 		}
 	}
 
-	b.WriteString(fmt.Sprintf("\nextensions:\n  health_check:\n    endpoint: \"127.0.0.1:%d\"\n", cfg.HealthPort))
-
 	// Pipelines.
 	b.WriteString("\nservice:\n")
-	b.WriteString("  extensions: [health_check]\n")
 	b.WriteString("  pipelines:\n")
 
 	traceExporters := []string{}
@@ -80,12 +74,12 @@ func GenerateYAML(cfg Config) string {
 
 	b.WriteString("    traces:\n")
 	b.WriteString("      receivers: [otlp]\n")
-	b.WriteString("      processors: [batch, memory_limiter]\n")
+	b.WriteString("      processors: [batch]\n")
 	b.WriteString(fmt.Sprintf("      exporters: [%s]\n", strings.Join(traceExporters, ", ")))
 
 	b.WriteString("    metrics:\n")
 	b.WriteString("      receivers: [otlp]\n")
-	b.WriteString("      processors: [batch, memory_limiter]\n")
+	b.WriteString("      processors: [batch]\n")
 	b.WriteString("      exporters: [prometheus]\n")
 
 	b.WriteString("    logs:\n")

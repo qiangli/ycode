@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -37,17 +35,9 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 	}
 
 	collectorAddr := obs.CollectorAddr
-	if collectorAddr == "" {
-		// Check if the stack is running by looking at ports.json.
-		portsPath := filepath.Join(home, ".ycode", "observability", "ports.json")
-		if data, err := os.ReadFile(portsPath); err == nil {
-			var ports map[string]int
-			if json.Unmarshal(data, &ports) == nil {
-				if p, ok := ports["collector-grpc"]; ok {
-					collectorAddr = fmt.Sprintf("127.0.0.1:%d", p)
-				}
-			}
-		}
+	if collectorAddr == "" && !noOTEL {
+		// Use the embedded collector's gRPC port (4317 by default).
+		collectorAddr = "127.0.0.1:4317"
 	}
 
 	sampleRate := obs.SampleRate
@@ -57,11 +47,15 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 
 	// Create OTEL provider.
 	ctx := context.Background()
+	// Generate a unique instance ID for this ycode process.
+	instanceID := sess.ID // Use session ID as instance identifier — unique per process.
+
 	otelProvider, err := yotel.NewProvider(ctx, yotel.ProviderConfig{
 		CollectorAddr:  collectorAddr,
 		ServiceName:    "ycode",
 		ServiceVersion: version,
 		SessionID:      sess.ID,
+		InstanceID:     instanceID,
 		SampleRate:     sampleRate,
 		DataDir:        dataDir,
 		PersistTraces:  obs.PersistTraces,

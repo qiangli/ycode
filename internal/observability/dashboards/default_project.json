@@ -1,0 +1,55 @@
+{
+  "name": "ycode",
+  "dashboards": [
+    {
+      "name": "LLM Overview",
+      "panels": [
+        {"title": "API Call Rate", "query": "rate(ycode_llm_call_total[5m])", "type": "timeseries"},
+        {"title": "API Call Latency (p95)", "query": "histogram_quantile(0.95, rate(ycode_llm_call_duration_bucket[5m]))", "type": "timeseries"},
+        {"title": "Estimated Cost ($)", "query": "sum(ycode_llm_cost_dollars) by (service_instance_id)", "type": "timeseries"},
+        {"title": "Total Calls", "query": "sum(ycode_llm_call_total)", "type": "stat"}
+      ]
+    },
+    {
+      "name": "Token Usage",
+      "panels": [
+        {"title": "Input Tokens", "query": "rate(ycode_llm_tokens_input[5m])", "type": "timeseries"},
+        {"title": "Output Tokens", "query": "rate(ycode_llm_tokens_output[5m])", "type": "timeseries"},
+        {"title": "Cache Read Tokens", "query": "rate(ycode_llm_tokens_cache_read[5m])", "type": "timeseries"},
+        {"title": "Cache Write Tokens", "query": "rate(ycode_llm_tokens_cache_write[5m])", "type": "timeseries"}
+      ]
+    },
+    {
+      "name": "Tool Performance",
+      "panels": [
+        {"title": "Tool Call Rate", "query": "rate(ycode_tool_call_total[5m])", "type": "timeseries"},
+        {"title": "Tool Latency (p95)", "query": "histogram_quantile(0.95, rate(ycode_tool_call_duration_bucket[5m]))", "type": "timeseries"},
+        {"title": "Top Tools by Call Count", "query": "topk(10, sum by (tool_name) (ycode_tool_call_total))", "type": "table"}
+      ]
+    },
+    {
+      "name": "Session Activity",
+      "panels": [
+        {"title": "Turns per Session", "query": "sum(ycode_session_turns) by (service_instance_id)", "type": "timeseries"},
+        {"title": "Turn Duration (p95)", "query": "histogram_quantile(0.95, rate(ycode_turn_duration_bucket[5m]))", "type": "timeseries"},
+        {"title": "Tools per Turn", "query": "histogram_quantile(0.5, rate(ycode_turn_tool_count_bucket[5m]))", "type": "timeseries"}
+      ]
+    },
+    {
+      "name": "Context & Compaction",
+      "panels": [
+        {"title": "Context Window Usage", "query": "ycode_llm_context_window_used", "type": "timeseries"},
+        {"title": "Compaction Events", "query": "rate(ycode_compaction_total[5m])", "type": "timeseries"},
+        {"title": "Tokens Saved by Compaction", "query": "sum(ycode_compaction_tokens_saved)", "type": "stat"}
+      ]
+    },
+    {
+      "name": "Instance Comparison",
+      "panels": [
+        {"title": "Calls by Instance", "query": "sum by (service_instance_id) (ycode_llm_call_total)", "type": "timeseries"},
+        {"title": "Cost by Instance", "query": "sum by (service_instance_id) (ycode_llm_cost_dollars)", "type": "timeseries"},
+        {"title": "Tokens by Instance", "query": "sum by (service_instance_id) (ycode_llm_tokens_input + ycode_llm_tokens_output)", "type": "timeseries"}
+      ]
+    }
+  ]
+}

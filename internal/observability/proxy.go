@@ -12,12 +12,14 @@ import (
 	"sync"
 )
 
-// ProxyServer is a reverse proxy that routes requests to backend services
-// based on path prefix. It listens on a single fixed port (e.g. 58080).
+// ProxyServer routes requests to backend services based on path prefix.
+// It supports both reverse-proxy backends (URL) and in-process handlers.
+// It listens on a single fixed port (e.g. 58080).
 type ProxyServer struct {
 	listenAddr string
 	mu         sync.RWMutex
-	routes     map[string]*url.URL // path prefix -> backend URL
+	routes     map[string]*url.URL     // path prefix -> backend URL
+	handlers   map[string]http.Handler // path prefix -> in-process handler
 	server     *http.Server
 }
 
@@ -26,15 +28,23 @@ func NewProxyServer(bindAddr string, port int) *ProxyServer {
 	return &ProxyServer{
 		listenAddr: fmt.Sprintf("%s:%d", bindAddr, port),
 		routes:     make(map[string]*url.URL),
+		handlers:   make(map[string]http.Handler),
 	}
 }
 
-// AddRoute registers a backend for a path prefix.
+// AddRoute registers a reverse-proxy backend for a path prefix.
 // Example: AddRoute("/prometheus/", "http://127.0.0.1:39821")
 func (p *ProxyServer) AddRoute(pathPrefix string, backend *url.URL) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.routes[pathPrefix] = backend
+}
+
+// AddHandler registers an in-process HTTP handler for a path prefix.
+func (p *ProxyServer) AddHandler(pathPrefix string, handler http.Handler) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.handlers[pathPrefix] = handler
 }
 
 // Start begins serving HTTP requests.
@@ -53,6 +63,19 @@ func (p *ProxyServer) Start(_ context.Context) error {
 	for _, prefix := range prefixes {
 		backend := p.routes[prefix]
 		mux.Handle(prefix, p.reverseProxy(prefix, backend))
+	}
+
+	// Register in-process handlers.
+	handlerPrefixes := make([]string, 0, len(p.handlers))
+	for prefix := range p.handlers {
+		handlerPrefixes = append(handlerPrefixes, prefix)
+	}
+	sort.Slice(handlerPrefixes, func(i, j int) bool {
+		return len(handlerPrefixes[i]) > len(handlerPrefixes[j])
+	})
+	for _, prefix := range handlerPrefixes {
+		handler := p.handlers[prefix]
+		mux.Handle(prefix, http.StripPrefix(strings.TrimSuffix(prefix, "/"), handler))
 	}
 	p.mu.RUnlock()
 
@@ -122,6 +145,10 @@ func (p *ProxyServer) landingPage(w http.ResponseWriter, r *http.Request) {
 		name := strings.Trim(prefix, "/")
 		b.WriteString(fmt.Sprintf("<li><a href=\"%s\">%s</a></li>", prefix, name))
 	}
+	for prefix := range p.handlers {
+		name := strings.Trim(prefix, "/")
+		b.WriteString(fmt.Sprintf("<li><a href=\"%s\">%s</a></li>", prefix, name))
+	}
 	p.mu.RUnlock()
 
 	b.WriteString("</ul><p><a href=\"/healthz\">/healthz</a> — aggregated health check</p>")
@@ -132,5 +159,5 @@ func (p *ProxyServer) landingPage(w http.ResponseWriter, r *http.Request) {
 func (p *ProxyServer) healthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"ok","routes":%d}`, len(p.routes))
+	fmt.Fprintf(w, `{"status":"ok","routes":%d}`, len(p.routes)+len(p.handlers))
 }

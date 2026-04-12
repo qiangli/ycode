@@ -4,95 +4,59 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/url"
-	"path/filepath"
+	"sync"
 
-	"github.com/qiangli/ycode/internal/collector"
 	"github.com/qiangli/ycode/internal/runtime/config"
 )
 
-// ComponentStatus describes the status of a stack component.
-type ComponentStatus struct {
-	Name      string `json:"name"`
-	PID       int    `json:"pid"`
-	Port      int    `json:"port"`
-	ProxyPath string `json:"proxy_path"`
-	Healthy   bool   `json:"healthy"`
-}
-
-// StackManager orchestrates all observability components and the reverse proxy.
+// StackManager orchestrates all embedded observability components and the reverse proxy.
 type StackManager struct {
 	cfg     *config.ObservabilityConfig
-	binDir  string // ~/.ycode/bin/
 	dataDir string // ~/.ycode/observability/
-	otelDir string // ~/.ycode/otel/
 
-	ports     *PortAllocator
-	proxy     *ProxyServer
-	collector *collector.Manager
-	processes map[string]*Process
+	mu         sync.Mutex
+	components []Component
+	proxy      *ProxyServer
+	started    bool
 }
 
 // NewStackManager creates a stack manager.
-func NewStackManager(cfg *config.ObservabilityConfig, binDir, dataDir, otelDir string) *StackManager {
+func NewStackManager(cfg *config.ObservabilityConfig, dataDir string) *StackManager {
 	return &StackManager{
-		cfg:       cfg,
-		binDir:    binDir,
-		dataDir:   dataDir,
-		otelDir:   otelDir,
-		ports:     NewPortAllocator(dataDir),
-		processes: make(map[string]*Process),
+		cfg:     cfg,
+		dataDir: dataDir,
 	}
 }
 
-// Start downloads binaries, allocates ports, generates configs, and starts all components.
+// AddComponent registers a component to be managed by the stack.
+// Components are started in the order they are added (dependency ordering).
+func (s *StackManager) AddComponent(c Component) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.components = append(s.components, c)
+}
+
+// Start launches all components (each in its own goroutine) and the reverse proxy.
 func (s *StackManager) Start(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.started {
+		return fmt.Errorf("stack already started")
+	}
+
 	slog.Info("observability: starting stack")
 
-	// 1. Allocate ports for all components.
-	portNames := []string{
-		"collector-grpc", "collector-http", "collector-prom", "collector-health",
-		"prometheus", "alertmanager", "karma", "perses", "victoria-logs",
-	}
-	for _, name := range portNames {
-		if _, err := s.ports.Allocate(name); err != nil {
-			return fmt.Errorf("allocate port %s: %w", name, err)
+	// Start components in dependency order. Each Start() is non-blocking
+	// (launches work in a goroutine internally).
+	for _, c := range s.components {
+		if err := c.Start(ctx); err != nil {
+			slog.Warn("observability: component start failed", "component", c.Name(), "error", err)
+			// Continue starting other components — non-fatal.
 		}
 	}
 
-	// 2. Start components in dependency order.
-
-	// VictoriaLogs first (log sink).
-	if err := s.startVictoriaLogs(ctx); err != nil {
-		slog.Warn("observability: victoria-logs start failed", "error", err)
-	}
-
-	// OTEL Collector.
-	if err := s.startCollector(ctx); err != nil {
-		slog.Warn("observability: collector start failed", "error", err)
-	}
-
-	// Prometheus.
-	if err := s.startPrometheus(ctx); err != nil {
-		slog.Warn("observability: prometheus start failed", "error", err)
-	}
-
-	// Alertmanager.
-	if err := s.startAlertmanager(ctx); err != nil {
-		slog.Warn("observability: alertmanager start failed", "error", err)
-	}
-
-	// Karma.
-	if err := s.startKarma(ctx); err != nil {
-		slog.Warn("observability: karma start failed", "error", err)
-	}
-
-	// Perses.
-	if err := s.startPerses(ctx); err != nil {
-		slog.Warn("observability: perses start failed", "error", err)
-	}
-
-	// 3. Start reverse proxy.
+	// Start reverse proxy.
 	proxyPort := s.cfg.ProxyPort
 	if proxyPort == 0 {
 		proxyPort = 58080
@@ -102,253 +66,99 @@ func (s *StackManager) Start(ctx context.Context) error {
 		bindAddr = "127.0.0.1"
 	}
 	s.proxy = NewProxyServer(bindAddr, proxyPort)
-	s.registerProxyRoutes()
+	s.registerRoutes()
 	if err := s.proxy.Start(ctx); err != nil {
 		return fmt.Errorf("start proxy: %w", err)
 	}
 
+	s.started = true
 	slog.Info("observability: stack started", "proxy", s.proxy.Addr())
 	return nil
 }
 
-// Stop shuts down all components and the proxy.
-func (s *StackManager) Stop() error {
+// Stop gracefully shuts down all components and the proxy (reverse order).
+func (s *StackManager) Stop(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.started {
+		return nil
+	}
+
 	slog.Info("observability: stopping stack")
 
 	if s.proxy != nil {
-		_ = s.proxy.Stop(context.Background())
+		_ = s.proxy.Stop(ctx)
 	}
-	for name, proc := range s.processes {
-		if err := proc.Stop(); err != nil {
-			slog.Warn("observability: stop failed", "component", name, "error", err)
+
+	// Stop in reverse order.
+	for i := len(s.components) - 1; i >= 0; i-- {
+		c := s.components[i]
+		if err := c.Stop(ctx); err != nil {
+			slog.Warn("observability: component stop failed", "component", c.Name(), "error", err)
 		}
 	}
-	if s.collector != nil {
-		_ = s.collector.Stop()
-	}
-	s.ports.ReleaseAll()
+
+	s.started = false
 	return nil
 }
 
 // Status returns the health status of each component.
 func (s *StackManager) Status() []ComponentStatus {
-	ctx := context.Background()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	var statuses []ComponentStatus
-
-	// Collector.
-	statuses = append(statuses, ComponentStatus{
-		Name:      "otel-collector",
-		PID:       s.collectorPID(),
-		Port:      s.ports.Get("collector-grpc"),
-		ProxyPath: "/collector/",
-		Healthy:   s.collector != nil && s.collector.Running(),
-	})
-
-	proxyPaths := map[string]string{
-		"prometheus":    "/prometheus/",
-		"alertmanager":  "/alerts/",
-		"karma":         "/karma/",
-		"perses":        "/dashboard/",
-		"victoria-logs": "/logs/",
-	}
-	for name, proc := range s.processes {
+	for _, c := range s.components {
 		statuses = append(statuses, ComponentStatus{
-			Name:      name,
-			PID:       proc.PID(),
-			Port:      proc.Port,
-			ProxyPath: proxyPaths[name],
-			Healthy:   proc.Healthy(ctx),
+			Name:    c.Name(),
+			Healthy: c.Healthy(),
 		})
 	}
-
 	return statuses
 }
 
-// CollectorGRPCPort returns the port the collector's OTLP gRPC receiver is on.
-func (s *StackManager) CollectorGRPCPort() int {
-	return s.ports.Get("collector-grpc")
-}
+// Healthy returns true if all components report healthy.
+func (s *StackManager) Healthy() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-func (s *StackManager) startVictoriaLogs(ctx context.Context) error {
-	port := s.ports.Get("victoria-logs")
-	dataDir := filepath.Join(s.dataDir, "vlogs", "data")
-	proc := &Process{
-		Name:       "victoria-logs",
-		BinaryPath: filepath.Join(s.binDir, "victoria-logs"), // simplified
-		Args:       VictoriaLogsArgs(port, dataDir),
-		Port:       port,
-		DataDir:    filepath.Join(s.dataDir, "vlogs"),
-		HealthPath: "/health",
-	}
-	if err := proc.Start(ctx); err != nil {
-		return err
-	}
-	s.processes["victoria-logs"] = proc
-	return nil
-}
-
-func (s *StackManager) startCollector(ctx context.Context) error {
-	collCfg := collector.Config{
-		GRPCPort:         s.ports.Get("collector-grpc"),
-		HTTPPort:         s.ports.Get("collector-http"),
-		PrometheusPort:   s.ports.Get("collector-prom"),
-		HealthPort:       s.ports.Get("collector-health"),
-		VictoriaLogsPort: s.ports.Get("victoria-logs"),
-	}
-	s.collector = collector.NewManager(s.binDir, filepath.Join(s.otelDir, "collector"), "")
-	return s.collector.Start(ctx, collCfg)
-}
-
-func (s *StackManager) startPrometheus(ctx context.Context) error {
-	port := s.ports.Get("prometheus")
-	promDir := filepath.Join(s.dataDir, "prometheus")
-	promCfg := PrometheusConfig{
-		Port:             port,
-		CollectorMetrics: s.ports.Get("collector-prom"),
-		AlertmanagerPort: s.ports.Get("alertmanager"),
-		VictoriaLogsPort: s.ports.Get("victoria-logs"),
-		DataDir:          filepath.Join(promDir, "data"),
-	}
-	// Convert config remote-write targets.
-	for _, rw := range s.cfg.RemoteWrite {
-		target := RemoteWriteTarget{URL: rw.URL, Headers: rw.Headers}
-		if rw.BasicAuth != nil {
-			target.BasicAuth = &BasicAuthConfig{
-				Username: rw.BasicAuth.Username,
-				Password: rw.BasicAuth.Password,
-			}
-		}
-		promCfg.RemoteWrite = append(promCfg.RemoteWrite, target)
-	}
-	for _, fed := range s.cfg.Federation {
-		promCfg.Federation = append(promCfg.Federation, FederationTarget{URL: fed.URL, Match: fed.Match})
-	}
-
-	configPath, err := WritePrometheusConfig(promDir, promCfg)
-	if err != nil {
-		return err
-	}
-	proc := &Process{
-		Name:       "prometheus",
-		BinaryPath: filepath.Join(s.binDir, "prometheus"),
-		Args: []string{
-			"--config.file=" + configPath,
-			fmt.Sprintf("--web.listen-address=127.0.0.1:%d", port),
-			"--web.external-url=/prometheus/",
-			"--web.route-prefix=/",
-			"--storage.tsdb.path=" + filepath.Join(promDir, "data"),
-		},
-		Port:       port,
-		DataDir:    promDir,
-		HealthPath: "/-/healthy",
-	}
-	if err := proc.Start(ctx); err != nil {
-		return err
-	}
-	s.processes["prometheus"] = proc
-	return nil
-}
-
-func (s *StackManager) startAlertmanager(ctx context.Context) error {
-	port := s.ports.Get("alertmanager")
-	dir := filepath.Join(s.dataDir, "alertmanager")
-	configPath, err := WriteAlertmanagerConfig(dir)
-	if err != nil {
-		return err
-	}
-	proc := &Process{
-		Name:       "alertmanager",
-		BinaryPath: filepath.Join(s.binDir, "alertmanager"),
-		Args: []string{
-			"--config.file=" + configPath,
-			fmt.Sprintf("--web.listen-address=127.0.0.1:%d", port),
-			"--web.external-url=/alerts/",
-			"--web.route-prefix=/",
-		},
-		Port:       port,
-		DataDir:    dir,
-		HealthPath: "/-/healthy",
-	}
-	if err := proc.Start(ctx); err != nil {
-		return err
-	}
-	s.processes["alertmanager"] = proc
-	return nil
-}
-
-func (s *StackManager) startKarma(ctx context.Context) error {
-	port := s.ports.Get("karma")
-	dir := filepath.Join(s.dataDir, "karma")
-	configPath, err := WriteKarmaConfig(dir, s.ports.Get("alertmanager"))
-	if err != nil {
-		return err
-	}
-	proc := &Process{
-		Name:       "karma",
-		BinaryPath: filepath.Join(s.binDir, "karma"),
-		Args: []string{
-			"--config.file=" + configPath,
-			fmt.Sprintf("--listen.address=127.0.0.1"),
-			fmt.Sprintf("--listen.port=%d", port),
-			"--listen.prefix=/karma/",
-		},
-		Port:       port,
-		DataDir:    dir,
-		HealthPath: "/karma/",
-	}
-	if err := proc.Start(ctx); err != nil {
-		return err
-	}
-	s.processes["karma"] = proc
-	return nil
-}
-
-func (s *StackManager) startPerses(ctx context.Context) error {
-	port := s.ports.Get("perses")
-	dir := filepath.Join(s.dataDir, "perses")
-	configPath, err := WritePersesConfig(dir, s.ports.Get("prometheus"))
-	if err != nil {
-		return err
-	}
-	proc := &Process{
-		Name:       "perses",
-		BinaryPath: filepath.Join(s.binDir, "perses"),
-		Args: []string{
-			"--config=" + configPath,
-			fmt.Sprintf("--web.listen-address=127.0.0.1:%d", port),
-		},
-		Port:       port,
-		DataDir:    dir,
-		HealthPath: "/api/v1/health",
-	}
-	if err := proc.Start(ctx); err != nil {
-		return err
-	}
-	s.processes["perses"] = proc
-	return nil
-}
-
-func (s *StackManager) registerProxyRoutes() {
-	routes := map[string]string{
-		"/prometheus/": "prometheus",
-		"/alerts/":     "alertmanager",
-		"/karma/":      "karma",
-		"/dashboard/":  "perses",
-		"/logs/":       "victoria-logs",
-		"/collector/":  "collector-health",
-	}
-	for path, component := range routes {
-		port := s.ports.Get(component)
-		if port > 0 {
-			backend, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
-			s.proxy.AddRoute(path, backend)
+	for _, c := range s.components {
+		if !c.Healthy() {
+			return false
 		}
 	}
+	return s.started
 }
 
-func (s *StackManager) collectorPID() int {
-	if s.collector != nil {
-		return s.collector.PID()
+// ProxyAddr returns the proxy listen address (e.g. "127.0.0.1:58080").
+func (s *StackManager) ProxyAddr() string {
+	if s.proxy != nil {
+		return s.proxy.Addr()
 	}
-	return 0
+	return ""
+}
+
+// registerRoutes mounts each component's HTTP handler on the proxy mux.
+func (s *StackManager) registerRoutes() {
+	// Predefined path mappings for well-known components.
+	pathMap := map[string]string{
+		"otel-collector": "/collector/",
+		"prometheus":     "/prometheus/",
+		"alertmanager":   "/alerts/",
+		"perses":         "/dashboard/",
+		"logstore":       "/logs/",
+	}
+
+	for _, c := range s.components {
+		handler := c.HTTPHandler()
+		if handler == nil {
+			continue
+		}
+		path, ok := pathMap[c.Name()]
+		if !ok {
+			path = "/" + c.Name() + "/"
+		}
+		s.proxy.AddHandler(path, handler)
+	}
 }

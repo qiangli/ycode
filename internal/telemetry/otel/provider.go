@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
@@ -26,6 +27,7 @@ type ProviderConfig struct {
 	ServiceName    string  // default "ycode"
 	ServiceVersion string  // from build ldflags
 	SessionID      string  // attached as resource attribute
+	InstanceID     string  // unique per ycode process (UUID) for multi-client tracking
 	SampleRate     float64 // 1.0 = sample everything
 
 	// File-based persistence.
@@ -61,12 +63,19 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 		cfg.SampleRate = 1.0
 	}
 
+	attrs := []attribute.KeyValue{
+		semconv.ServiceName(cfg.ServiceName),
+		semconv.ServiceVersion(cfg.ServiceVersion),
+		AttrSessionID.String(cfg.SessionID),
+	}
+	if cfg.InstanceID != "" {
+		attrs = append(attrs,
+			semconv.ServiceInstanceID(cfg.InstanceID),
+			AttrInstanceID.String(cfg.InstanceID),
+		)
+	}
 	res, err := resource.New(ctx,
-		resource.WithAttributes(
-			semconv.ServiceName(cfg.ServiceName),
-			semconv.ServiceVersion(cfg.ServiceVersion),
-			AttrSessionID.String(cfg.SessionID),
-		),
+		resource.WithAttributes(attrs...),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create resource: %w", err)

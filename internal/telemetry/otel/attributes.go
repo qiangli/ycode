@@ -42,4 +42,7 @@ var (
 	// Compaction attributes.
 	AttrTokensBefore = attribute.Key("tokens.before")
 	AttrTokensAfter  = attribute.Key("tokens.after")
+
+	// Instance tracking.
+	AttrInstanceID = attribute.Key("ycode.instance.id")
 )
