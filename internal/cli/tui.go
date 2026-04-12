@@ -454,9 +454,15 @@ func (m *TUIModel) statusBar() string {
 		modeText = " CONFIRM "
 		modeStyle = modeStyle.Background(lipgloss.Color("#f472b6")) // pink
 	}
-	if !m.working && !m.confirming && strings.HasPrefix(strings.TrimSpace(m.textarea.Value()), "!") {
-		modeText = " SHELL "
-		modeStyle = modeStyle.Background(lipgloss.Color("#f97316")) // orange
+	if !m.working && !m.confirming {
+		input := strings.TrimSpace(m.textarea.Value())
+		if strings.HasPrefix(input, "!!") {
+			modeText = " TTY "
+			modeStyle = modeStyle.Background(lipgloss.Color("#e879f9")) // magenta
+		} else if strings.HasPrefix(input, "!") {
+			modeText = " SHELL "
+			modeStyle = modeStyle.Background(lipgloss.Color("#f97316")) // orange
+		}
 	}
 	mode := modeStyle.Render(modeText)
 
@@ -467,7 +473,7 @@ func (m *TUIModel) statusBar() string {
 	model := modelStyle.Render(modelText)
 
 	// Hints.
-	hintText := " tab:complete | shift+tab:mode | /help "
+	hintText := " !:shell !!:tty | tab:complete | shift+tab:mode | /help "
 	if m.confirming {
 		hintText = " " + m.confirmPrompt + "  y=yes n=no a=always for session "
 	}
@@ -624,6 +630,23 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 			{Type: session.ContentTypeText, Text: text},
 		},
 	})
+
+	if strings.HasPrefix(text, "!!") {
+		shell := strings.TrimLeft(text[2:], " ")
+		if shell == "" {
+			return func() tea.Msg {
+				return commandOutputMsg{Echo: fmt.Sprintf("> %s\n", text), Text: "Usage: !! <command>"}
+			}
+		}
+		m.appendOutput(fmt.Sprintf("> %s\n", text))
+		cmd := exec.Command("sh", "-c", shell)
+		return tea.ExecProcess(cmd, func(err error) tea.Msg {
+			if err != nil {
+				return commandOutputMsg{Err: err}
+			}
+			return commandOutputMsg{Text: "(exited)"}
+		})
+	}
 
 	if strings.HasPrefix(text, "!") {
 		shell := strings.TrimLeft(text[1:], " ")
