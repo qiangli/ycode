@@ -59,8 +59,13 @@ func (a *AlertmanagerComponent) Healthy() bool { return a.healthy.Load() }
 func (a *AlertmanagerComponent) HTTPHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v2/alerts", a.handleAlerts)
+	mux.HandleFunc("/api/v2/alerts/groups", a.handleAlertGroups)
+	mux.HandleFunc("/api/v2/silences", a.handleSilences)
+	mux.HandleFunc("/api/v2/silences/", a.handleSilences)
+	mux.HandleFunc("/api/v2/status", a.handleStatus)
 	mux.HandleFunc("/api/v1/alerts", a.handleAlerts)
 	mux.HandleFunc("/-/healthy", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "OK") })
+	mux.HandleFunc("/-/ready", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "OK") })
 
 	// Serve the real Alertmanager web UI from embedded assets.
 	fs := http.FileServer(asset.Assets)
@@ -167,4 +172,71 @@ func (a *AlertmanagerComponent) handleAlerts(w http.ResponseWriter, r *http.Requ
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleAlertGroups returns alerts grouped by labels, as expected by the Elm UI.
+func (a *AlertmanagerComponent) handleAlertGroups(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	alerts := a.Alerts()
+	if len(alerts) == 0 {
+		fmt.Fprint(w, `[]`)
+		return
+	}
+	// Return a single group containing all alerts.
+	type receiver struct {
+		Name string `json:"name"`
+	}
+	type groupAlert struct {
+		Labels      map[string]string `json:"labels"`
+		Annotations map[string]string `json:"annotations"`
+		StartsAt    time.Time         `json:"startsAt"`
+		EndsAt      time.Time         `json:"endsAt"`
+		Status      struct {
+			State string `json:"state"`
+		} `json:"status"`
+		Fingerprint string `json:"fingerprint"`
+	}
+	type group struct {
+		Labels   map[string]string `json:"labels"`
+		Receiver receiver          `json:"receiver"`
+		Alerts   []groupAlert      `json:"alerts"`
+	}
+	var ga []groupAlert
+	for _, al := range alerts {
+		g := groupAlert{
+			Labels:      al.Labels,
+			Annotations: al.Annotations,
+			StartsAt:    al.StartsAt,
+			EndsAt:      al.EndsAt,
+			Fingerprint: al.Fingerprint,
+		}
+		g.Status.State = al.Status
+		ga = append(ga, g)
+	}
+	json.NewEncoder(w).Encode([]group{{
+		Labels:   map[string]string{},
+		Receiver: receiver{Name: "default"},
+		Alerts:   ga,
+	}})
+}
+
+// handleSilences returns an empty silences list (silences not implemented).
+func (a *AlertmanagerComponent) handleSilences(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	switch r.Method {
+	case http.MethodGet:
+		fmt.Fprint(w, `[]`)
+	case http.MethodPost:
+		fmt.Fprint(w, `{"silenceID":"not-implemented"}`)
+	case http.MethodDelete:
+		w.WriteHeader(http.StatusOK)
+	default:
+		fmt.Fprint(w, `[]`)
+	}
+}
+
+// handleStatus returns Alertmanager status info for the Elm UI.
+func (a *AlertmanagerComponent) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{"cluster":{"name":"","status":"disabled","peers":[]},"versionInfo":{"version":"embedded","branch":"","buildDate":"","buildUser":"","goVersion":"","revision":""},"config":{"original":""},"uptime":"2025-01-01T00:00:00.000Z"}`)
 }
