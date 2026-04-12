@@ -13,10 +13,24 @@ Run the full validation test suite against a running ycode server. All tests are
 | Suite | File | What it tests |
 |-------|------|---------------|
 | Smoke | `smoke_test.go` | Health endpoint, CLI version, server status |
-| Proxy | `proxy_test.go` | Landing page discovery, all proxied app routes reachable |
-| OTEL | `otel_test.go` | Real OTEL collector (traces, metrics, logs), Prometheus endpoint |
+| Proxy | `proxy_test.go` | Landing page discovery, all proxied app routes reachable, real UI content verification, health endpoints |
+| OTEL | `otel_test.go` | Real OTEL collector (traces, metrics, logs), Prometheus exporter endpoint |
 | Acceptance | `acceptance_test.go` | One-shot prompt, serve status, doctor check |
 | Performance | `perf_test.go` | Health latency (p50/p95/p99), trace throughput, binary startup |
+
+### Proxy test details
+
+The proxy suite (`proxy_test.go`) includes three test functions:
+
+- **TestProxyApps**: Discovers links from the landing page and verifies all routes return 200/301/302.
+- **TestProxyAppUIContent**: Verifies each third-party app serves its **real UI** (not a placeholder). Checks for characteristic content markers and ensures placeholder markers are absent. Each app has a known marker:
+  - `/prometheus/` — contains `<title>Prometheus</title>`, must NOT contain `ycode Prometheus`
+  - `/alerts/` — contains `script.js`, must NOT contain `ycode Alerts`
+  - `/dashboard/` — contains `Perses`
+  - `/logs/` — follows redirect to vmui, contains `VictoriaLogs`
+  - `/traces/` — contains `Jaeger`, must NOT contain `This is not the Jaeger UI`
+  - `/collector/` — contains `"status"`
+- **TestProxyAppHealthEndpoints**: Checks `/prometheus/-/healthy`, `/alerts/-/healthy`, `/dashboard/api/v1/health`, and `/healthz`.
 
 ## Arguments
 
@@ -54,8 +68,18 @@ This runs `go test -tags integration -v -count=1 ./internal/integration/...` wit
 Examine the Go test output:
 
 - **Connectivity skip** ("server not reachable"): The deploy didn't work. Re-run `/deploy` and retry.
-- **TestProxyApps failures**: Check component status and proxy registration in `internal/observability/stack.go`.
-- **TestOTEL failures**: OTEL collector or Prometheus may not be running. Check `internal/observability/` component startup.
+- **TestProxyApps failures**: Check component status and proxy registration in `internal/observability/stack.go`. Verify each component's `Start()` succeeded in the serve log (`~/.ycode/observability/serve.log`).
+- **TestProxyAppUIContent failures**: A proxied app is returning placeholder HTML instead of its real UI. Common causes and fixes:
+  - **Prometheus** (`ycode Prometheus` placeholder): Check that `prometheus.go` returns `nil` from `HTTPHandler()` and exposes `Port()`, and that `static/prometheus/index.html` exists.
+  - **Alertmanager** (`ycode Alerts` placeholder): Check that `alertmanager.go` imports and serves `asset.Assets` from `github.com/prometheus/alertmanager/asset`.
+  - **Jaeger** (`This is not the Jaeger UI`): The Jaeger UI assets are not embedded. Ensure `external/jaeger/cmd/jaeger/internal/extension/jaegerquery/internal/ui/actual/` contains gzipped UI files (run the Jaeger `rebuild-ui.sh` script or download from GitHub releases).
+  - **Perses** (500 error): Check `external/perses/ui/embed_stub.go` embeds `app/dist` (built React UI). If missing, build with `cd external/perses/ui && npm install && npx turbo run build --filter=@perses-dev/app`.
+  - **VictoriaLogs** (400 at root): Check that `victorialogs.go` redirects `/` to the vmui path.
+- **TestProxyAppHealthEndpoints failures**: A component's health endpoint is not reachable through the proxy. Check component startup logs and proxy route registration.
+- **TestOTEL failures**: OTEL collector may not be running. Check the serve log for collector startup errors. Common issues:
+  - `Telemetry must not be nil`: Add `otelconftelemetry.NewFactory()` to collector factories.
+  - Port binding conflicts: Ensure `service.telemetry.metrics.level: none` in collector YAML config.
+  - Prometheus exporter empty: The `/metrics` endpoint on port 8889 may be empty until metrics are received — this is normal.
 - **TestAcceptance failures**: These indicate a bug in the server or CLI code. Read the error, identify the root cause, fix it, then re-run `/build` → `/deploy` → `make validate`.
 - **TestPerformance warnings**: Performance tests log warnings but don't hard-fail. Report the numbers.
 
