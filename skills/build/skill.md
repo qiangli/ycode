@@ -18,7 +18,7 @@ Work in the project root. The goal is to make `make build` pass. If it fails, di
 make build
 ```
 
-This runs: `go mod tidy` → `go fmt` → `go vet` → `go test -race` → `go build` → `bin/ycode version`.
+This runs: `go mod tidy` → `go fmt` → `go vet` → `go build` → `go test -race` → `bin/ycode version`.
 
 ### Step 2: If build fails — fix and retry
 

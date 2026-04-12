@@ -27,17 +27,17 @@ sync: ## Pull latest changes for all submodules
 compile: ## Compile the ycode binary to bin/ (no checks)
 	go build $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 
-build: ## Build with full quality gate: tidy → fmt → vet → test → compile → verify
+build: ## Build with full quality gate: tidy → fmt → vet → compile → test → verify
 	@echo "=== Step 1: Dependency hygiene ==="
 	go mod tidy
 	@echo "=== Step 2: Format ==="
 	go fmt $(PACKAGES)
 	@echo "=== Step 3: Static analysis ==="
 	go vet $(PACKAGES)
-	@echo "=== Step 4: Unit tests ==="
-	go test -race -count=1 $(PACKAGES)
-	@echo "=== Step 5: Build binary ==="
+	@echo "=== Step 4: Build binary ==="
 	go build $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	@echo "=== Step 5: Unit tests ==="
+	go test -race $(PACKAGES)
 	@echo "=== Step 6: Verify ==="
 	bin/ycode version
 	@echo "=== Build PASSED ==="

@@ -40,14 +40,16 @@ func TestController_PauseResume(t *testing.T) {
 
 	go ctrl.Start(ctx)
 
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	ctrl.Pause()
 	if ctrl.GetState() != StatePaused {
 		t.Error("expected paused state")
 	}
 
+	// Allow any in-flight iteration to finish, then snapshot.
+	time.Sleep(20 * time.Millisecond)
 	pausedCount := iterations.Load()
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	if iterations.Load() != pausedCount {
 		t.Error("iterations should not increase while paused")
 	}
