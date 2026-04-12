@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -49,6 +51,14 @@ func (p *ProxyServer) AddHandler(pathPrefix string, handler http.Handler) {
 
 // Start begins serving HTTP requests.
 func (p *ProxyServer) Start(_ context.Context) error {
+	// Extract port from listenAddr for availability check.
+	_, portStr, _ := net.SplitHostPort(p.listenAddr)
+	if portStr != "" {
+		port, _ := strconv.Atoi(portStr)
+		if port > 0 && !IsPortAvailable(port) {
+			return fmt.Errorf("proxy: port %d already in use", port)
+		}
+	}
 	mux := http.NewServeMux()
 
 	p.mu.RLock()

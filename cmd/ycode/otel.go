@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"go.opentelemetry.io/contrib/bridges/otelslog"
-
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
@@ -119,11 +117,11 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 		convCfg.ConvLogger = yotel.NewConversationLogger(otelProvider.LoggerProvider, instanceID)
 	}
 
-	// Bridge slog to OTEL LoggerProvider.
-	otelHandler := otelslog.NewHandler("ycode")
-	originalHandler := slog.Default().Handler()
-	teeHandler := &teeLogHandler{primary: originalHandler, secondary: otelHandler}
-	slog.SetDefault(slog.New(teeHandler))
+	// NOTE: The slog→OTEL bridge (otelslog) is intentionally NOT installed.
+	// It deadlocks when the OTEL collector runs in the same process: the gRPC
+	// log exporter's batch processor queue blocks Handle() calls, stalling
+	// any goroutine that calls slog. Conversation logs still reach VictoriaLogs
+	// via the ConvLogger pipeline above.
 
 	// Start retention cleanup goroutine.
 	retentionDays := obs.LogRetentionDays
@@ -143,34 +141,5 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 			}
 		},
 		convOTEL: convCfg,
-	}
-}
-
-// teeLogHandler forwards log records to two handlers.
-type teeLogHandler struct {
-	primary   slog.Handler
-	secondary slog.Handler
-}
-
-func (h *teeLogHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	return h.primary.Enabled(ctx, level) || h.secondary.Enabled(ctx, level)
-}
-
-func (h *teeLogHandler) Handle(ctx context.Context, record slog.Record) error {
-	_ = h.secondary.Handle(ctx, record)
-	return h.primary.Handle(ctx, record)
-}
-
-func (h *teeLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &teeLogHandler{
-		primary:   h.primary.WithAttrs(attrs),
-		secondary: h.secondary.WithAttrs(attrs),
-	}
-}
-
-func (h *teeLogHandler) WithGroup(name string) slog.Handler {
-	return &teeLogHandler{
-		primary:   h.primary.WithGroup(name),
-		secondary: h.secondary.WithGroup(name),
 	}
 }

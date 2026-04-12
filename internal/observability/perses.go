@@ -44,6 +44,10 @@ func (p *PersesComponent) Name() string             { return "perses" }
 func (p *PersesComponent) SetPathPrefix(pfx string) { p.pathPrefix = pfx }
 
 func (p *PersesComponent) Start(ctx context.Context) error {
+	if !IsPortAvailable(p.port) {
+		return fmt.Errorf("perses: port %d already in use", p.port)
+	}
+
 	// Set the listen address flag before starting Perses. The perses/common
 	// app.Runner reads this flag to configure the echo HTTP server.
 	_ = flag.Set("web.listen-address", fmt.Sprintf(":%d", p.port))

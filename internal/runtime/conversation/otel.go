@@ -64,12 +64,16 @@ func (r *Runtime) InstrumentedTurn(ctx context.Context, messages []api.Message, 
 		attribute.Int("llm.tokens.output", result.Usage.OutputTokens+result.Usage.CompletionTokens),
 	)
 
-	// Record metrics.
+	// Record turn-level metrics.
 	if r.otel.Inst != nil {
 		r.otel.Inst.TurnDuration.Record(ctx, float64(dur.Milliseconds()))
 		r.otel.Inst.TurnToolCount.Record(ctx, int64(len(result.ToolCalls)))
 		r.otel.Inst.SessionTurns.Add(ctx, 1)
 	}
+
+	// Record LLM call metrics (tokens, cost, latency).
+	result.Duration = dur
+	r.recordTurnMetrics(ctx, result)
 
 	return result, nil
 }

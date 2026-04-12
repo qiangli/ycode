@@ -1322,8 +1322,6 @@ go.opentelemetry.io/collector/service/hostcapabilities v0.149.0 h1:vLw9GIbpZUvRI
 go.opentelemetry.io/collector/service/hostcapabilities v0.149.0/go.mod h1:tMD3mdx4BTljhfvScmSdewN89NUgj/eoKXCUDkD0F1Y=
 go.opentelemetry.io/collector/service/telemetry/telemetrytest v0.149.0 h1:Ao4axvnPWwQ07vK+67VL8veAz5eNH9v530H+B7Jsw70=
 go.opentelemetry.io/collector/service/telemetry/telemetrytest v0.149.0/go.mod h1:+scbyWSHHiabLiZLLRpM80P0uhAR+NkwIhL9OGv5LZ4=
-go.opentelemetry.io/contrib/bridges/otelslog v0.18.0 h1:hhPGP3zvvy1xWT9RTy970wlniSxFttBIsAK1gvMguJM=
-go.opentelemetry.io/contrib/bridges/otelslog v0.18.0/go.mod h1:twJF7inoMza6kxMcF8JOdL3mPmtOZu7GEr34CUNE6Dg=
 go.opentelemetry.io/contrib/bridges/otelzap v0.17.0 h1:oCltVHJcblcth2z9B9dRTeZIZTe2Sf9Ad9h8bcc+s8M=
 go.opentelemetry.io/contrib/bridges/otelzap v0.17.0/go.mod h1:G/VE1A/hRn6mEWdfC8rMvSdQVGM64KUPi4XilLkwcQw=
 go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0 h1:yI1/OhfEPy7J9eoa6Sj051C7n5dvpj0QX8g4sRchg04=

@@ -119,6 +119,10 @@ func DefaultConfig() *Config {
 			MaxStandard: 8,
 			MaxLLM:      2,
 		},
+		Observability: &ObservabilityConfig{
+			Enabled:          true,
+			LogConversations: true,
+		},
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -30,6 +31,13 @@ type natsServer struct {
 
 // startNATSServer starts an embedded NATS server with JetStream enabled.
 func startNATSServer(port int, storeDir, infoPath string) (*natsServer, error) {
+	// Pre-flight port check to fail fast instead of waiting for the 5s timeout.
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return nil, fmt.Errorf("nats port %d already in use", port)
+	}
+	ln.Close()
+
 	opts := &server.Options{
 		Host:           "127.0.0.1",
 		Port:           port,

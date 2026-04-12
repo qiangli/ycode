@@ -131,6 +131,7 @@ func (c *Cluster) runForceMaster(ctx context.Context) {
 
 // runElectionLoop tries to acquire the lock periodically.
 func (c *Cluster) runElectionLoop(ctx context.Context) {
+	promotionFailures := 0
 	for {
 		acquired, err := c.elect.tryAcquire()
 		if err != nil {
@@ -141,6 +142,7 @@ func (c *Cluster) runElectionLoop(ctx context.Context) {
 			if err := c.promoteWithRetry(ctx); err != nil {
 				slog.Warn("cluster: promotion failed, releasing lock", "error", err)
 				c.elect.release()
+				promotionFailures++
 			} else {
 				c.runLeaderLoop(ctx)
 				return
@@ -150,10 +152,17 @@ func (c *Cluster) runElectionLoop(ctx context.Context) {
 		// Try to connect to existing NATS server as client.
 		c.tryConnectAsClient()
 
+		// Back off more aggressively after repeated promotion failures
+		// (e.g. ports already in use by external processes).
+		delay := c.opts.RetryInterval
+		if promotionFailures > 1 {
+			delay = 30 * time.Second
+		}
+
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(c.opts.RetryInterval):
+		case <-time.After(delay):
 		}
 	}
 }

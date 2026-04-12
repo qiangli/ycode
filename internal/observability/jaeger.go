@@ -38,6 +38,19 @@ func (j *JaegerComponent) Name() string           { return "jaeger" }
 func (j *JaegerComponent) SetPathPrefix(p string) { j.pathPrefix = p }
 
 func (j *JaegerComponent) Start(ctx context.Context) error {
+	// Pre-flight port check to fail fast instead of blocking or crashing.
+	for _, p := range []struct {
+		name string
+		port int
+	}{
+		{"otlp", j.otlpPort},
+		{"query", j.queryPort},
+	} {
+		if !IsPortAvailable(p.port) {
+			return fmt.Errorf("jaeger: %s port %d already in use", p.name, p.port)
+		}
+	}
+
 	// Build Jaeger all-in-one config YAML programmatically.
 	configYAML := j.generateConfig()
 
@@ -47,7 +60,10 @@ func (j *JaegerComponent) Start(ctx context.Context) error {
 			Description: "Embedded Jaeger for ycode",
 			Version:     "0.1.0",
 		},
-		Factories: jaegerembed.Components,
+		// Prevent embedded Jaeger from intercepting SIGINT/SIGTERM.
+		// Shutdown is handled via context cancellation from the cluster manager.
+		DisableGracefulShutdown: true,
+		Factories:               jaegerembed.Components,
 		ConfigProviderSettings: otelcol.ConfigProviderSettings{
 			ResolverSettings: confmap.ResolverSettings{
 				URIs:              []string{"yaml:" + configYAML},

@@ -84,6 +84,16 @@ func (pa *PortAllocator) ReleaseAll() {
 	os.Remove(pa.path)
 }
 
+// IsPortAvailable returns true if the given TCP port on 127.0.0.1 is free.
+func IsPortAvailable(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
+}
+
 func (pa *PortAllocator) persist() {
 	data, err := json.MarshalIndent(pa.ports, "", "  ")
 	if err != nil {

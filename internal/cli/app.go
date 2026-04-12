@@ -45,6 +45,10 @@ type App struct {
 	// Session tracking for summary reporting.
 	usageTracker *usage.Tracker
 	sessionStart time.Time
+
+	// OTEL conversation instrumentation (optional).
+	convOTEL  *conversation.OTELConfig
+	turnIndex int // monotonically increasing turn counter for OTEL
 }
 
 // AppOptions holds optional configuration for App creation.
@@ -59,6 +63,7 @@ type AppOptions struct {
 	PromptCtx      *prompt.ProjectContext
 	UserConfigPath string
 	Storage        *storage.Manager
+	ConvOTEL       *conversation.OTELConfig
 }
 
 // NewApp creates a new app instance.
@@ -95,6 +100,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		storage:        o.Storage,
 		usageTracker:   usage.NewTracker(),
 		sessionStart:   time.Now(),
+		convOTEL:       o.ConvOTEL,
 	}
 
 	// Set up command registry.
@@ -129,6 +135,9 @@ func (a *App) conversationRuntime() *conversation.Runtime {
 	if a.config.LLMSummarizationEnabled {
 		rt.SetLLMSummarizer(session.NewLLMSummarizer(a.provider, a.config.Model))
 	}
+	if a.convOTEL != nil {
+		rt.SetOTEL(a.convOTEL)
+	}
 	return rt
 }
 
@@ -160,7 +169,8 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 	// Agentic loop: send → receive → execute tools → repeat until end_turn.
 	loopDetector := conversation.NewLoopDetector()
 	for i := 0; i < maxToolIterations; i++ {
-		result, recovery, err := rt.TurnWithRecovery(ctx, messages)
+		a.turnIndex++
+		result, recovery, err := rt.InstrumentedTurnWithRecovery(ctx, messages, a.turnIndex)
 		if err != nil {
 			return fmt.Errorf("turn %d: %w", i+1, err)
 		}
@@ -298,14 +308,16 @@ func formatDuration(d time.Duration) string {
 // Returns the result and any tool results that need to be fed back.
 func (a *App) RunTurn(ctx context.Context, messages []api.Message) (*conversation.TurnResult, error) {
 	rt := a.conversationRuntime()
-	return rt.Turn(ctx, messages)
+	a.turnIndex++
+	return rt.InstrumentedTurn(ctx, messages, a.turnIndex)
 }
 
 // RunTurnWithRecovery executes a turn with automatic recovery from token limit errors.
 // Returns the result, recovery info (if compaction occurred), and any error.
 func (a *App) RunTurnWithRecovery(ctx context.Context, messages []api.Message) (*conversation.TurnResult, *conversation.RecoveryResult, error) {
 	rt := a.conversationRuntime()
-	return rt.TurnWithRecovery(ctx, messages)
+	a.turnIndex++
+	return rt.InstrumentedTurnWithRecovery(ctx, messages, a.turnIndex)
 }
 
 // ExecuteTools runs tool calls and returns tool result content blocks.

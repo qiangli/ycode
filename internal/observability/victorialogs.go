@@ -34,6 +34,12 @@ func (v *VictoriaLogsComponent) Name() string           { return "victoria-logs"
 func (v *VictoriaLogsComponent) SetPathPrefix(p string) { v.pathPrefix = p }
 
 func (v *VictoriaLogsComponent) Start(ctx context.Context) error {
+	// Check port availability BEFORE starting. VictoriaLogs' httpserver calls
+	// logger.Fatalf (→ os.Exit) on bind failure, which would kill the entire process.
+	if !IsPortAvailable(v.port) {
+		return fmt.Errorf("victoria-logs: port %d already in use", v.port)
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	v.cancel = cancel
 
@@ -44,8 +50,10 @@ func (v *VictoriaLogsComponent) Start(ctx context.Context) error {
 	}
 	// VictoriaMetrics libraries require flag.Parse() to have been called
 	// before accessing memory limits and other flag-dependent values.
+	// Parse with empty args to avoid re-parsing os.Args, which contains
+	// cobra flags unknown to stdlib flag (flag.Parse would call os.Exit(2)).
 	if !flag.Parsed() {
-		flag.Parse()
+		flag.CommandLine.Parse([]string{})
 	}
 
 	// Initialize storage, select, and insert subsystems.

@@ -21,6 +21,7 @@ import (
 	"github.com/qiangli/ycode/internal/cluster"
 	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/runtime/config"
+	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/embedding"
 	"github.com/qiangli/ycode/internal/runtime/git"
 	"github.com/qiangli/ycode/internal/runtime/indexer"
@@ -344,7 +345,10 @@ func newApp() (*cli.App, error) {
 	if cfg.Observability != nil && cfg.Observability.Enabled {
 		otelRes = setupOTEL(cfg, sess, toolReg, provider, v)
 	}
-	_ = otelRes // convOTEL wired into conversation runtime via AppOptions
+	var convOTEL *conversation.OTELConfig
+	if otelRes != nil {
+		convOTEL = otelRes.convOTEL
+	}
 
 	app, err := cli.NewApp(cfg, provider, sess, cli.AppOptions{
 		WorkDir:      cwd,
@@ -361,6 +365,7 @@ func newApp() (*cli.App, error) {
 		PromptCtx:      promptCtx,
 		UserConfigPath: filepath.Join(userDir, "settings.json"),
 		Storage:        storageMgr,
+		ConvOTEL:       convOTEL,
 	})
 	if err != nil {
 		return nil, err

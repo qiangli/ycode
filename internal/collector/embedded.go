@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"sync"
@@ -52,6 +53,20 @@ func (c *EmbeddedCollector) Start(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// Pre-flight port check to fail fast instead of blocking.
+	for _, p := range []struct {
+		name string
+		port int
+	}{
+		{"gRPC", c.cfg.GRPCPort},
+		{"HTTP", c.cfg.HTTPPort},
+		{"prometheus", c.cfg.PrometheusPort},
+	} {
+		if !isPortAvailable(p.port) {
+			return fmt.Errorf("collector: %s port %d already in use", p.name, p.port)
+		}
+	}
+
 	if err := os.MkdirAll(c.dataDir, 0o755); err != nil {
 		return fmt.Errorf("create collector data dir: %w", err)
 	}
@@ -68,7 +83,10 @@ func (c *EmbeddedCollector) Start(ctx context.Context) error {
 			Description: "Embedded OTEL Collector for ycode",
 			Version:     "0.1.0",
 		},
-		Factories: func() (otelcol.Factories, error) { return factories, nil },
+		// Prevent the embedded collector from intercepting SIGINT/SIGTERM.
+		// Shutdown is handled via context cancellation from the cluster manager.
+		DisableGracefulShutdown: true,
+		Factories:               func() (otelcol.Factories, error) { return factories, nil },
 		ConfigProviderSettings: otelcol.ConfigProviderSettings{
 			ResolverSettings: confmap.ResolverSettings{
 				URIs:              []string{"yaml:" + configYAML},
@@ -220,6 +238,15 @@ background:rgba(255,255,255,0.08)}
 // GRPCAddr returns the collector's gRPC OTLP receiver address.
 func (c *EmbeddedCollector) GRPCAddr() string {
 	return fmt.Sprintf("127.0.0.1:%d", c.cfg.GRPCPort)
+}
+
+func isPortAvailable(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
 }
 
 // factories builds the component factories for the embedded collector.
