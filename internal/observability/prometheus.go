@@ -3,7 +3,9 @@ package observability
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -14,6 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/model/textparse"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/tsdb"
 )
@@ -146,56 +150,163 @@ func (p *PrometheusComponent) Port() int { return p.port }
 func (p *PrometheusComponent) handleQuery(w http.ResponseWriter, r *http.Request) {
 	query := r.FormValue("query")
 	if query == "" {
-		http.Error(w, `{"status":"error","error":"missing query"}`, http.StatusBadRequest)
+		writePromError(w, "missing query", http.StatusBadRequest)
 		return
 	}
 	qry, err := p.engine.NewInstantQuery(r.Context(), p.db, nil, query, time.Now())
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"status":"error","error":"%s"}`, err), http.StatusBadRequest)
+		writePromError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer qry.Close()
 	res := qry.Exec(r.Context())
-	w.Header().Set("Content-Type", "application/json")
 	if res.Err != nil {
-		http.Error(w, fmt.Sprintf(`{"status":"error","error":"%s"}`, res.Err), http.StatusInternalServerError)
+		writePromError(w, res.Err.Error(), http.StatusInternalServerError)
 		return
 	}
-	fmt.Fprintf(w, `{"status":"success","data":{"resultType":"%s","result":%s}}`, res.Value.Type(), res.Value.String())
+	writePromResult(w, res)
 }
 
 func (p *PrometheusComponent) handleQueryRange(w http.ResponseWriter, r *http.Request) {
 	query := r.FormValue("query")
 	if query == "" {
-		http.Error(w, `{"status":"error","error":"missing query"}`, http.StatusBadRequest)
+		writePromError(w, "missing query", http.StatusBadRequest)
 		return
 	}
 	end := time.Now()
 	start := end.Add(-1 * time.Hour)
 	qry, err := p.engine.NewRangeQuery(r.Context(), p.db, nil, query, start, end, 15*time.Second)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"status":"error","error":"%s"}`, err), http.StatusBadRequest)
+		writePromError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer qry.Close()
 	res := qry.Exec(r.Context())
-	w.Header().Set("Content-Type", "application/json")
 	if res.Err != nil {
-		http.Error(w, fmt.Sprintf(`{"status":"error","error":"%s"}`, res.Err), http.StatusInternalServerError)
+		writePromError(w, res.Err.Error(), http.StatusInternalServerError)
 		return
 	}
-	fmt.Fprintf(w, `{"status":"success","data":{"resultType":"%s","result":%s}}`, res.Value.Type(), res.Value.String())
+	writePromResult(w, res)
+}
+
+// writePromResult writes a Prometheus API-compatible JSON response.
+// Uses json.Marshal for the result value to ensure valid JSON even for empty results.
+func writePromResult(w http.ResponseWriter, res *promql.Result) {
+	resultJSON, err := json.Marshal(res.Value)
+	if err != nil || string(resultJSON) == "null" {
+		// nil slices marshal to "null"; the Prometheus API expects "[]".
+		resultJSON = []byte("[]")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"status":"success","data":{"resultType":"%s","result":%s}}`, res.Value.Type(), resultJSON)
+}
+
+// writePromError writes a Prometheus API-compatible error response.
+func writePromError(w http.ResponseWriter, msg string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	errJSON, _ := json.Marshal(msg)
+	fmt.Fprintf(w, `{"status":"error","error":%s}`, errJSON)
 }
 
 func (p *PrometheusComponent) scrapeLoop(ctx context.Context) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	url := fmt.Sprintf("http://%s/metrics", p.scrapeTargetAddr)
+	st := labels.NewSymbolTable()
+
+	// Scrape immediately on start, then every 15s.
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
+
+	p.scrape(ctx, client, url, st)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// TODO: scrape collector /metrics endpoint and write to TSDB
+			p.scrape(ctx, client, url, st)
 		}
+	}
+}
+
+// scrape fetches the /metrics endpoint and writes all samples to the TSDB.
+func (p *PrometheusComponent) scrape(ctx context.Context, client *http.Client, url string, st *labels.SymbolTable) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		slog.Debug("prometheus: scrape failed", "url", url, "error", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		slog.Debug("prometheus: read scrape body failed", "error", err)
+		return
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	parser, err := textparse.New(body, contentType, st, textparse.ParserOptions{})
+	if err != nil {
+		slog.Debug("prometheus: create parser failed", "error", err)
+		return
+	}
+
+	app := p.db.Appender(ctx)
+	now := time.Now().UnixMilli()
+	var (
+		lset    labels.Labels
+		samples int
+	)
+
+	for {
+		et, err := parser.Next()
+		if err != nil {
+			break // io.EOF or parse error
+		}
+
+		switch et {
+		case textparse.EntrySeries:
+			_, ts, v := parser.Series()
+			parser.Labels(&lset)
+			t := now
+			if ts != nil {
+				t = *ts
+			}
+			if _, err := app.Append(0, lset, t, v); err != nil {
+				slog.Debug("prometheus: append failed", "labels", lset.String(), "error", err)
+				continue
+			}
+			samples++
+
+		case textparse.EntryHistogram:
+			_, ts, h, fh := parser.Histogram()
+			parser.Labels(&lset)
+			t := now
+			if ts != nil {
+				t = *ts
+			}
+			if h != nil {
+				if _, err := app.AppendHistogram(0, lset, t, h, nil); err != nil {
+					continue
+				}
+			} else if fh != nil {
+				if _, err := app.AppendHistogram(0, lset, t, nil, fh); err != nil {
+					continue
+				}
+			}
+			samples++
+		}
+	}
+
+	if err := app.Commit(); err != nil {
+		slog.Warn("prometheus: commit failed", "error", err)
+		return
+	}
+	if samples > 0 {
+		slog.Debug("prometheus: scraped", "url", url, "samples", samples)
 	}
 }

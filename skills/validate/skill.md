@@ -12,8 +12,9 @@ Run the full validation test suite against a running ycode server. All tests are
 
 | Suite | File | What it tests |
 |-------|------|---------------|
-| Smoke | `smoke_test.go` | Health endpoint, CLI version, server status |
+| Smoke | `smoke_test.go` | Health endpoint, CLI version, server status, Prometheus query/query_range JSON validity |
 | Proxy | `proxy_test.go` | Landing page discovery, all proxied app routes reachable, real UI content verification, health endpoints |
+| Perses | `perses_test.go` | Dashboard provisioning: global datasource, projects, dashboards with panels/layouts, all dashboard API+UI links, plugin loading (TimeSeriesChart, StatChart, Prometheus) |
 | OTEL | `otel_test.go` | Real OTEL collector (traces, metrics, logs), Prometheus exporter endpoint |
 | Acceptance | `acceptance_test.go` | One-shot prompt, serve status, doctor check |
 | Performance | `perf_test.go` | Health latency (p50/p95/p99), trace throughput, binary startup |
@@ -31,6 +32,22 @@ The proxy suite (`proxy_test.go`) includes three test functions:
   - `/traces/` — contains `Jaeger`, must NOT contain `This is not the Jaeger UI`
   - `/collector/` — contains `"status"`
 - **TestProxyAppHealthEndpoints**: Checks `/prometheus/-/healthy`, `/alerts/-/healthy`, `/dashboard/api/v1/health`, and `/healthz`.
+
+### Perses test details
+
+The Perses suite (`perses_test.go`) verifies dashboard provisioning via the Perses REST API:
+
+- **GlobalDatasource**: `GET /dashboard/api/v1/globaldatasources/prometheus` returns a valid `GlobalDatasource` resource.
+- **Projects**: `GET /dashboard/api/v1/projects` includes all expected projects: `ycode`, `host-metrics`, `ycode-node-collector`.
+- **Dashboards**: For each project, `GET /dashboard/api/v1/projects/<name>/dashboards` returns at least the expected number of dashboards, and each dashboard has non-empty panels and layouts.
+  - `ycode` — at least 6 dashboards (LLM, Tokens, Tools, Sessions, Compaction, Instance Comparison)
+  - `host-metrics` — at least 5 dashboards (Host Info, CPU, Memory, Disk, Network)
+  - `ycode-node-collector` — at least 5 dashboards (LLM, Token, Tool, Session/Turn, Compaction)
+- **DashboardLinks** (`TestPersesDashboardLinks`): For every dashboard across all 3 projects, verifies:
+  - API endpoint returns 200 with valid Dashboard JSON: `GET /dashboard/api/v1/projects/<project>/dashboards/<name>`
+  - UI route returns 200 (SPA index.html fallback): `GET /dashboard/projects/<project>/dashboards/<name>`
+  - Dashboard names are dynamically discovered from the API — no hardcoded names.
+- **PluginsLoaded** (`TestPersesPluginsLoaded`): Verifies `/dashboard/api/v1/plugins` returns loaded plugins including TimeSeriesChart, StatChart, and Prometheus (required for rendering dashboards).
 
 ## Arguments
 
@@ -77,6 +94,11 @@ Examine the Go test output:
   - **Perses** (500 error): Check `external/perses/ui/embed_stub.go` embeds `app/dist` (built React UI). If missing, build with `cd external/perses/ui && npm install && npx turbo run build --filter=@perses-dev/app`.
   - **VictoriaLogs** (400 at root): Check that `victorialogs.go` redirects `/` to the vmui path.
 - **TestProxyAppHealthEndpoints failures**: A component's health endpoint is not reachable through the proxy. Check component startup logs and proxy route registration.
+- **TestPersesDashboards failures**: Perses provisioning did not create the expected projects or dashboards. Common causes:
+  - **GlobalDatasource missing**: The provisioning files were not written or Perses did not load them. Check that `internal/observability/dashboards/provision.go` writes files to the provisioning directory and that `perses.go` sets `Provisioning.Folders` in the config.
+  - **Projects missing**: The provisioning file `2-projects.json` was not generated or has invalid format. Verify `default_project.json` is parseable and that `slugify()` produces valid Perses names (must match `^[a-zA-Z0-9_.-]+$`).
+  - **Dashboards missing or empty**: The provisioning file `3-dashboards.json` was not generated or has invalid Perses resource format. Common issues: invalid panel keys, missing `$ref` paths, empty layouts or panels. Run unit tests in `internal/observability/dashboards/` to verify conversion.
+  - **Prometheus datasource URL wrong**: Perses cannot query Prometheus. Verify the URL passed to `NewPersesComponent` points to the Prometheus query API via the reverse proxy (e.g. `http://127.0.0.1:58080/prometheus`), not the collector exporter port.
 - **TestOTEL failures**: OTEL collector may not be running. Check the serve log for collector startup errors. Common issues:
   - `Telemetry must not be nil`: Add `otelconftelemetry.NewFactory()` to collector factories.
   - Port binding conflicts: Ensure `service.telemetry.metrics.level: none` in collector YAML config.

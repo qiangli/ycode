@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync/atomic"
+
+	"github.com/qiangli/ycode/internal/observability/dashboards"
 
 	persesembed "github.com/perses/perses/embed"
 	"github.com/perses/perses/pkg/model/api/config"
@@ -17,21 +21,22 @@ const persesDefaultKey = "e=dz;`M'5Pjvy^Sq3FVBkTC@N9?H/gua"
 
 // PersesComponent runs Perses in-process as a goroutine for dashboards.
 type PersesComponent struct {
-	port           int
-	prometheusAddr string // address of embedded Prometheus (e.g. "127.0.0.1:9090")
-	dataDir        string
-	pathPrefix     string // proxy path prefix (e.g. "/dashboard")
+	port          int
+	prometheusURL string // URL for Prometheus query API (e.g. "http://127.0.0.1:58080/prometheus")
+	dataDir       string
+	pathPrefix    string // proxy path prefix (e.g. "/dashboard")
 
 	server  *persesembed.Server
 	healthy atomic.Bool
 }
 
 // NewPersesComponent creates an in-process Perses component.
-func NewPersesComponent(port int, prometheusAddr, dataDir string) *PersesComponent {
+// prometheusURL is the Prometheus query API endpoint that Perses uses as a datasource.
+func NewPersesComponent(port int, prometheusURL, dataDir string) *PersesComponent {
 	return &PersesComponent{
-		port:           port,
-		prometheusAddr: prometheusAddr,
-		dataDir:        dataDir,
+		port:          port,
+		prometheusURL: prometheusURL,
+		dataDir:       dataDir,
 	}
 }
 
@@ -43,16 +48,36 @@ func (p *PersesComponent) Start(ctx context.Context) error {
 	// app.Runner reads this flag to configure the echo HTTP server.
 	_ = flag.Set("web.listen-address", fmt.Sprintf(":%d", p.port))
 
+	// Seed default projects, datasource, and dashboards directly into the
+	// file database. Writing to the DB directory bypasses Perses's plugin
+	// schema validation (which requires plugin archives we don't ship).
+	dbDir := p.dataDir + "/data"
+	if err := dashboards.Provision(dbDir, p.prometheusURL); err != nil {
+		slog.Warn("perses: seeding dashboards failed", "error", err)
+	}
+
+	// Configure plugin paths. Perses loads UI plugins (TimeSeriesChart,
+	// StatChart, PrometheusTimeSeriesQuery, etc.) from archive files.
+	// Run scripts/fetch-perses-plugins.sh to download them.
+	pluginDir := filepath.Join(p.dataDir, "plugins")
+	archiveDir := filepath.Join(p.dataDir, "plugins-archive")
+	_ = os.MkdirAll(pluginDir, 0o755)
+	_ = os.MkdirAll(archiveDir, 0o755)
+
 	conf := config.Config{
 		APIPrefix: p.pathPrefix,
 		Database: config.Database{
 			File: &config.File{
-				Folder:    p.dataDir + "/data",
+				Folder:    dbDir,
 				Extension: "json",
 			},
 		},
 		Security: config.Security{
 			EncryptionKey: secret.Hidden(persesDefaultKey),
+		},
+		Plugin: config.Plugin{
+			Path:         pluginDir,
+			ArchivePaths: []string{archiveDir},
 		},
 	}
 	// Verify() validates and hex-encodes the encryption key before use.
@@ -66,7 +91,7 @@ func (p *PersesComponent) Start(ctx context.Context) error {
 	}
 	p.server = server
 	p.healthy.Store(true)
-	slog.Info("perses: started", "port", p.port, "prometheus", p.prometheusAddr)
+	slog.Info("perses: started", "port", p.port, "prometheus", p.prometheusURL)
 	return nil
 }
 

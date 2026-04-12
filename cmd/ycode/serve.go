@@ -344,11 +344,15 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) *observa
 	// 5. Alertmanager.
 	mgr.AddComponent(observability.NewAlertmanagerComponent())
 
-	// 6. Perses dashboards (queries embedded Prometheus).
+	// 6. Perses dashboards (queries embedded Prometheus via reverse proxy).
 	persesPort := 18080
+	proxyPort := cfg.ProxyPort
+	if proxyPort == 0 {
+		proxyPort = 58080
+	}
 	mgr.AddComponent(observability.NewPersesComponent(
 		persesPort,
-		fmt.Sprintf("http://127.0.0.1:%d", collCfg.PrometheusPort),
+		fmt.Sprintf("http://127.0.0.1:%d/prometheus", proxyPort),
 		filepath.Join(dataDir, "perses"),
 	))
 

@@ -54,13 +54,21 @@ if [ -f "$PID_FILE" ]; then
 fi
 ```
 
-#### Step 2: Start server
+#### Step 2: Fetch Perses plugins
+
+Ensure Perses UI plugins (charts, queries, datasources) are available:
+```bash
+scripts/fetch-perses-plugins.sh
+```
+This is idempotent — it skips the download if plugins are already present.
+
+#### Step 3: Start server
 
 ```bash
 bin/ycode serve --port ${PORT} --detach
 ```
 
-#### Step 3: Verify
+#### Step 4: Verify
 
 Wait 2 seconds, then check health:
 ```bash
