@@ -6,14 +6,24 @@ user_invocable: true
 
 # /validate — Validate a running ycode instance
 
-Run the full validation test suite against a running ycode server. This covers integration, smoke, acceptance, and performance tests. Unit tests are excluded (handled by `/build`).
+Run the full validation test suite against a running ycode server. All tests are written in Go (`internal/integration/`) using the `integration` build tag and test against real services.
+
+## Test Suites
+
+| Suite | File | What it tests |
+|-------|------|---------------|
+| Smoke | `smoke_test.go` | Health endpoint, CLI version, server status |
+| Proxy | `proxy_test.go` | Landing page discovery, all proxied app routes reachable |
+| OTEL | `otel_test.go` | Real OTEL collector (traces, metrics, logs), Prometheus endpoint |
+| Acceptance | `acceptance_test.go` | One-shot prompt, serve status, doctor check |
+| Performance | `perf_test.go` | Health latency (p50/p95/p99), trace throughput, binary startup |
 
 ## Arguments
 
 - `/validate` — validate against localhost:58080 (default)
 - `/validate <host>:<port>` — validate against a specific endpoint
 
-Parse the argument to determine **BASE_URL**. Default: `http://localhost:58080`
+Parse the argument to determine **HOST** and **PORT**. Default: `localhost:58080`
 
 ## Instructions
 
@@ -37,14 +47,17 @@ With appropriate HOST/PORT if non-default:
 make validate HOST=<host> PORT=<port>
 ```
 
+This runs `go test -tags integration -v -count=1 ./internal/integration/...` with the appropriate environment variables.
+
 ### If `make validate` fails
 
-Examine the failure output:
+Examine the Go test output:
 
-- **Connectivity failure** ("No server reachable"): The deploy didn't work. Re-run `/deploy` and retry.
-- **Smoke/integration test failures**: These indicate a bug in the server code. Read the error, identify the root cause in the source, fix it, then re-run `/build` followed by `/deploy` followed by `make validate`.
-- **Acceptance test failures**: Same as above — fix, build, deploy, re-validate.
-- **Performance test failures**: These are informational and should not cause a hard failure. Report the numbers.
+- **Connectivity skip** ("server not reachable"): The deploy didn't work. Re-run `/deploy` and retry.
+- **TestProxyApps failures**: Check component status and proxy registration in `internal/observability/stack.go`.
+- **TestOTEL failures**: OTEL collector or Prometheus may not be running. Check `internal/observability/` component startup.
+- **TestAcceptance failures**: These indicate a bug in the server or CLI code. Read the error, identify the root cause, fix it, then re-run `/build` → `/deploy` → `make validate`.
+- **TestPerformance warnings**: Performance tests log warnings but don't hard-fail. Report the numbers.
 
 After applying a fix, repeat the full cycle: `/build` → `/deploy` → `make validate`. Do NOT skip steps.
 
@@ -52,7 +65,7 @@ If after 3 fix-and-retry cycles validation still fails, stop and report the unre
 
 ### On success
 
-Report the full validation summary table from `make validate` output, including pass/fail/skip counts and performance baselines.
+Report the full `go test -v` output showing pass/skip/fail for each test function, plus any logged performance metrics.
 
 ### On failure (after retries exhausted)
 

@@ -37,13 +37,13 @@ build: ## Build with full quality gate: tidy → fmt → vet → compile → tes
 	@echo "=== Step 4: Build binary ==="
 	go build $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 	@echo "=== Step 5: Unit tests ==="
-	go test -race $(PACKAGES)
+	go test -short -race $(PACKAGES)
 	@echo "=== Step 6: Verify ==="
 	bin/ycode version
 	@echo "=== Build PASSED ==="
 
-test: ## Run all tests with race detector
-	go test -race $(PACKAGES)
+test: ## Run unit tests with race detector (-short flag)
+	go test -short -race $(PACKAGES)
 
 vet: ## Run static analysis
 	go vet $(PACKAGES)
@@ -149,126 +149,10 @@ deploy-remote: ## Deploy to remote host (HOST=<remote> PORT=58080)
 
 validate: ## Validate running instance (HOST=localhost PORT=58080)
 	@echo "=== Validating $(BASE_URL) ==="
-	@PASS=0; FAIL=0; SKIP=0; DETAILS=""; \
-	IS_LOCAL=false; \
-	if [ "$(HOST)" = "localhost" ] || [ "$(HOST)" = "127.0.0.1" ]; then IS_LOCAL=true; fi; \
-	\
-	run_test() { \
-		NAME="$$1"; shift; \
-		if eval "$$@" > /dev/null 2>&1; then \
-			echo "  [PASS] $$NAME"; \
-			PASS=$$((PASS + 1)); \
-		else \
-			echo "  [FAIL] $$NAME"; \
-			FAIL=$$((FAIL + 1)); \
-			DETAILS="$$DETAILS\n  - $$NAME"; \
-		fi; \
-	}; \
-	skip_test() { \
-		echo "  [SKIP] $$1"; \
-		SKIP=$$((SKIP + 1)); \
-	}; \
-	\
-	echo "--- Pre-flight: Connectivity ---"; \
-	if ! curl -sf --max-time 5 $(BASE_URL)/healthz > /dev/null 2>&1; then \
-		echo "ERROR: No server reachable at $(BASE_URL)"; \
-		echo "Run 'make deploy' first."; \
-		exit 1; \
-	fi; \
-	echo "  Server reachable."; \
-	echo ""; \
-	\
-	echo "--- Suite 1: Smoke Tests ---"; \
-	run_test "Health endpoint" "curl -sf $(BASE_URL)/healthz"; \
-	run_test "Dashboard reachable" "curl -sf -o /dev/null -w '%{http_code}' $(BASE_URL)/dashboard/ | grep -qE '(200|301|302)'"; \
-	if [ "$$IS_LOCAL" = "true" ] && [ -f bin/ycode ]; then \
-		run_test "Version via CLI" "bin/ycode version"; \
-		run_test "Server status" "bin/ycode serve status --port $(PORT)"; \
-	else \
-		skip_test "Version via CLI (remote)"; \
-		skip_test "Server status (remote)"; \
-	fi; \
-	echo ""; \
-	\
-	echo "--- Suite 2: Integration Tests ---"; \
-	run_test "OTEL Collector traces endpoint" \
-		"curl -sf http://$(HOST):4318/v1/traces -X POST -H 'Content-Type: application/json' -d '{\"resourceSpans\":[]}'"; \
-	run_test "Prometheus metrics" \
-		"curl -sf http://$(HOST):8889/metrics | head -1 | grep -qE '^#'"; \
-	run_test "Send test trace" \
-		"curl -sf http://$(HOST):4318/v1/traces -X POST -H 'Content-Type: application/json' \
-		-d '{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"validate-test\"}}]},\"scopeSpans\":[{\"spans\":[{\"traceId\":\"00000000000000000000000000000001\",\"spanId\":\"0000000000000001\",\"name\":\"validate-smoke\",\"kind\":1,\"startTimeUnixNano\":\"1000000000\",\"endTimeUnixNano\":\"2000000000\"}]}]}]}'"; \
-	run_test "Send test metrics" \
-		"curl -sf http://$(HOST):4318/v1/metrics -X POST -H 'Content-Type: application/json' \
-		-d '{\"resourceMetrics\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"validate-test\"}}]},\"scopeMetrics\":[{\"metrics\":[{\"name\":\"validate_test_counter\",\"sum\":{\"dataPoints\":[{\"asInt\":\"1\",\"startTimeUnixNano\":\"1000000000\",\"timeUnixNano\":\"1000000000\"}],\"isMonotonic\":true,\"aggregationTemporality\":2}}]}]}]}'"; \
-	run_test "Send test log" \
-		"curl -sf http://$(HOST):4318/v1/logs -X POST -H 'Content-Type: application/json' \
-		-d '{\"resourceLogs\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"validate-test\"}}]},\"scopeLogs\":[{\"logRecords\":[{\"timeUnixNano\":\"1000000000\",\"body\":{\"stringValue\":\"validation smoke test\"},\"severityText\":\"INFO\"}]}]}]}'"; \
-	run_test "Proxy routing - Jaeger" "curl -sf -o /dev/null -w '%{http_code}' $(BASE_URL)/jaeger/ | grep -qE '(200|301|302)'"; \
-	echo ""; \
-	\
-	echo "--- Suite 3: Acceptance Tests ---"; \
-	if [ "$$IS_LOCAL" = "true" ] && [ -f bin/ycode ]; then \
-		if [ -n "$$ANTHROPIC_API_KEY" ] || [ -n "$$OPENAI_API_KEY" ]; then \
-			run_test "One-shot prompt" "echo 'What is 2+2?' | timeout 30 bin/ycode --no-otel --print 2>/dev/null | grep -q '4'"; \
-		else \
-			skip_test "One-shot prompt (no API key)"; \
-		fi; \
-		run_test "Serve status subcommand" "bin/ycode serve status --port $(PORT)"; \
-		run_test "Doctor check" "bin/ycode doctor"; \
-	else \
-		skip_test "One-shot prompt (remote)"; \
-		skip_test "Serve status subcommand (remote)"; \
-		skip_test "Doctor check (remote)"; \
-	fi; \
-	echo ""; \
-	\
-	echo "--- Suite 4: Performance Tests ---"; \
-	echo "  Health endpoint latency (50 requests):"; \
-	for i in $$(seq 1 50); do \
-		curl -sf -o /dev/null -w "%{time_total}\n" $(BASE_URL)/healthz; \
-	done | sort -n | awk '{ a[NR]=$$1; s+=$$1 } END { \
-		printf "    requests: %d\n", NR; \
-		printf "    mean:     %.3fs\n", s/NR; \
-		printf "    p50:      %.3fs\n", a[int(NR*0.5)]; \
-		printf "    p95:      %.3fs\n", a[int(NR*0.95)]; \
-		printf "    p99:      %.3fs\n", a[int(NR*0.99)]; \
-	}'; \
-	PASS=$$((PASS + 1)); \
-	\
-	echo "  Trace ingestion throughput (100 batches):"; \
-	START=$$(date +%s%N); \
-	for i in $$(seq 1 100); do \
-		curl -sf http://$(HOST):4318/v1/traces -X POST \
-			-H 'Content-Type: application/json' \
-			-d '{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"perf-test"}}]},"scopeSpans":[{"spans":[{"traceId":"00000000000000000000000000000002","spanId":"0000000000000099","name":"perf-span","kind":1,"startTimeUnixNano":"1000000000","endTimeUnixNano":"2000000000"}]}]}]}' \
-			-o /dev/null & \
-	done; \
-	wait; \
-	END=$$(date +%s%N); \
-	ELAPSED=$$(( (END - START) / 1000000 )); \
-	echo "    100 batches in $${ELAPSED}ms ($$(( 100000 / (ELAPSED + 1) )) req/s)"; \
-	PASS=$$((PASS + 1)); \
-	\
-	if [ "$$IS_LOCAL" = "true" ] && [ -f bin/ycode ]; then \
-		echo "  Binary startup time:"; \
-		{ time bin/ycode version > /dev/null 2>&1; } 2>&1 | grep real | sed 's/^/    /'; \
-		PASS=$$((PASS + 1)); \
-	else \
-		skip_test "Binary startup time (remote)"; \
-	fi; \
-	echo ""; \
-	\
-	echo "=== Validation Report ==="; \
-	echo "Target: $(BASE_URL)"; \
-	echo ""; \
-	echo "  Passed: $$PASS  Failed: $$FAIL  Skipped: $$SKIP"; \
-	echo ""; \
-	if [ "$$FAIL" -gt 0 ]; then \
-		echo "Failures:$$DETAILS"; \
-		echo ""; \
-		echo "Validation FAILED"; \
-		exit 1; \
-	else \
-		echo "Validation PASSED"; \
-	fi
+	@echo "--- Pre-flight: Connectivity ---"
+	@curl -sf --max-time 5 $(BASE_URL)/healthz > /dev/null 2>&1 || \
+		{ echo "ERROR: No server reachable at $(BASE_URL)"; echo "Run 'make deploy' first."; exit 1; }
+	@echo "  Server reachable."
+	@echo ""
+	HOST=$(HOST) PORT=$(PORT) BASE_URL=$(BASE_URL) \
+		go test -tags integration -v -count=1 ./internal/integration/...
