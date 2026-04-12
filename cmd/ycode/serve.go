@@ -326,11 +326,12 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) *observa
 
 	// 3. OTEL Collector (routes: metrics→Prometheus, logs→VictoriaLogs, traces→Jaeger).
 	collCfg := collector.Config{
-		GRPCPort:         4317,
-		HTTPPort:         4318,
-		PrometheusPort:   8889,
-		VictoriaLogsPort: vlogsPort,
-		JaegerOTLPPort:   jaegerOTLPPort,
+		GRPCPort:               4317,
+		HTTPPort:               4318,
+		PrometheusPort:         8889,
+		VictoriaLogsPort:       vlogsPort,
+		VictoriaLogsPathPrefix: "/logs",
+		JaegerOTLPPort:         jaegerOTLPPort,
 	}
 	mgr.AddComponent(collector.NewEmbeddedCollector(collCfg, filepath.Join(dataDir, "collector")))
 

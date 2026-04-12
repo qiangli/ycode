@@ -15,10 +15,11 @@ type Config struct {
 	HTTPPort int
 
 	// Exporter targets.
-	PrometheusPort   int // where Prometheus scrapes metrics from
-	VictoriaLogsPort int // VictoriaLogs OTLP HTTP endpoint for logs
-	JaegerOTLPPort   int // Jaeger OTLP gRPC endpoint for traces
-	HealthPort       int
+	PrometheusPort         int    // where Prometheus scrapes metrics from
+	VictoriaLogsPort       int    // VictoriaLogs OTLP HTTP endpoint for logs
+	VictoriaLogsPathPrefix string // path prefix VictoriaLogs requires (e.g. "/logs")
+	JaegerOTLPPort         int    // Jaeger OTLP gRPC endpoint for traces
+	HealthPort             int
 
 	// Optional remote OTLP endpoint.
 	RemoteOTLPEndpoint string
@@ -59,8 +60,12 @@ func GenerateYAML(cfg Config) string {
 	b.WriteString(fmt.Sprintf("  prometheus:\n    endpoint: \"127.0.0.1:%d\"\n", cfg.PrometheusPort))
 
 	// Logs → VictoriaLogs (OTLP HTTP)
+	// The endpoint must include the http.pathPrefix that VictoriaLogs requires
+	// (set by the stack manager for reverse-proxy routing). Without the prefix,
+	// VictoriaLogs rejects requests with "missing -http.pathPrefix" error.
 	if cfg.VictoriaLogsPort > 0 {
-		b.WriteString(fmt.Sprintf("  otlphttp/vlogs:\n    endpoint: \"http://127.0.0.1:%d/insert/opentelemetry\"\n", cfg.VictoriaLogsPort))
+		prefix := strings.TrimSuffix(cfg.VictoriaLogsPathPrefix, "/")
+		b.WriteString(fmt.Sprintf("  otlphttp/vlogs:\n    endpoint: \"http://127.0.0.1:%d%s/insert/opentelemetry\"\n", cfg.VictoriaLogsPort, prefix))
 	}
 
 	// Traces → Jaeger (OTLP gRPC — Jaeger v2 natively accepts OTLP)
