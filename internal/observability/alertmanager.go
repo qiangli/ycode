@@ -11,8 +11,7 @@ import (
 	"time"
 )
 
-// AlertmanagerComponent provides an embedded alert manager.
-// It accepts alerts via the Alertmanager v2 API and dispatches them.
+// AlertmanagerComponent provides an embedded alert manager running as a goroutine.
 type AlertmanagerComponent struct {
 	mu      sync.Mutex
 	alerts  []Alert
@@ -26,32 +25,22 @@ type Alert struct {
 	Annotations map[string]string `json:"annotations,omitempty"`
 	StartsAt    time.Time         `json:"startsAt"`
 	EndsAt      time.Time         `json:"endsAt,omitempty"`
-	Status      string            `json:"status"` // "firing" or "resolved"
+	Status      string            `json:"status"`
 	Fingerprint string            `json:"fingerprint,omitempty"`
 }
 
-// NewAlertmanagerComponent creates an embedded alertmanager component.
-func NewAlertmanagerComponent() *AlertmanagerComponent {
-	return &AlertmanagerComponent{}
-}
+func NewAlertmanagerComponent() *AlertmanagerComponent { return &AlertmanagerComponent{} }
+func (a *AlertmanagerComponent) Name() string          { return "alertmanager" }
 
-// Name implements Component.
-func (a *AlertmanagerComponent) Name() string { return "alertmanager" }
-
-// Start initializes the alertmanager. Work runs in goroutines.
 func (a *AlertmanagerComponent) Start(ctx context.Context) error {
 	cleanupCtx, cancel := context.WithCancel(ctx)
 	a.cancel = cancel
-
-	// Background goroutine to expire resolved alerts.
 	go a.cleanupLoop(cleanupCtx)
-
 	a.healthy.Store(true)
-	slog.Info("alertmanager: started (embedded)")
+	slog.Info("alertmanager: started")
 	return nil
 }
 
-// Stop shuts down the alertmanager.
 func (a *AlertmanagerComponent) Stop(_ context.Context) error {
 	a.healthy.Store(false)
 	if a.cancel != nil {
@@ -61,27 +50,20 @@ func (a *AlertmanagerComponent) Stop(_ context.Context) error {
 	return nil
 }
 
-// Healthy implements Component.
 func (a *AlertmanagerComponent) Healthy() bool { return a.healthy.Load() }
 
-// HTTPHandler returns the Alertmanager HTTP handler.
 func (a *AlertmanagerComponent) HTTPHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v2/alerts", a.handleAlerts)
-	mux.HandleFunc("/api/v1/alerts", a.handleAlertsV1)
-	mux.HandleFunc("/-/healthy", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "OK")
-	})
+	mux.HandleFunc("/api/v1/alerts", a.handleAlerts)
+	mux.HandleFunc("/-/healthy", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "OK") })
 	mux.HandleFunc("/", a.handleUI)
 	return mux
 }
 
-// AddAlert adds or updates an alert.
 func (a *AlertmanagerComponent) AddAlert(alert Alert) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
 	if alert.Status == "" {
 		alert.Status = "firing"
 	}
@@ -89,12 +71,14 @@ func (a *AlertmanagerComponent) AddAlert(alert Alert) {
 		alert.StartsAt = time.Now()
 	}
 	if alert.Fingerprint == "" {
-		alert.Fingerprint = alertFingerprint(alert.Labels)
+		fp := ""
+		for k, v := range alert.Labels {
+			fp += k + "=" + v + ","
+		}
+		alert.Fingerprint = fp
 	}
-
-	// Update existing or append.
-	for i, existing := range a.alerts {
-		if existing.Fingerprint == alert.Fingerprint {
+	for i, e := range a.alerts {
+		if e.Fingerprint == alert.Fingerprint {
 			a.alerts[i] = alert
 			return
 		}
@@ -102,19 +86,17 @@ func (a *AlertmanagerComponent) AddAlert(alert Alert) {
 	a.alerts = append(a.alerts, alert)
 }
 
-// Alerts returns a copy of current alerts.
 func (a *AlertmanagerComponent) Alerts() []Alert {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	result := make([]Alert, len(a.alerts))
-	copy(result, a.alerts)
-	return result
+	r := make([]Alert, len(a.alerts))
+	copy(r, a.alerts)
+	return r
 }
 
 func (a *AlertmanagerComponent) cleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -123,10 +105,9 @@ func (a *AlertmanagerComponent) cleanupLoop(ctx context.Context) {
 			a.mu.Lock()
 			now := time.Now()
 			alive := a.alerts[:0]
-			for _, alert := range a.alerts {
-				// Keep firing alerts and recently resolved ones.
-				if alert.Status == "firing" || now.Sub(alert.EndsAt) < 5*time.Minute {
-					alive = append(alive, alert)
+			for _, al := range a.alerts {
+				if al.Status == "firing" || now.Sub(al.EndsAt) < 5*time.Minute {
+					alive = append(alive, al)
 				}
 			}
 			a.alerts = alive
@@ -135,76 +116,46 @@ func (a *AlertmanagerComponent) cleanupLoop(ctx context.Context) {
 	}
 }
 
-// handleAlerts handles the Alertmanager v2 alerts API (POST to send, GET to list).
 func (a *AlertmanagerComponent) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		a.listAlerts(w)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(a.Alerts())
 	case http.MethodPost:
-		a.receiveAlerts(w, r)
+		var alerts []Alert
+		if err := json.NewDecoder(r.Body).Decode(&alerts); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		for _, al := range alerts {
+			a.AddAlert(al)
+		}
+		fmt.Fprint(w, `{"status":"success"}`)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-// handleAlertsV1 is the v1 compatibility endpoint.
-func (a *AlertmanagerComponent) handleAlertsV1(w http.ResponseWriter, r *http.Request) {
-	a.handleAlerts(w, r)
-}
-
-func (a *AlertmanagerComponent) listAlerts(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(a.Alerts())
-}
-
-func (a *AlertmanagerComponent) receiveAlerts(w http.ResponseWriter, r *http.Request) {
-	var alerts []Alert
-	if err := json.NewDecoder(r.Body).Decode(&alerts); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusBadRequest)
-		return
-	}
-	for _, alert := range alerts {
-		a.AddAlert(alert)
-	}
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, `{"status":"success"}`)
-}
-
 func (a *AlertmanagerComponent) handleUI(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	alerts := a.Alerts()
-
 	fmt.Fprint(w, `<!DOCTYPE html><html><head><title>ycode Alerts</title>
 <style>body{font-family:sans-serif;max-width:1000px;margin:20px auto;padding:0 20px}
 table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:4px 8px;border-bottom:1px solid #ddd}
-th{background:#f5f5f5}.firing{color:#d32f2f}.resolved{color:#388e3c}
-</style></head><body>
-<h2>ycode Alerts</h2>`)
-
+.firing{color:#d32f2f}.resolved{color:#388e3c}</style></head><body><h2>ycode Alerts</h2>`)
 	if len(alerts) == 0 {
 		fmt.Fprint(w, "<p>No active alerts.</p>")
 	} else {
-		fmt.Fprint(w, `<table><thead><tr><th>Status</th><th>Alert</th><th>Labels</th><th>Started</th></tr></thead><tbody>`)
-		for _, alert := range alerts {
-			class := "resolved"
-			if alert.Status == "firing" {
-				class = "firing"
+		fmt.Fprint(w, `<table><thead><tr><th>Status</th><th>Alert</th><th>Started</th></tr></thead><tbody>`)
+		for _, al := range alerts {
+			cls := "resolved"
+			if al.Status == "firing" {
+				cls = "firing"
 			}
-			labelsJSON, _ := json.Marshal(alert.Labels)
-			fmt.Fprintf(w, `<tr><td class="%s">%s</td><td>%s</td><td><code>%s</code></td><td>%s</td></tr>`,
-				class, alert.Status, alert.Labels["alertname"], labelsJSON, alert.StartsAt.Format(time.RFC3339))
+			fmt.Fprintf(w, `<tr><td class="%s">%s</td><td>%s</td><td>%s</td></tr>`,
+				cls, al.Status, al.Labels["alertname"], al.StartsAt.Format(time.RFC3339))
 		}
 		fmt.Fprint(w, "</tbody></table>")
 	}
-
-	fmt.Fprint(w, `<p><a href="/api/v2/alerts">JSON API</a></p></body></html>`)
-}
-
-func alertFingerprint(labels map[string]string) string {
-	// Simple fingerprint from sorted label key-value pairs.
-	fp := ""
-	for k, v := range labels {
-		fp += k + "=" + v + ","
-	}
-	return fp
+	fmt.Fprint(w, "</body></html>")
 }

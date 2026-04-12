@@ -1,4 +1,4 @@
-// Package collector manages the OpenTelemetry Collector as a subprocess.
+// Package collector manages the OpenTelemetry Collector.
 package collector
 
 import (
@@ -14,12 +14,11 @@ type Config struct {
 	GRPCPort int
 	HTTPPort int
 
-	// Exporter ports.
-	PrometheusPort int // where Prometheus scrapes metrics from
-	HealthPort     int
-
-	// VictoriaLogs endpoint for log/trace forwarding.
-	VictoriaLogsPort int
+	// Exporter targets.
+	PrometheusPort   int // where Prometheus scrapes metrics from
+	VictoriaLogsPort int // VictoriaLogs OTLP HTTP endpoint for logs
+	JaegerOTLPPort   int // Jaeger OTLP gRPC endpoint for traces
+	HealthPort       int
 
 	// Optional remote OTLP endpoint.
 	RemoteOTLPEndpoint string
@@ -27,6 +26,7 @@ type Config struct {
 }
 
 // GenerateYAML produces the collector config YAML from the given parameters.
+// Pipeline routing: metrics→Prometheus, logs→VictoriaLogs, traces→Jaeger.
 func GenerateYAML(cfg Config) string {
 	var b strings.Builder
 
@@ -41,12 +41,21 @@ func GenerateYAML(cfg Config) string {
 	b.WriteString("    timeout: 5s\n")
 
 	b.WriteString("\nexporters:\n")
+
+	// Metrics → Prometheus
 	b.WriteString(fmt.Sprintf("  prometheus:\n    endpoint: \"127.0.0.1:%d\"\n", cfg.PrometheusPort))
 
+	// Logs → VictoriaLogs (OTLP HTTP)
 	if cfg.VictoriaLogsPort > 0 {
 		b.WriteString(fmt.Sprintf("  otlphttp/vlogs:\n    endpoint: \"http://127.0.0.1:%d/insert/opentelemetry\"\n", cfg.VictoriaLogsPort))
 	}
 
+	// Traces → Jaeger (OTLP gRPC — Jaeger v2 natively accepts OTLP)
+	if cfg.JaegerOTLPPort > 0 {
+		b.WriteString(fmt.Sprintf("  otlp/jaeger:\n    endpoint: \"127.0.0.1:%d\"\n    tls:\n      insecure: true\n", cfg.JaegerOTLPPort))
+	}
+
+	// Optional remote OTLP endpoint (receives all signals)
 	if cfg.RemoteOTLPEndpoint != "" {
 		b.WriteString(fmt.Sprintf("  otlphttp/remote:\n    endpoint: \"%s\"\n", cfg.RemoteOTLPEndpoint))
 		if len(cfg.RemoteOTLPHeaders) > 0 {
@@ -61,31 +70,41 @@ func GenerateYAML(cfg Config) string {
 	b.WriteString("\nservice:\n")
 	b.WriteString("  pipelines:\n")
 
+	// Traces → Jaeger (+ optional remote)
 	traceExporters := []string{}
-	logExporters := []string{}
-	if cfg.VictoriaLogsPort > 0 {
-		traceExporters = append(traceExporters, "otlphttp/vlogs")
-		logExporters = append(logExporters, "otlphttp/vlogs")
+	if cfg.JaegerOTLPPort > 0 {
+		traceExporters = append(traceExporters, "otlp/jaeger")
 	}
 	if cfg.RemoteOTLPEndpoint != "" {
 		traceExporters = append(traceExporters, "otlphttp/remote")
-		logExporters = append(logExporters, "otlphttp/remote")
+	}
+	if len(traceExporters) > 0 {
+		b.WriteString("    traces:\n")
+		b.WriteString("      receivers: [otlp]\n")
+		b.WriteString("      processors: [batch]\n")
+		b.WriteString(fmt.Sprintf("      exporters: [%s]\n", strings.Join(traceExporters, ", ")))
 	}
 
-	b.WriteString("    traces:\n")
-	b.WriteString("      receivers: [otlp]\n")
-	b.WriteString("      processors: [batch]\n")
-	b.WriteString(fmt.Sprintf("      exporters: [%s]\n", strings.Join(traceExporters, ", ")))
-
+	// Metrics → Prometheus
 	b.WriteString("    metrics:\n")
 	b.WriteString("      receivers: [otlp]\n")
 	b.WriteString("      processors: [batch]\n")
 	b.WriteString("      exporters: [prometheus]\n")
 
-	b.WriteString("    logs:\n")
-	b.WriteString("      receivers: [otlp]\n")
-	b.WriteString("      processors: [batch]\n")
-	b.WriteString(fmt.Sprintf("      exporters: [%s]\n", strings.Join(logExporters, ", ")))
+	// Logs → VictoriaLogs (+ optional remote)
+	logExporters := []string{}
+	if cfg.VictoriaLogsPort > 0 {
+		logExporters = append(logExporters, "otlphttp/vlogs")
+	}
+	if cfg.RemoteOTLPEndpoint != "" {
+		logExporters = append(logExporters, "otlphttp/remote")
+	}
+	if len(logExporters) > 0 {
+		b.WriteString("    logs:\n")
+		b.WriteString("      receivers: [otlp]\n")
+		b.WriteString("      processors: [batch]\n")
+		b.WriteString(fmt.Sprintf("      exporters: [%s]\n", strings.Join(logExporters, ", ")))
+	}
 
 	return b.String()
 }

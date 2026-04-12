@@ -256,37 +256,46 @@ func detachServer(cfg *config.ObservabilityConfig, dataDir string) error {
 }
 
 // buildStackManager creates and configures a StackManager with all embedded components.
+// All components run as goroutines — no external processes.
+// Start order: VictoriaLogs → Jaeger → Collector → Prometheus → Alertmanager → Perses
 func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) *observability.StackManager {
 	mgr := observability.NewStackManager(cfg, dataDir)
 
-	// Collector ports (use config or defaults).
+	// 1. VictoriaLogs (log sink — must be up before collector sends logs).
+	vlogsPort := 9428
+	mgr.AddComponent(observability.NewVictoriaLogsComponent(vlogsPort, filepath.Join(dataDir, "vlogs")))
+
+	// 2. Jaeger (trace sink — must be up before collector sends traces).
+	jaegerOTLPPort := 14317
+	jaegerQueryPort := 16686
+	mgr.AddComponent(observability.NewJaegerComponent(jaegerOTLPPort, jaegerQueryPort, filepath.Join(dataDir, "jaeger")))
+
+	// 3. OTEL Collector (routes: metrics→Prometheus, logs→VictoriaLogs, traces→Jaeger).
 	collCfg := collector.Config{
-		GRPCPort:       4317,
-		HTTPPort:       4318,
-		PrometheusPort: 8889,
-		HealthPort:     13133,
+		GRPCPort:         4317,
+		HTTPPort:         4318,
+		PrometheusPort:   8889,
+		VictoriaLogsPort: vlogsPort,
+		JaegerOTLPPort:   jaegerOTLPPort,
 	}
-	collectorDir := filepath.Join(dataDir, "collector")
-	coll := collector.NewEmbeddedCollector(collCfg, collectorDir)
-	mgr.AddComponent(coll)
+	mgr.AddComponent(collector.NewEmbeddedCollector(collCfg, filepath.Join(dataDir, "collector")))
 
-	// Prometheus.
-	promDir := filepath.Join(dataDir, "prometheus")
-	prom := observability.NewPrometheusComponent(promDir, fmt.Sprintf("127.0.0.1:%d", collCfg.PrometheusPort))
-	mgr.AddComponent(prom)
+	// 4. Prometheus (scrapes collector's /metrics endpoint).
+	mgr.AddComponent(observability.NewPrometheusComponent(
+		filepath.Join(dataDir, "prometheus"),
+		fmt.Sprintf("127.0.0.1:%d", collCfg.PrometheusPort),
+	))
 
-	// Alertmanager.
+	// 5. Alertmanager.
 	mgr.AddComponent(observability.NewAlertmanagerComponent())
 
-	// Log store.
-	retentionDays := 3
-	if cfg.LogRetentionDays > 0 {
-		retentionDays = cfg.LogRetentionDays
-	}
-	mgr.AddComponent(observability.NewLogStoreComponent(dataDir, retentionDays))
-
-	// Dashboards (Perses-style).
-	mgr.AddComponent(observability.NewPersesComponent("/prometheus"))
+	// 6. Perses dashboards (queries embedded Prometheus).
+	persesPort := 18080
+	mgr.AddComponent(observability.NewPersesComponent(
+		persesPort,
+		fmt.Sprintf("http://127.0.0.1:%d", collCfg.PrometheusPort),
+		filepath.Join(dataDir, "perses"),
+	))
 
 	return mgr
 }

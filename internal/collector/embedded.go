@@ -14,6 +14,8 @@ import (
 	"go.opentelemetry.io/collector/confmap"
 	"go.opentelemetry.io/collector/confmap/provider/yamlprovider"
 	"go.opentelemetry.io/collector/exporter/debugexporter"
+	"go.opentelemetry.io/collector/exporter/otlpexporter"
+	"go.opentelemetry.io/collector/exporter/otlphttpexporter"
 	"go.opentelemetry.io/collector/otelcol"
 	"go.opentelemetry.io/collector/processor/batchprocessor"
 	"go.opentelemetry.io/collector/receiver/otlpreceiver"
@@ -157,6 +159,8 @@ func (c *EmbeddedCollector) factories() (otelcol.Factories, error) {
 	exporters, err := otelcol.MakeFactoryMap(
 		debugexporter.NewFactory(),
 		prometheusexporter.NewFactory(),
+		otlpexporter.NewFactory(),     // traces → Jaeger (OTLP gRPC)
+		otlphttpexporter.NewFactory(), // logs → VictoriaLogs (OTLP HTTP)
 	)
 	if err != nil {
 		return otelcol.Factories{}, fmt.Errorf("exporter factories: %w", err)

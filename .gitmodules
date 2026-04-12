@@ -25,3 +25,12 @@
 [submodule "priorart/opencode"]
 	path = priorart/opencode
 	url = https://github.com/anomalyco/opencode.git
+[submodule "external/victorialogs"]
+	path = external/victorialogs
+	url = https://github.com/VictoriaMetrics/VictoriaLogs.git
+[submodule "external/jaeger"]
+	path = external/jaeger
+	url = https://github.com/jaegertracing/jaeger.git
+[submodule "external/perses"]
+	path = external/perses
+	url = https://github.com/perses/perses.git

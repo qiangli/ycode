@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"sync"
 
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -147,18 +148,33 @@ func (s *StackManager) registerRoutes() {
 		"prometheus":     "/prometheus/",
 		"alertmanager":   "/alerts/",
 		"perses":         "/dashboard/",
-		"logstore":       "/logs/",
+		"victoria-logs":  "/logs/",
+		"jaeger":         "/traces/",
 	}
 
 	for _, c := range s.components {
-		handler := c.HTTPHandler()
-		if handler == nil {
-			continue
-		}
 		path, ok := pathMap[c.Name()]
 		if !ok {
 			path = "/" + c.Name() + "/"
 		}
-		s.proxy.AddHandler(path, handler)
+
+		// Components with their own HTTP handler get mounted in-process.
+		if handler := c.HTTPHandler(); handler != nil {
+			s.proxy.AddHandler(path, handler)
+			continue
+		}
+
+		// Components running as external processes with a port get reverse-proxied.
+		type portProvider interface{ Port() int }
+		if pp, ok := c.(portProvider); ok && pp.Port() > 0 {
+			backend, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", pp.Port()))
+			s.proxy.AddRoute(path, backend)
+		}
+		// Jaeger uses QueryPort for UI.
+		type queryPortProvider interface{ QueryPort() int }
+		if qp, ok := c.(queryPortProvider); ok && qp.QueryPort() > 0 {
+			backend, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", qp.QueryPort()))
+			s.proxy.AddRoute(path, backend)
+		}
 	}
 }
