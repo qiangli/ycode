@@ -578,14 +578,18 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 			return tea.Quit
 		}
 
-		echo := fmt.Sprintf("> %s\n", text)
-		return func() tea.Msg {
-			output, err := m.app.commands.Execute(context.Background(), name, args)
-			return commandOutputMsg{Echo: echo, Text: output, Err: err}
+		// Try built-in commands first; fall through to agent for unregistered
+		// names (e.g. skill slash commands like /claude, /build).
+		if _, ok := m.app.commands.Get(name); ok {
+			echo := fmt.Sprintf("> %s\n", text)
+			return func() tea.Msg {
+				output, err := m.app.commands.Execute(context.Background(), name, args)
+				return commandOutputMsg{Echo: echo, Text: output, Err: err}
+			}
 		}
 	}
 
-	// Start agentic turn.
+	// Start agentic turn — handles regular prompts and skill slash commands.
 	m.appendOutput(fmt.Sprintf("> %s\n", text))
 	return m.startAgentTurn(text)
 }

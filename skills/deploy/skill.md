@@ -10,13 +10,13 @@ Deploy the ycode binary to a target host and start the `ycode serve` server. Ens
 
 ## Arguments
 
-The user may provide arguments in these forms:
-- `/deploy` — deploy to localhost:58080 (default)
+`{{ARGS}}` is the optional target in these forms:
+- `/deploy` — deploy to localhost:58080 (default, `{{ARGS}}` is empty)
 - `/deploy <host>` — deploy to remote host on port 58080
 - `/deploy <host>:<port>` — deploy to remote host on specified port
 - `/deploy :<port>` — deploy to localhost on specified port
 
-Parse the argument accordingly. If no argument is given, use `localhost:58080`.
+Parse `{{ARGS}}` accordingly. If empty, use `localhost:58080`.
 
 ## Instructions
 

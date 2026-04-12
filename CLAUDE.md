@@ -40,12 +40,9 @@ The build system follows a strict three-layer separation:
 
 ## Skills
 
-**TRIGGER**: On each user query, check `./skills/` for a matching skill. If the user's request matches a skill name or description, read `skills/<name>/skill.md` and follow its instructions.
+**Skills**: When the user's message starts with `/<name>` (e.g. `/build`, `/deploy`), read `skills/<name>/skill.md` and follow its instructions exactly. Everything after `/<name> ` (the rest of the message) is `ARGS` -- pass it to the skill wherever the skill references `{{ARGS}}`. If the skill does not use `{{ARGS}}` and `ARGS` is non-empty, ignore it. If no matching skill exists, tell the user. To list available skills, run: `ls skills/*/skill.md`.
 
-Available skills:
-- **build** — `skills/build/skill.md` — build, fix errors, commit on success
-- **deploy** — `skills/deploy/skill.md` — deploy to host, ensure build first
-- **validate** — `skills/validate/skill.md` — run test suites, ensure build+deploy first
+See [skills/README.md](./skills/README.md) for the full convention and available commands.
 
 ## For More Detail
 

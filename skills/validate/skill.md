@@ -34,10 +34,11 @@ The proxy suite (`proxy_test.go`) includes three test functions:
 
 ## Arguments
 
-- `/validate` — validate against localhost:58080 (default)
+`{{ARGS}}` is the optional target endpoint:
+- `/validate` — validate against localhost:58080 (default, `{{ARGS}}` is empty)
 - `/validate <host>:<port>` — validate against a specific endpoint
 
-Parse the argument to determine **HOST** and **PORT**. Default: `localhost:58080`
+Parse `{{ARGS}}` to determine **HOST** and **PORT**. If empty, use `localhost:58080`.
 
 ## Instructions
 
