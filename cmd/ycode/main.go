@@ -18,7 +18,6 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/cli"
-	"github.com/qiangli/ycode/internal/cluster"
 	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
@@ -425,8 +424,6 @@ var (
 	printFlag             bool
 	modelFlag             string
 	dangerSkipPermissions bool
-	otelPort              int
-	noOTEL                bool
 )
 
 var rootCmd = &cobra.Command{
@@ -434,21 +431,10 @@ var rootCmd = &cobra.Command{
 	Short: "ycode – autonomous agent harness for software development",
 	Long:  "ycode is a CLI agent harness that provides 50+ tools, MCP/LSP integration, a plugin system, permission enforcement, and session management.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Join the OTEL cluster if --no-otel is not set.
-		var cl *cluster.Cluster
-		if !noOTEL {
-			var err error
-			cl, err = joinCluster(cmd.Context())
-			if err != nil {
-				slog.Warn("cluster: join failed, continuing without OTEL clustering", "error", err)
-			}
-		}
-
 		// Check for piped input.
 		stat, _ := os.Stdin.Stat()
 		isPiped := (stat.Mode() & os.ModeCharDevice) == 0
 
-		var runErr error
 		if isPiped {
 			input, err := io.ReadAll(os.Stdin)
 			if err != nil {
@@ -465,21 +451,14 @@ var rootCmd = &cobra.Command{
 			if printFlag {
 				app.SetPrintMode(true)
 			}
-			runErr = app.RunPrompt(context.Background(), prompt)
-		} else {
-			app, err := newApp()
-			if err != nil {
-				return err
-			}
-			runErr = app.RunInteractive(context.Background())
+			return app.RunPrompt(context.Background(), prompt)
 		}
 
-		// On exit, leave the cluster (stops OTEL stack if this instance was master).
-		if cl != nil {
-			leaveCluster(cl)
+		app, err := newApp()
+		if err != nil {
+			return err
 		}
-
-		return runErr
+		return app.RunInteractive(context.Background())
 	},
 }
 
@@ -847,8 +826,6 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&printFlag, "print", false, "Output response as plain text (no markdown rendering)")
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "Model to use (overrides config and env vars)")
 	rootCmd.PersistentFlags().BoolVar(&dangerSkipPermissions, "danger-skip-permissions", false, "Skip all permission checks (grants full access to all tools)")
-	rootCmd.PersistentFlags().IntVar(&otelPort, "port", 58080, "Observability server port for telemetry export")
-	rootCmd.PersistentFlags().BoolVar(&noOTEL, "no-otel", false, "Skip connecting to or starting the observability server")
 
 	loopCmd.Flags().String("interval", "10m", "Loop interval (e.g., 5m, 1h)")
 	loopCmd.Flags().String("prompt", "", "Path to prompt file")

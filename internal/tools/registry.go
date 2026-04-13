@@ -156,6 +156,21 @@ func (r *Registry) AlwaysAvailable() []*ToolSpec {
 	return specs
 }
 
+// AlwaysAvailableForMode returns always-available tools filtered by permission mode.
+// In plan mode (ReadOnly), tools requiring WorkspaceWrite or higher are excluded.
+func (r *Registry) AlwaysAvailableForMode(mode permission.Mode) []*ToolSpec {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var specs []*ToolSpec
+	for _, spec := range r.tools {
+		if spec.AlwaysAvailable && mode.Allows(spec.RequiredMode) {
+			specs = append(specs, spec)
+		}
+	}
+	sort.Slice(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })
+	return specs
+}
+
 // Deferred returns tool specs that are loaded on demand.
 func (r *Registry) Deferred() []*ToolSpec {
 	r.mu.RLock()

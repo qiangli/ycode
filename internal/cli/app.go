@@ -132,6 +132,7 @@ func (a *App) SetPrintMode(enabled bool) {
 // conversationRuntime creates a conversation.Runtime from the current app state.
 func (a *App) conversationRuntime() *conversation.Runtime {
 	rt := conversation.NewRuntime(a.config, a.provider, a.session, a.toolRegistry, a.promptCtx)
+	rt.SetPlanMode(a.InPlanMode())
 	if a.config.LLMSummarizationEnabled {
 		rt.SetLLMSummarizer(session.NewLLMSummarizer(a.provider, a.config.Model))
 	}

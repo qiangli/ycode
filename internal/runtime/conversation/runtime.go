@@ -10,6 +10,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/config"
+	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
@@ -31,6 +32,10 @@ type Runtime struct {
 
 	// Optional LLM-based summarizer for compaction. If nil, heuristic is used.
 	llmSummarizer *session.LLMSummarizer
+
+	// Plan mode — when true, write tools are filtered out and plan-mode
+	// instructions are injected into the system prompt.
+	planMode bool
 
 	// Optional OTEL instrumentation.
 	otel *OTELConfig
@@ -69,6 +74,11 @@ func (r *Runtime) SetLLMSummarizer(s *session.LLMSummarizer) {
 	r.llmSummarizer = s
 }
 
+// SetPlanMode enables or disables plan mode for this runtime.
+func (r *Runtime) SetPlanMode(enabled bool) {
+	r.planMode = enabled
+}
+
 // TurnResult is the outcome of a single conversation turn.
 type TurnResult struct {
 	Response        *api.Response
@@ -92,11 +102,17 @@ type ToolCall struct {
 // Turn executes one turn of the conversation: send messages, get response, execute tools.
 func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult, error) {
 	// Build system prompt.
-	systemPrompt := prompt.BuildDefault(r.promptCtx, r.cachingSupported, r.contextBaseline)
+	systemPrompt := prompt.BuildDefault(r.promptCtx, r.planMode, r.cachingSupported, r.contextBaseline)
 
-	// Build tool definitions.
+	// Build tool definitions — in plan mode, exclude tools requiring write access.
+	var toolSpecs []*tools.ToolSpec
+	if r.planMode {
+		toolSpecs = r.registry.AlwaysAvailableForMode(permission.ReadOnly)
+	} else {
+		toolSpecs = r.registry.AlwaysAvailable()
+	}
 	var toolDefs []api.ToolDefinition
-	for _, spec := range r.registry.AlwaysAvailable() {
+	for _, spec := range toolSpecs {
 		toolDefs = append(toolDefs, api.ToolDefinition{
 			Name:        spec.Name,
 			Description: spec.Description,

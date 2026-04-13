@@ -13,7 +13,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/qiangli/ycode/internal/cluster"
 	"github.com/qiangli/ycode/internal/collector"
 	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -101,29 +100,6 @@ var serveStatusCmd = &cobra.Command{
 			fmt.Fprintf(w, "%s\t%s\n", s.Name, health)
 		}
 		w.Flush()
-
-		// Show cluster info.
-		home, _ := os.UserHomeDir()
-		clusterDir := filepath.Join(home, ".ycode", "cluster")
-		cl := cluster.New(clusterDir, "status-check", cluster.Options{})
-		fmt.Println()
-
-		if info, err := cl.LeaderInfo(); err == nil {
-			fmt.Printf("Cluster Leader: %s (PID %d, port %d)\n", info.InstanceID, info.PID, info.Port)
-		} else {
-			fmt.Println("Cluster Leader: none")
-		}
-
-		if members, err := cl.Members(); err == nil && len(members) > 0 {
-			fmt.Println()
-			mw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(mw, "MEMBER\tPID\tROLE\tHEARTBEAT")
-			for _, m := range members {
-				fmt.Fprintf(mw, "%s\t%d\t%s\t%s\n",
-					m.ID, m.PID, m.Role, m.Heartbeat.Format("15:04:05"))
-			}
-			mw.Flush()
-		}
 		return nil
 	},
 }
@@ -154,9 +130,8 @@ var serveResetCmd = &cobra.Command{
 		home, _ := os.UserHomeDir()
 		dataDir := filepath.Join(home, ".ycode", "observability")
 		otelDir := filepath.Join(home, ".ycode", "otel")
-		clusterDir := filepath.Join(home, ".ycode", "cluster")
 
-		fmt.Printf("This will remove all data in:\n  %s\n  %s\n  %s\n", dataDir, otelDir, clusterDir)
+		fmt.Printf("This will remove all data in:\n  %s\n  %s\n", dataDir, otelDir)
 		fmt.Print("Continue? [y/N] ")
 		var answer string
 		fmt.Scanln(&answer)
@@ -166,8 +141,7 @@ var serveResetCmd = &cobra.Command{
 		}
 		_ = os.RemoveAll(dataDir)
 		_ = os.RemoveAll(otelDir)
-		_ = os.RemoveAll(clusterDir)
-		fmt.Println("Observability and cluster data removed.")
+		fmt.Println("Observability data removed.")
 		return nil
 	},
 }
@@ -213,39 +187,18 @@ var serveAuditCmd = &cobra.Command{
 	},
 }
 
-// runServerForeground starts the stack via cluster (as forced master) and blocks until interrupted.
+// runServerForeground starts the observability stack and blocks until interrupted.
 func runServerForeground(ctx context.Context, cfg *config.ObservabilityConfig, dataDir string) error {
 	home, _ := os.UserHomeDir()
-	clusterDir := filepath.Join(home, ".ycode", "cluster")
 
 	port := cfg.ProxyPort
 	if port == 0 {
 		port = 58080
 	}
 
-	var stackMgr *observability.StackManager
-
-	cl := cluster.New(clusterDir, fmt.Sprintf("serve-%d", os.Getpid()), cluster.Options{
-		NATSPort:    port + 100,
-		ForceMaster: true,
-		OnPromoted: func(ctx context.Context) error {
-			mgr := buildStackManager(cfg, dataDir)
-			if err := mgr.Start(ctx); err != nil {
-				return err
-			}
-			stackMgr = mgr
-			return nil
-		},
-		OnDemoted: func(ctx context.Context) error {
-			if stackMgr != nil {
-				return stackMgr.Stop(ctx)
-			}
-			return nil
-		},
-	})
-
-	if err := cl.Join(ctx); err != nil {
-		return fmt.Errorf("cluster join: %w", err)
+	mgr := buildStackManager(cfg, dataDir)
+	if err := mgr.Start(ctx); err != nil {
+		return fmt.Errorf("start observability stack: %w", err)
 	}
 
 	fmt.Printf("ycode observability server running at http://127.0.0.1:%d/\n", port)
@@ -263,8 +216,8 @@ func runServerForeground(ctx context.Context, cfg *config.ObservabilityConfig, d
 	<-sigCh
 
 	fmt.Println("\nShutting down...")
-	if err := cl.Leave(context.Background()); err != nil {
-		slog.Warn("cluster: leave on shutdown", "error", err)
+	if err := mgr.Stop(context.Background()); err != nil {
+		slog.Warn("observability: stop error", "error", err)
 	}
 	return nil
 }

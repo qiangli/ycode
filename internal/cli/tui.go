@@ -18,6 +18,7 @@ import (
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/git"
+	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/runtime/usage"
@@ -869,6 +870,8 @@ func formatSessionSummary(tracker *usage.Tracker, startTime time.Time) string {
 
 // toggleMode switches between plan and build mode.
 // Both directions are immediate — no confirmation needed.
+// A transition reminder is injected into the session so the LLM
+// is aware of the mode change on the next turn.
 func (m *TUIModel) toggleMode() tea.Cmd {
 	if m.app.planMode == nil {
 		return func() tea.Msg {
@@ -879,14 +882,32 @@ func (m *TUIModel) toggleMode() tea.Cmd {
 	if m.app.InPlanMode() {
 		return func() tea.Msg {
 			result, err := m.app.planMode.ExitPlanMode()
+			if err == nil {
+				m.injectModeTransition(prompt.BuildTransitionReminder())
+			}
 			return commandOutputMsg{Text: result, Err: err}
 		}
 	}
 
 	return func() tea.Msg {
 		result, err := m.app.planMode.EnterPlanMode()
+		if err == nil {
+			m.injectModeTransition(prompt.PlanTransitionReminder())
+		}
 		return commandOutputMsg{Text: result, Err: err}
 	}
+}
+
+// injectModeTransition adds a system reminder message to the session
+// so the LLM is informed about the mode change on its next turn.
+func (m *TUIModel) injectModeTransition(reminder string) {
+	msg := session.ConversationMessage{
+		Role: session.RoleUser,
+		Content: []session.ContentBlock{
+			{Type: session.ContentTypeText, Text: reminder},
+		},
+	}
+	_ = m.app.session.AddMessage(msg)
 }
 
 // handleConfirmKey processes key input during a confirmation dialog.

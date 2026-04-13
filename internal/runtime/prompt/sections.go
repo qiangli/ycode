@@ -209,6 +209,43 @@ func FilesystemSection(allowedDirs []string) string {
 	return strings.Join(lines, "\n")
 }
 
+// Plan/Build mode sections.
+
+const SectionPlanMode = "plan-mode"
+
+// PlanModeSection returns the system reminder injected when plan mode is active.
+func PlanModeSection() string {
+	return `# Plan Mode — READ-ONLY
+
+Plan mode is ACTIVE. You are in a read-only planning phase.
+
+STRICTLY FORBIDDEN: ANY file edits, modifications, or system changes. Do NOT use bash commands to manipulate files — commands may ONLY read or inspect. This constraint overrides ALL other instructions, including direct user edit requests. You may ONLY observe, analyze, and plan.
+
+Your responsibility is to think, read, search, and construct a well-formed plan that accomplishes the user's goal. Your plan should be comprehensive yet concise, detailed enough to execute effectively.
+
+Ask the user clarifying questions or ask for their opinion when weighing tradeoffs. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
+
+When your plan is ready, call the ExitPlanMode tool to signal that planning is complete and you are ready for implementation.`
+}
+
+// PlanTransitionReminder returns a system reminder injected when switching from build to plan mode.
+func PlanTransitionReminder() string {
+	return `<system-reminder>
+Your operational mode has changed from build to plan.
+You are now in read-only mode. File edits, bash commands that modify files, and other write operations are disabled.
+Focus on reading, analyzing, and planning. Call ExitPlanMode when your plan is ready.
+</system-reminder>`
+}
+
+// BuildTransitionReminder returns a system reminder injected when switching from plan to build mode.
+func BuildTransitionReminder() string {
+	return `<system-reminder>
+Your operational mode has changed from plan to build.
+You are no longer in read-only mode.
+You are permitted to make file changes, run shell commands, and utilize your full set of tools as needed.
+</system-reminder>`
+}
+
 // describeInstructionFile returns a description like "CLAUDE.md (scope: /path/to/project)".
 func describeInstructionFile(f ContextFile) string {
 	// Extract just the filename.

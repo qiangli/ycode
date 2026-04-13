@@ -44,7 +44,7 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 	dataDir := resolveOTELDataDir(obs)
 
 	collectorAddr := obs.CollectorAddr
-	if collectorAddr == "" && !noOTEL {
+	if collectorAddr == "" {
 		// Use the embedded collector's gRPC port (4317 by default).
 		collectorAddr = "127.0.0.1:4317"
 	}
