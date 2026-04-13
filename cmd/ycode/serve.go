@@ -201,31 +201,34 @@ func runAllServices(ctx context.Context, cfg *config.ObservabilityConfig, dataDi
 		port = 58080
 	}
 
-	// 1. Start observability stack.
+	// 1. Build and start observability stack first (no dependencies on API).
 	mgr := buildStackManager(cfg, dataDir)
 	if err := mgr.Start(ctx); err != nil {
 		return fmt.Errorf("start observability stack: %w", err)
 	}
-	fmt.Printf("Observability server at http://127.0.0.1:%d/\n", port)
+	fmt.Printf("Observability at http://127.0.0.1:%d/\n", port)
 
-	// 2. Start API/WebSocket server + NATS (unless disabled).
+	// 2. Build API/WebSocket + NATS (may take time or fail if no API key).
 	var api *apiStack
 	if !serveNoAPI || !serveNoNATS {
 		var err error
-		api, err = startAPIStack(serveNoAPI, serveNoNATS)
+		api, err = buildAPIStack(serveNoNATS)
 		if err != nil {
-			slog.Error("failed to start API stack", "error", err)
-			// Non-fatal — observability still runs.
+			slog.Warn("API stack not available", "error", err)
+			fmt.Printf("Web UI:            not available (%s)\n", err)
 		} else {
-			if api.apiSrv != nil {
-				fmt.Printf("API server at    http://%s/\n", api.apiSrv.Addr())
-				fmt.Printf("Web UI at        http://%s/?token=%s\n", api.apiSrv.Addr(), api.token)
+			if !serveNoAPI && api.handler != nil {
+				// Add web UI as a late component — the proxy is already running,
+				// so we use AddLateComponent to register the handler on the mux.
+				webComp := observability.NewWebUIComponent(api.handler)
+				if err := mgr.AddLateComponent(ctx, webComp); err != nil {
+					fmt.Printf("Web UI error: %v\n", err)
+				} else {
+					fmt.Printf("Web UI at          http://127.0.0.1:%d/ycode/\n", port)
+				}
 			}
 			if api.natsSrv != nil {
-				fmt.Printf("NATS server at   nats://127.0.0.1:%d\n", apiNATSPort)
-			}
-			if api.token != "" {
-				fmt.Printf("Token:           %s\n", api.token)
+				fmt.Printf("NATS server at     nats://127.0.0.1:%d\n", apiNATSPort)
 			}
 		}
 	}
@@ -366,12 +369,10 @@ func loadServeConfig() (*config.ObservabilityConfig, string, error) {
 }
 
 func init() {
-	serveCmd.Flags().IntVar(&servePort, "port", 58080, "Port for the observability server")
+	serveCmd.PersistentFlags().IntVar(&servePort, "port", 58080, "Port for the observability server")
 	serveCmd.Flags().BoolVar(&serveDetach, "detach", false, "Run server in background")
 	serveCmd.Flags().BoolVar(&serveNoAPI, "no-api", false, "Disable the API/WebSocket server")
 	serveCmd.Flags().BoolVar(&serveNoNATS, "no-nats", false, "Disable the embedded NATS server")
-	serveCmd.Flags().IntVar(&apiPort, "api-port", 58090, "Port for the API server")
-	serveCmd.Flags().StringVar(&apiHostname, "api-hostname", "127.0.0.1", "Hostname for the API server")
 	serveCmd.Flags().IntVar(&apiNATSPort, "nats-port", 4222, "Port for the embedded NATS server")
 
 	serveAuditCmd.Flags().Int("last", 10, "Number of records to show")

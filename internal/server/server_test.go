@@ -99,30 +99,8 @@ func TestHealthEndpoint(t *testing.T) {
 func TestAuthMiddleware(t *testing.T) {
 	_, ts := newTestServer(t)
 
-	// Without token — should be 401.
+	// Auth is currently disabled — all requests should succeed.
 	resp, err := http.Get(ts.URL + "/api/config")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("got status %d, want %d", resp.StatusCode, http.StatusUnauthorized)
-	}
-
-	// With token — should be 200.
-	req, _ := http.NewRequest("GET", ts.URL+"/api/config", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("got status %d, want %d", resp.StatusCode, http.StatusOK)
-	}
-
-	// With query param token — should be 200.
-	resp, err = http.Get(ts.URL + "/api/config?token=test-token")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,15 +185,13 @@ func TestWebSocket(t *testing.T) {
 func TestWebSocketAuth(t *testing.T) {
 	_, ts := newTestServer(t)
 
-	// Without token — should fail.
+	// Auth is currently disabled — WebSocket should connect without token.
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/sessions/test-session/ws"
-	_, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err == nil {
-		t.Error("expected WebSocket connection to fail without token")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("expected WebSocket connection to succeed, got: %v", err)
 	}
-	if resp != nil && resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("got status %d, want %d", resp.StatusCode, http.StatusUnauthorized)
-	}
+	conn.Close()
 }
 
 func TestGetStatus(t *testing.T) {

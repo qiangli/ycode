@@ -6,7 +6,17 @@
   'use strict';
 
   // --- Configuration ---
-  const API_BASE = window.location.origin;
+  // Detect base path: if served at /ycode/, API calls go to /ycode/api/...
+  // If served at root, API calls go to /api/...
+  const basePath = (function () {
+    const path = window.location.pathname;
+    // Strip trailing filename or slash to get the directory.
+    const dir = path.replace(/\/[^/]*$/, '');
+    // If we're under a proxy prefix like /ycode, use that as base.
+    if (dir && dir !== '/') return dir;
+    return '';
+  })();
+  const API_BASE = window.location.origin + basePath;
   const TOKEN = new URLSearchParams(window.location.search).get('token') || '';
 
   // --- DOM ---
@@ -74,7 +84,7 @@
   // --- WebSocket ---
   function connectWebSocket() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = proto + '//' + location.host + '/api/sessions/' + sessionID + '/ws?token=' + TOKEN;
+    const wsUrl = proto + '//' + location.host + basePath + '/api/sessions/' + sessionID + '/ws?token=' + TOKEN;
 
     ws = new WebSocket(wsUrl);
 

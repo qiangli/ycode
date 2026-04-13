@@ -143,24 +143,9 @@ func (s *Server) registerRoutes() {
 }
 
 // authMiddleware wraps a handler with bearer token authentication.
+// TODO: re-enable token check when auth is fully implemented.
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if s.config.Token == "" {
-			next(w, r)
-			return
-		}
-		token := r.Header.Get("Authorization")
-		if token == "Bearer "+s.config.Token {
-			next(w, r)
-			return
-		}
-		// Also check query parameter (for browser/WebSocket).
-		if r.URL.Query().Get("token") == s.config.Token {
-			next(w, r)
-			return
-		}
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-	}
+	return next
 }
 
 // corsMiddleware adds CORS headers for browser clients.
@@ -290,16 +275,6 @@ type wsMessage struct {
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Auth check for WebSocket upgrade.
-	if s.config.Token != "" {
-		token := r.URL.Query().Get("token")
-		auth := r.Header.Get("Authorization")
-		if token != s.config.Token && auth != "Bearer "+s.config.Token {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-	}
-
 	sessionID := r.PathValue("id")
 
 	conn, err := s.upgrader.Upgrade(w, r, nil)

@@ -117,11 +117,13 @@ func newApp() (*cli.App, error) {
 	}
 	cfg.Model = api.ResolveModelWithAliases(model, cfg.Aliases)
 
+	var provider api.Provider
 	providerCfg, err := api.DetectProvider(cfg.Model)
 	if err != nil {
-		return nil, err
+		slog.Warn("no LLM provider available (agent features disabled until API key is configured)", "error", err)
+	} else {
+		provider = api.NewProvider(providerCfg)
 	}
-	provider := api.NewProvider(providerCfg)
 
 	// Initialize storage manager (Phase 1: KV store is instant).
 	storageDataDir := filepath.Join(home, ".ycode", "projects", "data")
@@ -350,8 +352,13 @@ func newApp() (*cli.App, error) {
 	}
 
 	app, err := cli.NewApp(cfg, provider, sess, cli.AppOptions{
-		WorkDir:      cwd,
-		ProviderKind: providerCfg.DisplayKind(),
+		WorkDir: cwd,
+		ProviderKind: func() string {
+			if providerCfg != nil {
+				return providerCfg.DisplayKind()
+			}
+			return "none"
+		}(),
 		ConfigDirs: commands.ConfigDirs{
 			UserDir:    userDir,
 			ProjectDir: projectDir,
@@ -833,6 +840,11 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "Model to use (overrides config and env vars)")
 	rootCmd.PersistentFlags().BoolVar(&dangerSkipPermissions, "danger-skip-permissions", false, "Skip all permission checks (grants full access to all tools)")
 	rootCmd.PersistentFlags().StringVar(&connectURL, "connect", "", "Connect to a remote ycode server (ws:// or nats://)")
+
+	// no-otel: accepted for backward compatibility with integration tests (no-op).
+	var noOtel bool
+	rootCmd.PersistentFlags().BoolVar(&noOtel, "no-otel", false, "Disable OTEL instrumentation (no-op, kept for compatibility)")
+	_ = rootCmd.PersistentFlags().MarkHidden("no-otel")
 
 	loopCmd.Flags().String("interval", "10m", "Loop interval (e.g., 5m, 1h)")
 	loopCmd.Flags().String("prompt", "", "Path to prompt file")

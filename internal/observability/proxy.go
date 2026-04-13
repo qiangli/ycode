@@ -23,6 +23,7 @@ type ProxyServer struct {
 	routes     map[string]*url.URL     // path prefix -> backend URL
 	handlers   map[string]http.Handler // path prefix -> in-process handler
 	server     *http.Server
+	mux        *http.ServeMux // stored for late handler registration
 }
 
 // NewProxyServer creates a reverse proxy listening on bindAddr:port.
@@ -43,10 +44,14 @@ func (p *ProxyServer) AddRoute(pathPrefix string, backend *url.URL) {
 }
 
 // AddHandler registers an in-process HTTP handler for a path prefix.
+// If the proxy is already running, the handler is also registered on the live mux.
 func (p *ProxyServer) AddHandler(pathPrefix string, handler http.Handler) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.handlers[pathPrefix] = handler
+	if p.mux != nil {
+		p.mux.Handle(pathPrefix, http.StripPrefix(strings.TrimSuffix(pathPrefix, "/"), handler))
+	}
 }
 
 // Start begins serving HTTP requests.
@@ -95,6 +100,7 @@ func (p *ProxyServer) Start(_ context.Context) error {
 	// Aggregated health check.
 	mux.HandleFunc("/healthz", p.healthz)
 
+	p.mux = mux
 	p.server = &http.Server{
 		Addr:    p.listenAddr,
 		Handler: mux,

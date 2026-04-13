@@ -150,6 +150,47 @@ func (s *StackManager) ProxyAddr() string {
 	return ""
 }
 
+// AddRoute registers a reverse-proxy route on the proxy after the stack has started.
+func (s *StackManager) AddRoute(pathPrefix string, backend *url.URL) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.proxy != nil {
+		s.proxy.AddRoute(pathPrefix, backend)
+	}
+}
+
+// AddLateComponent registers and starts a component after the stack is already running.
+// Its HTTP handler (if any) is mounted on the proxy.
+func (s *StackManager) AddLateComponent(ctx context.Context, c Component) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.components = append(s.components, c)
+
+	if err := c.Start(ctx); err != nil {
+		return err
+	}
+
+	// Mount on proxy.
+	if s.proxy != nil {
+		path, ok := componentPathMap[c.Name()]
+		if !ok {
+			path = "/" + c.Name() + "/"
+		}
+		if handler := c.HTTPHandler(); handler != nil {
+			s.proxy.AddHandler(path, handler)
+		} else {
+			type portProvider interface{ Port() int }
+			if pp, ok := c.(portProvider); ok && pp.Port() > 0 {
+				backend, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", pp.Port()))
+				s.proxy.AddRoute(path, backend)
+			}
+		}
+	}
+
+	return nil
+}
+
 // componentPathMap defines the proxy path prefix for each well-known component.
 var componentPathMap = map[string]string{
 	"otel-collector": "/collector/",
@@ -158,6 +199,7 @@ var componentPathMap = map[string]string{
 	"perses":         "/dashboard/",
 	"victoria-logs":  "/logs/",
 	"jaeger":         "/traces/",
+	"ycode":          "/ycode/",
 }
 
 // registerRoutes mounts each component's HTTP handler on the proxy mux.

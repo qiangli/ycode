@@ -4,33 +4,34 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"net/http"
 	"os"
 	"path/filepath"
 
 	"github.com/qiangli/ycode/internal/bus"
-	"github.com/qiangli/ycode/internal/server"
+	internalserver "github.com/qiangli/ycode/internal/server"
 	"github.com/qiangli/ycode/internal/service"
 )
 
 var (
 	serveNoAPI  bool
 	serveNoNATS bool
-	apiPort     int
-	apiHostname string
 	apiNATSPort int
 )
 
-// apiStack holds the API server and NATS server state.
+// apiStack holds the API/NATS server state for the unified serve command.
 type apiStack struct {
 	memBus  *bus.MemoryBus
 	svc     *service.LocalService
-	apiSrv  *server.Server
-	natsSrv *server.NATSServer
+	handler http.Handler // HTTP handler for the API/WebSocket server
+	natsSrv *internalserver.NATSServer
 	token   string
 }
 
-// startAPIStack initializes and starts the API server and optionally NATS.
-func startAPIStack(noAPI, noNATS bool) (*apiStack, error) {
+// buildAPIStack initializes the app, service layer, and optionally NATS.
+// It returns an apiStack with the HTTP handler ready to be served
+// (by WebUIComponent or standalone).
+func buildAPIStack(noNATS bool) (*apiStack, error) {
 	app, err := newApp()
 	if err != nil {
 		return nil, err
@@ -39,32 +40,24 @@ func startAPIStack(noAPI, noNATS bool) (*apiStack, error) {
 	memBus := bus.NewMemoryBus()
 	svc := service.NewLocalService(app, memBus)
 
-	stack := &apiStack{
-		memBus: memBus,
-		svc:    svc,
-	}
-
 	token, err := generateToken()
 	if err != nil {
 		return nil, err
 	}
-	stack.token = token
 	_ = writeTokenFile(token)
 
-	if !noAPI {
-		apiSrv := server.New(server.Config{
-			Port:     apiPort,
-			Hostname: apiHostname,
-			Token:    token,
-		}, svc)
-		if err := apiSrv.Start(); err != nil {
-			return nil, err
-		}
-		stack.apiSrv = apiSrv
+	// Build the HTTP/WebSocket handler (but don't start listening yet).
+	srv := internalserver.New(internalserver.Config{Token: token}, svc)
+
+	stack := &apiStack{
+		memBus:  memBus,
+		svc:     svc,
+		handler: srv.Mux(),
+		token:   token,
 	}
 
 	if !noNATS {
-		natsSrv := server.NewNATSServer(server.NATSConfig{
+		natsSrv := internalserver.NewNATSServer(internalserver.NATSConfig{
 			Enabled:  true,
 			Port:     apiNATSPort,
 			Embedded: true,
@@ -81,9 +74,6 @@ func startAPIStack(noAPI, noNATS bool) (*apiStack, error) {
 func (s *apiStack) stop() {
 	if s.natsSrv != nil {
 		s.natsSrv.Stop()
-	}
-	if s.apiSrv != nil {
-		s.apiSrv.Stop(context.Background())
 	}
 	if s.memBus != nil {
 		s.memBus.Close()

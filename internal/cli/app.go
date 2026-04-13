@@ -148,6 +148,9 @@ const maxToolIterations = 25
 // RunPrompt executes a one-shot prompt with the full agentic loop
 // (system prompt, tools, multi-turn tool execution).
 func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
+	if a.provider == nil {
+		return fmt.Errorf("no LLM provider configured; set ANTHROPIC_API_KEY, OPENAI_API_KEY, MOONSHOT_API_KEY, or KIMI_API_KEY")
+	}
 	rt := a.conversationRuntime()
 
 	// Build conversation history from session + new user message.
@@ -316,6 +319,9 @@ func (a *App) RunTurn(ctx context.Context, messages []api.Message) (*conversatio
 // RunTurnWithRecovery executes a turn with automatic recovery from token limit errors.
 // Returns the result, recovery info (if compaction occurred), and any error.
 func (a *App) RunTurnWithRecovery(ctx context.Context, messages []api.Message) (*conversation.TurnResult, *conversation.RecoveryResult, error) {
+	if a.provider == nil {
+		return nil, nil, fmt.Errorf("no LLM provider configured; set ANTHROPIC_API_KEY, OPENAI_API_KEY, MOONSHOT_API_KEY, or KIMI_API_KEY")
+	}
 	rt := a.conversationRuntime()
 	a.turnIndex++
 	return rt.InstrumentedTurnWithRecovery(ctx, messages, a.turnIndex)
