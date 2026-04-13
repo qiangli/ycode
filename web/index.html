@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ycode</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header id="header">
+      <div class="header-left">
+        <h1>ycode</h1>
+        <span id="status-badge" class="badge">connecting...</span>
+      </div>
+      <div class="header-right">
+        <span id="model-label" class="model-label"></span>
+        <span id="token-count" class="token-count"></span>
+      </div>
+    </header>
+
+    <main id="messages" role="log" aria-live="polite">
+      <div id="welcome" class="welcome">
+        <p>Connected to ycode. Type a message to start.</p>
+      </div>
+    </main>
+
+    <footer id="input-area">
+      <div id="tool-progress" class="tool-progress hidden"></div>
+      <form id="input-form">
+        <textarea id="input" rows="2" placeholder="Send a message..." autofocus></textarea>
+        <button type="submit" id="send-btn" title="Send">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </form>
+    </footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

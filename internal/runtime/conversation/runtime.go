@@ -39,6 +39,10 @@ type Runtime struct {
 
 	// Optional OTEL instrumentation.
 	otel *OTELConfig
+
+	// Optional streaming event callback. Called for each text/thinking delta
+	// and tool call event as they arrive from the LLM provider.
+	onEvent func(eventType string, data map[string]any)
 }
 
 // NewRuntime creates a new conversation runtime.
@@ -77,6 +81,21 @@ func (r *Runtime) SetLLMSummarizer(s *session.LLMSummarizer) {
 // SetPlanMode enables or disables plan mode for this runtime.
 func (r *Runtime) SetPlanMode(enabled bool) {
 	r.planMode = enabled
+}
+
+// SetEventCallback sets a callback that receives streaming events as they
+// arrive from the LLM provider. The callback receives an event type string
+// and a data map. This allows the service layer to publish bus events
+// without the runtime depending on the bus package.
+func (r *Runtime) SetEventCallback(fn func(eventType string, data map[string]any)) {
+	r.onEvent = fn
+}
+
+// emitEvent calls the event callback if set.
+func (r *Runtime) emitEvent(eventType string, data map[string]any) {
+	if r.onEvent != nil {
+		r.onEvent(eventType, data)
+	}
 }
 
 // TurnResult is the outcome of a single conversation turn.
@@ -170,9 +189,11 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 				if err := json.Unmarshal(ev.Delta, &delta); err == nil {
 					if delta.Text != "" {
 						textParts = append(textParts, delta.Text)
+						r.emitEvent("text.delta", map[string]any{"text": delta.Text})
 					}
 					if delta.Thinking != "" {
 						thinkingParts = append(thinkingParts, delta.Thinking)
+						r.emitEvent("thinking.delta", map[string]any{"text": delta.Thinking})
 					}
 					if currentBlock != nil && currentBlock.Type == api.ContentTypeToolUse && delta.PartialJSON != "" {
 						currentBlock.Input = append(currentBlock.Input, []byte(delta.PartialJSON)...)
@@ -182,10 +203,15 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		case "content_block_stop":
 			if currentBlock != nil {
 				if currentBlock.Type == api.ContentTypeToolUse {
-					result.ToolCalls = append(result.ToolCalls, ToolCall{
+					tc := ToolCall{
 						ID:    currentBlock.ID,
 						Name:  currentBlock.Name,
 						Input: currentBlock.Input,
+					}
+					result.ToolCalls = append(result.ToolCalls, tc)
+					r.emitEvent("tool_use.start", map[string]any{
+						"id":   tc.ID,
+						"tool": tc.Name,
 					})
 				}
 				currentBlock = nil

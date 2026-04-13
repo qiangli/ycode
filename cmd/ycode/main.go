@@ -424,6 +424,7 @@ var (
 	printFlag             bool
 	modelFlag             string
 	dangerSkipPermissions bool
+	connectURL            string
 )
 
 var rootCmd = &cobra.Command{
@@ -431,6 +432,11 @@ var rootCmd = &cobra.Command{
 	Short: "ycode – autonomous agent harness for software development",
 	Long:  "ycode is a CLI agent harness that provides 50+ tools, MCP/LSP integration, a plugin system, permission enforcement, and session management.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Remote mode: connect to a running ycode server.
+		if connectURL != "" {
+			return runRemoteTUI(connectURL)
+		}
+
 		// Check for piped input.
 		stat, _ := os.Stdin.Stat()
 		isPiped := (stat.Mode() & os.ModeCharDevice) == 0
@@ -826,6 +832,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&printFlag, "print", false, "Output response as plain text (no markdown rendering)")
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "Model to use (overrides config and env vars)")
 	rootCmd.PersistentFlags().BoolVar(&dangerSkipPermissions, "danger-skip-permissions", false, "Skip all permission checks (grants full access to all tools)")
+	rootCmd.PersistentFlags().StringVar(&connectURL, "connect", "", "Connect to a remote ycode server (ws:// or nats://)")
 
 	loopCmd.Flags().String("interval", "10m", "Loop interval (e.g., 5m, 1h)")
 	loopCmd.Flags().String("prompt", "", "Path to prompt file")

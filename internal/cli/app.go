@@ -404,6 +404,82 @@ func (a *App) InPlanMode() bool {
 // Commands returns the command registry.
 func (a *App) Commands() *commands.Registry { return a.commands }
 
+// ExecuteCommand runs a slash command by name.
+func (a *App) ExecuteCommand(ctx context.Context, name string, args string) (string, error) {
+	return a.commands.Execute(ctx, name, args)
+}
+
+// Config returns the current configuration.
+func (a *App) Config() *config.Config { return a.config }
+
+// Version returns the application version string.
+func (a *App) Version() string { return a.version }
+
+// SessionID returns the current session ID.
+func (a *App) SessionID() string {
+	if a.session == nil {
+		return ""
+	}
+	return a.session.ID
+}
+
+// MessageCount returns the number of messages in the current session.
+func (a *App) MessageCount() int {
+	if a.session == nil {
+		return 0
+	}
+	return a.session.MessageCount()
+}
+
+// SessionMessages returns the current session messages in API format.
+func (a *App) SessionMessages() []api.Message {
+	return a.sessionMessages()
+}
+
+// Session returns the underlying session.
+func (a *App) Session() *session.Session { return a.session }
+
+// ConversationRuntime creates a conversation.Runtime from the current app state.
+// Exported for use by the service layer.
+func (a *App) ConversationRuntime() *conversation.Runtime {
+	return a.conversationRuntime()
+}
+
+// UsageTracker returns the usage tracker.
+func (a *App) UsageTracker() *usage.Tracker { return a.usageTracker }
+
+// TurnIndex returns the current turn index and increments it.
+func (a *App) NextTurnIndex() int {
+	a.turnIndex++
+	return a.turnIndex
+}
+
+// RunInteractiveWithClient starts the interactive TUI with an optional client
+// for event-driven messaging via the service layer and bus.
+func (a *App) RunInteractiveWithClient(ctx context.Context, cl agentClient) error {
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	m := NewTUIModel(a)
+	m.cl = cl
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
+	m.program = p
+
+	if a.toolRegistry != nil {
+		prompter := NewTUIPrompter(p)
+		a.toolRegistry.SetPermissionPrompter(prompter.Prompt)
+	}
+
+	_, err := p.Run()
+	if err != nil {
+		return err
+	}
+	a.printSessionSummary()
+	if a.storage != nil {
+		a.storage.Close()
+	}
+	return nil
+}
+
 // RunInteractive starts the interactive TUI.
 func (a *App) RunInteractive(ctx context.Context) error {
 	// Discard log output during TUI mode. The default slog handler writes

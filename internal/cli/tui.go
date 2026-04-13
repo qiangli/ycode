@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/qiangli/ycode/internal/api"
+	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/git"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
@@ -30,9 +31,18 @@ const (
 	textareaHeight  = 3
 )
 
+// agentClient is the interface for sending messages through the service layer.
+// Satisfied by client.InProcessClient and other client implementations.
+type agentClient interface {
+	SendMessage(ctx context.Context, sessionID string, input bus.MessageInput) error
+	CancelTurn(ctx context.Context, sessionID string) error
+	Events(ctx context.Context, filter ...bus.EventType) (<-chan bus.Event, error)
+}
+
 // TUIModel is the top-level bubbletea model for interactive mode.
 type TUIModel struct {
 	app         *App
+	cl          agentClient // optional: when set, agentic loop runs through client/service/bus
 	viewport    viewport.Model
 	textarea    textarea.Model
 	width       int
@@ -98,6 +108,9 @@ type toolProgressMsg taskqueue.TaskEvent
 
 // repaintMsg triggers one more Update/View cycle to flush rendering.
 type repaintMsg struct{}
+
+// busEventMsg wraps a bus.Event for delivery through bubbletea's message system.
+type busEventMsg struct{ bus.Event }
 
 // NewTUIModel creates the composite TUI model.
 func NewTUIModel(app *App) *TUIModel {
@@ -381,6 +394,9 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appendOutput(msg.Text + "\n\n")
 		}
 		cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
+
+	case busEventMsg:
+		return m.handleBusEvent(msg.Event)
 
 	case repaintMsg:
 		// No-op; triggers Update/View cycle.
@@ -696,7 +712,12 @@ func (m *TUIModel) startAgentTurn(userPrompt string) tea.Cmd {
 
 	m.appendOutput("⧗ Sending to LLM...\n")
 
-	// Build conversation: session history + new user message.
+	// Event-driven path: use the client/service layer + bus events.
+	if m.cl != nil {
+		return m.startAgentTurnViaClient(ctx, userPrompt)
+	}
+
+	// Direct path: call App methods directly (original behavior).
 	m.turnMessages = m.app.sessionMessages()
 	m.turnMessages = append(m.turnMessages, api.Message{
 		Role: api.RoleUser,
@@ -709,6 +730,41 @@ func (m *TUIModel) startAgentTurn(userPrompt string) tea.Cmd {
 	return func() tea.Msg {
 		result, recovery, err := m.app.RunTurnWithRecovery(ctx, msgs)
 		return turnResultMsg{Result: result, Recovery: recovery, Err: err}
+	}
+}
+
+// startAgentTurnViaClient sends the message through the service layer and
+// listens for bus events, forwarding them to the TUI via program.Send().
+func (m *TUIModel) startAgentTurnViaClient(ctx context.Context, userPrompt string) tea.Cmd {
+	prog := m.program
+	sessionID := m.app.SessionID()
+
+	return func() tea.Msg {
+		// Subscribe to events.
+		evCh, err := m.cl.Events(ctx)
+		if err != nil {
+			return turnResultMsg{Err: err}
+		}
+
+		// Send message (async — events arrive on evCh).
+		go func() {
+			if err := m.cl.SendMessage(ctx, sessionID, bus.MessageInput{Text: userPrompt}); err != nil {
+				if prog != nil {
+					prog.Send(turnResultMsg{Err: err})
+				}
+			}
+		}()
+
+		// Forward bus events to TUI until turn completes.
+		for ev := range evCh {
+			if prog != nil {
+				prog.Send(busEventMsg{ev})
+			}
+			if ev.Type == bus.EventTurnComplete || ev.Type == bus.EventTurnError {
+				return nil // turn is done, stop forwarding
+			}
+		}
+		return nil
 	}
 }
 
@@ -908,6 +964,102 @@ func (m *TUIModel) injectModeTransition(reminder string) {
 		},
 	}
 	_ = m.app.session.AddMessage(msg)
+}
+
+// handleBusEvent processes events from the service layer bus.
+// This is the event-driven rendering path used when cl (agentClient) is set.
+func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
+	var data map[string]any
+	_ = json.Unmarshal(ev.Data, &data)
+
+	str := func(key string) string {
+		if v, ok := data[key].(string); ok {
+			return v
+		}
+		return ""
+	}
+
+	switch ev.Type {
+	case bus.EventTurnStart:
+		// Already showing "Sending to LLM..." from startAgentTurn.
+
+	case bus.EventTextDelta:
+		if text := str("text"); text != "" {
+			m.appendOutput(text)
+		}
+
+	case bus.EventThinkingDelta:
+		if text := str("text"); text != "" {
+			m.appendOutput(text) // thinking content rendered inline
+		}
+
+	case bus.EventToolUseStart:
+		tool := str("tool")
+		m.appendOutput(fmt.Sprintf("\n⚙ Tool(%s)\n", tool))
+
+	case bus.EventToolProgress:
+		tool := str("tool")
+		status := str("status")
+		icon := "⧗"
+		switch status {
+		case "completed":
+			icon = "✓"
+		case "failed":
+			icon = "✗"
+		case "queued":
+			icon = "◻"
+		}
+		m.appendOutput(fmt.Sprintf("  %s %s\n", icon, tool))
+
+	case bus.EventToolResult:
+		// Tool result handled — will be followed by next turn or turn.complete.
+
+	case bus.EventTurnComplete:
+		m.working = false
+		m.workCancel = nil
+		m.appendOutput("\n✓ Done.\n\n")
+		m.appendOutput(formatSessionSummary(m.app.usageTracker, m.app.sessionStart))
+		m.appendOutput("\n")
+		return m, func() tea.Msg { return repaintMsg{} }
+
+	case bus.EventTurnError:
+		m.working = false
+		m.workCancel = nil
+		errMsg := str("error")
+		if strings.Contains(errMsg, "context canceled") {
+			m.appendOutput("\n⏹ Cancelled.\n\n")
+		} else {
+			m.appendOutput(fmt.Sprintf("\n✗ Error: %s\n\n", errMsg))
+		}
+		return m, func() tea.Msg { return repaintMsg{} }
+
+	case bus.EventUsageUpdate:
+		if in, ok := data["input_tokens"].(float64); ok {
+			if out, ok := data["output_tokens"].(float64); ok {
+				m.app.usageTracker.Add(int(in), int(out), 0, 0)
+			}
+		}
+
+	case bus.EventPermissionReq:
+		reqID := str("request_id")
+		toolName := str("tool")
+		if m.permAlwaysAllow {
+			m.appendOutput(fmt.Sprintf("  Auto-allowing tool %q\n", toolName))
+			return m, nil
+		}
+		m.confirming = true
+		m.confirmPrompt = fmt.Sprintf("Allow tool %q? (y/n/a)", toolName)
+		m.confirmYes = func() tea.Cmd {
+			_ = reqID // TODO: wire RespondPermission via client when permission flow is integrated
+			return func() tea.Msg { return repaintMsg{} }
+		}
+		m.confirmNo = func() tea.Cmd {
+			_ = reqID
+			return func() tea.Msg { return repaintMsg{} }
+		}
+	}
+
+	return m, nil
 }
 
 // handleConfirmKey processes key input during a confirmation dialog.

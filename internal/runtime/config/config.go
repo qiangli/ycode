@@ -46,8 +46,20 @@ type Config struct {
 	// Observability settings (OTEL + Prometheus stack)
 	Observability *ObservabilityConfig `json:"observability,omitempty"`
 
+	// NATS server settings
+	NATS *NATSConfig `json:"nats,omitempty"`
+
 	// Custom settings (arbitrary key-value pairs from plugins/MCP)
 	Custom map[string]any `json:"custom,omitempty"`
+}
+
+// NATSConfig controls the embedded NATS server for distributed messaging.
+type NATSConfig struct {
+	Enabled    bool   `json:"enabled"`              // start NATS server, default true when serving
+	Port       int    `json:"port,omitempty"`       // default 4222
+	URL        string `json:"url,omitempty"`        // external NATS URL (when not using embedded)
+	Embedded   bool   `json:"embedded,omitempty"`   // use embedded server, default true
+	Credential string `json:"credential,omitempty"` // NATS credentials file path
 }
 
 // ObservabilityConfig controls OTEL instrumentation and the embedded observability stack.

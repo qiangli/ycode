@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 
@@ -25,8 +26,11 @@ var (
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
-	Short: "Run the embedded observability server",
-	Long:  "Start the embedded OTEL collector, Prometheus, alertmanager, log store, and dashboard server.",
+	Short: "Run all ycode services (observability, API, NATS)",
+	Long: `Start all ycode services: observability stack (OTEL, Prometheus, Jaeger, dashboards),
+HTTP/WebSocket API server (for web UI and remote clients), and embedded NATS server.
+
+Use --no-api or --no-nats to disable specific services.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, dataDir, err := loadServeConfig()
 		if err != nil {
@@ -40,13 +44,13 @@ var serveCmd = &cobra.Command{
 			return detachServer(cfg, dataDir)
 		}
 
-		return runServerForeground(cmd.Context(), cfg, dataDir)
+		return runAllServices(cmd.Context(), cfg, dataDir)
 	},
 }
 
 var serveStopCmd = &cobra.Command{
 	Use:   "stop",
-	Short: "Stop the running observability server",
+	Short: "Stop the running server",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		home, _ := os.UserHomeDir()
 		pidPath := filepath.Join(home, ".ycode", "serve.pid")
@@ -54,7 +58,7 @@ var serveStopCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("no server PID file found: %w", err)
 		}
-		pid, err := strconv.Atoi(string(data))
+		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 		if err != nil {
 			return fmt.Errorf("invalid PID: %w", err)
 		}
@@ -73,7 +77,7 @@ var serveStopCmd = &cobra.Command{
 
 var serveStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show status of the observability server and cluster",
+	Short: "Show status of the server and components",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, dataDir, err := loadServeConfig()
 		if err != nil {
@@ -187,8 +191,9 @@ var serveAuditCmd = &cobra.Command{
 	},
 }
 
-// runServerForeground starts the observability stack and blocks until interrupted.
-func runServerForeground(ctx context.Context, cfg *config.ObservabilityConfig, dataDir string) error {
+// runAllServices starts the full ycode server stack:
+// observability, API/WebSocket server, and NATS server.
+func runAllServices(ctx context.Context, cfg *config.ObservabilityConfig, dataDir string) error {
 	home, _ := os.UserHomeDir()
 
 	port := cfg.ProxyPort
@@ -196,13 +201,36 @@ func runServerForeground(ctx context.Context, cfg *config.ObservabilityConfig, d
 		port = 58080
 	}
 
+	// 1. Start observability stack.
 	mgr := buildStackManager(cfg, dataDir)
 	if err := mgr.Start(ctx); err != nil {
 		return fmt.Errorf("start observability stack: %w", err)
 	}
+	fmt.Printf("Observability server at http://127.0.0.1:%d/\n", port)
 
-	fmt.Printf("ycode observability server running at http://127.0.0.1:%d/\n", port)
-	fmt.Println("Press Ctrl+C to stop.")
+	// 2. Start API/WebSocket server + NATS (unless disabled).
+	var api *apiStack
+	if !serveNoAPI || !serveNoNATS {
+		var err error
+		api, err = startAPIStack(serveNoAPI, serveNoNATS)
+		if err != nil {
+			slog.Error("failed to start API stack", "error", err)
+			// Non-fatal — observability still runs.
+		} else {
+			if api.apiSrv != nil {
+				fmt.Printf("API server at    http://%s/\n", api.apiSrv.Addr())
+				fmt.Printf("Web UI at        http://%s/?token=%s\n", api.apiSrv.Addr(), api.token)
+			}
+			if api.natsSrv != nil {
+				fmt.Printf("NATS server at   nats://127.0.0.1:%d\n", apiNATSPort)
+			}
+			if api.token != "" {
+				fmt.Printf("Token:           %s\n", api.token)
+			}
+		}
+	}
+
+	fmt.Println("\nPress Ctrl+C to stop.")
 
 	// Write PID file.
 	pidPath := filepath.Join(home, ".ycode", "serve.pid")
@@ -216,6 +244,9 @@ func runServerForeground(ctx context.Context, cfg *config.ObservabilityConfig, d
 	<-sigCh
 
 	fmt.Println("\nShutting down...")
+	if api != nil {
+		api.stop()
+	}
 	if err := mgr.Stop(context.Background()); err != nil {
 		slog.Warn("observability: stop error", "error", err)
 	}
@@ -224,10 +255,15 @@ func runServerForeground(ctx context.Context, cfg *config.ObservabilityConfig, d
 
 // detachServer forks the current process as a background server.
 func detachServer(cfg *config.ObservabilityConfig, dataDir string) error {
-	// Re-exec ourselves with the same args minus --detach.
 	args := []string{"serve"}
 	if servePort > 0 {
 		args = append(args, "--port", strconv.Itoa(servePort))
+	}
+	if serveNoAPI {
+		args = append(args, "--no-api")
+	}
+	if serveNoNATS {
+		args = append(args, "--no-nats")
 	}
 
 	exe, err := os.Executable()
@@ -235,7 +271,6 @@ func detachServer(cfg *config.ObservabilityConfig, dataDir string) error {
 		return fmt.Errorf("find executable: %w", err)
 	}
 
-	// Create log file for detached process.
 	home, _ := os.UserHomeDir()
 	logDir := filepath.Join(home, ".ycode", "observability")
 	_ = os.MkdirAll(logDir, 0o755)
@@ -263,21 +298,16 @@ func detachServer(cfg *config.ObservabilityConfig, dataDir string) error {
 }
 
 // buildStackManager creates and configures a StackManager with all embedded components.
-// All components run as goroutines — no external processes.
-// Start order: VictoriaLogs → Jaeger → Collector → Prometheus → Alertmanager → Perses
 func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) *observability.StackManager {
 	mgr := observability.NewStackManager(cfg, dataDir)
 
-	// 1. VictoriaLogs (log sink — must be up before collector sends logs).
 	vlogsPort := 9428
 	mgr.AddComponent(observability.NewVictoriaLogsComponent(vlogsPort, filepath.Join(dataDir, "vlogs")))
 
-	// 2. Jaeger (trace sink — must be up before collector sends traces).
 	jaegerOTLPPort := 14317
 	jaegerQueryPort := 16686
 	mgr.AddComponent(observability.NewJaegerComponent(jaegerOTLPPort, jaegerQueryPort, filepath.Join(dataDir, "jaeger")))
 
-	// 3. OTEL Collector (routes: metrics→Prometheus, logs→VictoriaLogs, traces→Jaeger).
 	collCfg := collector.Config{
 		GRPCPort:               4317,
 		HTTPPort:               4318,
@@ -288,16 +318,13 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) *observa
 	}
 	mgr.AddComponent(collector.NewEmbeddedCollector(collCfg, filepath.Join(dataDir, "collector")))
 
-	// 4. Prometheus (scrapes collector's /metrics endpoint).
 	mgr.AddComponent(observability.NewPrometheusComponent(
 		filepath.Join(dataDir, "prometheus"),
 		fmt.Sprintf("127.0.0.1:%d", collCfg.PrometheusPort),
 	))
 
-	// 5. Alertmanager.
 	mgr.AddComponent(observability.NewAlertmanagerComponent())
 
-	// 6. Perses dashboards (queries embedded Prometheus via reverse proxy).
 	persesPort := 18080
 	proxyPort := cfg.ProxyPort
 	if proxyPort == 0 {
@@ -341,6 +368,11 @@ func loadServeConfig() (*config.ObservabilityConfig, string, error) {
 func init() {
 	serveCmd.Flags().IntVar(&servePort, "port", 58080, "Port for the observability server")
 	serveCmd.Flags().BoolVar(&serveDetach, "detach", false, "Run server in background")
+	serveCmd.Flags().BoolVar(&serveNoAPI, "no-api", false, "Disable the API/WebSocket server")
+	serveCmd.Flags().BoolVar(&serveNoNATS, "no-nats", false, "Disable the embedded NATS server")
+	serveCmd.Flags().IntVar(&apiPort, "api-port", 58090, "Port for the API server")
+	serveCmd.Flags().StringVar(&apiHostname, "api-hostname", "127.0.0.1", "Hostname for the API server")
+	serveCmd.Flags().IntVar(&apiNATSPort, "nats-port", 4222, "Port for the embedded NATS server")
 
 	serveAuditCmd.Flags().Int("last", 10, "Number of records to show")
 
