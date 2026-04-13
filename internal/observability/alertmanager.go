@@ -2,44 +2,54 @@ package observability
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"path"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
+	amcluster "github.com/prometheus/alertmanager/cluster"
+	amconfig "github.com/prometheus/alertmanager/config"
+	"github.com/prometheus/alertmanager/dispatch"
+	"github.com/prometheus/alertmanager/featurecontrol"
+	"github.com/prometheus/alertmanager/provider/mem"
+	"github.com/prometheus/alertmanager/silence"
+	"github.com/prometheus/alertmanager/types"
+	prometheus_model "github.com/prometheus/common/model"
+
+	v2 "github.com/prometheus/alertmanager/api/v2"
 	"github.com/prometheus/alertmanager/asset"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
-// AlertmanagerComponent provides an embedded alert manager running as a goroutine.
+// AlertmanagerComponent runs an embedded Alertmanager with the real upstream
+// API v2 and the Elm-based UI from the alertmanager/asset package.
 type AlertmanagerComponent struct {
-	mu      sync.Mutex
-	alerts  []Alert
+	alerts  *mem.Alerts
+	marker  *types.MemMarker
 	healthy atomic.Bool
 	cancel  context.CancelFunc
-}
-
-// Alert represents a firing or resolved alert.
-type Alert struct {
-	Labels      map[string]string `json:"labels"`
-	Annotations map[string]string `json:"annotations,omitempty"`
-	StartsAt    time.Time         `json:"startsAt"`
-	EndsAt      time.Time         `json:"endsAt,omitempty"`
-	Status      string            `json:"status"`
-	Fingerprint string            `json:"fingerprint,omitempty"`
 }
 
 func NewAlertmanagerComponent() *AlertmanagerComponent { return &AlertmanagerComponent{} }
 func (a *AlertmanagerComponent) Name() string          { return "alertmanager" }
 
 func (a *AlertmanagerComponent) Start(ctx context.Context) error {
-	cleanupCtx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(ctx)
 	a.cancel = cancel
-	go a.cleanupLoop(cleanupCtx)
+
+	reg := prometheus.NewRegistry()
+	logger := slog.Default()
+
+	a.marker = types.NewMarker(reg)
+
+	alerts, err := mem.NewAlerts(ctx, a.marker, 30*time.Minute, 0, nil, logger, reg, featurecontrol.NoopFlags{})
+	if err != nil {
+		return err
+	}
+	a.alerts = alerts
+
 	a.healthy.Store(true)
 	slog.Info("alertmanager: started")
 	return nil
@@ -50,6 +60,9 @@ func (a *AlertmanagerComponent) Stop(_ context.Context) error {
 	if a.cancel != nil {
 		a.cancel()
 	}
+	if a.alerts != nil {
+		a.alerts.Close()
+	}
 	slog.Info("alertmanager: stopped")
 	return nil
 }
@@ -57,186 +70,98 @@ func (a *AlertmanagerComponent) Stop(_ context.Context) error {
 func (a *AlertmanagerComponent) Healthy() bool { return a.healthy.Load() }
 
 func (a *AlertmanagerComponent) HTTPHandler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v2/alerts", a.handleAlerts)
-	mux.HandleFunc("/api/v2/alerts/groups", a.handleAlertGroups)
-	mux.HandleFunc("/api/v2/silences", a.handleSilences)
-	mux.HandleFunc("/api/v2/silences/", a.handleSilences)
-	mux.HandleFunc("/api/v2/status", a.handleStatus)
-	mux.HandleFunc("/api/v1/alerts", a.handleAlerts)
-	mux.HandleFunc("/-/healthy", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "OK") })
-	mux.HandleFunc("/-/ready", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "OK") })
+	reg := prometheus.NewRegistry()
+	logger := slog.Default()
 
-	// Serve the real Alertmanager web UI from embedded assets.
+	silences, err := silence.New(silence.Options{
+		Retention: 24 * time.Hour,
+		Logger:    logger,
+		Metrics:   reg,
+	})
+	if err != nil {
+		slog.Warn("alertmanager: silence init failed, using stub", "error", err)
+		return a.fallbackHandler()
+	}
+
+	peer := &noopPeer{}
+
+	// groupsFn returns alert groups — empty since we have no dispatcher.
+	groupsFn := func(_ context.Context, _ func(*dispatch.Route) bool, _ func(*types.Alert, time.Time) bool) (dispatch.AlertGroups, map[prometheus_model.Fingerprint][]string, error) {
+		return nil, nil, nil
+	}
+	// getAlertStatusFn returns the status for a given alert fingerprint.
+	getAlertStatusFn := func(_ prometheus_model.Fingerprint) types.AlertStatus {
+		return types.AlertStatus{State: types.AlertStateActive}
+	}
+	// groupMutedFunc returns the muted state.
+	groupMutedFunc := func(routeID, groupKey string) ([]string, bool) {
+		return a.marker.Muted(routeID, groupKey)
+	}
+
+	api, err := v2.NewAPI(a.alerts, groupsFn, getAlertStatusFn, groupMutedFunc, silences, peer, logger, reg)
+	if err != nil {
+		slog.Warn("alertmanager: API v2 init failed, using stub", "error", err)
+		return a.fallbackHandler()
+	}
+
+	// Initialize with a minimal config so the status endpoint works.
+	defaultReceiver := "default"
+	api.Update(&amconfig.Config{
+		Route:     &amconfig.Route{Receiver: defaultReceiver},
+		Receivers: []amconfig.Receiver{{Name: defaultReceiver}},
+	}, func(_ context.Context, _ prometheus_model.LabelSet) {})
+
+	mux := http.NewServeMux()
+	// Mount the real API v2.
+	mux.Handle("/api/v2/", api.Handler)
+	// Health/ready endpoints.
+	mux.HandleFunc("/-/healthy", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("OK")) })
+	mux.HandleFunc("/-/ready", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("OK")) })
+
+	// Serve the real Alertmanager Elm UI from embedded assets.
 	fs := http.FileServer(asset.Assets)
 	mux.HandleFunc("/script.js", func(w http.ResponseWriter, r *http.Request) {
-		disableAlertCaching(w)
 		r.URL.Path = "/static/script.js"
 		fs.ServeHTTP(w, r)
 	})
 	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-		disableAlertCaching(w)
 		r.URL.Path = "/static/favicon.ico"
 		fs.ServeHTTP(w, r)
 	})
 	mux.HandleFunc("/lib/", func(w http.ResponseWriter, r *http.Request) {
-		disableAlertCaching(w)
-		// Map /lib/foo → /static/lib/foo
 		r.URL.Path = path.Join("/static/lib", strings.TrimPrefix(r.URL.Path, "/lib"))
 		fs.ServeHTTP(w, r)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		disableAlertCaching(w)
 		r.URL.Path = "/static/"
 		fs.ServeHTTP(w, r)
+	})
+
+	return mux
+}
+
+// fallbackHandler returns a minimal handler if the real API fails to initialize.
+func (a *AlertmanagerComponent) fallbackHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/-/healthy", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("OK")) })
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("Alertmanager UI unavailable"))
 	})
 	return mux
 }
 
-func disableAlertCaching(w http.ResponseWriter) {
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("Expires", "0")
+// AddAlert inserts an alert via the in-memory provider.
+func (a *AlertmanagerComponent) AddAlert(ctx context.Context, alert *types.Alert) error {
+	if a.alerts == nil {
+		return nil
+	}
+	return a.alerts.Put(ctx, alert)
 }
 
-func (a *AlertmanagerComponent) AddAlert(alert Alert) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if alert.Status == "" {
-		alert.Status = "firing"
-	}
-	if alert.StartsAt.IsZero() {
-		alert.StartsAt = time.Now()
-	}
-	if alert.Fingerprint == "" {
-		fp := ""
-		for k, v := range alert.Labels {
-			fp += k + "=" + v + ","
-		}
-		alert.Fingerprint = fp
-	}
-	for i, e := range a.alerts {
-		if e.Fingerprint == alert.Fingerprint {
-			a.alerts[i] = alert
-			return
-		}
-	}
-	a.alerts = append(a.alerts, alert)
-}
+// noopPeer implements cluster.ClusterPeer for single-node operation.
+type noopPeer struct{}
 
-func (a *AlertmanagerComponent) Alerts() []Alert {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	r := make([]Alert, len(a.alerts))
-	copy(r, a.alerts)
-	return r
-}
-
-func (a *AlertmanagerComponent) cleanupLoop(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			a.mu.Lock()
-			now := time.Now()
-			alive := a.alerts[:0]
-			for _, al := range a.alerts {
-				if al.Status == "firing" || now.Sub(al.EndsAt) < 5*time.Minute {
-					alive = append(alive, al)
-				}
-			}
-			a.alerts = alive
-			a.mu.Unlock()
-		}
-	}
-}
-
-func (a *AlertmanagerComponent) handleAlerts(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(a.Alerts())
-	case http.MethodPost:
-		var alerts []Alert
-		if err := json.NewDecoder(r.Body).Decode(&alerts); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		for _, al := range alerts {
-			a.AddAlert(al)
-		}
-		fmt.Fprint(w, `{"status":"success"}`)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// handleAlertGroups returns alerts grouped by labels, as expected by the Elm UI.
-func (a *AlertmanagerComponent) handleAlertGroups(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	alerts := a.Alerts()
-	if len(alerts) == 0 {
-		fmt.Fprint(w, `[]`)
-		return
-	}
-	// Return a single group containing all alerts.
-	type receiver struct {
-		Name string `json:"name"`
-	}
-	type groupAlert struct {
-		Labels      map[string]string `json:"labels"`
-		Annotations map[string]string `json:"annotations"`
-		StartsAt    time.Time         `json:"startsAt"`
-		EndsAt      time.Time         `json:"endsAt"`
-		Status      struct {
-			State string `json:"state"`
-		} `json:"status"`
-		Fingerprint string `json:"fingerprint"`
-	}
-	type group struct {
-		Labels   map[string]string `json:"labels"`
-		Receiver receiver          `json:"receiver"`
-		Alerts   []groupAlert      `json:"alerts"`
-	}
-	var ga []groupAlert
-	for _, al := range alerts {
-		g := groupAlert{
-			Labels:      al.Labels,
-			Annotations: al.Annotations,
-			StartsAt:    al.StartsAt,
-			EndsAt:      al.EndsAt,
-			Fingerprint: al.Fingerprint,
-		}
-		g.Status.State = al.Status
-		ga = append(ga, g)
-	}
-	json.NewEncoder(w).Encode([]group{{
-		Labels:   map[string]string{},
-		Receiver: receiver{Name: "default"},
-		Alerts:   ga,
-	}})
-}
-
-// handleSilences returns an empty silences list (silences not implemented).
-func (a *AlertmanagerComponent) handleSilences(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	switch r.Method {
-	case http.MethodGet:
-		fmt.Fprint(w, `[]`)
-	case http.MethodPost:
-		fmt.Fprint(w, `{"silenceID":"not-implemented"}`)
-	case http.MethodDelete:
-		w.WriteHeader(http.StatusOK)
-	default:
-		fmt.Fprint(w, `[]`)
-	}
-}
-
-// handleStatus returns Alertmanager status info for the Elm UI.
-func (a *AlertmanagerComponent) handleStatus(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprint(w, `{"cluster":{"name":"","status":"disabled","peers":[]},"versionInfo":{"version":"embedded","branch":"","buildDate":"","buildUser":"","goVersion":"","revision":""},"config":{"original":""},"uptime":"2025-01-01T00:00:00.000Z"}`)
-}
+func (n *noopPeer) Name() string                     { return "embedded" }
+func (n *noopPeer) Status() string                   { return "disabled" }
+func (n *noopPeer) Peers() []amcluster.ClusterMember { return nil }

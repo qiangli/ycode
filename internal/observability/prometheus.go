@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -86,22 +87,103 @@ func (p *PrometheusComponent) Start(ctx context.Context) error {
 	p.listenAddr = listener.Addr().String()
 	p.port = listener.Addr().(*net.TCPAddr).Port
 
-	// Serve the embedded Prometheus web UI and API endpoints.
+	// Serve the real Prometheus mantine-ui and API endpoints.
 	// The reverse proxy forwards the full path including the prefix
 	// (e.g. /prometheus/api/v1/query), so we mount under the prefix.
 	uiFS, _ := fs.Sub(prometheusUI, "static/prometheus")
 	prefix := p.pathPrefix // e.g. "/prometheus"
 
 	mux := http.NewServeMux()
+	// Implemented Prometheus API endpoints.
 	mux.HandleFunc(prefix+"/api/v1/query", p.handleQuery)
 	mux.HandleFunc(prefix+"/api/v1/query_range", p.handleQueryRange)
+	mux.HandleFunc(prefix+"/api/v1/label/__name__/values", p.handleLabelValues)
+	// SSE endpoint the mantine-ui polls for live notifications.
+	mux.HandleFunc(prefix+"/api/v1/notifications/live", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		<-r.Context().Done()
+	})
+	// Stub endpoints for mantine-ui pages that expect specific response shapes.
+	mux.HandleFunc(prefix+"/api/v1/rules", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"groups":[]}}`)
+	})
+	mux.HandleFunc(prefix+"/api/v1/targets", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"activeTargets":[],"droppedTargets":[],"droppedTargetCounts":{}}}`)
+	})
+	mux.HandleFunc(prefix+"/api/v1/scrape_pools", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"scrapePools":[]}}`)
+	})
+	mux.HandleFunc(prefix+"/api/v1/status/config", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"yaml":""}}`)
+	})
+	mux.HandleFunc(prefix+"/api/v1/status/flags", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{}}`)
+	})
+	mux.HandleFunc(prefix+"/api/v1/status/runtimeinfo", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"startTime":"","CWD":"","reloadConfigSuccess":true,"lastConfigTime":"","corruptionCount":0,"goroutineCount":0,"GOMAXPROCS":0,"GOGC":"","GODEBUG":"","storageRetention":"15d"}}`)
+	})
+	mux.HandleFunc(prefix+"/api/v1/status/buildinfo", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"version":"embedded","revision":"","branch":"","buildUser":"","buildDate":"","goVersion":"","platform":""}}`)
+	})
+	mux.HandleFunc(prefix+"/api/v1/status/tsdb", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"headStats":{"numSeries":0,"chunkCount":0,"minTime":0,"maxTime":0,"numLabelPairs":0},"seriesCountByMetricName":[],"labelValueCountByLabelName":[],"memoryInBytesByLabelName":[],"seriesCountByLabelValuePair":[]}}`)
+	})
+	mux.HandleFunc(prefix+"/api/v1/labels", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":[]}`)
+	})
+	mux.HandleFunc(prefix+"/api/v1/alerts", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"alerts":[]}}`)
+	})
+	mux.HandleFunc(prefix+"/api/v1/metadata", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{}}`)
+	})
+	mux.HandleFunc(prefix+"/api/v1/status/walreplay", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"min":0,"max":0,"current":0}}`)
+	})
+	mux.HandleFunc(prefix+"/api/v1/series", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":[]}`)
+	})
+	mux.HandleFunc(prefix+"/api/v1/alertmanagers", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"activeAlertmanagers":[],"droppedAlertmanagers":[]}}`)
+	})
+	// Catch-all for any remaining /api/v1/* endpoints.
+	mux.HandleFunc(prefix+"/api/v1/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{}}`)
+	})
 	mux.HandleFunc(prefix+"/-/healthy", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "OK")
 	})
-	// Serve embedded UI static files under the prefix.
-	fileServer := http.StripPrefix(prefix, http.FileServer(http.FS(uiFS)))
-	mux.Handle(prefix+"/", fileServer)
+	// Serve index.html with placeholders replaced.
+	indexHTML := p.buildIndexHTML(uiFS)
+	mux.HandleFunc(prefix+"/", func(w http.ResponseWriter, r *http.Request) {
+		// For asset files, serve from embedded FS directly.
+		relPath := strings.TrimPrefix(r.URL.Path, prefix+"/")
+		if relPath != "" && relPath != "index.html" {
+			http.StripPrefix(prefix, http.FileServer(http.FS(uiFS))).ServeHTTP(w, r)
+			return
+		}
+		// Serve processed index.html for the root and index.html paths.
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(indexHTML)
+	})
 
 	p.server = &http.Server{Handler: mux}
 	go func() {
@@ -146,6 +228,49 @@ func (p *PrometheusComponent) HTTPHandler() http.Handler { return nil }
 
 // Port returns the Prometheus HTTP port for reverse proxying.
 func (p *PrometheusComponent) Port() int { return p.port }
+
+// buildIndexHTML reads the embedded index.html and replaces Prometheus placeholders.
+func (p *PrometheusComponent) buildIndexHTML(uiFS fs.FS) []byte {
+	data, err := fs.ReadFile(uiFS, "index.html")
+	if err != nil {
+		return []byte("<html><body>Prometheus UI not available</body></html>")
+	}
+	html := string(data)
+	html = strings.ReplaceAll(html, "CONSOLES_LINK_PLACEHOLDER", "")
+	html = strings.ReplaceAll(html, "AGENT_MODE_PLACEHOLDER", "false")
+	html = strings.ReplaceAll(html, "READY_PLACEHOLDER", "true")
+	html = strings.ReplaceAll(html, "LOOKBACKDELTA_PLACEHOLDER", "5m")
+	html = strings.ReplaceAll(html, "TITLE_PLACEHOLDER", "Prometheus")
+	return []byte(html)
+}
+
+// handleLabelValues returns label values for autocomplete (metric names).
+func (p *PrometheusComponent) handleLabelValues(w http.ResponseWriter, r *http.Request) {
+	q, err := p.db.Querier(0, time.Now().UnixMilli())
+	if err != nil {
+		writePromError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer q.Close()
+
+	names, _, err := q.LabelNames(r.Context(), nil)
+	if err != nil {
+		writePromError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// The __name__ label values endpoint returns metric names.
+	vals, _, err := q.LabelValues(r.Context(), "__name__", nil)
+	if err != nil {
+		writePromError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = names // used for other label endpoints if needed
+
+	w.Header().Set("Content-Type", "application/json")
+	result, _ := json.Marshal(vals)
+	fmt.Fprintf(w, `{"status":"success","data":%s}`, result)
+}
 
 func (p *PrometheusComponent) handleQuery(w http.ResponseWriter, r *http.Request) {
 	query := r.FormValue("query")
