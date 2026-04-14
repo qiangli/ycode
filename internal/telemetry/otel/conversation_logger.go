@@ -114,6 +114,59 @@ func (cl *ConversationLogger) LogToolCall(sessionID string, turnIndex int, tc To
 	cl.logger.Emit(context.Background(), rec)
 }
 
+// SessionSummary holds aggregate data for a completed session.
+type SessionSummary struct {
+	SessionID    string
+	Title        string
+	TurnsCount   int
+	TokensIn     int
+	TokensOut    int
+	TotalCostUSD float64
+	DurationMs   int64
+	FilesChanged int
+	ToolsUsed    []string
+	Success      bool
+	Error        string
+}
+
+// LogSessionSummary emits a session summary as a structured OTEL log record.
+// Called when a session ends or the user exits.
+func (cl *ConversationLogger) LogSessionSummary(summary *SessionSummary) {
+	if summary == nil {
+		return
+	}
+
+	var rec log.Record
+	rec.SetTimestamp(time.Now())
+	rec.SetSeverityText("INFO")
+	rec.SetSeverity(log.SeverityInfo)
+	rec.SetBody(log.StringValue("session_summary"))
+	rec.AddAttributes(
+		log.String("log.type", "session_summary"),
+		log.String("session.id", summary.SessionID),
+		log.String("instance.id", cl.instanceID),
+		log.Int("session.turns", summary.TurnsCount),
+		log.Int("session.tokens.input", summary.TokensIn),
+		log.Int("session.tokens.output", summary.TokensOut),
+		log.Float64("session.cost_usd", summary.TotalCostUSD),
+		log.Int64("session.duration_ms", summary.DurationMs),
+		log.Int("session.files_changed", summary.FilesChanged),
+		log.Bool("success", summary.Success),
+	)
+	if summary.Title != "" {
+		rec.AddAttributes(log.String("session.title", summary.Title))
+	}
+	if summary.Error != "" {
+		rec.AddAttributes(log.String("error", summary.Error))
+	}
+	if len(summary.ToolsUsed) > 0 {
+		toolsJSON, _ := json.Marshal(summary.ToolsUsed)
+		rec.AddAttributes(log.String("session.tools_used", string(toolsJSON)))
+	}
+
+	cl.logger.Emit(context.Background(), rec)
+}
+
 // LogChatMessage emits an individual chat message as a structured OTEL log record.
 func (cl *ConversationLogger) LogChatMessage(sessionID string, turnIndex int, role string, content json.RawMessage) {
 	var rec log.Record

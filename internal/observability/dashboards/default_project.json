@@ -32,7 +32,10 @@
         "name": "Session Activity",
         "panels": [
           {"title": "Turns per Session", "query": "sum(ycode_session_turns) by (service_instance_id)", "type": "timeseries"},
+          {"title": "Session Cost ($)", "query": "sum(ycode_session_cost) by (service_instance_id)", "type": "timeseries"},
+          {"title": "Session Tokens", "query": "sum(ycode_session_tokens_input + ycode_session_tokens_output) by (service_instance_id)", "type": "timeseries"},
           {"title": "Turn Duration (p95)", "query": "histogram_quantile(0.95, rate(ycode_turn_duration_bucket[5m]))", "type": "timeseries"},
+          {"title": "Files Changed per Turn", "query": "histogram_quantile(0.5, rate(ycode_turn_files_changed_bucket[5m]))", "type": "timeseries"},
           {"title": "Tools per Turn", "query": "histogram_quantile(0.5, rate(ycode_turn_tool_count_bucket[5m]))", "type": "timeseries"}
         ]
       },
@@ -157,9 +160,16 @@
         "name": "Session & Turn Metrics",
         "panels": [
           {"title": "Turns per Session", "query": "sum(ycode_session_turns) by (service_instance_id)", "type": "timeseries"},
+          {"title": "Session Duration (p50)", "query": "histogram_quantile(0.5, rate(ycode_session_duration_bucket[5m]))", "type": "timeseries"},
+          {"title": "Session Cost ($)", "query": "sum(ycode_session_cost) by (service_instance_id)", "type": "timeseries"},
+          {"title": "Session Input Tokens", "query": "sum(ycode_session_tokens_input) by (service_instance_id)", "type": "timeseries"},
+          {"title": "Session Output Tokens", "query": "sum(ycode_session_tokens_output) by (service_instance_id)", "type": "timeseries"},
           {"title": "Turn Duration (p50)", "query": "histogram_quantile(0.5, rate(ycode_turn_duration_bucket[5m]))", "type": "timeseries"},
           {"title": "Turn Duration (p95)", "query": "histogram_quantile(0.95, rate(ycode_turn_duration_bucket[5m]))", "type": "timeseries"},
           {"title": "Turn Duration (p99)", "query": "histogram_quantile(0.99, rate(ycode_turn_duration_bucket[5m]))", "type": "timeseries"},
+          {"title": "Files Changed per Turn", "query": "histogram_quantile(0.5, rate(ycode_turn_files_changed_bucket[5m]))", "type": "timeseries"},
+          {"title": "Lines Added per Turn", "query": "histogram_quantile(0.5, rate(ycode_turn_lines_added_bucket[5m]))", "type": "timeseries"},
+          {"title": "Lines Deleted per Turn", "query": "histogram_quantile(0.5, rate(ycode_turn_lines_deleted_bucket[5m]))", "type": "timeseries"},
           {"title": "Tools per Turn (median)", "query": "histogram_quantile(0.5, rate(ycode_turn_tool_count_bucket[5m]))", "type": "timeseries"},
           {"title": "Tools per Turn (p95)", "query": "histogram_quantile(0.95, rate(ycode_turn_tool_count_bucket[5m]))", "type": "timeseries"}
         ]

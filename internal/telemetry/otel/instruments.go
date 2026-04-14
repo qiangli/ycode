@@ -25,6 +25,17 @@ type Instruments struct {
 	TurnToolCount metric.Int64Histogram
 	SessionTurns  metric.Int64Counter
 
+	// Session metrics.
+	SessionDuration  metric.Float64Histogram
+	SessionTotalCost metric.Float64Counter
+	SessionTokensIn  metric.Int64Counter
+	SessionTokensOut metric.Int64Counter
+
+	// Turn-level file change metrics.
+	TurnFilesChanged metric.Int64Histogram
+	TurnLinesAdded   metric.Int64Histogram
+	TurnLinesDeleted metric.Int64Histogram
+
 	// Compaction metrics.
 	CompactionTotal       metric.Int64Counter
 	CompactionTokensSaved metric.Int64Counter
@@ -94,6 +105,38 @@ func NewInstruments(m metric.Meter) (*Instruments, error) {
 	}
 	if inst.SessionTurns, err = m.Int64Counter("ycode.session.turns",
 		metric.WithDescription("Turns per session")); err != nil {
+		return nil, err
+	}
+	if inst.SessionDuration, err = m.Float64Histogram("ycode.session.duration",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Session duration")); err != nil {
+		return nil, err
+	}
+	if inst.SessionTotalCost, err = m.Float64Counter("ycode.session.cost",
+		metric.WithUnit("USD"),
+		metric.WithDescription("Cumulative session cost")); err != nil {
+		return nil, err
+	}
+	if inst.SessionTokensIn, err = m.Int64Counter("ycode.session.tokens.input",
+		metric.WithUnit("tokens"),
+		metric.WithDescription("Session input tokens")); err != nil {
+		return nil, err
+	}
+	if inst.SessionTokensOut, err = m.Int64Counter("ycode.session.tokens.output",
+		metric.WithUnit("tokens"),
+		metric.WithDescription("Session output tokens")); err != nil {
+		return nil, err
+	}
+	if inst.TurnFilesChanged, err = m.Int64Histogram("ycode.turn.files_changed",
+		metric.WithDescription("Files modified per turn")); err != nil {
+		return nil, err
+	}
+	if inst.TurnLinesAdded, err = m.Int64Histogram("ycode.turn.lines_added",
+		metric.WithDescription("Lines added per turn")); err != nil {
+		return nil, err
+	}
+	if inst.TurnLinesDeleted, err = m.Int64Histogram("ycode.turn.lines_deleted",
+		metric.WithDescription("Lines deleted per turn")); err != nil {
 		return nil, err
 	}
 	if inst.CompactionTotal, err = m.Int64Counter("ycode.compaction.total",
