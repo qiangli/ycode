@@ -1,4 +1,4 @@
-# Implementation Plan: Tools, Agents & Skills Gaps
+# Implementation Plan: Tools & Security Gaps
 
 > Based on analysis of 9 prior-art projects. Prioritized by impact and feasibility.
 > Generated 2026-04-11.
@@ -135,84 +135,19 @@ The most critical gaps are in security. These should be addressed first since th
 
 ---
 
-## Phase 4: Agent Enhancements (P2)
+## Phase 4: Nice-to-Have (P2-P3)
 
-### 4.1 Custom Agent Definitions
-**Effort:** Medium | **Reference:** OpenCode, OpenClaw, Claw Code
-**Files:** `internal/tools/agent.go`, new `internal/runtime/agents/`
-
-- [ ] Support `.ycode/agents/*.toml` files for custom agent definitions
-- [ ] Fields: name, description, model, reasoning_effort, tool_allowlist, system_prompt
-- [ ] Discovery: scan project → user dirs with shadowing
-- [ ] Integrate with Agent tool: `subagent_type` maps to custom agent names
-- [ ] Slash command: `/agents` to list available agents
-
-### 4.2 Keyword-Triggered Skills
-**Effort:** Medium | **Reference:** OpenHands
-**Files:** `internal/tools/skill.go`, `internal/runtime/prompt/`
-
-- [ ] Add `triggers` field to SKILL.md frontmatter
-- [ ] Scan user messages for trigger keywords
-- [ ] Auto-inject matching skill content into system prompt
-- [ ] Limit to 2-3 triggered skills per message to avoid prompt bloat
-
-### 4.3 Inter-Agent Messaging
-**Effort:** Medium | **Reference:** Codex V2
-**Files:** `internal/tools/agent.go`
-
-- [ ] Add `SendMessage` tool for agent-to-agent communication
-- [ ] Mailbox-based: messages queued for next turn
-- [ ] Agent can wait for messages or status changes
-- [ ] Useful for coordination in multi-agent workflows
-
----
-
-## Phase 5: Expanded Skills Library (P1-P2)
-
-### 5.1 New Built-in Skills
-**Files:** `internal/tools/skills/`
-
-- [ ] **github** - PR creation, issue management, CI status checks
-- [ ] **gitlab** - GitLab equivalents
-- [ ] **test-runner** - Run tests, analyze failures, suggest fixes
-- [ ] **security-review** - Security-focused code analysis
-- [ ] **docs-writer** - Documentation generation
-- [ ] **changelog** - Changelog generation from git history
-- [ ] **debug** - Bug hunting and diagnosis workflow
-- [ ] **onboarding** - Repository onboarding assistance
-- [ ] **refactor** - Guided refactoring workflows
-
-### 5.2 Skill Gating
-**Effort:** Low | **Reference:** OpenClaw, Gemini CLI
-**Files:** `internal/tools/skill.go`
-
-- [ ] Add optional `requires` to SKILL.md frontmatter:
-  - `requires.bins`: Required binaries on PATH
-  - `requires.env`: Required environment variables
-  - `requires.os`: Platform filter (darwin/linux/windows)
-- [ ] Skip skills that don't meet requirements during discovery
-- [ ] Show gating reason in skill list
-
----
-
-## Phase 6: Nice-to-Have (P2-P3)
-
-### 6.1 Auto-Approval Profiles
-**Reference:** Cline, OpenClaw
-- [ ] Predefined profiles: `default` (ask), `auto-edit` (auto-approve file edits), `full` (auto-approve all)
-- [ ] Configurable via settings
-
-### 6.2 REPL Tool
+### 4.1 REPL Tool
 **Reference:** Codex (JS), OpenHands (IPython)
 - [ ] Python REPL with persistent kernel
 - [ ] Useful for data exploration and testing
 
-### 6.3 Repository Mapping
+### 4.2 Repository Mapping
 **Reference:** Aider (tree-sitter)
 - [ ] AST-based code summarization for repo overview
 - [ ] Token-budget-aware trimming
 
-### 6.4 Content Filtering
+### 4.3 Content Filtering
 **Reference:** OpenClaw
 - [ ] Strip thinking tags from output
 - [ ] Redact leaked control tokens
@@ -223,10 +158,7 @@ The most critical gaps are in security. These should be addressed first since th
 ## Implementation Order (Recommended)
 
 ```
-Phase 1 (Security) ──→ Phase 2 (Tools) ──→ Phase 3 (More Security)
-                                          ──→ Phase 5 (Skills)
-                                          ──→ Phase 4 (Agents)
-                                          ──→ Phase 6 (Nice-to-have)
+Phase 1 (Security) ──→ Phase 2 (New Tools) ──→ Phase 3 (More Security) ──→ Phase 4 (Nice-to-have)
 ```
 
 ### Sprint 1: Security Foundation
@@ -244,16 +176,9 @@ Phase 1 (Security) ──→ Phase 2 (Tools) ──→ Phase 3 (More Security)
 8. Approval caching (3.1)
 9. Doom loop detection (3.3)
 
-### Sprint 4: Skills & Agents
-10. New built-in skills (5.1)
-11. Skill gating (5.2)
-12. Custom agent definitions (4.1)
-
-### Sprint 5: Advanced Features
-13. Browser automation (2.4)
-14. Keyword-triggered skills (4.2)
-15. Inter-agent messaging (4.3)
-16. Guardian LLM review (3.2)
+### Sprint 4: Advanced Features
+10. Browser automation (2.4)
+11. Guardian LLM review (3.2)
 
 ---
 
@@ -263,9 +188,7 @@ Phase 1 (Security) ──→ Phase 2 (Tools) ──→ Phase 3 (More Security)
 |------|------------|
 | Platform sandboxing | Bash safety analysis (for integration) |
 | Guardian LLM review | Approval caching (for UX) |
-| Inter-agent messaging | Custom agent definitions |
 | Browser automation | None (can be MCP server) |
-| Keyword-triggered skills | Skill gating |
 
 ## Key Go Packages
 

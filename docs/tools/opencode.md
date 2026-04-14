@@ -1,4 +1,4 @@
-# OpenCode - Tools, Agents, Skills & Security Analysis
+# OpenCode - Tools & Security Analysis
 
 **Project:** OpenCode (AI coding agent CLI)
 **Language:** TypeScript (Bun runtime)
@@ -53,43 +53,6 @@
 
 ---
 
-## Agents / Subagents
-
-### Primary Agents (2)
-| Agent | Description | Mode |
-|-------|-------------|------|
-| **build** | Full-access development agent (default) | primary |
-| **plan** | Read-only planning/analysis agent | primary |
-
-### Subagents (2)
-| Agent | Description | Mode |
-|-------|-------------|------|
-| **general** | General-purpose, parallel execution | subagent |
-| **explore** | Fast codebase exploration (read-only tools) | subagent |
-
-### Hidden Agents (3)
-| Agent | Description |
-|-------|-------------|
-| **compaction** | Session compaction |
-| **title** | Session title generation (temp: 0.5) |
-| **summary** | Session summary generation |
-
-### Custom Agents
-User-defined via config with: name, description, permission, model, prompt, temperature, topP, color, options, steps.
-
----
-
-## Skills
-
-| Component | Description |
-|-----------|-------------|
-| **Format** | `SKILL.md` with YAML frontmatter (name, description) |
-| **Locations** | `~/.claude/skills/`, `~/.agents/skills/`, `.opencode/skills/`, `.opencode/plans/`, plugins |
-| **Loading** | Bundled with up to 10 related files |
-| **Dedup** | First-wins on duplicate names |
-
----
-
 ## Security & Guardrails
 
 ### Permission System
@@ -131,11 +94,8 @@ User-defined via config with: name, description, permission, model, prompt, temp
 
 ## Notable Patterns
 
-- **Effect-based architecture:** Typed composable async operations via Effect library
-- **Plugin system:** Hooks with trigger patterns, built-in auth plugins (Codex, Copilot, Gitlab, Poe, Cloudflare)
-- **Bus service:** Async event publishing for permission events and session events
-- **InstanceState:** Per-project cleanup semantics with scoped cache
 - **Conditional tools:** Edit vs apply_patch based on model capability
+- **Effect-based architecture:** Typed composable async operations via Effect library
 
 ---
 
@@ -145,12 +105,8 @@ User-defined via config with: name, description, permission, model, prompt, temp
 |---------|-------------|----------|
 | Bash AST analysis (tree-sitter) | Not implemented | **High** - superior to regex |
 | `multiedit` tool (chained edits) | Not implemented | **Medium** |
-| `codesearch` (code-specific web search) | Not implemented | Low - niche |
 | External directory protection | Partial (VFS validation) | **Medium** - strengthen |
 | Doom loop detection | Not implemented | **Medium** - safety |
 | `.env` file protection | Not implemented | **Medium** - security |
 | LSP diagnostic feedback after writes | Not implemented | **Medium** - quality |
-| Custom agent definitions (config) | Not implemented | **Medium** |
-| `plan_exit` tool (agent transition) | Implemented (ExitPlanMode) | Done |
 | Output truncation to file | Not implemented | Low |
-| Auth plugins (Copilot, Gitlab, etc.) | Not implemented | Low |

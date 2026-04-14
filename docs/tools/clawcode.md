@@ -1,4 +1,4 @@
-# Claw Code - Tools, Agents, Skills & Security Analysis
+# Claw Code - Tools & Security Analysis
 
 **Project:** Claw Code (reference implementation for ycode)
 **Language:** Rust
@@ -104,32 +104,6 @@
 
 ---
 
-## Agents / Subagents
-
-| Component | Description |
-|-----------|-------------|
-| **Agent tool** | Launches specialized agent tasks with custom prompts |
-| **Agent definitions** | `.claw/agents/*.toml` with name, description, model, reasoning_effort |
-| **Worker boot system** | State machine: Spawning → TrustRequired → ReadyForPrompt → Running → Finished/Failed |
-| **Team coordination** | Parallel subagent teams via TeamCreate |
-| **Cron scheduling** | Recurring task execution |
-
----
-
-## Skills
-
-| Component | Description |
-|-----------|-------------|
-| **Skill tool** | Loads SKILL.md files with frontmatter |
-| **Discovery** | `.claw/skills/`, `.codex/skills/`, user-level dirs |
-| **Legacy support** | `.commands/` directory format |
-| **Shadowing** | Project skills override user skills with same name |
-
-### Slash Commands (70+)
-Categories: Session, Workspace/Git, Discovery/Debug, Automation, Plugin, Execution Control, Specialized.
-
----
-
 ## Security & Guardrails
 
 | Mechanism | Description |
@@ -149,19 +123,24 @@ Categories: Session, Workspace/Git, Discovery/Debug, Automation, Plugin, Executi
 
 ---
 
+## Notable Patterns
+
+- **ToolHandler trait:** Generic handler abstraction with mutability detection
+- **Deferred tool loading:** Tools marked `defer_loading: true`
+- **Event-driven:** Tool invocations emit ToolEventCtx for audit trail
+
+---
+
 ## Gap Analysis vs ycode
 
 | Feature | ycode Status | Priority |
 |---------|-------------|----------|
 | All 50 core tools | **Implemented** (50+ tools) | Done |
-| Worker boot state machine | **Implemented** | Done |
-| Team/Cron tools | **Implemented** | Done |
-| MCP/LSP integration | **Implemented** | Done |
 | Bash command validation/classification | Partial (basic) | **High** - need intent classification |
 | Sandbox (Linux namespaces) | Not implemented | **High** - critical for safety |
 | Binary file detection | Not implemented | **Medium** |
 | Hook system with permission overrides | Partial (hooks exist) | **Medium** - need override capability |
-| RunTaskPacket tool | Not implemented | Low |
 | REPL tool | Not implemented | **Medium** - useful for data science |
+| RunTaskPacket tool | Not implemented | Low |
 | PowerShell tool | Not implemented | Low (platform-specific) |
 | Container detection tuning | Basic implementation | Low |

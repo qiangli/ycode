@@ -1,4 +1,4 @@
-# Gemini CLI - Tools, Agents, Skills & Security Analysis
+# Gemini CLI - Tools & Security Analysis
 
 **Project:** Google Gemini CLI
 **Language:** TypeScript/Node.js
@@ -47,50 +47,6 @@
 | Tool | Description |
 |------|-------------|
 | `mcp_<server>_<tool>` | Dynamically discovered MCP tools with namespace prefixes |
-
----
-
-## Agents / Subagents
-
-### Built-in Local Agents (5)
-| Agent | Description | Timeout | Max Turns |
-|-------|-------------|---------|-----------|
-| **generalist** | General-purpose, all tools, non-interactive | 10 min | 20 |
-| **codebase_investigator** | Read-only code analysis, low temperature (0.1), structured JSON output | 10 min | 50 |
-| **cli_help** | CLI documentation agent | - | - |
-| **browser_agent** | Autonomous web browser via Chrome accessibility tree (experimental) | 10 min | 30 |
-| **memory_manager** | Long-term memory persistence, scoped workspace | - | - |
-
-### Remote Agents (A2A Protocol)
-| Feature | Description |
-|---------|-------------|
-| **A2A protocol** | Agent-to-Agent execution via URL-based agent cards |
-| **Authentication** | OAuth2, API Key, HTTP, Google Credentials |
-| **Identity verification** | Hash-based agent acknowledgment |
-| **Agent cards** | URL or inline JSON format |
-
----
-
-## Skills (11 built-in)
-
-| Skill | Description |
-|-------|-------------|
-| `async-pr-review` | Asynchronous PR review with GitHub integration |
-| `behavioral-evals` | Test/evaluation framework |
-| `ci` | CI/CD integration |
-| `code-reviewer` | Structured code review analysis |
-| `docs-changelog` | Documentation changelog generation |
-| `docs-writer` | Documentation writing assistance |
-| `github-issue-creator` | Automated GitHub issue creation |
-| `pr-address-comments` | Automated PR comment addressing |
-| `pr-creator` | Automated PR creation |
-| `review-duplication` | Code duplication detection |
-| `string-reviewer` | Text content review |
-
-### Skill Architecture
-- Precedence: Built-in < Extensions < User < Workspace
-- Activation via `activate_skill` tool
-- Script-based or tool-based implementation
 
 ---
 
@@ -146,10 +102,6 @@
 ## Notable Patterns
 
 - **Declarative tools:** `DeclarativeTool` base class with schema-driven validation
-- **ReAct loop:** Agent execution via LocalAgentExecutor with configurable turns
-- **Agent-as-Tool:** Agents callable via `delegate_to_agent`
-- **Policy-as-Code:** TOML-based policy files with HMAC integrity
-- **Message bus:** Async tool-UI communication with correlation IDs
 - **Tool kinds:** Read, Edit, Delete, Move, Search, Execute, Think, Agent, Fetch, etc.
 
 ---
@@ -158,16 +110,8 @@
 
 | Feature | ycode Status | Priority |
 |---------|-------------|----------|
-| Browser agent (Chrome automation) | Not implemented | **High** - unique capability |
-| A2A remote agents | Not implemented | **Medium** - future interop |
 | Policy-as-Code (TOML with HMAC) | Not implemented | **Medium** - tamper-proof policies |
-| Codebase investigator agent | Partial (Explore agent) | Low - similar concept |
 | `read_many_files` (batch read) | Implemented (`read_multiple_files`) | Done |
-| `ask_user` with multi-select | Partial (AskUserQuestion) | Low |
 | Folder trust system | Not implemented | **Medium** - security |
 | Safety checker plugins | Not implemented | **Medium** - extensible validation |
-| `modify_with_editor` approval option | Not implemented | Low |
 | Tool kind classification | Not implemented | Low |
-| Memory manager agent | Partial (memory system exists) | Low |
-| `save_memory` tool | Partial (skill-based) | Low |
-| 11 built-in skills | 6 skills implemented | **Medium** - add more skills |

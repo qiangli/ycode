@@ -1,4 +1,4 @@
-# OpenClaw - Tools, Agents, Skills & Security Analysis
+# OpenClaw - Tools & Security Analysis
 
 **Project:** OpenClaw (multi-channel AI assistant gateway)
 **Language:** TypeScript (ESM)
@@ -77,50 +77,6 @@
 
 ---
 
-## Agents / Subagents
-
-### Multi-Agent Architecture
-| Component | Description |
-|-----------|-------------|
-| **Agent isolation** | Session key: `agent:<agentId>:main` vs `agent:<agentId>:subagent:<uuid>` |
-| **Per-agent config** | Workspace, skills, tool policies, models, timeouts, sandbox |
-| **Spawn depth** | Configurable: depth 0 (main) → depth 1 (sub) → depth 2 (sub-sub) |
-| **Concurrency** | `maxChildrenPerAgent` (default 5), `maxConcurrent` (default 8) |
-| **Auto-archive** | After configurable inactivity (default 60 min) |
-
-### ACP (Agent Client Protocol) Sessions
-| Feature | Description |
-|---------|-------------|
-| **Supported harnesses** | Codex, Claude Code, Cursor, Gemini CLI, OpenCode |
-| **Binding modes** | Current-conversation (`--bind here`) or thread (`--thread auto`) |
-| **Commands** | `/acp spawn`, `/acp status`, `/acp model`, `/acp cancel`, `/acp close` |
-
----
-
-## Skills (75 bundled)
-
-### Categories
-| Category | Skills |
-|----------|--------|
-| **System** | healthcheck, node-connect, coding-agent, taskflow, oracle |
-| **Communication** | discord, slack, imsg, bluebubbles, voice-call |
-| **Notes** | apple-notes, bear-notes, notion, obsidian, apple-reminders, things-mac |
-| **Development** | github, gh-issues, skill-creator, clawhub |
-| **Audio/Media** | openai-whisper, spotify-player, songsee, canvas, peekaboo, video-frames |
-| **IoT/Hardware** | eightctl, openhue, blucli |
-| **Utility** | nano-pdf, himalaya (email), gifgrep, weather, goplaces |
-| **AI/Models** | gemini, model-usage, sag |
-
-### Skill Gating System
-- **Environment:** `requires.env` checks
-- **Binaries:** `requires.bins` / `requires.anyBins` PATH validation
-- **Config:** `requires.config` path checks
-- **OS:** Platform filtering (darwin/linux/win32)
-- **Install specs:** brew/node/go/uv/download
-- **Load order:** Extra dirs → Bundled → Managed → Personal → Project → Workspace
-
----
-
 ## Security & Guardrails
 
 ### 5-Tier Trust Model (MITRE ATLAS framework)
@@ -164,12 +120,7 @@
 
 ## Notable Patterns
 
-- **25+ channel integrations:** WhatsApp, Telegram, Slack, Discord, Signal, iMessage, IRC, Matrix, etc.
-- **Plugin architecture:** 99+ bundled plugins with manifest-driven loading
-- **ACP runtime:** Interop with external agent harnesses (Codex, Claude Code, Gemini CLI)
 - **Tool streaming:** Block streaming for progressive tool results
-- **Config SHA-256 hashing:** Baseline drift detection for config changes
-- **Thread binding:** Discord thread ↔ agent session binding
 
 ---
 
@@ -177,16 +128,9 @@
 
 | Feature | ycode Status | Priority |
 |---------|-------------|----------|
-| Multi-channel messaging (25+ platforms) | Not applicable | N/A - ycode is CLI-focused |
-| ACP (Agent Client Protocol) interop | Not implemented | **Medium** - future agent interop |
-| Image/video/music generation tools | Not implemented | Low - not core to coding |
 | Browser automation tool | Not implemented | **High** - web research capability |
-| Device/node remote execution | Not applicable | N/A - desktop scope |
-| 75 bundled skills | 6 skills | **High** - expand skill library |
-| Skill gating (bins/env/config/OS) | Not implemented | **Medium** - conditional skills |
 | Tool profiles (full/coding/messaging/minimal) | Not implemented | **Medium** - presets |
 | SSRF protection in web fetch | Not implemented | **Medium** - security |
-| Exec file binding (approval tied to operand) | Not implemented | Low |
 | Content filtering (strip thinking tags, etc.) | Not implemented | **Medium** - safety |
-| Config drift detection (SHA-256) | Not implemented | Low |
-| ClawHub skill marketplace | Not applicable | N/A - different ecosystem |
+| Image/video/music generation tools | Not implemented | Low - not core to coding |
+| Device/node remote execution | Not applicable | N/A - desktop scope |

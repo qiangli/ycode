@@ -1,4 +1,4 @@
-# Codex CLI - Tools, Agents, Skills & Security Analysis
+# Codex CLI - Tools & Security Analysis
 
 **Project:** OpenAI Codex CLI Agent
 **Language:** Rust (codex-rs core), TypeScript (codex-cli wrapper)
@@ -73,35 +73,6 @@
 
 ---
 
-## Agents / Subagents
-
-Codex has the most sophisticated multi-agent system among surveyed projects:
-
-| Component | Description |
-|-----------|-------------|
-| **Agent spawning** | V1 (simple) and V2 (task tree, model selection, reasoning_effort) |
-| **Agent hierarchy** | Root agent + spawned subagents form task tree |
-| **Inter-agent messaging** | send_input (V1), send_message (V2), followup_task (V2) |
-| **Fork modes** | FullHistory or LastNTurns for context propagation |
-| **Nickname system** | Randomized from configurable candidate lists |
-| **Agent status** | Pending, Running, Completed, Failed, Closed, Resumable |
-| **Weak references** | Prevents circular memory in agent registry |
-| **Batch spawning** | CSV-driven parallel agent creation |
-
----
-
-## Skills
-
-| Component | Description |
-|-----------|-------------|
-| **core-skills crate** | Skill loading, management, invocation, rendering |
-| **Guardian review** | Dedicated LLM agent reviewing approval requests |
-| **Tool suggestion** | ML-powered tool recommendation |
-| **Memory consolidation** | Multi-stage context compression |
-| **Personality templates** | Configurable agent personas |
-
----
-
 ## Security & Guardrails
 
 ### Guardian Review Agent (Unique)
@@ -144,7 +115,6 @@ Codex has the most sophisticated multi-agent system among surveyed projects:
 
 - **ToolHandler trait:** Generic handler abstraction with mutability detection
 - **Guardian lifecycle:** Separate review ID from tool call ID, compact transcript
-- **Feature flags:** exec_permission_approvals, additional_permissions gates
 - **Deferred tool loading:** Tools marked `defer_loading: true`
 - **Event-driven:** Tool invocations emit ToolEventCtx for audit trail
 
@@ -156,13 +126,8 @@ Codex has the most sophisticated multi-agent system among surveyed projects:
 |---------|-------------|----------|
 | Guardian review agent (LLM-based approval) | Not implemented | **High** - novel security approach |
 | Platform sandboxing (Seatbelt/Landlock/bwrap) | Not implemented | **High** - critical for safety |
-| Multi-agent V2 (task trees, mailbox) | Partial (Agent tool exists) | **Medium** - enhanced delegation |
-| Inter-agent messaging | Not implemented | **Medium** |
 | Network approval system | Not implemented | **Medium** - security |
-| Execution policy (Skip/NeedsApproval/Forbidden) | Partial (policy rules) | Low - similar to existing |
 | JS REPL | Not implemented | Low |
 | view_image tool | Not implemented | **Medium** - useful for screenshots |
 | apply_patch (atomic multi-file) | Not implemented | **Medium** |
-| Batch agent spawning (CSV) | Not implemented | Low |
 | Approval caching | Not implemented | **Medium** - UX improvement |
-| Proposed policy amendments | Not implemented | Low - nice-to-have |

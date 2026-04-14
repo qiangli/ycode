@@ -1,4 +1,4 @@
-# Cline - Tools, Agents, Skills & Security Analysis
+# Cline - Tools & Security Analysis
 
 **Project:** Cline (autonomous AI coding VS Code extension)
 **Language:** TypeScript
@@ -69,34 +69,6 @@
 
 ---
 
-## Agents / Subagents
-
-| Component | Description |
-|-----------|-------------|
-| **SubagentBuilder** | Configures autonomous subagent instances with model overrides and system prompts |
-| **SubagentRunner** | Executes up to 5 parallel subagents, tracks token usage |
-| **AgentConfigLoader** | Loads agent configurations from files with tool allowlists |
-| **Default subagent tools** | Read-only: FILE_READ, LIST_FILES, SEARCH, LIST_CODE_DEF, BASH (readonly), USE_SKILL |
-
----
-
-## Skills
-
-| Component | Description |
-|-----------|-------------|
-| **Discovery** | Scans `~/.cline/skills/` (global) and `.cline/skills/` (project) |
-| **Format** | Subdirectory with `SKILL.md` file, YAML frontmatter (name, description) |
-| **Activation** | Via `use_skill` tool, instructions injected into context |
-| **Toggles** | Global and project-level skill enable/disable |
-
-### Slash Commands (Built-in)
-`/newtask`, `/smol` (`/compact`), `/newrule`, `/reportbug`, `/deep-planning`, `/explain-changes`
-
-### Custom Workflows
-File-based from `.cline/workflows/` and `~/.cline/workflows/`, plus remote workflows.
-
----
-
 ## Security & Guardrails
 
 | Mechanism | Description |
@@ -125,8 +97,6 @@ File-based from `.cline/workflows/` and `~/.cline/workflows/`, plus remote workf
 ## Notable Patterns
 
 - **Model-variant tool definitions:** GENERIC, NATIVE_GPT_5, NATIVE_NEXT_GEN, GEMINI_3, etc.
-- **PromptRegistry:** Singleton managing all system prompts with variant system
-- **gRPC/Protobuf communication** between extension and webview
 - **Hook system:** User prompt submit hooks for input interception
 
 ---
@@ -136,12 +106,8 @@ File-based from `.cline/workflows/` and `~/.cline/workflows/`, plus remote workf
 | Feature | ycode Status | Priority |
 |---------|-------------|----------|
 | Browser automation (Puppeteer) | Not implemented | **High** - unique capability |
-| `list_code_definition_names` (symbol indexing) | Partial (LSP exists) | Low - LSP covers this |
-| Parallel subagents (up to 5) | Implemented (Agent tool) | Done |
 | `.clineignore` / `.ycodeignore` | Not implemented | **Medium** - privacy feature |
-| Model-variant tool definitions | Not implemented | Low - over-engineering for CLI |
 | Auto-approval system with per-action granularity | Not implemented | **Medium** - UX improvement |
-| Custom workflows (file-based) | Skills cover this | Done |
 | Shell redirect blocking | Not implemented | **Medium** - security |
 | Long-running command detection | Not implemented | Low |
 | Consecutive mistake counting | Not implemented | Low |
