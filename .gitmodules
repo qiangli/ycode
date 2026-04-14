@@ -34,3 +34,6 @@
 [submodule "external/perses"]
 	path = external/perses
 	url = https://github.com/perses/perses.git
+[submodule "priorart/memos"]
+	path = priorart/memos
+	url = https://github.com/usememos/memos.git
