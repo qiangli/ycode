@@ -150,6 +150,9 @@ func (cs *completionState) moveDown() {
 
 // clampScroll ensures the selected item is visible in the scroll window.
 func (cs *completionState) clampScroll() {
+	if cs.scroll < 0 {
+		cs.scroll = 0
+	}
 	if cs.selected < cs.scroll {
 		cs.scroll = cs.selected
 	}
@@ -188,6 +191,9 @@ func renderCompletion(cs *completionState, width int) string {
 	skillTag := lipgloss.NewStyle().Foreground(lipgloss.Color("#f97316")).SetString("skill") // orange
 
 	// Determine visible window.
+	if cs.scroll < 0 {
+		cs.scroll = 0
+	}
 	end := cs.scroll + completionMaxVisible
 	if end > len(cs.items) {
 		end = len(cs.items)
