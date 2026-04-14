@@ -61,7 +61,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 
 	expected := []string{
 		// session
-		"help", "status", "cost", "version", "model",
+		"help", "status", "cost", "version", "model", "retry", "revert", "rename",
 		// workspace
 		"clear", "compact", "config", "export", "memory", "init",
 		// discovery
@@ -95,9 +95,22 @@ func TestAllCommandsExecute(t *testing.T) {
 	r := newTestRegistry(t)
 	ctx := context.Background()
 
+	// Commands that are expected to return errors when deps are nil.
+	errExpected := map[string]bool{
+		"retry":  true,
+		"revert": true,
+		"rename": true, // requires args
+	}
+
 	for _, spec := range r.List() {
 		t.Run(spec.Name, func(t *testing.T) {
 			output, err := r.Execute(ctx, spec.Name, "")
+			if errExpected[spec.Name] {
+				if err == nil {
+					t.Fatalf("/%s expected error (nil deps), got output: %s", spec.Name, output)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("/%s returned error: %v", spec.Name, err)
 			}
