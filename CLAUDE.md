@@ -2,6 +2,8 @@
 
 ycode — pure Go CLI agent harness for autonomous software development.
 
+**Read [INSTRUCTIONS.md](./INSTRUCTIONS.md) first** — it contains the shared project conventions, build commands, testing guidelines, and skill dispatch rules that apply to all AI agents working on this repo.
+
 ## Quick Reference
 
 ```bash
@@ -15,6 +17,21 @@ make test        # unit tests only (-short -race)
 Single test: `go test -short -race -run TestName ./internal/path/to/package/`
 
 Integration tests: `go test -tags integration -v -count=1 ./internal/integration/...`
+
+## Skills
+
+**Skills**: When the user's message starts with `/<name>` (e.g. `/build`, `/deploy`), read `skills/<name>/skill.md` and follow its instructions exactly. Everything after `/<name> ` (the rest of the message) is `ARGS` -- pass it to the skill wherever the skill references `{{ARGS}}`. If the skill does not use `{{ARGS}}` and `ARGS` is non-empty, ignore it. If no matching skill exists, tell the user. To list available skills, run: `ls skills/*/skill.md`.
+
+See [skills/README.md](./skills/README.md) for the full convention and available commands.
+
+## Committing Changes
+
+When asked to commit changes in this project, follow the `/commit` skill (`skills/commit/skill.md`). Key points:
+
+- **Gather context in parallel.** Run `git status`, `git diff`, and `git log --oneline -5` concurrently before drafting a commit message.
+- **Use the initial git status snapshot.** The system prompt includes the git status and diff captured at session start. Compare current `git status` against that snapshot to distinguish pre-existing dirty files from changes made during this session — do not stage pre-existing changes.
+- **Stage files by name.** Never use `git add -A` or `git add .`.
+- **Match the repo's commit style.** Use the prefix convention from `git log` (e.g. `fix:`, `feat:`, `docs:`).
 
 ## Project Conventions
 
@@ -37,21 +54,6 @@ The build system follows a strict three-layer separation:
 - Unit tests: add `*_test.go` next to the source. Use `testing.Short()` for anything slow.
 - Integration tests: add to `internal/integration/` with `//go:build integration` tag. Use the helpers in `helpers_test.go` for HTTP calls and connectivity checks.
 - New Makefile targets: keep them as single commands or delegate to a script in `scripts/`.
-
-## Skills
-
-**Skills**: When the user's message starts with `/<name>` (e.g. `/build`, `/deploy`), read `skills/<name>/skill.md` and follow its instructions exactly. Everything after `/<name> ` (the rest of the message) is `ARGS` -- pass it to the skill wherever the skill references `{{ARGS}}`. If the skill does not use `{{ARGS}}` and `ARGS` is non-empty, ignore it. If no matching skill exists, tell the user. To list available skills, run: `ls skills/*/skill.md`.
-
-See [skills/README.md](./skills/README.md) for the full convention and available commands.
-
-## Committing Changes
-
-When asked to commit changes in this project, follow the `/commit` skill (`skills/commit/skill.md`). Key points:
-
-- **Gather context in parallel.** Run `git status`, `git diff`, and `git log --oneline -5` concurrently before drafting a commit message.
-- **Use the initial git status snapshot.** The system prompt includes the git status and diff captured at session start. Compare current `git status` against that snapshot to distinguish pre-existing dirty files from changes made during this session — do not stage pre-existing changes.
-- **Stage files by name.** Never use `git add -A` or `git add .`.
-- **Match the repo's commit style.** Use the prefix convention from `git log` (e.g. `fix:`, `feat:`, `docs:`).
 
 ## For More Detail
 
