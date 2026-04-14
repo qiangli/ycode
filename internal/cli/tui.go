@@ -633,11 +633,19 @@ func (m *TUIModel) statusBar() string {
 	// Session info.
 	sessionText := ""
 	if sid := m.app.SessionID(); sid != "" {
-		short := sid
-		if len(short) > 8 {
-			short = short[:8]
+		title := m.app.session.Title
+		if title != "" {
+			if len(title) > 20 {
+				title = title[:17] + "..."
+			}
+			sessionText = fmt.Sprintf(" [%s] ", title)
+		} else {
+			short := sid
+			if len(short) > 8 {
+				short = short[:8]
+			}
+			sessionText = fmt.Sprintf(" [%s] ", short)
 		}
-		sessionText = fmt.Sprintf(" [%s] ", short)
 	}
 	sessionStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#737373"))
@@ -801,6 +809,12 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 			{Type: session.ContentTypeText, Text: text},
 		},
 	})
+
+	// Auto-generate session title from first user message.
+	if m.app.session.Title == "" && !strings.HasPrefix(text, "/") &&
+		!strings.HasPrefix(text, "!") {
+		m.app.session.GenerateDefaultTitle()
+	}
 
 	if strings.HasPrefix(text, "!!") {
 		shell := strings.TrimLeft(text[2:], " ")

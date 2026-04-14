@@ -25,6 +25,7 @@ type Session struct {
 	Messages  []ConversationMessage `json:"messages"`
 	Dir       string                `json:"-"` // session directory
 	Summary   string                `json:"summary,omitempty"`
+	Title     string                `json:"title,omitempty"` // human-readable session title
 
 	sqlWriter     *SQLWriter     `json:"-"` // optional SQLite dual-writer
 	searchIndexer *SearchIndexer `json:"-"` // optional Bleve indexer
@@ -202,6 +203,39 @@ func hasTextContent(msg ConversationMessage) bool {
 		}
 	}
 	return false
+}
+
+// SetTitle sets the session title.
+func (s *Session) SetTitle(title string) {
+	s.Title = title
+}
+
+// GenerateDefaultTitle creates a title from the first user message.
+// Returns the generated title or empty if no user messages exist.
+func (s *Session) GenerateDefaultTitle() string {
+	for _, msg := range s.Messages {
+		if msg.Role == RoleUser && hasTextContent(msg) {
+			for _, block := range msg.Content {
+				if block.Type == ContentTypeText && block.Text != "" {
+					title := block.Text
+					// Truncate to 50 chars.
+					if len(title) > 50 {
+						title = title[:47] + "..."
+					}
+					// Strip newlines.
+					for i, c := range title {
+						if c == '\n' || c == '\r' {
+							title = title[:i]
+							break
+						}
+					}
+					s.Title = title
+					return title
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // LastUserMessage returns the text of the most recent user message, or empty.

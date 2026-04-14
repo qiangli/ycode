@@ -193,6 +193,27 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 	})
 
 	r.Register(&Spec{
+		Name:        "rename",
+		Description: "Rename the current session",
+		Usage:       "/rename <title>",
+		Category:    "session",
+		Handler: func(ctx context.Context, args string) (string, error) {
+			title := strings.TrimSpace(args)
+			if title == "" {
+				if deps.Session != nil && deps.Session.Title != "" {
+					return fmt.Sprintf("Current title: %s", deps.Session.Title), nil
+				}
+				return "", fmt.Errorf("usage: /rename <title>")
+			}
+			if deps.Session == nil {
+				return "", fmt.Errorf("no active session")
+			}
+			deps.Session.SetTitle(title)
+			return fmt.Sprintf("Session renamed to: %s", title), nil
+		},
+	})
+
+	r.Register(&Spec{
 		Name:        "revert",
 		Description: "Revert file changes from the last agent turn",
 		Category:    "session",
