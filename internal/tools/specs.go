@@ -275,6 +275,43 @@ func builtinSpecs() []*ToolSpec {
 			RequiredMode: permission.ReadOnly,
 			Source:       SourceBuiltin,
 		},
+
+		// Git operation tools
+		{
+			Name:         "git_status",
+			Description:  "Show the working tree status. Returns modified, staged, and untracked files.",
+			InputSchema:  mustJSON(gitStatusSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "git_log",
+			Description:  "Show commit history. Returns recent commits with hash, author, date, and message.",
+			InputSchema:  mustJSON(gitLogSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "git_commit",
+			Description:  "Stage files and create a git commit. Use patterns to stage specific files or '.' for all changes.",
+			InputSchema:  mustJSON(gitCommitSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "git_branch",
+			Description:  "List, create, switch, or delete git branches.",
+			InputSchema:  mustJSON(gitBranchSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "git_stash",
+			Description:  "Stash or restore working directory changes. Supports push, pop, list, and drop operations.",
+			InputSchema:  mustJSON(gitStashSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
 	}
 }
 
@@ -578,6 +615,53 @@ var (
 			"staged": {"type": "boolean", "description": "Show staged changes (--cached)"},
 			"path": {"type": "string", "description": "Limit diff to specific file or directory"},
 			"commit_range": {"type": "string", "description": "Commit range (e.g., 'HEAD~3..HEAD', 'main..feature')"}
+		}
+	}`
+
+	gitStatusSchema = `{
+		"type": "object",
+		"properties": {
+			"short": {"type": "boolean", "description": "Use short format output (default true)"}
+		}
+	}`
+
+	gitLogSchema = `{
+		"type": "object",
+		"properties": {
+			"count": {"type": "integer", "description": "Number of commits to show (default 10)"},
+			"oneline": {"type": "boolean", "description": "One line per commit (default true)"},
+			"path": {"type": "string", "description": "Limit to commits affecting this path"},
+			"author": {"type": "string", "description": "Filter by author name or email"},
+			"since": {"type": "string", "description": "Show commits since date (e.g., '2024-01-01', '1 week ago')"},
+			"diff": {"type": "string", "description": "Show diff against a branch or commit (e.g., 'main..HEAD')"}
+		}
+	}`
+
+	gitCommitSchema = `{
+		"type": "object",
+		"properties": {
+			"message": {"type": "string", "description": "Commit message"},
+			"files": {"type": "array", "items": {"type": "string"}, "description": "Files to stage before committing. Use [\".\"] for all changes."},
+			"all": {"type": "boolean", "description": "Stage all modified and deleted files (-a flag)"}
+		},
+		"required": ["message"]
+	}`
+
+	gitBranchSchema = `{
+		"type": "object",
+		"properties": {
+			"action": {"type": "string", "enum": ["list", "create", "switch", "delete"], "description": "Branch operation to perform (default: list)"},
+			"name": {"type": "string", "description": "Branch name (required for create, switch, delete)"},
+			"start_point": {"type": "string", "description": "Starting point for new branch (default: HEAD)"}
+		}
+	}`
+
+	gitStashSchema = `{
+		"type": "object",
+		"properties": {
+			"action": {"type": "string", "enum": ["push", "pop", "list", "drop", "show"], "description": "Stash operation (default: push)"},
+			"message": {"type": "string", "description": "Stash message (for push)"},
+			"index": {"type": "integer", "description": "Stash index (for pop, drop, show; default 0)"}
 		}
 	}`
 )

@@ -211,6 +211,7 @@ func newApp() (*cli.App, error) {
 	tools.RegisterModeHandlers(toolReg, planMode)
 	tools.RegisterConfigHandler(toolReg, cfg)
 	tools.RegisterSemanticSearchHandler(toolReg)
+	tools.RegisterGitHandlers(toolReg, cwd)
 
 	// Wire permission enforcement: resolve current mode from the live
 	// settings.local.json file so that plan mode toggles take effect immediately.
