@@ -38,10 +38,11 @@ Include this paragraph verbatim in your AI tool's instruction file
 | Command     | Description |
 |-------------|-------------|
 | `/build`    | Build binary with full quality checks, fix errors, commit on success |
-| `/deploy`   | Deploy to host, ensures build first |
-| `/validate` | Run integration/smoke/acceptance tests against running instance |
 | `/claude`   | Run Claude Code CLI with a single prompt |
 | `/commit`   | Plan and commit local changes with a convention-following message |
+| `/deploy`   | Deploy to host, ensures build first |
+| `/learn`    | Study a prior-art project or new topic, produce gap analysis, plan, and TODO |
+| `/validate` | Run integration/smoke/acceptance tests against running instance |
 
 ## Adding a Skill
 
