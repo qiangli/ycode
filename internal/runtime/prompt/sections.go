@@ -101,10 +101,10 @@ func ProjectSection(ctx *ProjectContext) string {
 		lines = append(lines, " - "+b)
 	}
 
-	// Git status snapshot.
+	// Git status snapshot (initial, captured at session start).
 	if ctx.GitStatus != "" {
 		lines = append(lines, "")
-		lines = append(lines, "Git status snapshot:")
+		lines = append(lines, "Initial git status (captured at session start):")
 		lines = append(lines, ctx.GitStatus)
 	}
 
@@ -117,10 +117,10 @@ func ProjectSection(ctx *ProjectContext) string {
 		}
 	}
 
-	// Git diff snapshot.
+	// Git diff snapshot (initial, captured at session start).
 	if ctx.GitDiff != "" {
 		lines = append(lines, "")
-		lines = append(lines, "Git diff snapshot:")
+		lines = append(lines, "Initial git diff (captured at session start):")
 		lines = append(lines, ctx.GitDiff)
 	}
 

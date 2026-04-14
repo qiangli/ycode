@@ -12,7 +12,7 @@ Analyze uncommitted changes, draft an appropriate commit message, and create a c
 
 ### Step 1: Gather context
 
-Run these commands to understand the current state:
+Run these three commands **in parallel** to gather context:
 
 1. `git status` — identify which files have been modified, staged, or are untracked. Do not use the `-uall` flag.
 2. `git diff` and `git diff --cached` — read the actual content of unstaged and staged changes respectively.
@@ -20,7 +20,7 @@ Run these commands to understand the current state:
 
 ### Step 2: Analyze and draft
 
-1. **Identify scope.** Determine which changed files belong to the current logical change. Exclude files that contain secrets (`.env`, credentials, tokens) — warn the user if they ask to commit those.
+1. **Identify scope.** Determine which changed files belong to the current logical change. Compare the current `git status` against the initial git status snapshot from the system prompt to distinguish pre-existing dirty files from changes made during this session — do not stage pre-existing changes. Exclude files that contain secrets (`.env`, credentials, tokens) — warn the user if they ask to commit those.
 
 2. **Classify the change.** Match the convention observed from `git log`:
    - `fix:` — a bug fix

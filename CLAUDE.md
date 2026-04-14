@@ -44,6 +44,15 @@ The build system follows a strict three-layer separation:
 
 See [skills/README.md](./skills/README.md) for the full convention and available commands.
 
+## Committing Changes
+
+When asked to commit changes in this project, follow the `/commit` skill (`skills/commit/skill.md`). Key points:
+
+- **Gather context in parallel.** Run `git status`, `git diff`, and `git log --oneline -5` concurrently before drafting a commit message.
+- **Use the initial git status snapshot.** The system prompt includes the git status and diff captured at session start. Compare current `git status` against that snapshot to distinguish pre-existing dirty files from changes made during this session — do not stage pre-existing changes.
+- **Stage files by name.** Never use `git add -A` or `git add .`.
+- **Match the repo's commit style.** Use the prefix convention from `git log` (e.g. `fix:`, `feat:`, `docs:`).
+
 ## For More Detail
 
 Read these on demand, not upfront:
