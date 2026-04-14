@@ -211,6 +211,7 @@ Parse `{{ARGS}}` as a topic or technology. If the intent is ambiguous, ask the u
 
 Search for well-known, highly-starred GitHub projects related to the topic. Look for:
 
+- **Permissive license required**: only consider projects under BSD, MIT, or Apache 2.0 licenses. Reject GPL, AGPL, LGPL, SSPL, BSL, or any copyleft/source-available license.
 - Projects with 1000+ stars (prefer well-maintained, recently active)
 - Projects that are implementation references (not just docs or specs)
 - Projects in any language (the goal is to learn patterns, not copy code)
@@ -223,13 +224,16 @@ Propose 3-5 candidate projects to the user:
 ```
 ### <Project Name>
 - **URL**: https://github.com/<owner>/<repo>
+- **License**: <MIT/BSD-3-Clause/Apache-2.0>
 - **Stars**: <count>
 - **Language**: <primary language>
 - **Last active**: <approximate date>
 - **Why relevant**: <1-2 sentences on what this project can learn from it>
 ```
 
-### Step 3: Get user approval
+### Step 3: Verify license and get user approval
+
+Before proposing, verify each candidate's license by checking the repository's `LICENSE` file or GitHub metadata. **Only propose projects with a permissive license (MIT, BSD, or Apache 2.0).** If a promising project has a non-permissive license, mention it as excluded and state the reason.
 
 Ask which project(s) to add. **Wait for explicit approval.** Do not proceed without it.
 
@@ -261,3 +265,4 @@ Execute Mode 1 Steps 1-7 against the newly added project.
 - **Match existing doc style.** Read at least one existing `docs/gap-analysis-*.md`, `docs/plan-*.md`, and `docs/todo-*.md` before writing new ones. Follow their formatting conventions.
 - **Agent-agnostic.** Do not rely on any tool-specific capabilities. Use standard file operations, git commands, and shell. If web search is unavailable in Mode 2, fall back to asking the user for URLs.
 - **No implementation without permission.** After producing the three documents, stop and ask before implementing anything.
+- **Permissive licenses only.** Only add projects licensed under MIT, BSD, or Apache 2.0 as submodules. Never add GPL, AGPL, LGPL, SSPL, BSL, or other copyleft/source-available licensed projects.
