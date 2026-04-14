@@ -7,6 +7,8 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/exec"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -120,6 +122,8 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		MemoryDir:     o.MemoryDir,
 		Session:       sess,
 		ModelSwitcher: app.SwitchModel,
+		RetryTurn:     app.RetryTurn,
+		RevertFiles:   app.RevertFiles,
 	})
 	app.commands = cmdRegistry
 
@@ -451,6 +455,43 @@ func (a *App) Session() *session.Session { return a.session }
 // Exported for use by the service layer.
 func (a *App) ConversationRuntime() *conversation.Runtime {
 	return a.conversationRuntime()
+}
+
+// RetryTurn removes the last assistant turn and returns the last user message.
+func (a *App) RetryTurn() (string, error) {
+	if a.session == nil {
+		return "", fmt.Errorf("no active session")
+	}
+	lastMsg := a.session.LastUserMessage()
+	removed := a.session.RemoveLastTurn()
+	if removed == 0 {
+		return "", fmt.Errorf("no turn to retry")
+	}
+	return lastMsg, nil
+}
+
+// RevertFiles reverts uncommitted file changes using git checkout.
+func (a *App) RevertFiles() (string, error) {
+	cmd := exec.Command("git", "diff", "--stat")
+	cmd.Dir = a.workDir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git diff failed: %w", err)
+	}
+	if len(strings.TrimSpace(string(out))) == 0 {
+		return "No uncommitted changes to revert.", nil
+	}
+
+	// Show what will be reverted.
+	stats := strings.TrimSpace(string(out))
+
+	cmd = exec.Command("git", "checkout", ".")
+	cmd.Dir = a.workDir
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git checkout failed: %w", err)
+	}
+
+	return fmt.Sprintf("Reverted uncommitted changes:\n%s", stats), nil
 }
 
 // UsageTracker returns the usage tracker.

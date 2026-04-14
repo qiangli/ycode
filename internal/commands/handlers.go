@@ -32,6 +32,12 @@ type RuntimeDeps struct {
 
 	// ModelSwitcher switches the active model at runtime.
 	ModelSwitcher func(name string) (string, error)
+
+	// RetryTurn removes the last turn and returns the last user message for re-execution.
+	RetryTurn func() (string, error)
+
+	// RevertFiles reverts file changes from the last agent turn.
+	RevertFiles func() (string, error)
 }
 
 // ConfigDirs holds the config directory paths for display.
@@ -159,6 +165,42 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Category:    "workspace",
 		Handler: func(ctx context.Context, args string) (string, error) {
 			return "Compaction triggered.", nil
+		},
+	})
+
+	r.Register(&Spec{
+		Name:        "retry",
+		Description: "Remove last turn and re-send the last user message",
+		Usage:       "/retry [new prompt]",
+		Category:    "session",
+		Handler: func(ctx context.Context, args string) (string, error) {
+			if deps.RetryTurn == nil {
+				return "", fmt.Errorf("retry not available")
+			}
+			msg, err := deps.RetryTurn()
+			if err != nil {
+				return "", err
+			}
+			prompt := strings.TrimSpace(args)
+			if prompt == "" {
+				prompt = msg
+			}
+			if prompt == "" {
+				return "", fmt.Errorf("no previous user message to retry")
+			}
+			return fmt.Sprintf("Retrying with: %s", prompt), nil
+		},
+	})
+
+	r.Register(&Spec{
+		Name:        "revert",
+		Description: "Revert file changes from the last agent turn",
+		Category:    "session",
+		Handler: func(ctx context.Context, args string) (string, error) {
+			if deps.RevertFiles == nil {
+				return "", fmt.Errorf("revert not available")
+			}
+			return deps.RevertFiles()
 		},
 	})
 

@@ -171,3 +171,49 @@ func (s *Session) SearchIndexer() *SearchIndexer {
 func (s *Session) MessageCount() int {
 	return len(s.Messages)
 }
+
+// RemoveLastTurn removes the last assistant turn from the session.
+// It removes messages from the end until it hits (and removes) a user message
+// with actual text content (not tool results), effectively undoing the last
+// exchange. Returns the number of messages removed.
+func (s *Session) RemoveLastTurn() int {
+	if len(s.Messages) == 0 {
+		return 0
+	}
+
+	removed := 0
+	for len(s.Messages) > 0 {
+		last := s.Messages[len(s.Messages)-1]
+		s.Messages = s.Messages[:len(s.Messages)-1]
+		removed++
+		if last.Role == RoleUser && hasTextContent(last) {
+			break
+		}
+	}
+	return removed
+}
+
+// hasTextContent returns true if the message contains a text content block
+// (as opposed to only tool_result blocks).
+func hasTextContent(msg ConversationMessage) bool {
+	for _, block := range msg.Content {
+		if block.Type == ContentTypeText && block.Text != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// LastUserMessage returns the text of the most recent user message, or empty.
+func (s *Session) LastUserMessage() string {
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		if s.Messages[i].Role == RoleUser {
+			for _, block := range s.Messages[i].Content {
+				if block.Type == ContentTypeText && block.Text != "" {
+					return block.Text
+				}
+			}
+		}
+	}
+	return ""
+}
