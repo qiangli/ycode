@@ -78,6 +78,15 @@ type TUIModel struct {
 	// Slash command completion.
 	completion    completionState  // popup state
 	completionAll []completionItem // all available commands (built once)
+
+	// Model picker overlay.
+	modelPicker modelPickerState
+
+	// Command palette overlay.
+	cmdPalette commandPaletteState
+
+	// Toast notification stack.
+	toasts toastState
 }
 
 // toolTaskProgress tracks a single tool's execution state.
@@ -165,6 +174,82 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleConfirmKey(msg)
 		}
 
+		// Handle model picker overlay.
+		if m.modelPicker.visible {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.modelPicker.close()
+				return m, nil
+			case tea.KeyEnter:
+				if model := m.modelPicker.selectedModel(); model != "" {
+					m.modelPicker.close()
+					result, err := m.app.SwitchModel(model)
+					if err != nil {
+						m.toasts.add(fmt.Sprintf("Model switch failed: %v", err), ToastError)
+					} else {
+						m.toasts.add(result, ToastSuccess)
+					}
+					return m, func() tea.Msg { return repaintMsg{} }
+				}
+			case tea.KeyUp:
+				m.modelPicker.moveUp()
+				return m, nil
+			case tea.KeyDown:
+				m.modelPicker.moveDown()
+				return m, nil
+			case tea.KeyBackspace:
+				m.modelPicker.backspace()
+				return m, nil
+			default:
+				if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+					m.modelPicker.typeChar(msg.Runes[0])
+					return m, nil
+				}
+			}
+			return m, nil
+		}
+
+		// Handle command palette overlay.
+		if m.cmdPalette.visible {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.cmdPalette.close()
+				return m, nil
+			case tea.KeyEnter:
+				if item := m.cmdPalette.selectedItem(); item != nil {
+					m.cmdPalette.close()
+					name := item.Name
+					if strings.HasPrefix(name, "/") {
+						// Execute as slash command.
+						return m, m.handleInput(name)
+					}
+					// Handle built-in actions.
+					switch name {
+					case "Switch Model":
+						m.modelPicker.open(m.app.Model())
+					case "Toggle Mode":
+						return m, m.toggleMode()
+					}
+					return m, func() tea.Msg { return repaintMsg{} }
+				}
+			case tea.KeyUp:
+				m.cmdPalette.moveUp()
+				return m, nil
+			case tea.KeyDown:
+				m.cmdPalette.moveDown()
+				return m, nil
+			case tea.KeyBackspace:
+				m.cmdPalette.backspace()
+				return m, nil
+			default:
+				if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+					m.cmdPalette.typeChar(msg.Runes[0])
+					return m, nil
+				}
+			}
+			return m, nil
+		}
+
 		// Handle completion popup keys when visible.
 		if m.completion.visible {
 			switch msg.Type {
@@ -211,6 +296,11 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case msg.Type == tea.KeyShiftTab:
 			return m, m.toggleMode()
+		case msg.Type == tea.KeyCtrlK:
+			if !m.working {
+				m.cmdPalette.open(m.buildPaletteItems())
+				return m, nil
+			}
 		case msg.Type == tea.KeyEnter:
 			if m.working {
 				break
@@ -429,12 +519,47 @@ func (m *TUIModel) View() string {
 		return "Initializing..."
 	}
 
+	// Prune expired toasts.
+	m.toasts.prune()
+
+	// Check for overlays (command palette, model picker).
+	if m.cmdPalette.visible {
+		overlay := renderCommandPalette(&m.cmdPalette, m.width)
+		return fmt.Sprintf("%s\n%s\n%s\n%s",
+			m.viewport.View(),
+			m.statusBar(),
+			overlay,
+			m.textarea.View(),
+		)
+	}
+
+	if m.modelPicker.visible {
+		overlay := renderModelPicker(&m.modelPicker, m.width, m.height)
+		return fmt.Sprintf("%s\n%s\n%s\n%s",
+			m.viewport.View(),
+			m.statusBar(),
+			overlay,
+			m.textarea.View(),
+		)
+	}
+
 	popup := renderCompletion(&m.completion, m.width)
 	if popup != "" {
 		return fmt.Sprintf("%s\n%s\n%s\n%s",
 			m.viewport.View(),
 			m.statusBar(),
 			popup,
+			m.textarea.View(),
+		)
+	}
+
+	// Toast notifications overlay on the viewport.
+	toastOverlay := renderToasts(&m.toasts, m.width)
+	if toastOverlay != "" {
+		return fmt.Sprintf("%s\n%s\n%s\n%s",
+			m.viewport.View(),
+			toastOverlay,
+			m.statusBar(),
 			m.textarea.View(),
 		)
 	}
@@ -489,8 +614,37 @@ func (m *TUIModel) statusBar() string {
 		Foreground(lipgloss.Color("#a3a3a3"))
 	model := modelStyle.Render(modelText)
 
+	// Usage info (tokens + cost).
+	tracker := m.app.UsageTracker()
+	usageText := ""
+	if tracker.TotalRequests > 0 {
+		totalTokens := tracker.TotalTokens()
+		cost := tracker.Cost()
+		if cost >= 0.01 {
+			usageText = fmt.Sprintf(" %dk tokens | $%.2f ", totalTokens/1000, cost)
+		} else {
+			usageText = fmt.Sprintf(" %dk tokens | $%.4f ", totalTokens/1000, cost)
+		}
+	}
+	usageStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#818cf8")) // indigo
+	usageInfo := usageStyle.Render(usageText)
+
+	// Session info.
+	sessionText := ""
+	if sid := m.app.SessionID(); sid != "" {
+		short := sid
+		if len(short) > 8 {
+			short = short[:8]
+		}
+		sessionText = fmt.Sprintf(" [%s] ", short)
+	}
+	sessionStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#737373"))
+	sessionInfo := sessionStyle.Render(sessionText)
+
 	// Hints.
-	hintText := " !:shell !!:tty | tab:complete | shift+tab:mode | /help "
+	hintText := " ctrl+k:commands | shift+tab:mode | /help "
 	if m.confirming {
 		hintText = " " + m.confirmPrompt + "  y=yes n=no a=always for session "
 	}
@@ -502,7 +656,7 @@ func (m *TUIModel) statusBar() string {
 	barStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("#262626"))
 
-	left := mode + model
+	left := mode + model + usageInfo + sessionInfo
 	right := hint
 
 	leftWidth := lipgloss.Width(left)
