@@ -209,13 +209,15 @@ Parse `{{ARGS}}` as a topic or technology. If the intent is ambiguous, ask the u
 
 ### Step 2: Search for candidate projects
 
-Search for well-known, highly-starred GitHub projects related to the topic. Look for:
+Search for **best-in-class** GitHub projects related to the topic. Evaluate candidates using these criteria in priority order:
 
-- **Permissive license required**: only consider projects under BSD, MIT, or Apache 2.0 licenses. Reject GPL, AGPL, LGPL, SSPL, BSL, or any copyleft/source-available license.
-- Projects with 1000+ stars (prefer well-maintained, recently active)
-- Projects that are implementation references (not just docs or specs)
-- Projects in any language (the goal is to learn patterns, not copy code)
-- Diversity of approach (pick projects that solve the problem differently)
+1. **Permissive license required**: only consider projects under BSD, MIT, or Apache 2.0. Reject GPL, AGPL, LGPL, SSPL, BSL, or any copyleft/source-available license.
+2. **Community traction**: high star count, fork count, number of contributors, and user base. Prefer projects with 1000+ stars.
+3. **Active maintenance**: recent commits (within last 3-6 months), responsive issue triage, regular releases. Avoid abandoned or archived projects.
+4. **Language preference**: strongly prefer **Go** (backend) and **Node.js/JavaScript/TypeScript/HTML/CSS** (frontend/tooling) — these integrate with YCode with the least effort. Other languages are acceptable if the project is significantly better than any Go/JS alternative, but note the integration cost.
+5. **Implementation quality**: projects that are working implementations (not just specs, docs, or proofs of concept).
+
+When multiple projects cover the same area, rank by the criteria above and present the top choices.
 
 If web search or GitHub search is unavailable, ask the user to provide candidate project URLs manually.
 
@@ -225,10 +227,11 @@ Propose 3-5 candidate projects to the user:
 ### <Project Name>
 - **URL**: https://github.com/<owner>/<repo>
 - **License**: <MIT/BSD-3-Clause/Apache-2.0>
-- **Stars**: <count>
+- **Stars / Forks / Contributors**: <stars> / <forks> / <contributors>
 - **Language**: <primary language>
-- **Last active**: <approximate date>
-- **Why relevant**: <1-2 sentences on what this project can learn from it>
+- **Last commit**: <approximate date>
+- **Integration effort**: <Low (Go/JS) | Medium (Python/Rust) | High (other)>
+- **Why relevant**: <1-2 sentences on what YCode can learn from it>
 ```
 
 ### Step 3: Verify license and get user approval
