@@ -41,6 +41,7 @@ Include this paragraph verbatim in your AI tool's instruction file
 | `/deploy`   | Deploy to host, ensures build first |
 | `/validate` | Run integration/smoke/acceptance tests against running instance |
 | `/claude`   | Run Claude Code CLI with a single prompt |
+| `/commit`   | Plan and commit local changes with a convention-following message |
 
 ## Adding a Skill
 
