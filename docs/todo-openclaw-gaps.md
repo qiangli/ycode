@@ -78,31 +78,33 @@ See [gap-analysis-openclaw.md](./gap-analysis-openclaw.md) for full analysis.
 
 ## Phase 4: Refinement — Session Features & Config
 
-> Goal: Polish session management and improve configurability. **PAUSED — not yet started.**
+> Goal: Polish session management and improve configurability.
 
-- [ ] **S5 — Per-session model overrides**
-  - [ ] Add `ModelOverride` field to session metadata
-  - [ ] Implement `SwitchModel(sessionID, model)` in service API
-  - [ ] Persist override in session metadata file
-- [ ] **S2 — Session search/filtering API**
-  - [ ] Search sessions by agent ID, date range, content keywords
-  - [ ] Index session metadata for fast lookup
-  - [ ] Expose via service layer
-- [ ] **T3 — Lane-based execution scheduling**
-  - [ ] Define lane types: Main, Cron, Subagent
-  - [ ] Route incoming work to appropriate lanes
-  - [ ] Prevent concurrent execution within same lane
-- [ ] **S6 — Session transcript live events** *(blocked by S1)*
-  - [ ] Emit `transcript.update` bus events on message append
-  - [ ] Include session key, message ID, role in event payload
-- [ ] **T5 — Auth profile rotation**
-  - [ ] Support multiple API keys per provider in config
-  - [ ] Rotate to next key on 429/rate limit with cooldown timer
-  - [ ] Config schema: `providers[].keys: [key1, key2, ...]`
-- [ ] **M6 — Heartbeat/health events**
-  - [ ] Periodic goroutine emitting health snapshots
-  - [ ] Include: active sessions, queue depth, memory usage
-  - [ ] Configurable interval (default: 30s)
+- [x] **S5 — Per-session model overrides**
+  - [x] `MetadataStore` in `internal/runtime/session/model_override.go`
+  - [x] Disk-backed via `session_meta.json` with in-memory cache
+  - [x] `SetModelOverride()`, `ClearModelOverride()`, `ModelOverride()` methods
+- [x] **S2 — Session search/filtering API**
+  - [x] `Search()` in `internal/runtime/session/search.go`
+  - [x] Filter by text query, title, time range (After/Before), with pagination (Limit/Offset)
+  - [x] Falls back to `GenerateDefaultTitle()` since Title is not persisted in JSONL
+- [x] **T3 — Lane-based execution scheduling**
+  - [x] `Scheduler` in `internal/runtime/lanes/lanes.go`
+  - [x] Lanes: Main, Cron, Subagent — serialize work per lane
+  - [x] `Acquire()`, `TryAcquire()`, `IsActive()`, `ActiveWork()`, `Route()` APIs
+- [x] **S6 — Session transcript live events**
+  - [x] `TranscriptNotifier` in `internal/runtime/session/transcript_events.go`
+  - [x] `NotifyMessageAdded()`, `NotifySessionCleared()` emit `transcript.update` bus events
+  - [x] Added `EventTranscriptUpdate` to bus constants
+- [x] **T5 — Auth profile rotation**
+  - [x] `KeyPool` in `internal/api/key_rotation.go`
+  - [x] Thread-safe rotation with per-key cooldowns (default 60s)
+  - [x] `Current()`, `Rotate()`, `MarkRateLimited()`, `Available()` methods
+  - [x] `RotatingProviderConfig` bridges to `ProviderConfig`
+- [x] **M6 — Heartbeat/health events**
+  - [x] `Heartbeat` in `internal/runtime/health/heartbeat.go`
+  - [x] Periodic runtime metrics: goroutines, heap stats, GC info, uptime
+  - [x] Custom gauge registration, configurable interval (default 30s)
 
 ---
 

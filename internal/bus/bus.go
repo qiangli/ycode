@@ -10,20 +10,21 @@ import (
 type EventType string
 
 const (
-	EventTurnStart     EventType = "turn.start"
-	EventTextDelta     EventType = "text.delta"
-	EventThinkingDelta EventType = "thinking.delta"
-	EventToolUseStart  EventType = "tool_use.start"
-	EventToolProgress  EventType = "tool.progress"
-	EventToolResult    EventType = "tool.result"
-	EventTurnComplete  EventType = "turn.complete"
-	EventTurnError     EventType = "turn.error"
-	EventPermissionReq EventType = "permission.request"
-	EventPermissionRes EventType = "permission.response"
-	EventUsageUpdate   EventType = "usage.update"
-	EventSessionUpdate EventType = "session.update"
-	EventMessageSend   EventType = "message.send"
-	EventTurnCancel    EventType = "turn.cancel"
+	EventTurnStart        EventType = "turn.start"
+	EventTextDelta        EventType = "text.delta"
+	EventThinkingDelta    EventType = "thinking.delta"
+	EventToolUseStart     EventType = "tool_use.start"
+	EventToolProgress     EventType = "tool.progress"
+	EventToolResult       EventType = "tool.result"
+	EventTurnComplete     EventType = "turn.complete"
+	EventTurnError        EventType = "turn.error"
+	EventPermissionReq    EventType = "permission.request"
+	EventPermissionRes    EventType = "permission.response"
+	EventUsageUpdate      EventType = "usage.update"
+	EventSessionUpdate    EventType = "session.update"
+	EventTranscriptUpdate EventType = "transcript.update"
+	EventMessageSend      EventType = "message.send"
+	EventTurnCancel       EventType = "turn.cancel"
 )
 
 // Event is a single message flowing through the bus.
