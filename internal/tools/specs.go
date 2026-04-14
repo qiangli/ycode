@@ -312,6 +312,36 @@ func builtinSpecs() []*ToolSpec {
 			RequiredMode: permission.WorkspaceWrite,
 			Source:       SourceBuiltin,
 		},
+
+		// Memos — persistent long-term memory storage
+		{
+			Name:         "MemosStore",
+			Description:  "Save a memo to persistent long-term memory. Use #tags in the content for categorization (e.g. #project, #decision, #learning). Memos persist across sessions and are searchable.",
+			InputSchema:  mustJSON(memosStoreSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "MemosSearch",
+			Description:  "Search persistent long-term memories by content or tag. Returns matching memos with their content and metadata.",
+			InputSchema:  mustJSON(memosSearchSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "MemosList",
+			Description:  "List recent memos from persistent long-term memory. Supports pagination for browsing through stored memories.",
+			InputSchema:  mustJSON(memosListSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "MemosDelete",
+			Description:  "Delete a memo from persistent long-term memory by its ID.",
+			InputSchema:  mustJSON(memosDeleteSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
 	}
 }
 
@@ -665,5 +695,39 @@ var (
 			"message": {"type": "string", "description": "Stash message (for push)"},
 			"index": {"type": "integer", "description": "Stash index (for pop, drop, show; default 0)"}
 		}
+	}`
+
+	memosStoreSchema = `{
+		"type": "object",
+		"properties": {
+			"content": {"type": "string", "description": "Markdown content of the memo. Use #tags in the content for categorization."},
+			"visibility": {"type": "string", "enum": ["PRIVATE", "PROTECTED", "PUBLIC"], "description": "Visibility (default: PRIVATE)"}
+		},
+		"required": ["content"]
+	}`
+
+	memosSearchSchema = `{
+		"type": "object",
+		"properties": {
+			"query": {"type": "string", "description": "Search query (matched against memo content)"},
+			"tag": {"type": "string", "description": "Filter by #tag name (without the # prefix)"},
+			"max_results": {"type": "integer", "description": "Maximum results to return (default: 20)"}
+		}
+	}`
+
+	memosListSchema = `{
+		"type": "object",
+		"properties": {
+			"page_size": {"type": "integer", "description": "Number of memos to return (default: 20, max: 100)"},
+			"page_token": {"type": "string", "description": "Pagination token from previous response"}
+		}
+	}`
+
+	memosDeleteSchema = `{
+		"type": "object",
+		"properties": {
+			"memo_id": {"type": "string", "description": "The memo ID to delete"}
+		},
+		"required": ["memo_id"]
 	}`
 )

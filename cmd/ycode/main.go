@@ -206,6 +206,7 @@ func newApp() (*cli.App, error) {
 	tools.RegisterWebHandlers(toolReg)
 	tools.RegisterToolSearchHandler(toolReg)
 	tools.RegisterSkillHandler(toolReg)
+	tools.RegisterMemosHandlers(toolReg)
 	tools.RegisterRemoteHandler(toolReg)
 	tools.RegisterNotebookHandler(toolReg)
 	tools.RegisterModeHandlers(toolReg, planMode)

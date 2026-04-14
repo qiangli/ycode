@@ -15,8 +15,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/collector"
+	"github.com/qiangli/ycode/internal/memos"
 	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/runtime/config"
+	"github.com/qiangli/ycode/internal/tools"
 )
 
 var (
@@ -87,7 +89,7 @@ var serveStatusCmd = &cobra.Command{
 			cfg.ProxyPort = servePort
 		}
 
-		mgr := buildStackManager(cfg, dataDir)
+		stack := buildStackManager(cfg, dataDir)
 		port := cfg.ProxyPort
 		if port == 0 {
 			port = 58080
@@ -96,7 +98,7 @@ var serveStatusCmd = &cobra.Command{
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "COMPONENT\tHEALTH")
-		for _, s := range mgr.Status() {
+		for _, s := range stack.mgr.Status() {
 			health := "unknown"
 			if s.Healthy {
 				health = "healthy"
@@ -202,11 +204,19 @@ func runAllServices(ctx context.Context, cfg *config.ObservabilityConfig, dataDi
 	}
 
 	// 1. Build and start observability stack first (no dependencies on API).
-	mgr := buildStackManager(cfg, dataDir)
+	stack := buildStackManager(cfg, dataDir)
+	mgr := stack.mgr
 	if err := mgr.Start(ctx); err != nil {
 		return fmt.Errorf("start observability stack: %w", err)
 	}
 	fmt.Printf("Observability at http://127.0.0.1:%d/\n", port)
+
+	// Wire Memos client for agent tools (if memos started successfully).
+	if stack.memos != nil && stack.memos.Healthy() {
+		mc := memos.NewClient(fmt.Sprintf("http://%s", stack.memos.MemosAddr()))
+		tools.SetMemosClient(mc)
+		fmt.Printf("Memos at           http://127.0.0.1:%d/memos/\n", port)
+	}
 
 	// 2. Build API/WebSocket + NATS (may take time or fail if no API key).
 	var api *apiStack
@@ -300,8 +310,14 @@ func detachServer(cfg *config.ObservabilityConfig, dataDir string) error {
 	return nil
 }
 
+// stackComponents holds references to key components for post-start wiring.
+type stackComponents struct {
+	mgr   *observability.StackManager
+	memos *observability.MemosComponent
+}
+
 // buildStackManager creates and configures a StackManager with all embedded components.
-func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) *observability.StackManager {
+func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) *stackComponents {
 	mgr := observability.NewStackManager(cfg, dataDir)
 
 	vlogsPort := 9428
@@ -339,7 +355,11 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) *observa
 		filepath.Join(dataDir, "perses"),
 	))
 
-	return mgr
+	// Memos — persistent long-term memory storage.
+	memosComp := observability.NewMemosComponent(filepath.Join(dataDir, "memos"))
+	mgr.AddComponent(memosComp)
+
+	return &stackComponents{mgr: mgr, memos: memosComp}
 }
 
 func loadServeConfig() (*config.ObservabilityConfig, string, error) {
