@@ -14,6 +14,7 @@ const (
 type DelegationConfig struct {
 	MaxDepth     int
 	AllowedTypes []string // agent types allowed to delegate (empty = all)
+	AllowedTools []string // tool names this agent may use (empty = all)
 }
 
 // DefaultDelegationConfig returns the default delegation config.
@@ -61,6 +62,20 @@ func (dc *DelegationContext) Child(agentID string) (*DelegationContext, error) {
 		Lineage: lineage,
 		Config:  dc.Config,
 	}, nil
+}
+
+// IsToolAllowed returns whether the given tool name is permitted by the allowlist.
+// If no allowlist is configured (empty or nil), all tools are allowed.
+func (dc *DelegationContext) IsToolAllowed(toolName string) bool {
+	if len(dc.Config.AllowedTools) == 0 {
+		return true
+	}
+	for _, name := range dc.Config.AllowedTools {
+		if name == toolName {
+			return true
+		}
+	}
+	return false
 }
 
 // RemainingDepth returns how many more levels of delegation are allowed.

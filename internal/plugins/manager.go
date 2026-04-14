@@ -5,46 +5,38 @@ import (
 	"sync"
 )
 
-// Kind identifies where a plugin came from.
-type Kind string
-
-const (
-	KindBuiltin  Kind = "builtin"
-	KindBundled  Kind = "bundled"
-	KindExternal Kind = "external"
-)
-
-// Manifest describes a plugin.
-type Manifest struct {
-	Name        string `json:"name"`
-	Version     string `json:"version"`
-	Description string `json:"description"`
-	Kind        Kind   `json:"kind"`
-	Enabled     bool   `json:"enabled"`
-	EntryPoint  string `json:"entry_point,omitempty"`
+// ManagedPlugin wraps a Manifest with runtime state for the Manager.
+type ManagedPlugin struct {
+	Manifest *Manifest
+	Dir      string // filesystem location
+	Enabled  bool
 }
 
 // Manager handles plugin lifecycle.
 type Manager struct {
 	mu      sync.RWMutex
-	plugins map[string]*Manifest
+	plugins map[string]*ManagedPlugin
 }
 
 // NewManager creates a new plugin manager.
 func NewManager() *Manager {
 	return &Manager{
-		plugins: make(map[string]*Manifest),
+		plugins: make(map[string]*ManagedPlugin),
 	}
 }
 
-// Install adds a plugin.
-func (m *Manager) Install(manifest *Manifest) error {
+// Install adds a plugin from a discovered manifest.
+func (m *Manager) Install(dp DiscoveredPlugin) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, exists := m.plugins[manifest.Name]; exists {
-		return fmt.Errorf("plugin %q already installed", manifest.Name)
+	if _, exists := m.plugins[dp.Manifest.Name]; exists {
+		return fmt.Errorf("plugin %q already installed", dp.Manifest.Name)
 	}
-	m.plugins[manifest.Name] = manifest
+	m.plugins[dp.Manifest.Name] = &ManagedPlugin{
+		Manifest: dp.Manifest,
+		Dir:      dp.Dir,
+		Enabled:  true,
+	}
 	return nil
 }
 
@@ -84,10 +76,10 @@ func (m *Manager) Disable(name string) error {
 }
 
 // List returns all installed plugins.
-func (m *Manager) List() []*Manifest {
+func (m *Manager) List() []*ManagedPlugin {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	result := make([]*Manifest, 0, len(m.plugins))
+	result := make([]*ManagedPlugin, 0, len(m.plugins))
 	for _, p := range m.plugins {
 		result = append(result, p)
 	}
@@ -95,7 +87,7 @@ func (m *Manager) List() []*Manifest {
 }
 
 // Get returns a plugin by name.
-func (m *Manager) Get(name string) (*Manifest, bool) {
+func (m *Manager) Get(name string) (*ManagedPlugin, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	p, ok := m.plugins[name]
@@ -103,10 +95,10 @@ func (m *Manager) Get(name string) (*Manifest, bool) {
 }
 
 // EnabledPlugins returns only enabled plugins.
-func (m *Manager) EnabledPlugins() []*Manifest {
+func (m *Manager) EnabledPlugins() []*ManagedPlugin {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	var result []*Manifest
+	var result []*ManagedPlugin
 	for _, p := range m.plugins {
 		if p.Enabled {
 			result = append(result, p)
