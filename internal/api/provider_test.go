@@ -14,6 +14,7 @@ func clearEnv(t *testing.T) {
 		"DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL",
 		"MOONSHOT_API_KEY", "MOONSHOT_BASE_URL",
 		"KIMI_API_KEY", "KIMI_BASE_URL",
+		"GOOGLE_API_KEY", "GEMINI_API_KEY", "GEMINI_BASE_URL",
 	} {
 		t.Setenv(key, "")
 	}
@@ -179,13 +180,89 @@ func TestDetectProvider_KimiAlias(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("MOONSHOT_API_KEY", "ms-test")
 
-	// "kimi" alias resolves to "moonshot-v1-auto" and detects Moonshot provider.
+	// "kimi" alias resolves to "kimi-k2.5" and detects Moonshot provider.
 	cfg, err := DetectProvider("moonshot-v1-auto")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.Kind != ProviderOpenAI {
 		t.Errorf("Kind = %v, want %v", cfg.Kind, ProviderOpenAI)
+	}
+}
+
+func TestDetectProvider_Gemini(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("GOOGLE_API_KEY", "goog-test")
+
+	cfg, err := DetectProvider("gemini-2.5-pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Kind != ProviderGemini {
+		t.Errorf("Kind = %v, want %v", cfg.Kind, ProviderGemini)
+	}
+	if cfg.APIKey != "goog-test" {
+		t.Errorf("APIKey = %q, want %q", cfg.APIKey, "goog-test")
+	}
+	if cfg.BaseURL != "https://generativelanguage.googleapis.com/v1beta/openai" {
+		t.Errorf("BaseURL = %q, want Gemini URL", cfg.BaseURL)
+	}
+}
+
+func TestDetectProvider_GeminiAPIKey(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("GEMINI_API_KEY", "gem-test")
+
+	cfg, err := DetectProvider("gemini-2.5-flash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Kind != ProviderGemini {
+		t.Errorf("Kind = %v, want %v", cfg.Kind, ProviderGemini)
+	}
+	if cfg.APIKey != "gem-test" {
+		t.Errorf("APIKey = %q, want %q", cfg.APIKey, "gem-test")
+	}
+}
+
+func TestDetectProvider_GeminiAlias(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("GOOGLE_API_KEY", "goog-test")
+
+	cfg, err := DetectProvider("gemini-pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Kind != ProviderGemini {
+		t.Errorf("Kind = %v, want %v", cfg.Kind, ProviderGemini)
+	}
+}
+
+func TestDetectProvider_GeminiCustomBaseURL(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("GOOGLE_API_KEY", "goog-test")
+	t.Setenv("GEMINI_BASE_URL", "https://custom.gemini.example/v1")
+
+	cfg, err := DetectProvider("gemini-2.5-pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BaseURL != "https://custom.gemini.example/v1" {
+		t.Errorf("BaseURL = %q, want custom URL", cfg.BaseURL)
+	}
+}
+
+func TestResolveModel_GeminiAliases(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"gemini-pro", "gemini-2.5-pro"},
+		{"gemini-flash", "gemini-2.5-flash"},
+	}
+	for _, tt := range tests {
+		if got := ResolveModel(tt.input); got != tt.want {
+			t.Errorf("ResolveModel(%q) = %q, want %q", tt.input, got, tt.want)
+		}
 	}
 }
 

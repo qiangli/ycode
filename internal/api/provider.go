@@ -11,10 +11,12 @@ import (
 
 // ModelAliases maps short names to full model IDs.
 var ModelAliases = map[string]string{
-	"opus":   "claude-opus-4-6-20250415",
-	"sonnet": "claude-sonnet-4-6-20250514",
-	"haiku":  "claude-haiku-4-5-20251001",
-	"kimi":   "kimi-k2.5",
+	"opus":         "claude-opus-4-6-20250415",
+	"sonnet":       "claude-sonnet-4-6-20250514",
+	"haiku":        "claude-haiku-4-5-20251001",
+	"kimi":         "kimi-k2.5",
+	"gemini-pro":   "gemini-2.5-pro",
+	"gemini-flash": "gemini-2.5-flash",
 }
 
 // ProviderConfig holds provider-specific settings for client creation.
@@ -138,6 +140,22 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 			BaseURL: envNonEmpty("KIMI_BASE_URL", "https://api.moonshot.ai/v1"),
 		}, nil
 	}
+	if key := envNonEmpty("GOOGLE_API_KEY"); key != "" {
+		return &ProviderConfig{
+			Kind:        ProviderGemini,
+			DisplayName: "gemini",
+			APIKey:      key,
+			BaseURL:     envNonEmpty("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai"),
+		}, nil
+	}
+	if key := envNonEmpty("GEMINI_API_KEY"); key != "" {
+		return &ProviderConfig{
+			Kind:        ProviderGemini,
+			DisplayName: "gemini",
+			APIKey:      key,
+			BaseURL:     envNonEmpty("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai"),
+		}, nil
+	}
 
 	// Fall back to saved OAuth credentials for Anthropic.
 	if token, err := resolveOAuthToken(); err == nil && token != "" {
@@ -148,7 +166,7 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 		}, nil
 	}
 
-	return nil, fmt.Errorf("no API key found; set one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY\nor run: ycode login")
+	return nil, fmt.Errorf("no API key found; set one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY\nor run: ycode login")
 }
 
 // NewProvider creates a Provider from a ProviderConfig.
@@ -163,6 +181,8 @@ func NewProvider(cfg *ProviderConfig) Provider {
 			opts = append(opts, WithBearerToken(cfg.BearerToken))
 		}
 		return NewAnthropicClient(cfg.APIKey, opts...)
+	case ProviderGemini:
+		return NewOpenAICompatClient(cfg.APIKey, cfg.BaseURL)
 	default:
 		return NewOpenAICompatClient(cfg.APIKey, cfg.BaseURL)
 	}
@@ -219,6 +239,24 @@ func detectFromModel(model string) (*ProviderConfig, bool) {
 				DisplayName: "dashscope",
 				APIKey:      key,
 				BaseURL:     envNonEmpty("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+			}, true
+		}
+		return nil, true
+	case strings.HasPrefix(lower, "gemini-") || strings.HasPrefix(lower, "gemini/"):
+		if key := envNonEmpty("GOOGLE_API_KEY"); key != "" {
+			return &ProviderConfig{
+				Kind:        ProviderGemini,
+				DisplayName: "gemini",
+				APIKey:      key,
+				BaseURL:     envNonEmpty("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai"),
+			}, true
+		}
+		if key := envNonEmpty("GEMINI_API_KEY"); key != "" {
+			return &ProviderConfig{
+				Kind:        ProviderGemini,
+				DisplayName: "gemini",
+				APIKey:      key,
+				BaseURL:     envNonEmpty("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai"),
 			}, true
 		}
 		return nil, true

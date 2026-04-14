@@ -22,6 +22,8 @@ func DetectCapabilities(kind ProviderKind, model string) ProviderCapabilities {
 		return anthropicCapabilities(model)
 	case ProviderOpenAI:
 		return openaiCapabilities(model)
+	case ProviderGemini:
+		return geminiCapabilities(model)
 	default:
 		// Unknown providers: assume no caching (safe default).
 		return ProviderCapabilities{CachingSupported: false}
@@ -53,6 +55,20 @@ func anthropicCapabilities(model string) ProviderCapabilities {
 		caps.MaxContextTokens = 200_000
 	default:
 		caps.MaxContextTokens = 200_000
+	}
+	return caps
+}
+
+func geminiCapabilities(model string) ProviderCapabilities {
+	caps := ProviderCapabilities{CachingSupported: true}
+	lower := strings.ToLower(model)
+	switch {
+	case strings.Contains(lower, "pro"):
+		caps.MaxContextTokens = 1_000_000
+	case strings.Contains(lower, "flash"):
+		caps.MaxContextTokens = 1_000_000
+	default:
+		caps.MaxContextTokens = 1_000_000
 	}
 	return caps
 }

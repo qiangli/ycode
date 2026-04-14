@@ -8,6 +8,7 @@ type ProviderKind string
 const (
 	ProviderAnthropic ProviderKind = "anthropic"
 	ProviderOpenAI    ProviderKind = "openai"
+	ProviderGemini    ProviderKind = "gemini"
 )
 
 // Provider is the interface that all API providers must implement.

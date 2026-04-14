@@ -22,6 +22,26 @@ func TestDetectCapabilities_OpenAI(t *testing.T) {
 	}
 }
 
+func TestDetectCapabilities_Gemini(t *testing.T) {
+	caps := DetectCapabilities(ProviderGemini, "gemini-2.5-pro")
+	if !caps.CachingSupported {
+		t.Error("expected CachingSupported=true for Gemini")
+	}
+	if caps.MaxContextTokens != 1_000_000 {
+		t.Errorf("expected 1000000 tokens, got %d", caps.MaxContextTokens)
+	}
+}
+
+func TestDetectCapabilities_GeminiFlash(t *testing.T) {
+	caps := DetectCapabilities(ProviderGemini, "gemini-2.5-flash")
+	if !caps.CachingSupported {
+		t.Error("expected CachingSupported=true for Gemini Flash")
+	}
+	if caps.MaxContextTokens != 1_000_000 {
+		t.Errorf("expected 1000000 tokens, got %d", caps.MaxContextTokens)
+	}
+}
+
 func TestDetectCapabilities_Unknown(t *testing.T) {
 	caps := DetectCapabilities("ollama", "llama3")
 	if caps.CachingSupported {
