@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"os"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"google.golang.org/grpc/grpclog"
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/commands"
@@ -463,7 +465,7 @@ func (a *App) NextTurnIndex() int {
 // RunInteractiveWithClient starts the interactive TUI with an optional client
 // for event-driven messaging via the service layer and bus.
 func (a *App) RunInteractiveWithClient(ctx context.Context, cl agentClient) error {
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	suppressLogOutput()
 
 	m := NewTUIModel(a)
 	m.cl = cl
@@ -488,9 +490,7 @@ func (a *App) RunInteractiveWithClient(ctx context.Context, cl agentClient) erro
 
 // RunInteractive starts the interactive TUI.
 func (a *App) RunInteractive(ctx context.Context) error {
-	// Discard log output during TUI mode. The default slog handler writes
-	// to stdout/stderr which corrupts the bubbletea alt-screen display.
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	suppressLogOutput()
 
 	m := NewTUIModel(a)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
@@ -516,6 +516,15 @@ func (a *App) RunInteractive(ctx context.Context) error {
 		a.storage.Close()
 	}
 	return nil
+}
+
+// suppressLogOutput silences all log output that could corrupt the bubbletea
+// alt-screen display: slog (application logs), the standard log package, and
+// gRPC's internal logger (which writes connection errors directly to stderr).
+func suppressLogOutput() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	log.SetOutput(io.Discard)
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, io.Discard, io.Discard))
 }
 
 // Close shuts down the application and releases resources.
