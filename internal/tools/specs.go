@@ -614,7 +614,9 @@ var (
 		"properties": {
 			"staged": {"type": "boolean", "description": "Show staged changes (--cached)"},
 			"path": {"type": "string", "description": "Limit diff to specific file or directory"},
-			"commit_range": {"type": "string", "description": "Commit range (e.g., 'HEAD~3..HEAD', 'main..feature')"}
+			"commit_range": {"type": "string", "description": "Commit range (e.g., 'HEAD~3..HEAD', 'main..feature')"},
+			"merge_base": {"type": "boolean", "description": "Diff from the merge base of current branch against base_branch (accurate PR diff)"},
+			"base_branch": {"type": "string", "description": "Base branch for merge_base diff (default: main or master)"}
 		}
 	}`
 

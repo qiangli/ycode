@@ -89,6 +89,34 @@ func readGitDiff(dir string) string {
 	return strings.Join(sections, "\n\n")
 }
 
+// MergeBase returns the best common ancestor between two commits/branches.
+// This is useful for calculating the accurate diff for a PR.
+func MergeBase(dir, ref1, ref2 string) (string, error) {
+	out, err := runGitOutput(dir, "merge-base", ref1, ref2)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// DiffStat returns the diff stat (files changed, insertions, deletions)
+// between two refs. If base is empty, diffs against the main branch merge base.
+func DiffStat(dir, base, head string) (string, error) {
+	if base == "" {
+		main := detectMainBranch(dir)
+		var err error
+		base, err = MergeBase(dir, main, head)
+		if err != nil {
+			return "", err
+		}
+	}
+	out, err := runGitOutput(dir, "diff", "--stat", base+".."+head)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 func detectMainBranch(dir string) string {
 	// Try common main branch names.
 	for _, name := range []string{"main", "master"} {
