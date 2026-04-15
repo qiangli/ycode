@@ -241,9 +241,13 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 				fmt.Printf("NATS server at     nats://127.0.0.1:%d\n", apiNATSPort)
 			}
 
-			// 3. Start chat hub (requires NATS connection).
-			if api.natsSrv != nil && fullCfg.Chat != nil && fullCfg.Chat.Enabled {
-				chatHub := buildChatHub(api.natsSrv.Conn(), fullCfg.Chat, filepath.Join(home, ".ycode", "chat"))
+			// 3. Start chat hub. Defaults to enabled when config is absent.
+			chatCfg := fullCfg.Chat
+			if chatCfg == nil {
+				chatCfg = &config.ChatConfig{Enabled: true}
+			}
+			if chatCfg.Enabled && api.natsSrv != nil {
+				chatHub := buildChatHub(api.natsSrv.Conn(), chatCfg, filepath.Join(home, ".ycode", "chat"))
 				if err := mgr.AddLateComponent(ctx, chatHub); err != nil {
 					slog.Warn("chat hub not available", "error", err)
 				} else {
