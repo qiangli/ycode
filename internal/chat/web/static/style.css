@@ -350,6 +350,23 @@ main#chat-area {
 
 .binding-tag .remove-binding:hover { color: #e94560; }
 
+/* Thinking animation */
+.thinking-dots span {
+    animation: blink 1.4s infinite;
+    animation-fill-mode: both;
+}
+.thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink {
+    0%, 80%, 100% { opacity: 0.2; }
+    40% { opacity: 1; }
+}
+
+.system-msg .body {
+    background: transparent !important;
+    padding: 4px 0 !important;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

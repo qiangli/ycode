@@ -119,13 +119,36 @@
 
     async function sendMessage(text) {
         if (!currentRoomID || !text.trim()) return;
+
+        // Optimistic: show the message immediately.
+        const now = new Date().toISOString();
+        const optimisticMsg = {
+            id: "pending-" + Date.now(),
+            room_id: currentRoomID,
+            sender: { id: "me", display_name: senderName, channel_id: "web" },
+            timestamp: now,
+            content: { text: text.trim() },
+            origin: { channel_id: "web" },
+        };
+        appendMessage(optimisticMsg);
+        scrollToBottom();
+
+        // Show thinking indicator.
+        showThinking();
+
         try {
-            await fetch(apiBase + "/rooms/" + currentRoomID + "/messages", {
+            const res = await fetch(apiBase + "/rooms/" + currentRoomID + "/messages", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ text: text.trim(), sender_name: senderName }),
             });
+            if (!res.ok) {
+                hideThinking();
+                appendSystemMessage("Failed to send message (HTTP " + res.status + ")");
+            }
         } catch (e) {
+            hideThinking();
+            appendSystemMessage("Failed to send: " + e.message);
             console.error("Failed to send message:", e);
         }
     }
@@ -164,6 +187,15 @@
             try {
                 const msg = JSON.parse(evt.data);
                 if (msg.room_id === currentRoomID) {
+                    // Skip duplicate of our own optimistic message.
+                    if (msg.origin && msg.origin.channel_id === "web" &&
+                        msg.sender && msg.sender.display_name === senderName) {
+                        return;
+                    }
+                    // AI response arrived — hide thinking indicator.
+                    if (msg.origin && msg.origin.channel_id === "agent") {
+                        hideThinking();
+                    }
                     appendMessage(msg);
                     scrollToBottom();
                 }
@@ -173,7 +205,7 @@
         };
     }
 
-    // --- Typing indicator ---
+    // --- Typing / thinking indicators ---
 
     function showTyping(name) {
         typingEl.textContent = name + " is typing...";
@@ -182,6 +214,40 @@
         typingTimer = setTimeout(() => {
             typingEl.classList.add("hidden");
         }, 3000);
+    }
+
+    let thinkingEl = null;
+
+    function showThinking() {
+        hideThinking();
+        thinkingEl = document.createElement("div");
+        thinkingEl.className = "message thinking";
+        thinkingEl.innerHTML =
+            '<div class="meta"><span class="channel-badge">agent</span><span class="sender">AI Assistant</span></div>' +
+            '<div class="body thinking-dots">Thinking<span>.</span><span>.</span><span>.</span></div>';
+        messagesEl.appendChild(thinkingEl);
+        scrollToBottom();
+    }
+
+    function hideThinking() {
+        if (thinkingEl) {
+            thinkingEl.remove();
+            thinkingEl = null;
+        }
+    }
+
+    function appendSystemMessage(text) {
+        const div = document.createElement("div");
+        div.className = "message system-msg";
+        div.innerHTML = '<div class="body" style="color:#e94560;font-style:italic">' + escapeHtml(text) + "</div>";
+        messagesEl.appendChild(div);
+        scrollToBottom();
+    }
+
+    function escapeHtml(s) {
+        const d = document.createElement("div");
+        d.textContent = s;
+        return d.innerHTML;
     }
 
     // --- Rendering ---
