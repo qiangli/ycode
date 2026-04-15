@@ -6,10 +6,11 @@
     const basePath = (() => {
         const scripts = document.querySelectorAll("script[src]");
         for (const s of scripts) {
-            const idx = s.src.indexOf("/chat.js");
+            const url = new URL(s.src, location.href);
+            const path = url.pathname;
+            const idx = path.lastIndexOf("/chat.js");
             if (idx !== -1) {
-                const url = new URL(s.src);
-                return url.pathname.substring(0, idx) || "";
+                return path.substring(0, idx) || "";
             }
         }
         return "";
