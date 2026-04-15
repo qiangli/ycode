@@ -11,11 +11,11 @@ import (
 // MockChannel is a test double that implements Channel. It records
 // outbound messages and can inject inbound messages for testing.
 type MockChannel struct {
-	id       channel.ChannelID
-	healthy  atomic.Bool
-	inbound  chan<- channel.InboundMessage
-	mu       sync.Mutex
-	Sent     []MockSent // recorded outbound messages
+	id      channel.ChannelID
+	healthy atomic.Bool
+	inbound chan<- channel.InboundMessage
+	mu      sync.Mutex
+	Sent    []MockSent // recorded outbound messages
 }
 
 // MockSent records a single outbound send call.

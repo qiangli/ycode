@@ -51,8 +51,8 @@ func newTestHub(t *testing.T) (*Hub, *adapters.MockChannel) {
 	cfg := &HubConfig{
 		Enabled: true,
 		Channels: map[channel.ChannelID]ChannelConfig{
-			channel.ChannelWeb:  {Enabled: true},
-			"mock":              {Enabled: true},
+			channel.ChannelWeb: {Enabled: true},
+			"mock":             {Enabled: true},
 		},
 	}
 

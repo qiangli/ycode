@@ -58,8 +58,8 @@ type Config struct {
 
 // ChatConfig controls the embedded NATS-based chat hub and platform bridges.
 type ChatConfig struct {
-	Enabled  bool                             `json:"enabled"`
-	Channels map[string]ChatChannelConfig     `json:"channels,omitempty"` // key = channel ID (telegram, discord, etc.)
+	Enabled  bool                         `json:"enabled"`
+	Channels map[string]ChatChannelConfig `json:"channels,omitempty"` // key = channel ID (telegram, discord, etc.)
 }
 
 // ChatChannelConfig configures a single chat channel.

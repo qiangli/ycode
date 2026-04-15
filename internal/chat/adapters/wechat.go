@@ -34,12 +34,12 @@ type WeChatChannel struct {
 }
 
 type wecomAccount struct {
-	id       string
-	corpID   string
-	agentID  string
-	secret   string
-	token    string // callback verification token
-	aesKey   string // callback EncodingAESKey (optional for now)
+	id      string
+	corpID  string
+	agentID string
+	secret  string
+	token   string // callback verification token
+	aesKey  string // callback EncodingAESKey (optional for now)
 }
 
 type wecomToken struct {

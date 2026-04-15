@@ -21,7 +21,7 @@ type Message struct {
 
 // Sender identifies who sent a message.
 type Sender struct {
-	ID          string            `json:"id"`           // hub-internal user ID
+	ID          string            `json:"id"` // hub-internal user ID
 	DisplayName string            `json:"display_name"`
 	ChannelID   channel.ChannelID `json:"channel_id"`
 	PlatformID  string            `json:"platform_id"` // platform-native user ID

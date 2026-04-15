@@ -38,14 +38,14 @@ type ChannelConfig struct {
 // Hub is the central messaging component. It implements observability.Component
 // and manages channels, routing, persistence, and the web UI.
 type Hub struct {
-	conn     *nats.Conn
-	config   *HubConfig
-	store    *Store
-	router   *Router
-	logger   *slog.Logger
-	healthy  atomic.Bool
-	handler  http.Handler
-	dataDir  string
+	conn    *nats.Conn
+	config  *HubConfig
+	store   *Store
+	router  *Router
+	logger  *slog.Logger
+	healthy atomic.Bool
+	handler http.Handler
+	dataDir string
 
 	mu       sync.RWMutex
 	channels map[channel.ChannelID]channel.Channel
@@ -385,9 +385,9 @@ func (h *Hub) handleListChannels(w http.ResponseWriter, r *http.Request) {
 	defer h.mu.RUnlock()
 
 	type channelStatus struct {
-		ID           channel.ChannelID       `json:"id"`
-		Healthy      bool                    `json:"healthy"`
-		Capabilities channel.Capabilities    `json:"capabilities"`
+		ID           channel.ChannelID    `json:"id"`
+		Healthy      bool                 `json:"healthy"`
+		Capabilities channel.Capabilities `json:"capabilities"`
 	}
 	var statuses []channelStatus
 	for _, ch := range h.channels {
@@ -417,9 +417,9 @@ func (h *Hub) handleGetRoom(w http.ResponseWriter, r *http.Request) {
 	stats, _ := h.store.GetRoomStats(roomID)
 
 	type roomDetail struct {
-		*Room      `json:"room"`
-		Bindings   []*Binding   `json:"bindings"`
-		Stats      *RoomStats   `json:"stats"`
+		*Room    `json:"room"`
+		Bindings []*Binding `json:"bindings"`
+		Stats    *RoomStats `json:"stats"`
 	}
 	if bindings == nil {
 		bindings = []*Binding{}

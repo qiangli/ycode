@@ -162,9 +162,9 @@ func TestGetRoomStats(t *testing.T) {
 
 	// Add a message.
 	msg := &Message{
-		ID:     "stat-msg-1",
-		RoomID: room.ID,
-		Sender: Sender{ID: "u1", DisplayName: "Alice", ChannelID: channel.ChannelWeb},
+		ID:        "stat-msg-1",
+		RoomID:    room.ID,
+		Sender:    Sender{ID: "u1", DisplayName: "Alice", ChannelID: channel.ChannelWeb},
 		Timestamp: time.Now(),
 		Content:   channel.MessageContent{Text: "hi"},
 		Origin:    MessageOrigin{ChannelID: channel.ChannelWeb},
