@@ -268,10 +268,15 @@ func (h *Hub) buildHTTPHandler() http.Handler {
 	mux.HandleFunc("GET /api/health", h.handleHealth)
 	mux.HandleFunc("GET /api/rooms", h.handleListRooms)
 	mux.HandleFunc("POST /api/rooms", h.handleCreateRoom)
+	mux.HandleFunc("GET /api/rooms/{id}", h.handleGetRoom)
+	mux.HandleFunc("PUT /api/rooms/{id}", h.handleUpdateRoom)
 	mux.HandleFunc("GET /api/rooms/{id}/messages", h.handleGetMessages)
 	mux.HandleFunc("POST /api/rooms/{id}/messages", h.handleSendMessage)
 	mux.HandleFunc("GET /api/rooms/{id}/ws", h.handleWebSocket)
+	mux.HandleFunc("POST /api/rooms/{id}/bindings", h.handleAddBinding)
+	mux.HandleFunc("DELETE /api/bindings/{id}", h.handleRemoveBinding)
 	mux.HandleFunc("GET /api/channels", h.handleListChannels)
+	mux.HandleFunc("GET /api/dashboard", h.handleDashboard)
 
 	// Static web UI — serve embedded files, SPA fallback.
 	staticHandler := chatWebHandler()
@@ -399,4 +404,153 @@ func (h *Hub) handleListChannels(w http.ResponseWriter, r *http.Request) {
 func (h *Hub) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	roomID := r.PathValue("id")
 	h.wsClients.serveWS(w, r, roomID)
+}
+
+func (h *Hub) handleGetRoom(w http.ResponseWriter, r *http.Request) {
+	roomID := r.PathValue("id")
+	room, err := h.store.GetRoom(roomID)
+	if err != nil {
+		http.Error(w, "room not found", http.StatusNotFound)
+		return
+	}
+	bindings, _ := h.store.GetBindings(roomID)
+	stats, _ := h.store.GetRoomStats(roomID)
+
+	type roomDetail struct {
+		*Room      `json:"room"`
+		Bindings   []*Binding   `json:"bindings"`
+		Stats      *RoomStats   `json:"stats"`
+	}
+	if bindings == nil {
+		bindings = []*Binding{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(roomDetail{Room: room, Bindings: bindings, Stats: stats})
+}
+
+func (h *Hub) handleUpdateRoom(w http.ResponseWriter, r *http.Request) {
+	roomID := r.PathValue("id")
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.RenameRoom(roomID, req.Name); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Hub) handleAddBinding(w http.ResponseWriter, r *http.Request) {
+	roomID := r.PathValue("id")
+	var req struct {
+		ChannelID string `json:"channel_id"`
+		AccountID string `json:"account_id"`
+		ChatID    string `json:"chat_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if req.ChannelID == "" || req.ChatID == "" {
+		http.Error(w, "channel_id and chat_id required", http.StatusBadRequest)
+		return
+	}
+	if req.AccountID == "" {
+		req.AccountID = "default"
+	}
+	if err := h.store.AddBinding(roomID, channel.ChannelID(req.ChannelID), req.AccountID, req.ChatID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+}
+
+func (h *Hub) handleRemoveBinding(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid binding id", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.RemoveBinding(id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// DashboardData is the response for GET /api/dashboard.
+type DashboardData struct {
+	Rooms    []DashboardRoom    `json:"rooms"`
+	Channels []DashboardChannel `json:"channels"`
+}
+
+// DashboardRoom summarizes a room for the dashboard.
+type DashboardRoom struct {
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	MessageCount int        `json:"message_count"`
+	UserCount    int        `json:"user_count"`
+	LastActivity *time.Time `json:"last_activity,omitempty"`
+	Bindings     []*Binding `json:"bindings"`
+}
+
+// DashboardChannel summarizes a channel for the dashboard.
+type DashboardChannel struct {
+	ID           channel.ChannelID    `json:"id"`
+	Healthy      bool                 `json:"healthy"`
+	Capabilities channel.Capabilities `json:"capabilities"`
+}
+
+func (h *Hub) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	rooms, err := h.store.ListRooms()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var dashRooms []DashboardRoom
+	for _, room := range rooms {
+		dr := DashboardRoom{
+			ID:   room.ID,
+			Name: room.Name,
+		}
+		if stats, err := h.store.GetRoomStats(room.ID); err == nil {
+			dr.MessageCount = stats.MessageCount
+			dr.UserCount = stats.UserCount
+			if !stats.LastActivity.IsZero() {
+				dr.LastActivity = &stats.LastActivity
+			}
+		}
+		bindings, _ := h.store.GetBindings(room.ID)
+		if bindings == nil {
+			bindings = []*Binding{}
+		}
+		dr.Bindings = bindings
+		dashRooms = append(dashRooms, dr)
+	}
+	if dashRooms == nil {
+		dashRooms = []DashboardRoom{}
+	}
+
+	h.mu.RLock()
+	var dashChannels []DashboardChannel
+	for _, ch := range h.channels {
+		dashChannels = append(dashChannels, DashboardChannel{
+			ID:           ch.ID(),
+			Healthy:      ch.Healthy(),
+			Capabilities: ch.Capabilities(),
+		})
+	}
+	h.mu.RUnlock()
+	if dashChannels == nil {
+		dashChannels = []DashboardChannel{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(DashboardData{Rooms: dashRooms, Channels: dashChannels})
 }

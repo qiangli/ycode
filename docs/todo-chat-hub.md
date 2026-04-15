@@ -46,12 +46,21 @@ Plan: [plan-chat-hub.md](./plan-chat-hub.md)
 - [x] `go test -short -race ./internal/chat/...` — all pass
 - [x] `go mod tidy` — clean
 
-## Phase 6: Polish (future)
+## Phase 6: Polish
 
-- [ ] Room management UI (rename, add bindings between channels)
-- [ ] Message history pagination in web UI
-- [ ] Presence/typing indicators
+- [x] Dashboard view — rooms with stats (message count, user count, last activity), channel bindings, channel health
+- [x] Room detail API (`GET /api/rooms/{id}`) with bindings and stats
+- [x] Room rename API (`PUT /api/rooms/{id}`)
+- [x] Add/remove binding APIs (`POST /api/rooms/{id}/bindings`, `DELETE /api/bindings/{id}`)
+- [x] Dashboard API (`GET /api/dashboard`) — aggregate room+channel overview
+- [x] Message history scroll pagination (load older on scroll-to-top)
+- [x] Typing indicator UI support
+- [x] Hub integration tests (`hub_test.go`) — create room, dashboard, fan-out, health, channels
+- [x] Store tests for RenameRoom, RemoveBinding, GetRoomStats
+- [x] `go build` / `go vet` / `go test -race` — all clean, 16 tests pass
+
+## Future
+
 - [ ] Media upload and relay across channels
-- [ ] Health dashboard integration
 - [ ] Upgrade Telegram adapter to use `gotd/td` (MIT) for full MTProto 2.0
-- [ ] Integration tests with embedded NATS (`internal/integration/chat_test.go`)
+- [ ] End-to-end integration tests (`internal/integration/chat_test.go`)

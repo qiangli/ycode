@@ -36,7 +36,12 @@ aside#sidebar {
     color: #e94560;
 }
 
-#new-room-btn {
+.sidebar-actions {
+    display: flex;
+    gap: 6px;
+}
+
+#new-room-btn, #dashboard-btn {
     background: #e94560;
     color: #fff;
     border: none;
@@ -50,6 +55,8 @@ aside#sidebar {
     justify-content: center;
 }
 
+#dashboard-btn { background: #0f3460; font-size: 16px; }
+#dashboard-btn:hover { background: #1a1a3e; }
 #new-room-btn:hover { background: #c73652; }
 
 #room-list {
@@ -191,6 +198,157 @@ main#chat-area {
 }
 
 #message-form button:hover { background: #c73652; }
+
+/* Typing indicator */
+#typing-indicator {
+    font-size: 12px;
+    color: #888;
+    font-style: italic;
+    min-height: 16px;
+    margin-top: 4px;
+}
+#typing-indicator.hidden { display: none; }
+
+/* Dashboard overlay */
+#dashboard {
+    position: absolute;
+    top: 0;
+    left: 260px;
+    right: 0;
+    bottom: 0;
+    background: #1a1a2e;
+    overflow-y: auto;
+    z-index: 10;
+    padding: 24px 32px;
+}
+
+#dashboard.hidden { display: none; }
+
+.dash-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.dash-header h2 {
+    font-size: 22px;
+    color: #e94560;
+}
+
+#dash-close {
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 28px;
+    cursor: pointer;
+}
+
+#dash-close:hover { color: #e94560; }
+
+.dash-section {
+    margin-bottom: 28px;
+}
+
+.dash-section h3 {
+    font-size: 15px;
+    color: #aaa;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid #0f3460;
+    padding-bottom: 6px;
+}
+
+/* Channel cards */
+.channel-card {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #16213e;
+    border: 1px solid #0f3460;
+    border-radius: 8px;
+    padding: 10px 16px;
+    margin: 0 8px 8px 0;
+    font-size: 14px;
+}
+
+.channel-card .ch-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.channel-card .ch-dot.healthy { background: #4caf50; }
+.channel-card .ch-dot.unhealthy { background: #f44336; }
+
+.channel-card .ch-name {
+    font-weight: 600;
+    text-transform: capitalize;
+}
+
+.channel-card .ch-caps {
+    font-size: 11px;
+    color: #666;
+}
+
+/* Room cards */
+.room-card {
+    background: #16213e;
+    border: 1px solid #0f3460;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 10px;
+}
+
+.room-card .rc-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.room-card .rc-name {
+    font-weight: 600;
+    font-size: 15px;
+    color: #e0e0e0;
+    cursor: pointer;
+}
+
+.room-card .rc-name:hover { color: #e94560; }
+
+.room-card .rc-stats {
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+    color: #888;
+}
+
+.room-card .rc-bindings {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.binding-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: #0f3460;
+    color: #ccc;
+}
+
+.binding-tag .remove-binding {
+    cursor: pointer;
+    color: #888;
+    margin-left: 4px;
+}
+
+.binding-tag .remove-binding:hover { color: #e94560; }
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }

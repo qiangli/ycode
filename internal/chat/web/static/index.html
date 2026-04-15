@@ -11,7 +11,10 @@
         <aside id="sidebar">
             <div class="sidebar-header">
                 <h2>Chat</h2>
-                <button id="new-room-btn" title="New Room">+</button>
+                <div class="sidebar-actions">
+                    <button id="dashboard-btn" title="Dashboard">&#9776;</button>
+                    <button id="new-room-btn" title="New Room">+</button>
+                </div>
             </div>
             <ul id="room-list"></ul>
             <div class="sidebar-footer">
@@ -22,6 +25,7 @@
         <main id="chat-area">
             <div id="chat-header">
                 <h3 id="room-name">Select a room</h3>
+                <div id="typing-indicator" class="hidden"></div>
             </div>
             <div id="messages"></div>
             <form id="message-form" class="hidden">
@@ -29,6 +33,21 @@
                 <button type="submit">Send</button>
             </form>
         </main>
+        <!-- Dashboard overlay -->
+        <div id="dashboard" class="hidden">
+            <div class="dash-header">
+                <h2>Dashboard</h2>
+                <button id="dash-close">&times;</button>
+            </div>
+            <div class="dash-section">
+                <h3>Channels</h3>
+                <div id="dash-channels"></div>
+            </div>
+            <div class="dash-section">
+                <h3>Rooms</h3>
+                <div id="dash-rooms"></div>
+            </div>
+        </div>
     </div>
     <script src="chat.js"></script>
 </body>

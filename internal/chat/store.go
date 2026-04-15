@@ -280,6 +280,52 @@ func (s *Store) GetMessages(roomID string, limit, offset int) ([]*Message, error
 	return messages, rows.Err()
 }
 
+// RoomStats holds aggregate stats for a room.
+type RoomStats struct {
+	RoomID       string    `json:"room_id"`
+	MessageCount int       `json:"message_count"`
+	LastActivity time.Time `json:"last_activity"`
+	UserCount    int       `json:"user_count"`
+}
+
+// GetRoomStats returns aggregate stats for a room.
+func (s *Store) GetRoomStats(roomID string) (*RoomStats, error) {
+	var stats RoomStats
+	stats.RoomID = roomID
+
+	var lastTS sql.NullString
+	err := s.db.QueryRow(
+		"SELECT COUNT(*), MAX(timestamp) FROM chat_messages WHERE room_id = ?", roomID,
+	).Scan(&stats.MessageCount, &lastTS)
+	if err != nil {
+		return nil, err
+	}
+	if lastTS.Valid {
+		stats.LastActivity, _ = time.Parse(time.RFC3339Nano, lastTS.String)
+	}
+
+	err = s.db.QueryRow(
+		"SELECT COUNT(DISTINCT sender_id) FROM chat_messages WHERE room_id = ?", roomID,
+	).Scan(&stats.UserCount)
+	if err != nil {
+		return nil, err
+	}
+	return &stats, nil
+}
+
+// RenameRoom updates a room's name.
+func (s *Store) RenameRoom(roomID, name string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec("UPDATE chat_rooms SET name = ?, updated_at = ? WHERE id = ?", name, now, roomID)
+	return err
+}
+
+// RemoveBinding removes a binding by its ID.
+func (s *Store) RemoveBinding(bindingID int64) error {
+	_, err := s.db.Exec("DELETE FROM chat_bindings WHERE id = ?", bindingID)
+	return err
+}
+
 // FindOrCreateUser finds a user by channel+platform ID, or creates one.
 func (s *Store) FindOrCreateUser(channelID channel.ChannelID, platformID, displayName string) (*User, error) {
 	var u User

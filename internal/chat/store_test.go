@@ -113,6 +113,73 @@ func TestSaveAndGetMessages(t *testing.T) {
 	}
 }
 
+func TestRenameRoom(t *testing.T) {
+	s := newTestStore(t)
+	room, _ := s.CreateRoom("old-name")
+
+	if err := s.RenameRoom(room.ID, "new-name"); err != nil {
+		t.Fatalf("RenameRoom: %v", err)
+	}
+
+	got, _ := s.GetRoom(room.ID)
+	if got.Name != "new-name" {
+		t.Fatalf("got name %q, want %q", got.Name, "new-name")
+	}
+}
+
+func TestRemoveBinding(t *testing.T) {
+	s := newTestStore(t)
+	room, _ := s.CreateRoom("rm-bind-room")
+	s.AddBinding(room.ID, channel.ChannelTelegram, "bot1", "chat1")
+
+	bindings, _ := s.GetBindings(room.ID)
+	if len(bindings) != 1 {
+		t.Fatalf("expected 1 binding, got %d", len(bindings))
+	}
+
+	if err := s.RemoveBinding(bindings[0].ID); err != nil {
+		t.Fatalf("RemoveBinding: %v", err)
+	}
+
+	bindings2, _ := s.GetBindings(room.ID)
+	if len(bindings2) != 0 {
+		t.Fatalf("expected 0 bindings after remove, got %d", len(bindings2))
+	}
+}
+
+func TestGetRoomStats(t *testing.T) {
+	s := newTestStore(t)
+	room, _ := s.CreateRoom("stats-room")
+
+	// Empty stats.
+	stats, err := s.GetRoomStats(room.ID)
+	if err != nil {
+		t.Fatalf("GetRoomStats: %v", err)
+	}
+	if stats.MessageCount != 0 {
+		t.Fatalf("expected 0 messages, got %d", stats.MessageCount)
+	}
+
+	// Add a message.
+	msg := &Message{
+		ID:     "stat-msg-1",
+		RoomID: room.ID,
+		Sender: Sender{ID: "u1", DisplayName: "Alice", ChannelID: channel.ChannelWeb},
+		Timestamp: time.Now(),
+		Content:   channel.MessageContent{Text: "hi"},
+		Origin:    MessageOrigin{ChannelID: channel.ChannelWeb},
+	}
+	s.SaveMessage(msg)
+
+	stats2, _ := s.GetRoomStats(room.ID)
+	if stats2.MessageCount != 1 {
+		t.Fatalf("expected 1 message, got %d", stats2.MessageCount)
+	}
+	if stats2.UserCount != 1 {
+		t.Fatalf("expected 1 user, got %d", stats2.UserCount)
+	}
+}
+
 func TestFindOrCreateUser(t *testing.T) {
 	s := newTestStore(t)
 
