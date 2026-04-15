@@ -3,6 +3,7 @@ package adapters
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -15,14 +16,17 @@ import (
 	"github.com/qiangli/ycode/internal/service"
 )
 
+// StatusBroadcaster is the interface the agent adapter uses to send
+// ephemeral progress events to WebSocket clients. Implemented by Hub.
+type StatusBroadcaster interface {
+	BroadcastStatus(roomID, statusType, text string)
+}
+
 // AgentChannel bridges chat messages to the AI agent service.
 // It implements channel.Channel — the AI is just another "platform" in the hub.
-//
-// When the hub fans out a message to this channel, Send() dispatches it to
-// service.SendMessage(). When the AI finishes a turn, the bus event is
-// converted back to an InboundMessage and pushed into the hub.
 type AgentChannel struct {
 	svc     service.Service
+	status  StatusBroadcaster
 	logger  *slog.Logger
 	healthy atomic.Bool
 	inbound chan<- channel.InboundMessage
@@ -36,9 +40,11 @@ type AgentChannel struct {
 }
 
 // NewAgentChannel creates an agent channel adapter wrapping the given service.
-func NewAgentChannel(svc service.Service) *AgentChannel {
+// The StatusBroadcaster (typically the Hub) is used to relay progress events.
+func NewAgentChannel(svc service.Service, status StatusBroadcaster) *AgentChannel {
 	return &AgentChannel{
 		svc:    svc,
+		status: status,
 		logger: slog.Default(),
 	}
 }
@@ -58,8 +64,16 @@ func (a *AgentChannel) Start(ctx context.Context, _ []channel.AccountConfig, inb
 	ctx, cancel := context.WithCancel(ctx)
 	a.cancel = cancel
 
-	// Subscribe to turn completion and error events from the AI service bus.
-	ch, unsub := a.svc.Bus().Subscribe(bus.EventTurnComplete, bus.EventTurnError)
+	// Subscribe to all relevant events from the AI service bus.
+	ch, unsub := a.svc.Bus().Subscribe(
+		bus.EventTurnStart,
+		bus.EventTextDelta,
+		bus.EventThinkingDelta,
+		bus.EventToolProgress,
+		bus.EventToolResult,
+		bus.EventTurnComplete,
+		bus.EventTurnError,
+	)
 	go a.listenEvents(ctx, ch, unsub)
 
 	a.healthy.Store(true)
@@ -78,7 +92,6 @@ func (a *AgentChannel) Stop(_ context.Context) error {
 func (a *AgentChannel) Healthy() bool { return a.healthy.Load() }
 
 // Send is called by the hub when a message should reach the AI agent.
-// It dispatches to service.SendMessage in a goroutine (non-blocking).
 func (a *AgentChannel) Send(_ context.Context, target channel.OutboundTarget, msg channel.OutboundMessage) error {
 	roomID := target.ChatID
 	sessionID, err := a.getOrCreateSession(roomID)
@@ -91,14 +104,12 @@ func (a *AgentChannel) Send(_ context.Context, target channel.OutboundTarget, ms
 			Text: msg.Content.Text,
 		}); err != nil {
 			a.logger.Error("agent: SendMessage failed", "room", roomID, "error", err)
-			// Post error as a chat message so the user sees it.
 			a.postToHub(roomID, "Error: "+err.Error())
 		}
 	}()
 	return nil
 }
 
-// getOrCreateSession returns the AI session for a room, creating one if needed.
 func (a *AgentChannel) getOrCreateSession(roomID string) (string, error) {
 	if v, ok := a.roomToSession.Load(roomID); ok {
 		return v.(string), nil
@@ -107,7 +118,6 @@ func (a *AgentChannel) getOrCreateSession(roomID string) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Double-check after acquiring lock.
 	if v, ok := a.roomToSession.Load(roomID); ok {
 		return v.(string), nil
 	}
@@ -123,7 +133,6 @@ func (a *AgentChannel) getOrCreateSession(roomID string) (string, error) {
 	return info.ID, nil
 }
 
-// listenEvents reads bus events and converts AI responses to chat messages.
 func (a *AgentChannel) listenEvents(ctx context.Context, ch <-chan bus.Event, unsub func()) {
 	defer unsub()
 	for {
@@ -140,40 +149,76 @@ func (a *AgentChannel) listenEvents(ctx context.Context, ch <-chan bus.Event, un
 }
 
 func (a *AgentChannel) handleEvent(ev bus.Event) {
-	// Look up room from session.
-	roomID, ok := a.sessionToRoom.Load(ev.SessionID)
+	roomVal, ok := a.sessionToRoom.Load(ev.SessionID)
 	if !ok {
-		return // Not a session we manage.
+		return
 	}
+	roomID := roomVal.(string)
 
 	switch ev.Type {
+	case bus.EventTurnStart:
+		a.broadcastProgress(roomID, "thinking", "AI is thinking...")
+
+	case bus.EventTextDelta:
+		// Streaming text — show a brief "generating" status.
+		a.broadcastProgress(roomID, "thinking", "AI is generating a response...")
+
+	case bus.EventThinkingDelta:
+		a.broadcastProgress(roomID, "thinking", "AI is reasoning...")
+
+	case bus.EventToolProgress:
+		var data struct {
+			Tool   string `json:"tool"`
+			Status string `json:"status"`
+			Index  int    `json:"index"`
+			Total  int    `json:"total"`
+		}
+		if json.Unmarshal(ev.Data, &data) == nil {
+			text := fmt.Sprintf("Running tool: %s (%d/%d) [%s]", data.Tool, data.Index+1, data.Total, data.Status)
+			a.broadcastProgress(roomID, "tool", text)
+		}
+
+	case bus.EventToolResult:
+		var data struct {
+			Status  string `json:"status"`
+			IsError bool   `json:"is_error"`
+		}
+		if json.Unmarshal(ev.Data, &data) == nil {
+			if data.IsError {
+				a.broadcastProgress(roomID, "tool", "Tool failed")
+			} else {
+				a.broadcastProgress(roomID, "tool", "Tool completed")
+			}
+		}
+
 	case bus.EventTurnComplete:
+		// Clear progress, post final response as a chat message.
+		a.broadcastProgress(roomID, "done", "")
 		var data struct {
 			Status string `json:"status"`
 			Text   string `json:"text"`
 		}
-		if err := json.Unmarshal(ev.Data, &data); err != nil {
-			return
+		if json.Unmarshal(ev.Data, &data) == nil && data.Text != "" {
+			a.postToHub(roomID, data.Text)
 		}
-		if data.Text == "" {
-			return
-		}
-		a.postToHub(roomID.(string), data.Text)
 
 	case bus.EventTurnError:
+		a.broadcastProgress(roomID, "done", "")
 		var data struct {
 			Error string `json:"error"`
 		}
-		if err := json.Unmarshal(ev.Data, &data); err != nil {
-			return
-		}
-		if data.Error != "" {
-			a.postToHub(roomID.(string), "Error: "+data.Error)
+		if json.Unmarshal(ev.Data, &data) == nil && data.Error != "" {
+			a.postToHub(roomID, "Error: "+data.Error)
 		}
 	}
 }
 
-// postToHub pushes a message from the AI agent into the chat hub.
+func (a *AgentChannel) broadcastProgress(roomID, statusType, text string) {
+	if a.status != nil {
+		a.status.BroadcastStatus(roomID, statusType, text)
+	}
+}
+
 func (a *AgentChannel) postToHub(roomID, text string) {
 	if a.inbound == nil {
 		return

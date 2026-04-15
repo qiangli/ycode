@@ -55,8 +55,10 @@ func buildChatHub(conn *nats.Conn, cfg *config.ChatConfig, dataDir string, svc s
 	hub.RegisterChannel(adapters.NewWeChatChannel())
 
 	// Register the AI agent adapter if service is available.
+	// Pass the hub as StatusBroadcaster so agent progress events
+	// reach WebSocket clients in real time.
 	if svc != nil {
-		hub.RegisterChannel(adapters.NewAgentChannel(svc))
+		hub.RegisterChannel(adapters.NewAgentChannel(svc, hub))
 	}
 
 	return hub

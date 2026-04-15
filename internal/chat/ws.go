@@ -80,6 +80,34 @@ func (h *wsHub) broadcast(msg *Message) {
 	}
 }
 
+// StatusEvent is an ephemeral progress/status update sent to WebSocket clients.
+// Unlike Messages, these are not persisted — they are live-only indicators.
+type StatusEvent struct {
+	Type   string `json:"type"` // "progress", "thinking", "tool", "error"
+	RoomID string `json:"room_id"`
+	Text   string `json:"text"`
+}
+
+// broadcastStatus sends an ephemeral status event to all WebSocket clients in a room.
+func (h *wsHub) broadcastStatus(evt *StatusEvent) {
+	data, err := json.Marshal(evt)
+	if err != nil {
+		return
+	}
+
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.clients {
+		if c.roomID != "" && c.roomID != evt.RoomID {
+			continue
+		}
+		select {
+		case c.send <- data:
+		default:
+		}
+	}
+}
+
 // serveWS upgrades an HTTP connection to WebSocket and registers the client.
 func (h *wsHub) serveWS(w http.ResponseWriter, r *http.Request, roomID string) {
 	conn, err := upgrader.Upgrade(w, r, nil)

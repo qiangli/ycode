@@ -185,7 +185,18 @@
 
         ws.onmessage = (evt) => {
             try {
-                const msg = JSON.parse(evt.data);
+                const data = JSON.parse(evt.data);
+
+                // Status/progress events (ephemeral, from agent adapter).
+                if (data.type && !data.id) {
+                    if (data.room_id === currentRoomID) {
+                        handleStatusEvent(data);
+                    }
+                    return;
+                }
+
+                // Chat message.
+                const msg = data;
                 if (msg.room_id === currentRoomID) {
                     // Skip duplicate of our own optimistic message.
                     if (msg.origin && msg.origin.channel_id === "web" &&
@@ -248,6 +259,37 @@
         const d = document.createElement("div");
         d.textContent = s;
         return d.innerHTML;
+    }
+
+    function handleStatusEvent(evt) {
+        if (evt.type === "done") {
+            // Turn complete — clear all progress indicators.
+            hideThinking();
+            typingEl.classList.add("hidden");
+            return;
+        }
+        // Show progress in the thinking indicator area.
+        if (evt.text) {
+            updateProgress(evt.type, evt.text);
+        }
+    }
+
+    function updateProgress(type, text) {
+        // Update or create the thinking indicator with live progress.
+        if (!thinkingEl) {
+            showThinking();
+        }
+        if (thinkingEl) {
+            const body = thinkingEl.querySelector(".body");
+            if (body) {
+                body.textContent = text;
+                // Add a pulsing dot for tool operations.
+                if (type === "tool") {
+                    body.innerHTML = '<span class="tool-icon">&#9881;</span> ' + escapeHtml(text);
+                }
+            }
+        }
+        scrollToBottom();
     }
 
     // --- Rendering ---

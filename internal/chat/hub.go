@@ -134,6 +134,16 @@ func (h *Hub) Healthy() bool { return h.healthy.Load() }
 // HTTPHandler implements observability.Component.
 func (h *Hub) HTTPHandler() http.Handler { return h.handler }
 
+// BroadcastStatus sends an ephemeral status event to WebSocket clients in a room.
+// Used by channel adapters (e.g., agent) to relay progress without persisting.
+func (h *Hub) BroadcastStatus(roomID, statusType, text string) {
+	h.wsClients.broadcastStatus(&StatusEvent{
+		Type:   statusType,
+		RoomID: roomID,
+		Text:   text,
+	})
+}
+
 // RegisterChannel adds a channel adapter to the hub.
 func (h *Hub) RegisterChannel(ch channel.Channel) {
 	h.mu.Lock()

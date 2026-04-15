@@ -362,6 +362,12 @@ main#chat-area {
     40% { opacity: 1; }
 }
 
+.tool-icon {
+    display: inline-block;
+    animation: spin 2s linear infinite;
+}
+@keyframes spin { 100% { transform: rotate(360deg); } }
+
 .system-msg .body {
     background: transparent !important;
     padding: 4px 0 !important;
