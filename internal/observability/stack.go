@@ -201,6 +201,7 @@ var componentPathMap = map[string]string{
 	"jaeger":         "/traces/",
 	"ycode":          "/ycode/",
 	"memos":          "/memos/",
+	"chat":           "/chat/",
 }
 
 // registerRoutes mounts each component's HTTP handler on the proxy mux.

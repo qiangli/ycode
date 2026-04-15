@@ -49,8 +49,30 @@ type Config struct {
 	// NATS server settings
 	NATS *NATSConfig `json:"nats,omitempty"`
 
+	// Chat hub settings
+	Chat *ChatConfig `json:"chat,omitempty"`
+
 	// Custom settings (arbitrary key-value pairs from plugins/MCP)
 	Custom map[string]any `json:"custom,omitempty"`
+}
+
+// ChatConfig controls the embedded NATS-based chat hub and platform bridges.
+type ChatConfig struct {
+	Enabled  bool                             `json:"enabled"`
+	Channels map[string]ChatChannelConfig     `json:"channels,omitempty"` // key = channel ID (telegram, discord, etc.)
+}
+
+// ChatChannelConfig configures a single chat channel.
+type ChatChannelConfig struct {
+	Enabled  bool               `json:"enabled"`
+	Accounts []ChatAccountEntry `json:"accounts,omitempty"`
+}
+
+// ChatAccountEntry holds per-account credentials for a chat channel.
+type ChatAccountEntry struct {
+	ID      string            `json:"id"`
+	Enabled bool              `json:"enabled"`
+	Config  map[string]string `json:"config"` // channel-specific keys (bot_token, etc.)
 }
 
 // NATSConfig controls the embedded NATS server for distributed messaging.
@@ -289,6 +311,9 @@ func mergeFromFile(cfg *Config, path string) error {
 		if o.PersistMetrics {
 			cfg.Observability.PersistMetrics = true
 		}
+	}
+	if overlay.Chat != nil {
+		cfg.Chat = overlay.Chat
 	}
 	if overlay.Custom != nil {
 		if cfg.Custom == nil {

@@ -15,6 +15,7 @@ require (
 	github.com/VictoriaMetrics/VictoriaLogs v0.0.0-20260218111324-95b48d57d032
 	github.com/VictoriaMetrics/VictoriaMetrics v1.139.0
 	github.com/blevesearch/bleve/v2 v2.5.7
+	github.com/bwmarrin/discordgo v0.29.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/glamour v1.0.0

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ycode Chat</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <aside id="sidebar">
+            <div class="sidebar-header">
+                <h2>Chat</h2>
+                <button id="new-room-btn" title="New Room">+</button>
+            </div>
+            <ul id="room-list"></ul>
+            <div class="sidebar-footer">
+                <div id="connection-status" class="status-dot disconnected"></div>
+                <span id="status-text">Disconnected</span>
+            </div>
+        </aside>
+        <main id="chat-area">
+            <div id="chat-header">
+                <h3 id="room-name">Select a room</h3>
+            </div>
+            <div id="messages"></div>
+            <form id="message-form" class="hidden">
+                <input type="text" id="message-input" placeholder="Type a message..." autocomplete="off">
+                <button type="submit">Send</button>
+            </form>
+        </main>
+    </div>
+    <script src="chat.js"></script>
+</body>
+</html>

@@ -34,19 +34,19 @@ HTTP/WebSocket API server (for web UI and remote clients), and embedded NATS ser
 
 Use --no-api or --no-nats to disable specific services.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, dataDir, err := loadServeConfig()
+		fullCfg, obsCfg, dataDir, err := loadFullServeConfig()
 		if err != nil {
 			return err
 		}
 		if servePort > 0 {
-			cfg.ProxyPort = servePort
+			obsCfg.ProxyPort = servePort
 		}
 
 		if serveDetach {
-			return detachServer(cfg, dataDir)
+			return detachServer(obsCfg, dataDir)
 		}
 
-		return runAllServices(cmd.Context(), cfg, dataDir)
+		return runAllServices(cmd.Context(), fullCfg, obsCfg, dataDir)
 	},
 }
 
@@ -194,8 +194,8 @@ var serveAuditCmd = &cobra.Command{
 }
 
 // runAllServices starts the full ycode server stack:
-// observability, API/WebSocket server, and NATS server.
-func runAllServices(ctx context.Context, cfg *config.ObservabilityConfig, dataDir string) error {
+// observability, API/WebSocket server, NATS server, and chat hub.
+func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.ObservabilityConfig, dataDir string) error {
 	home, _ := os.UserHomeDir()
 
 	port := cfg.ProxyPort
@@ -239,6 +239,16 @@ func runAllServices(ctx context.Context, cfg *config.ObservabilityConfig, dataDi
 			}
 			if api.natsSrv != nil {
 				fmt.Printf("NATS server at     nats://127.0.0.1:%d\n", apiNATSPort)
+			}
+
+			// 3. Start chat hub (requires NATS connection).
+			if api.natsSrv != nil && fullCfg.Chat != nil && fullCfg.Chat.Enabled {
+				chatHub := buildChatHub(api.natsSrv.Conn(), fullCfg.Chat, filepath.Join(home, ".ycode", "chat"))
+				if err := mgr.AddLateComponent(ctx, chatHub); err != nil {
+					slog.Warn("chat hub not available", "error", err)
+				} else {
+					fmt.Printf("Chat at            http://127.0.0.1:%d/chat/\n", port)
+				}
 			}
 		}
 	}
@@ -363,9 +373,14 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) *stackCo
 }
 
 func loadServeConfig() (*config.ObservabilityConfig, string, error) {
+	_, obsCfg, dataDir, err := loadFullServeConfig()
+	return obsCfg, dataDir, err
+}
+
+func loadFullServeConfig() (*config.Config, *config.ObservabilityConfig, string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, "", fmt.Errorf("user home dir: %w", err)
+		return nil, nil, "", fmt.Errorf("user home dir: %w", err)
 	}
 
 	cwd, _ := os.Getwd()
@@ -376,7 +391,7 @@ func loadServeConfig() (*config.ObservabilityConfig, string, error) {
 	)
 	cfg, err := loader.Load()
 	if err != nil {
-		return nil, "", fmt.Errorf("load config: %w", err)
+		return nil, nil, "", fmt.Errorf("load config: %w", err)
 	}
 
 	obsCfg := cfg.Observability
@@ -385,7 +400,7 @@ func loadServeConfig() (*config.ObservabilityConfig, string, error) {
 	}
 
 	dataDir := filepath.Join(home, ".ycode", "observability")
-	return obsCfg, dataDir, nil
+	return cfg, obsCfg, dataDir, nil
 }
 
 func init() {
