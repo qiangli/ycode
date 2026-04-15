@@ -12,12 +12,12 @@ By using [Memos](https://usememos.com/) across all layers, the stack creates a l
 |:------|:-----|:--------|:------------------------|:-----------------------------------------------|:----------------|:-------------|:------------|
 | **L1** | **Working** | Immediate context and active reasoning: the "RAM" of the agent. Holds current task goals, recent conversation turns, and Plan/Act/Verify loop state. | [Matrix Room State](https://matrix.org/docs/older/faq/) / Zulip Topic-Based Threading. Managed via local Go variables during runtime. | **Snapshot:** Post current session summaries to Memos with `#working` tag. | The "Conversation": literal text of the last few messages and active thread context. | Input: Current message + immediate session history. | Volatile (Current Session) |
 | **L2** | **Episodic** | Auto-biographical event logs: chronological records of specific past actions and outcomes. Answers "What did I do last time?" to avoid repeating errors. | [OTEL Traces](https://opentelemetry.io/) (OpenTelemetry) stored as vectorized event logs. Trace IDs map to specific historical agent "episodes." | **Log Cards:** Create a Memo for each major task with a link to the [Prometheus](https://prometheus.io/) alert or trace. | The "Flashback": summarized snippet or re-hydrated log of a specific past event injected into the prompt. | Reference: Retrievable context for the current prompt. | Long-term (Searchable) |
-| **L3** | **Semantic** | The internal encyclopedia: general facts, technical documentation, and concept relationships (e.g., Go syntax, OTLP specs) independent of specific events. | Vector Databases ([Dgraph](https://dgraph.io/) / [ArcadeDB](https://arcadedb.com/)) + Knowledge Graphs. Utilizes RAG (Retrieval-Augmented Generation). | **Knowledge Memos:** Use `#docs` tags to store technical specs for Go libraries and system architecture. | The "Knowledge": static facts, code snippets, or documentation provided as reference text. | Reference: Static data injected via RAG. | Permanent (Knowledge Base) |
+| **L3** | **Semantic** | The internal encyclopedia: general facts, technical documentation, and concept relationships (e.g., Go syntax, OTLP specs) independent of specific events. | Vector Databases ([Dgraph](https://dgraph.io/) / [ArcadeDB](https://arcadedb.com/) / [Weaviate](https://weaviate.io/)) + Knowledge Graphs. Utilizes RAG (Retrieval-Augmented Generation). | **Knowledge Memos:** Use `#docs` tags to store technical specs for Go libraries and system architecture. | The "Knowledge": static facts, code snippets, or documentation provided as reference text. | Reference: Static data injected via RAG. | Permanent (Knowledge Base) |
 | **L4** | **Procedural** | The internal instruction manual: "How-to" skills and execution logic. Governs the steps for debugging, deploying, or interacting with system APIs. | Go Functions and [MCP](https://modelcontextprotocol.io) Tool Definitions. Hard-coded logic gates that the agent triggers to perform physical actions. | **Tool Heatmap:** A pinned Memo listing common tool-call patterns and optimization notes. | The "Toolkit": JSON schema defining available functions and tools the LLM is permitted to call. | Output: Tool Calls (JSON) sent back to your Go binary. | Fixed (Logic/Skills) |
 | **L5** | **Reflective** | Self-optimization and metacognition: high-level abstractions and "lessons learned." The agent analyzes its own episodic patterns to refine future strategies. | Summarized Insights DB / RL-driven patterns. A "Background Processor" in Go that distills L2 (Episodic) data into high-level rules. | **Lesson Learned:** Post "Reflections" to Memos after failures to refine the next "Plan." | The "Strategy": distilled lessons, optimized plans, and corrected behaviors based on self-reflection. | Feedback Loop: Meta-analysis of past performance. | Evolving (Continuous) |
 | **L6** | **Observability** | Self-awareness and efficiency: monitoring the agent's own health, read/write costs, and latency. Prevents context window bloat and manages token budgets. | **[Prometheus](https://prometheus.io/)** for metrics and alerts. Integration with OTEL/OTLP for real-time monitoring. | **Health Cards:** Weekly stats on token usage and latency pulled from Prometheus. | The "Analytic": latency, cost, and health metrics. | Metadata: Resource usage and performance telemetry. | Operational (Runtime) |
 | **L7** | **Governance** | The moral and policy gate: enforces organizational rules, safety guardrails, and privacy (e.g., redacting credentials, blocking restricted commands). | [Open Policy Agent (OPA)](https://www.openpolicyagent.org/) or dedicated Governance Engines that intercept and validate LLM outputs. | **Policy Manual:** Tagged Memos for each active safety rule (e.g., `#policy_no_rm`). | The "Censor": strict policy guardrails that prevent restricted or unsafe actions. | Gatekeeper: Permission and compliance checks. | Regulatory (Static) |
-| **L8** | **Collective** | The hive mind: real-time synchronization of intelligence between independent agents. Sharing learned "intuition" rather than just raw data. | Interoperability Protocols like [A2A](https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/) (Agent-to-Agent) under AAIF governance. | **Swarm Insights:** Memos shared from other agents in the network hub. | The "Swarm": shared insights and learned patterns from other agents in the network. | Input: Cross-agent collaborative intelligence. | Distributed (Global) |
+| **L8** | **Collective** | The hive mind: real-time synchronization of intelligence between independent agents. Sharing learned "intuition" rather than just raw data. | Interoperability Protocols: [A2A](https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/) (Agent-to-Agent), [AGP](https://agentgatewayprotocol.dev/) (Agent Gateway Protocol), Cisco ANP (Agent Network Protocol) — under AAIF governance. | **Swarm Insights:** Memos shared from other agents in the network hub. | The "Swarm": shared insights and learned patterns from other agents in the network. | Input: Cross-agent collaborative intelligence. | Distributed (Global) |
 | **L9** | **Counterfactual** | Multi-verse simulation: managing "What-If" scenarios. The agent "remembers" simulated failures to avoid them in reality (Predictive Verification). | Parallel sandbox execution environments (e.g., [E2B](https://e2b.dev/)) that run simulations before the final "Act." | **Sim-Logs:** Record "What-If" failure modes to Memos to avoid repeating them. | The "Multi-Verse": summaries of failed or successful branches from pre-action simulations. | Simulation: Predicted outcomes used for verification. | Predictive (Pre-Act) |
 | **L10** | **Substrate** | Universal archival: hardware-independent memory. Storing agent states in non-silicon mediums like Synthetic DNA or high-density optical storage. | Synthetic DNA storage or permanent immutable cold-storage ledgers. | **Deep Archive:** Historical Memo exports stored in immutable hardware. | The "Archive": deep historical recovery of data from previous "lives" or ancestral agents. | Input: Historical recovery from archival storage. | Eternal (Millennial) |
 | **L11** | **Planck-Scale** | Information physics: based on the Holographic Principle; treating information as a fundamental 2D property of the 3D universe. | Theoretical: information-theoretic limits of bit density in space-time. | *Theoretical* — Foundational bit-density. | The "Pixel": fundamental "bits" of reality that the agent perceives as building blocks of data. | Foundation: Info-physics primitives. | Cosmic |
@@ -67,7 +67,7 @@ Three memory scopes: **user**, **session**, and **agent**, backed by a hybrid st
 
 #### Zep / Graphiti
 
-Temporal knowledge graph architecture for agent memory. Core engine is **Graphiti** — a temporally-aware knowledge graph that synthesizes unstructured conversational data and structured business data while maintaining historical relationships.
+Temporal knowledge graph architecture for agent memory enabling **persistent agent identity** — agents store dialogue history, track goals, and preserve long-term context across complex tasks and workflows. Core engine is **Graphiti** — a temporally-aware knowledge graph that synthesizes unstructured conversational data and structured business data while maintaining historical relationships.
 
 Three hierarchical graph tiers: **episode subgraph**, **semantic entity subgraph**, **community subgraph**. Bi-temporal model tracks when events occurred AND when they were ingested; every edge has explicit validity intervals (e.g., "Kendra loves Adidas shoes (as of March 2026)").
 
@@ -186,6 +186,14 @@ Anthropic (November 2024); now governed by Linux Foundation's AAIF. 97 million m
 
 Google (April 2025); donated to Linux Foundation June 2025. IBM's ACP merged into A2A in August 2025. Standardizes agent discovery, communication, and collaboration.
 
+### AGP (Agent Gateway Protocol)
+
+Cross-system communication protocol for routing agent interactions across heterogeneous platforms and infrastructure boundaries. Complements A2A (peer-to-peer) with gateway-mediated routing.
+
+### ANP (Agent Network Protocol)
+
+Cisco's contribution to the agent interoperability ecosystem. Focuses on network-level agent discovery and communication primitives.
+
 ### AAIF (Agentic AI Foundation)
 
 Linux Foundation; launched December 2025; co-founders: OpenAI, Anthropic, Google, Microsoft, AWS, Block. Governs both MCP and A2A as complementary standards.
@@ -222,6 +230,22 @@ Linux Foundation; launched December 2025; co-founders: OpenAI, Anthropic, Google
 7. **Compression and forgetting** — entropy-aware filtering, Ebbinghaus decay curves, and progressive consolidation now standard techniques
 8. **Multi-agent memory** — computer-architecture-inspired shared/distributed paradigms; A2A enables cross-agent memory sharing
 9. **Benchmark limitations** — million-token context windows challenge existing benchmarks; new evaluation frameworks needed
+
+## Industry Stack Cross-Reference
+
+The [AIMultiple 7-layer agentic AI stack](https://aimultiple.com/agentic-ai-stack) maps to our 13-layer model as follows:
+
+| Industry Layer | Description | ycode Layers | Strategic Moat |
+|:---------------|:------------|:-------------|:---------------|
+| L1 Foundation Model Infrastructure | Models, compute, data, APIs | (External dependency) | Low — commoditized by hyperscalers |
+| L2 Agent Runtime & Infrastructure | Execution, memory systems, embedding stores | L1 Working, L2 Episodic | Medium — defensible through domain specialization |
+| L3 Protocol & Interoperability | A2A, ANP, AGP, MCP | L8 Collective | Low — standards commoditize quickly |
+| L4 Orchestration | Multi-agent coordination, prompt routing, memory preservation, RAG | L4 Procedural, L5 Reflective | Medium — workflow coupling creates lock-in |
+| L5 Tooling & Enrichment | RAG, vector DBs, knowledge bases, tool invocation | L3 Semantic, L4 Procedural | **High** — 2-5 years to build; plugin ecosystems create platform lock-in |
+| L6 Applications | Co-pilots, agent teammates | (Application layer) | Low — crowded, interchangeable; only vertical data-rich apps differentiate |
+| L7 Observability & Governance | Monitoring, safety, deployment, privacy, registries | L6 Observability, L7 Governance | **High** — deep technical expertise, long development cycles |
+
+**Key insight:** The highest-moat layers (Tooling/Enrichment and Observability/Governance) align with our L3-L4 and L6-L7 — exactly where ycode's Memos traceability, Prometheus observability, and OPA governance create defensible depth.
 
 ## Strategic Integration
 
@@ -260,6 +284,9 @@ Linux Foundation; launched December 2025; co-founders: OpenAI, Anthropic, Google
 - **AAIF (Agentic AI Foundation):** Linux Foundation; governs MCP + A2A. Co-founders: OpenAI, Anthropic, Google, Microsoft, AWS, Block.
 - **MCP:** [modelcontextprotocol.io](https://modelcontextprotocol.io) — 97M monthly SDK downloads.
 - **A2A:** [google A2A announcement](https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/) — IBM ACP merged August 2025.
+- **AGP:** [Agent Gateway Protocol](https://agentgatewayprotocol.dev/) — cross-system agent routing.
+- **ANP:** Cisco Agent Network Protocol — network-level agent discovery.
+- **Industry Stack:** [AIMultiple Agentic AI Stack](https://aimultiple.com/agentic-ai-stack) — 7-layer industry reference architecture.
 
 ### Benchmarks and Evaluation
 
