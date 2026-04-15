@@ -1,0 +1,13 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "./themes/default.css";
+
+@layer base {
+  * {
+    @apply border-border outline-none ring-0;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}

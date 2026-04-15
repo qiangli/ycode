@@ -6,10 +6,15 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
+	"strings"
 	"sync/atomic"
 
 	memosembed "github.com/usememos/memos/embed"
+
+	"github.com/qiangli/ycode/internal/observability/memosweb"
 )
 
 // MemosComponent embeds the Memos note-taking server as an observability
@@ -79,10 +84,37 @@ func (m *MemosComponent) Healthy() bool {
 	return m.healthy.Load()
 }
 
-// HTTPHandler returns nil — Memos runs its own HTTP server.
-// Accessed via reverse proxy from the stack manager.
+// memosAPIPrefixes are path prefixes that should be reverse-proxied to the
+// Memos backend server (API, file serving, health). Everything else is
+// served from the embedded frontend assets.
+var memosAPIPrefixes = []string{
+	"/api/",
+	"/memos.api.v1.",
+	"/file/",
+	"/healthz",
+}
+
+// HTTPHandler returns a composite handler: API requests are reverse-proxied
+// to the Memos backend; all other paths are served from the embedded
+// frontend assets (with SPA fallback to index.html).
+// The proxy's AddHandler wraps this with http.StripPrefix("/memos").
 func (m *MemosComponent) HTTPHandler() http.Handler {
-	return nil
+	if m.port == 0 {
+		return nil
+	}
+	target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", m.port))
+	apiProxy := httputil.NewSingleHostReverseProxy(target)
+	staticHandler := memosweb.Handler()
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, prefix := range memosAPIPrefixes {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				apiProxy.ServeHTTP(w, r)
+				return
+			}
+		}
+		staticHandler.ServeHTTP(w, r)
+	})
 }
 
 // Port returns the Memos HTTP port for reverse proxying.
