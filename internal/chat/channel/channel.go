@@ -14,6 +14,7 @@ const (
 	ChannelTelegram ChannelID = "telegram"
 	ChannelDiscord  ChannelID = "discord"
 	ChannelWeChat   ChannelID = "wechat"
+	ChannelAgent    ChannelID = "agent"
 )
 
 // Capabilities declares what a channel supports.

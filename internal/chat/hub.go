@@ -321,6 +321,8 @@ func (h *Hub) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	// Add a web binding so the room is accessible from the web UI.
 	h.store.AddBinding(room.ID, channel.ChannelWeb, "default", room.ID)
+	// Add an agent binding so the AI participates in every room.
+	h.store.AddBinding(room.ID, channel.ChannelAgent, "default", room.ID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(room)

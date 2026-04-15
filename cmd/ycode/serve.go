@@ -247,7 +247,7 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 				chatCfg = &config.ChatConfig{Enabled: true}
 			}
 			if chatCfg.Enabled && api.natsSrv != nil {
-				chatHub := buildChatHub(api.natsSrv.Conn(), chatCfg, filepath.Join(home, ".ycode", "chat"))
+				chatHub := buildChatHub(api.natsSrv.Conn(), chatCfg, filepath.Join(home, ".ycode", "chat"), api.svc)
 				if err := mgr.AddLateComponent(ctx, chatHub); err != nil {
 					slog.Warn("chat hub not available", "error", err)
 				} else {

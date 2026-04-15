@@ -8,11 +8,12 @@ import (
 	"github.com/qiangli/ycode/internal/chat/channel"
 	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/runtime/config"
+	"github.com/qiangli/ycode/internal/service"
 )
 
 // buildChatHub creates and configures a chat Hub component with all
 // available channel adapters registered.
-func buildChatHub(conn *nats.Conn, cfg *config.ChatConfig, dataDir string) observability.Component {
+func buildChatHub(conn *nats.Conn, cfg *config.ChatConfig, dataDir string, svc service.Service) observability.Component {
 	// Convert config types.
 	hubCfg := &chat.HubConfig{
 		Enabled:  cfg.Enabled,
@@ -38,6 +39,13 @@ func buildChatHub(conn *nats.Conn, cfg *config.ChatConfig, dataDir string) obser
 		hubCfg.Channels[channel.ChannelWeb] = chat.ChannelConfig{Enabled: true}
 	}
 
+	// Always enable the agent channel when a service is available.
+	if svc != nil {
+		if _, ok := hubCfg.Channels[channel.ChannelAgent]; !ok {
+			hubCfg.Channels[channel.ChannelAgent] = chat.ChannelConfig{Enabled: true}
+		}
+	}
+
 	hub := chat.NewHub(conn, hubCfg, dataDir)
 
 	// Register built-in channel adapters.
@@ -45,6 +53,11 @@ func buildChatHub(conn *nats.Conn, cfg *config.ChatConfig, dataDir string) obser
 	hub.RegisterChannel(adapters.NewTelegramChannel())
 	hub.RegisterChannel(adapters.NewDiscordChannel())
 	hub.RegisterChannel(adapters.NewWeChatChannel())
+
+	// Register the AI agent adapter if service is available.
+	if svc != nil {
+		hub.RegisterChannel(adapters.NewAgentChannel(svc))
+	}
 
 	return hub
 }
