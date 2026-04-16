@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -57,14 +58,16 @@ func NewManager(ctx context.Context, cfg Config) (*Manager, error) {
 		searchReady:   make(chan struct{}),
 	}
 
-	// Phase 1: KV store (instant).
+	// Phase 1: KV store (instant). Non-fatal if locked by another process.
 	if cfg.KVFactory != nil {
 		kv, err := cfg.KVFactory(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("init kv store: %w", err)
+			slog.Warn("kv store unavailable (possibly locked by another ycode process), continuing without it", "error", err)
+			m.status.KV = BackendStatus{Phase: Phase1, Error: err.Error()}
+		} else {
+			m.kv = kv
+			m.status.KV = BackendStatus{Phase: Phase1, Ready: true, Since: time.Now()}
 		}
-		m.kv = kv
-		m.status.KV = BackendStatus{Phase: Phase1, Ready: true, Since: time.Now()}
 	}
 
 	return m, nil

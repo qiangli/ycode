@@ -124,7 +124,6 @@ func newApp() (*cli.App, error) {
 	} else {
 		provider = api.NewProvider(providerCfg)
 	}
-
 	// Initialize storage manager (Phase 1: KV store is instant).
 	storageDataDir := filepath.Join(home, ".ycode", "projects", "data")
 	storageMgr, err := storage.NewManager(context.Background(), storage.Config{

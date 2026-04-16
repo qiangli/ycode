@@ -21,6 +21,13 @@ const (
 	ContentTypeImage      ContentType = "image"
 )
 
+// CacheControl marks a content block for provider-level prompt caching.
+// When set to {"type":"ephemeral"}, Anthropic caches the prefix up to and
+// including this block, yielding ~90% cost reduction on cache-hit tokens.
+type CacheControl struct {
+	Type string `json:"type"` // "ephemeral"
+}
+
 // ContentBlock represents a single block of content within a message.
 type ContentBlock struct {
 	Type ContentType `json:"type"`
@@ -40,6 +47,10 @@ type ContentBlock struct {
 
 	// Image (type == "image")
 	Source *ImageSource `json:"source,omitempty"`
+
+	// CacheControl marks this block as a cache breakpoint for providers
+	// that support prompt caching (Anthropic).
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
 
 // ImageSource for image content blocks.
@@ -62,6 +73,15 @@ type ToolDefinition struct {
 	InputSchema json.RawMessage `json:"input_schema"`
 }
 
+// SystemBlock is a content block used in the array form of the "system" field.
+// Anthropic accepts system as either a plain string or an array of these blocks,
+// which allows attaching cache_control markers.
+type SystemBlock struct {
+	Type         string        `json:"type"`                    // "text"
+	Text         string        `json:"text"`                    //
+	CacheControl *CacheControl `json:"cache_control,omitempty"` //
+}
+
 // Request is the API request to send to a provider.
 type Request struct {
 	Model       string           `json:"model"`
@@ -73,6 +93,39 @@ type Request struct {
 	Temperature *float64         `json:"temperature,omitempty"`
 	TopP        *float64         `json:"top_p,omitempty"`
 	StopReason  string           `json:"-"`
+
+	// SystemBlocks is the array form of the system prompt, used when cache
+	// control markers are needed (Anthropic). When non-nil, it takes
+	// precedence over the plain System string during JSON marshaling.
+	SystemBlocks []SystemBlock `json:"-"`
+}
+
+// MarshalJSON implements custom marshaling for Request. When SystemBlocks is
+// populated, the "system" field is serialized as an array of content blocks
+// (required for Anthropic prompt caching). Otherwise falls back to the plain
+// string form.
+func (r Request) MarshalJSON() ([]byte, error) {
+	// Use an alias to avoid infinite recursion.
+	type requestAlias Request
+	if len(r.SystemBlocks) == 0 {
+		return json.Marshal(requestAlias(r))
+	}
+
+	// Build a map from the alias, then replace "system" with the blocks array.
+	data, err := json.Marshal(requestAlias(r))
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	blocks, err := json.Marshal(r.SystemBlocks)
+	if err != nil {
+		return nil, err
+	}
+	m["system"] = blocks
+	return json.Marshal(m)
 }
 
 // Response is the full API response.

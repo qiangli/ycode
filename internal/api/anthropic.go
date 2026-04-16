@@ -59,6 +59,37 @@ func (c *AnthropicClient) Kind() ProviderKind {
 	return ProviderAnthropic
 }
 
+// applyCacheMarks adds Anthropic prompt caching annotations to the request.
+// It marks:
+//   - The system prompt with cache_control on its last block
+//   - The last 2 non-system messages' final content blocks
+//
+// This follows the same strategy as opencode's applyCaching in transform.ts.
+func applyCacheMarks(req *Request) {
+	ephemeral := &CacheControl{Type: "ephemeral"}
+
+	// Convert plain system string to SystemBlocks with cache mark.
+	if req.System != "" && len(req.SystemBlocks) == 0 {
+		req.SystemBlocks = []SystemBlock{
+			{Type: "text", Text: req.System, CacheControl: ephemeral},
+		}
+	} else if len(req.SystemBlocks) > 0 {
+		// Mark the last system block.
+		req.SystemBlocks[len(req.SystemBlocks)-1].CacheControl = ephemeral
+	}
+
+	// Mark the last content block of the last 2 messages.
+	marked := 0
+	for i := len(req.Messages) - 1; i >= 0 && marked < 2; i-- {
+		blocks := req.Messages[i].Content
+		if len(blocks) == 0 {
+			continue
+		}
+		blocks[len(blocks)-1].CacheControl = ephemeral
+		marked++
+	}
+}
+
 // Send sends a streaming request to the Anthropic API.
 func (c *AnthropicClient) Send(ctx context.Context, req *Request) (<-chan *StreamEvent, <-chan error) {
 	events := make(chan *StreamEvent, 16)
@@ -69,6 +100,7 @@ func (c *AnthropicClient) Send(ctx context.Context, req *Request) (<-chan *Strea
 		defer close(errc)
 
 		req.Stream = true
+		applyCacheMarks(req)
 		body, err := json.Marshal(req)
 		if err != nil {
 			errc <- fmt.Errorf("marshal request: %w", err)

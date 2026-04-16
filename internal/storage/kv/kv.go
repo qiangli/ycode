@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/qiangli/ycode/internal/storage"
 
@@ -28,7 +29,7 @@ func Open(dir string) (*Store, error) {
 
 	dbPath := filepath.Join(dir, "ycode.kv")
 	db, err := bolt.Open(dbPath, 0o600, &bolt.Options{
-		Timeout:      0, // Wait indefinitely for lock.
+		Timeout:      2 * time.Second, // Fail fast if another process holds the lock.
 		NoGrowSync:   false,
 		FreelistType: bolt.FreelistMapType,
 	})

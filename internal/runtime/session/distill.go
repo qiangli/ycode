@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -11,6 +12,13 @@ import (
 const (
 	// DefaultMaxInlineChars is the default threshold for tool output distillation.
 	DefaultMaxInlineChars = 2000
+	// DefaultMaxInlineBytes is the byte-level threshold (50 KB, matching opencode).
+	DefaultMaxInlineBytes = 50 * 1024
+	// DefaultMaxInlineLines is the line-count threshold.
+	DefaultMaxInlineLines = 2000
+	// DefaultMaxLineLength caps individual line length (protects against minified files).
+	DefaultMaxLineLength = 2000
+
 	// distillHeadLines is how many lines to keep at the head of large outputs.
 	distillHeadLines = 20
 	// distillTailLines is how many lines to keep at the tail of large outputs.
@@ -22,6 +30,19 @@ type DistillConfig struct {
 	// MaxInlineChars is the maximum characters to keep inline.
 	// Outputs exceeding this are distilled and the full output saved to disk.
 	MaxInlineChars int `json:"maxInlineChars,omitempty"`
+
+	// MaxInlineBytes is the byte-level threshold. Outputs exceeding this
+	// are distilled regardless of character count. Default: 50 KB.
+	MaxInlineBytes int `json:"maxInlineBytes,omitempty"`
+
+	// MaxInlineLines is the line-count threshold. Outputs exceeding this
+	// are distilled regardless of size. Default: 2000.
+	MaxInlineLines int `json:"maxInlineLines,omitempty"`
+
+	// MaxLineLength caps individual line length. Lines exceeding this are
+	// truncated with a suffix marker. Protects against minified files.
+	// Default: 2000.
+	MaxLineLength int `json:"maxLineLength,omitempty"`
 
 	// FullOutputDir is where full outputs are saved.
 	// Empty disables disk saving.
@@ -36,32 +57,41 @@ type DistillConfig struct {
 func DefaultDistillConfig() DistillConfig {
 	return DistillConfig{
 		MaxInlineChars: DefaultMaxInlineChars,
+		MaxInlineBytes: DefaultMaxInlineBytes,
+		MaxInlineLines: DefaultMaxInlineLines,
+		MaxLineLength:  DefaultMaxLineLength,
 		ExemptTools:    []string{"read_file", "read_multiple_files"},
 	}
 }
 
 // DistillToolOutput distills a large tool output, keeping it concise inline
 // and optionally saving the full output to disk for later re-reading.
+//
+// Distillation triggers when ANY of these thresholds is exceeded:
+//   - MaxInlineChars (character count)
+//   - MaxInlineBytes (byte count — catches multi-byte heavy content)
+//   - MaxInlineLines (line count — catches verbose but short-line output)
 func DistillToolOutput(toolName string, output string, cfg DistillConfig) string {
-	if cfg.MaxInlineChars <= 0 {
-		cfg.MaxInlineChars = DefaultMaxInlineChars
-	}
+	applyDefaults(&cfg)
 
 	// Check exemptions.
-	for _, exempt := range cfg.ExemptTools {
-		if toolName == exempt {
-			return output
-		}
-	}
-
-	// Small enough — keep as-is.
-	if len(output) <= cfg.MaxInlineChars {
+	if slices.Contains(cfg.ExemptTools, toolName) {
 		return output
 	}
 
-	// Split into lines for structural distillation.
+	// Truncate individual long lines first (e.g., minified JS).
+	output = truncateLongLines(output, cfg.MaxLineLength)
+
+	// Check all thresholds — distill if any is exceeded.
 	lines := strings.Split(output, "\n")
 	totalLines := len(lines)
+	needsDistill := len(output) > cfg.MaxInlineChars ||
+		len(output) > cfg.MaxInlineBytes ||
+		totalLines > cfg.MaxInlineLines
+
+	if !needsDistill {
+		return output
+	}
 
 	// If few enough lines, just truncate by chars.
 	if totalLines <= distillHeadLines+distillTailLines {
@@ -87,9 +117,10 @@ func DistillToolOutput(toolName string, output string, cfg DistillConfig) string
 	}
 
 	if savedPath != "" {
-		b.WriteString(fmt.Sprintf("\n[... %d lines omitted, full output saved to %s ...]\n\n", omitted, savedPath))
+		fmt.Fprintf(&b, "\n[... %d lines omitted, full output saved to %s ...]\n", omitted, savedPath)
+		b.WriteString("Use Grep to search the full content or Read with offset/limit to view specific sections.\n\n")
 	} else {
-		b.WriteString(fmt.Sprintf("\n[... %d lines omitted ...]\n\n", omitted))
+		fmt.Fprintf(&b, "\n[... %d lines omitted ...]\n\n", omitted)
 	}
 
 	for _, line := range tail {
@@ -98,6 +129,41 @@ func DistillToolOutput(toolName string, output string, cfg DistillConfig) string
 	}
 
 	return b.String()
+}
+
+// applyDefaults fills zero-value config fields with defaults.
+func applyDefaults(cfg *DistillConfig) {
+	if cfg.MaxInlineChars <= 0 {
+		cfg.MaxInlineChars = DefaultMaxInlineChars
+	}
+	if cfg.MaxInlineBytes <= 0 {
+		cfg.MaxInlineBytes = DefaultMaxInlineBytes
+	}
+	if cfg.MaxInlineLines <= 0 {
+		cfg.MaxInlineLines = DefaultMaxInlineLines
+	}
+	if cfg.MaxLineLength <= 0 {
+		cfg.MaxLineLength = DefaultMaxLineLength
+	}
+}
+
+// truncateLongLines caps each line to maxLen characters, appending a marker.
+func truncateLongLines(s string, maxLen int) string {
+	if maxLen <= 0 {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	changed := false
+	for i, line := range lines {
+		if len(line) > maxLen {
+			lines[i] = line[:maxLen] + "... (line truncated)"
+			changed = true
+		}
+	}
+	if !changed {
+		return s
+	}
+	return strings.Join(lines, "\n")
 }
 
 // saveFullOutput writes the complete output to a file and returns the path.

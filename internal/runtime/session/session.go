@@ -168,6 +168,12 @@ func (s *Session) SearchIndexer() *SearchIndexer {
 	return s.searchIndexer
 }
 
+// ToolOutputDir returns the directory for saving full tool outputs.
+// The directory is created lazily under the session directory.
+func (s *Session) ToolOutputDir() string {
+	return filepath.Join(s.Dir, "tool-output")
+}
+
 // MessageCount returns the number of messages in the session.
 func (s *Session) MessageCount() int {
 	return len(s.Messages)

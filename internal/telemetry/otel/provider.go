@@ -3,6 +3,7 @@ package otel
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -60,6 +61,10 @@ func (p *Provider) Meter(name string) metric.Meter {
 	return p.MeterProvider.Meter(name)
 }
 
+// grpcConnectTimeout limits how long we wait for gRPC exporter creation.
+// If the collector is unreachable, we skip it rather than blocking startup.
+const grpcConnectTimeout = 5 * time.Second
+
 // NewProvider creates an OTEL provider with dual export (gRPC + file).
 func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 	if cfg.ServiceName == "" {
@@ -93,15 +98,18 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 	var spanExporters []sdktrace.SpanExporter
 
 	if cfg.CollectorAddr != "" {
-		grpcExp, err := otlptracegrpc.New(ctx,
+		grpcCtx, grpcCancel := context.WithTimeout(ctx, grpcConnectTimeout)
+		grpcExp, err := otlptracegrpc.New(grpcCtx,
 			otlptracegrpc.WithEndpoint(cfg.CollectorAddr),
 			otlptracegrpc.WithInsecure(),
 		)
+		grpcCancel()
 		if err != nil {
-			return nil, fmt.Errorf("create trace gRPC exporter: %w", err)
+			slog.Warn("OTEL trace gRPC exporter unavailable, skipping", "addr", cfg.CollectorAddr, "error", err)
+		} else {
+			spanExporters = append(spanExporters, grpcExp)
+			p.shutdownFuncs = append(p.shutdownFuncs, grpcExp.Shutdown)
 		}
-		spanExporters = append(spanExporters, grpcExp)
-		p.shutdownFuncs = append(p.shutdownFuncs, grpcExp.Shutdown)
 	}
 
 	if cfg.PersistTraces && cfg.DataDir != "" {
@@ -133,16 +141,19 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 	var metricReaders []sdkmetric.Reader
 
 	if cfg.CollectorAddr != "" {
-		grpcExp, err := otlpmetricgrpc.New(ctx,
+		grpcCtx, grpcCancel := context.WithTimeout(ctx, grpcConnectTimeout)
+		grpcExp, err := otlpmetricgrpc.New(grpcCtx,
 			otlpmetricgrpc.WithEndpoint(cfg.CollectorAddr),
 			otlpmetricgrpc.WithInsecure(),
 		)
+		grpcCancel()
 		if err != nil {
-			return nil, fmt.Errorf("create metric gRPC exporter: %w", err)
+			slog.Warn("OTEL metric gRPC exporter unavailable, skipping", "addr", cfg.CollectorAddr, "error", err)
+		} else {
+			metricReaders = append(metricReaders,
+				sdkmetric.NewPeriodicReader(grpcExp, sdkmetric.WithInterval(15*time.Second)))
+			p.shutdownFuncs = append(p.shutdownFuncs, grpcExp.Shutdown)
 		}
-		metricReaders = append(metricReaders,
-			sdkmetric.NewPeriodicReader(grpcExp, sdkmetric.WithInterval(15*time.Second)))
-		p.shutdownFuncs = append(p.shutdownFuncs, grpcExp.Shutdown)
 	}
 
 	if cfg.PersistMetrics && cfg.DataDir != "" {
@@ -170,20 +181,23 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 
 	// --- Log provider (for structured log records to VictoriaLogs) ---
 	if cfg.CollectorAddr != "" {
-		grpcLogExp, err := otlploggrpc.New(ctx,
+		grpcCtx, grpcCancel := context.WithTimeout(ctx, grpcConnectTimeout)
+		grpcLogExp, err := otlploggrpc.New(grpcCtx,
 			otlploggrpc.WithEndpoint(cfg.CollectorAddr),
 			otlploggrpc.WithInsecure(),
 		)
+		grpcCancel()
 		if err != nil {
-			return nil, fmt.Errorf("create log gRPC exporter: %w", err)
+			slog.Warn("OTEL log gRPC exporter unavailable, skipping", "addr", cfg.CollectorAddr, "error", err)
+		} else {
+			p.LoggerProvider = sdklog.NewLoggerProvider(
+				sdklog.WithResource(res),
+				sdklog.WithProcessor(sdklog.NewBatchProcessor(grpcLogExp)),
+			)
+			p.shutdownFuncs = append(p.shutdownFuncs, grpcLogExp.Shutdown)
+			p.shutdownFuncs = append(p.shutdownFuncs, p.LoggerProvider.Shutdown)
+			otellog.SetLoggerProvider(p.LoggerProvider)
 		}
-		p.LoggerProvider = sdklog.NewLoggerProvider(
-			sdklog.WithResource(res),
-			sdklog.WithProcessor(sdklog.NewBatchProcessor(grpcLogExp)),
-		)
-		p.shutdownFuncs = append(p.shutdownFuncs, grpcLogExp.Shutdown)
-		p.shutdownFuncs = append(p.shutdownFuncs, p.LoggerProvider.Shutdown)
-		otellog.SetLoggerProvider(p.LoggerProvider)
 	}
 
 	// Create pre-built instruments.

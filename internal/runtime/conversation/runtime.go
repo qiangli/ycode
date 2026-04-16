@@ -17,6 +17,10 @@ import (
 	"github.com/qiangli/ycode/internal/tools"
 )
 
+// MaxOutputTokenCap is the safety cap for output tokens per response.
+// Prevents runaway responses from wasting tokens. Matches opencode's default.
+const MaxOutputTokenCap = 32_000
+
 // Runtime manages the conversation turn loop.
 type Runtime struct {
 	config    *config.Config
@@ -29,6 +33,10 @@ type Runtime struct {
 	// Differential context injection for non-caching providers.
 	cachingSupported bool
 	contextBaseline  *prompt.ContextBaseline
+
+	// Tool output distillation config.
+	distillCfg   session.DistillConfig
+	routingCache *session.RoutingCache
 
 	// Optional LLM-based summarizer for compaction. If nil, heuristic is used.
 	llmSummarizer *session.LLMSummarizer
@@ -59,6 +67,11 @@ func NewRuntime(
 	if cfg.ProviderCapabilities != nil && cfg.ProviderCapabilities.CachingSupported != nil {
 		cachingSupported = *cfg.ProviderCapabilities.CachingSupported
 	}
+	distillCfg := session.DefaultDistillConfig()
+	if sess != nil {
+		distillCfg.FullOutputDir = sess.ToolOutputDir()
+	}
+
 	return &Runtime{
 		config:           cfg,
 		provider:         provider,
@@ -68,6 +81,8 @@ func NewRuntime(
 		logger:           slog.Default(),
 		cachingSupported: cachingSupported,
 		contextBaseline:  prompt.NewContextBaseline(),
+		distillCfg:       distillCfg,
+		routingCache:     session.NewRoutingCache(),
 	}
 }
 
@@ -139,10 +154,16 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		})
 	}
 
+	// Cap output tokens to prevent runaway responses.
+	maxTokens := r.config.MaxTokens
+	if maxTokens <= 0 || maxTokens > MaxOutputTokenCap {
+		maxTokens = MaxOutputTokenCap
+	}
+
 	// Build API request.
 	req := &api.Request{
 		Model:     r.config.Model,
-		MaxTokens: r.config.MaxTokens,
+		MaxTokens: maxTokens,
 		System:    systemPrompt,
 		Messages:  messages,
 		Tools:     toolDefs,
@@ -247,10 +268,13 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 // concurrently within per-category limits. Progress events are sent to the
 // progress channel if non-nil; the caller must close it after this returns.
 func (r *Runtime) ExecuteTools(ctx context.Context, calls []ToolCall, progress chan<- taskqueue.TaskEvent) []api.ContentBlock {
+	var results []api.ContentBlock
 	if !r.config.Parallel.Enabled || len(calls) <= 1 {
-		return r.executeToolsSequential(ctx, calls, progress)
+		results = r.executeToolsSequential(ctx, calls, progress)
+	} else {
+		results = r.executeToolsParallel(ctx, calls, progress)
 	}
-	return r.executeToolsParallel(ctx, calls, progress)
+	return r.distillResults(calls, results)
 }
 
 // executeToolsSequential runs tool calls one at a time (original behavior).
@@ -331,6 +355,55 @@ func (r *Runtime) executeToolsParallel(ctx context.Context, calls []ToolCall, pr
 	return blocks
 }
 
+// distillResults applies content routing and tool output distillation to reduce
+// token usage. The pipeline per tool result is:
+//
+//  1. Route: classify as Full/Partial/Summary/Excluded based on tool type + size
+//  2. If RouteFull → run through DistillToolOutput (may still truncate large content)
+//     Otherwise → apply the route transformation directly
+//
+// Error results are never distilled — they contain critical diagnostics.
+func (r *Runtime) distillResults(calls []ToolCall, results []api.ContentBlock) []api.ContentBlock {
+	for i := range results {
+		if results[i].IsError || results[i].Type != api.ContentTypeToolResult {
+			continue
+		}
+		// Find the matching tool name for this result.
+		toolName := ""
+		for _, call := range calls {
+			if call.ID == results[i].ToolUseID {
+				toolName = call.Name
+				break
+			}
+		}
+
+		before := len(results[i].Content)
+
+		// Step 1: Content routing — classify the result.
+		route := session.RouteContent(toolName, results[i].Content, false, r.routingCache)
+
+		// Step 2: Apply route or distillation.
+		switch route {
+		case session.RouteFull:
+			// Full route still goes through distillation (catches byte/line limits).
+			results[i].Content = session.DistillToolOutput(toolName, results[i].Content, r.distillCfg)
+		default:
+			// Partial/Summary/Excluded — apply the route transformation.
+			results[i].Content = session.ApplyRoute(results[i].Content, route, toolName)
+		}
+
+		if after := len(results[i].Content); after < before {
+			r.logger.Info("distilled tool output",
+				"tool", toolName,
+				"route", string(route),
+				"before", before,
+				"after", after,
+			)
+		}
+	}
+	return results
+}
+
 func joinParts(parts []string) string {
 	s := ""
 	for _, p := range parts {
@@ -345,13 +418,16 @@ type RecoveryResult struct {
 	PreservedCount  int
 	RetrySuccessful bool
 	SummaryPreview  string
+	Masked          bool // Layer 0: old observations were masked
+	MaskedCount     int  // Number of old tool results masked
 	Pruned          bool // Layer 1: tool results were pruned
 	PrunedCount     int  // Number of tool results pruned
 	Flushed         bool // Layer 3: emergency flush was performed
 }
 
-// TurnWithRecovery executes a turn with the 3-layer context defense:
+// TurnWithRecovery executes a turn with the 4-layer context defense:
 //
+//	Layer 0 (Mask):    Replace old tool results outside attention window with placeholder
 //	Layer 1 (Prune):   Soft/hard trim old tool results when approaching threshold
 //	Layer 2 (Compact): Full semantic compaction when exceeding threshold
 //	Layer 3 (Flush):   Emergency minimal continuation when compaction isn't enough
@@ -359,9 +435,19 @@ type RecoveryResult struct {
 // This is called before each API request to proactively manage context.
 func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) (*TurnResult, *RecoveryResult, error) {
 	sessionMsgs := r.apiMessagesToSession(messages)
-	health := session.CheckContextHealth(sessionMsgs)
 	recovery := &RecoveryResult{}
 
+	// --- Layer 0: Observation masking (cheapest defense — always runs) ---
+	masked, maskedCount := session.MaskOldObservations(sessionMsgs)
+	if maskedCount > 0 {
+		r.logger.Info("layer 0: masked old observations", "count", maskedCount)
+		sessionMsgs = masked
+		messages = r.sessionMessagesToAPI(masked)
+		recovery.Masked = true
+		recovery.MaskedCount = maskedCount
+	}
+
+	health := session.CheckContextHealth(sessionMsgs)
 	r.logger.Info("context health", "tokens", health.EstimatedTokens, "level", health.Level.String())
 
 	// --- Layer 1: Pruning (in-memory tool result trimming) ---

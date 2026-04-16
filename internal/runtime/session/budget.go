@@ -61,6 +61,25 @@ func ContextBudgetForModel(contextWindow int) ContextBudget {
 	}
 }
 
+// NonCachingCompactionDiscount is applied to the compaction threshold for
+// providers without prompt caching. Since every token is billed at full price
+// every turn, we compact earlier to keep costs down.
+const NonCachingCompactionDiscount = 0.70 // 30% reduction
+
+// ContextBudgetForProvider returns a budget adjusted for provider capabilities.
+// Non-caching providers (OpenAI, Gemini, Moonshot/Kimi) get a lower compaction
+// threshold since they pay full price for every input token every turn.
+func ContextBudgetForProvider(contextWindow int, cachingSupported bool) ContextBudget {
+	budget := ContextBudgetForModel(contextWindow)
+	if !cachingSupported {
+		budget.CompactionThreshold = max(
+			int(float64(budget.CompactionThreshold)*NonCachingCompactionDiscount),
+			10_000,
+		)
+	}
+	return budget
+}
+
 // EffectiveMax returns the maximum tokens available for conversation messages
 // (context window minus reserved).
 func (b ContextBudget) EffectiveMax() int {

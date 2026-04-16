@@ -62,54 +62,69 @@ func (b *Builder) Build() string {
 	return strings.Join(parts, "\n\n")
 }
 
-// BuildDifferential assembles the system prompt, omitting unchanged dynamic
-// sections when prompt caching is unavailable. Returns the prompt string and
-// the section content map (for updating the baseline after a successful call).
+// BuildDifferential assembles the system prompt, omitting unchanged sections
+// when prompt caching is unavailable. On first turn, everything is sent.
+// On subsequent turns, both static and dynamic sections that haven't changed
+// are omitted — this saves ~1,500+ tokens/turn for non-caching providers.
+//
+// Returns the prompt string and the section content map (for updating the
+// baseline after a successful call).
 func (b *Builder) BuildDifferential(baseline *ContextBaseline) (string, map[string]string) {
-	// Collect current dynamic section contents for diffing.
+	// Collect ALL section contents (static + dynamic) for diffing.
 	current := make(map[string]string)
 	for _, s := range b.sections {
-		if !s.Static {
-			current[s.Name] = s.Content
-		}
+		current[s.Name] = s.Content
 	}
 
 	diff := baseline.Diff(current)
 
-	var parts []string
+	if diff.IsFirst {
+		// First turn: include everything (same as Build).
+		return b.Build(), current
+	}
 
-	// Static sections always included.
+	// Build a set of changed section names.
+	changedSet := make(map[string]bool, len(diff.Changed))
+	for _, name := range diff.Changed {
+		changedSet[name] = true
+	}
+
+	var parts []string
+	omittedStatic := 0
+	omittedDynamic := 0
+
+	// Static sections — include only changed ones.
 	for _, s := range b.sections {
-		if s.Static {
-			parts = append(parts, s.Content)
+		if !s.Static {
+			continue
 		}
+		if changedSet[s.Name] {
+			parts = append(parts, s.Content)
+		} else {
+			omittedStatic++
+		}
+	}
+
+	if omittedStatic > 0 {
+		parts = append(parts, fmt.Sprintf("[System instructions unchanged from previous turn (%d section(s) omitted)]", omittedStatic))
 	}
 
 	parts = append(parts, DynamicBoundary)
 
-	if diff.IsFirst {
-		// First turn: include everything.
-		for _, s := range b.sections {
-			if !s.Static {
-				parts = append(parts, s.Content)
-			}
+	// Dynamic sections — include only changed ones.
+	for _, s := range b.sections {
+		if s.Static {
+			continue
 		}
-	} else {
-		// Build a set of changed section names.
-		changedSet := make(map[string]bool, len(diff.Changed))
-		for _, name := range diff.Changed {
-			changedSet[name] = true
+		if changedSet[s.Name] {
+			parts = append(parts, s.Content)
+		} else {
+			omittedDynamic++
 		}
+	}
 
-		// Include only changed sections; note omitted ones.
-		if len(diff.Unchanged) > 0 {
-			parts = append(parts, fmt.Sprintf("[Context: %d section(s) unchanged from previous turn, omitted to save tokens]", len(diff.Unchanged)))
-		}
-		for _, s := range b.sections {
-			if !s.Static && changedSet[s.Name] {
-				parts = append(parts, s.Content)
-			}
-		}
+	if omittedDynamic > 0 {
+		parts = append(parts, fmt.Sprintf("[Context: %d section(s) unchanged from previous turn, omitted to save tokens]", omittedDynamic))
 	}
 
 	return strings.Join(parts, "\n\n"), current
