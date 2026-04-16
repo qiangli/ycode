@@ -627,8 +627,8 @@ var (
 	applyPatchSchema = `{
 		"type": "object",
 		"properties": {
-			"patch": {"type": "string", "description": "Unified diff patch content"},
-			"strip": {"type": "integer", "description": "Number of leading path components to strip (default 0)"}
+			"patch": {"type": "string", "description": "Patch content. Supports two formats: (1) Standard unified diff, or (2) Compact format starting with '*** Begin Patch' using *** Add/Delete/Update File headers and @@ context hints. The compact format is preferred for token efficiency."},
+			"strip": {"type": "integer", "description": "Number of leading path components to strip (default 0, only for unified diff format)"}
 		},
 		"required": ["patch"]
 	}`

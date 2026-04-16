@@ -13,7 +13,7 @@ const (
 	// PreserveLastMessages is the number of recent messages to keep verbatim.
 	PreserveLastMessages = 4
 
-	compactContinuationPreamble = "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\n"
+	compactContinuationPreamble = "A previous model instance worked on this task and produced a context checkpoint handoff. Use it to build on completed work, avoid duplicating effort, and verify current state with tools before making assumptions.\n\n"
 	compactRecentMessagesNote   = "Recent messages are preserved verbatim."
 	compactDirectResumeInstr    = "Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, and do not preface with continuation text."
 )

@@ -30,6 +30,14 @@ func RegisterPatchHandler(r *Registry, v *vfs.VFS) {
 		if params.Patch == "" {
 			return "", fmt.Errorf("patch content is required")
 		}
+		// Auto-detect Codex-style patch format (*** Begin Patch).
+		if IsCodexPatch(params.Patch) {
+			parsed, err := ParseCodexPatch(params.Patch)
+			if err != nil {
+				return "", fmt.Errorf("parse codex patch: %w", err)
+			}
+			return ApplyCodexPatch(ctx, v, parsed)
+		}
 		return applyPatch(ctx, v, params.Patch, params.Strip)
 	}
 }

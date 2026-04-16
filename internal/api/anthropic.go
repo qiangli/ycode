@@ -107,12 +107,18 @@ func (c *AnthropicClient) Send(ctx context.Context, req *Request) (<-chan *Strea
 			return
 		}
 
+		// Compress request body if beneficial (typically 60-80% reduction).
+		compressedBody, contentEncoding := CompressGzip(body)
+
 		makeReq := func() (*http.Request, error) {
-			httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(body))
+			httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(compressedBody))
 			if err != nil {
 				return nil, fmt.Errorf("create request: %w", err)
 			}
 			httpReq.Header.Set("Content-Type", "application/json")
+			if contentEncoding != "" {
+				httpReq.Header.Set("Content-Encoding", contentEncoding)
+			}
 			if c.apiKey != "" {
 				httpReq.Header.Set("X-API-Key", c.apiKey)
 			}

@@ -51,13 +51,19 @@ func (c *OpenAICompatClient) Send(ctx context.Context, req *Request) (<-chan *St
 			return
 		}
 
+		// Compress request body if beneficial.
+		compressedData, contentEncoding := CompressGzip(data)
+
 		makeReq := func() (*http.Request, error) {
 			httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-				c.baseURL+"/chat/completions", bytes.NewReader(data))
+				c.baseURL+"/chat/completions", bytes.NewReader(compressedData))
 			if err != nil {
 				return nil, fmt.Errorf("create request: %w", err)
 			}
 			httpReq.Header.Set("Content-Type", "application/json")
+			if contentEncoding != "" {
+				httpReq.Header.Set("Content-Encoding", contentEncoding)
+			}
 			httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 			return httpReq, nil
 		}

@@ -18,7 +18,7 @@ const (
 	// LLMSummaryMaxTokens limits the output length for summarization.
 	LLMSummaryMaxTokens = 1024
 
-	llmSummaryPrompt = `You are a conversation summarizer for an AI coding assistant. Summarize the following conversation into a structured intent summary that preserves the most important context for continuing the work.
+	llmSummaryPrompt = `You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM instance that will resume this task. The next instance has access to the current file/tool state but NOT the conversation history.
 
 Use this exact format:
 

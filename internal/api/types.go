@@ -94,6 +94,11 @@ type Request struct {
 	TopP        *float64         `json:"top_p,omitempty"`
 	StopReason  string           `json:"-"`
 
+	// ReasoningEffort controls how much "thinking" the model does.
+	// Values: "low", "medium", "high", or "" (provider default).
+	// Lower effort = fewer thinking tokens = faster + cheaper.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+
 	// SystemBlocks is the array form of the system prompt, used when cache
 	// control markers are needed (Anthropic). When non-nil, it takes
 	// precedence over the plain System string during JSON marshaling.
