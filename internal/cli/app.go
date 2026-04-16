@@ -143,10 +143,24 @@ func (a *App) conversationRuntime() *conversation.Runtime {
 	rt := conversation.NewRuntime(a.config, a.provider, a.session, a.toolRegistry, a.promptCtx)
 	rt.SetPlanMode(a.InPlanMode())
 	if a.config.LLMSummarizationEnabled {
-		rt.SetLLMSummarizer(session.NewLLMSummarizer(a.provider, a.config.Model))
+		if a.config.WeakModel != "" {
+			// Fallback chain: try weak (cheap) model first, then main model.
+			rt.SetLLMSummarizer(session.NewLLMSummarizerChain([]session.ModelSpec{
+				{Provider: a.provider, Model: a.config.WeakModel},
+				{Provider: a.provider, Model: a.config.Model},
+			}))
+		} else {
+			rt.SetLLMSummarizer(session.NewLLMSummarizer(a.provider, a.config.Model))
+		}
 	}
 	if a.convOTEL != nil {
 		rt.SetOTEL(a.convOTEL)
+	}
+	if a.config.CacheWarmingEnabled {
+		caps := api.DetectCapabilities(a.provider.Kind(), a.config.Model)
+		if caps.CachingSupported {
+			rt.SetCacheWarmer(api.NewCacheWarmer(a.provider))
+		}
 	}
 	return rt
 }

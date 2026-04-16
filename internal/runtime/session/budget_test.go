@@ -59,4 +59,73 @@ func TestDefaultContextBudget(t *testing.T) {
 	if b.CompactionThreshold != CompactionThreshold {
 		t.Errorf("default should match CompactionThreshold constant")
 	}
+	if b.MaxChatHistoryTokens <= 0 {
+		t.Errorf("MaxChatHistoryTokens should be > 0, got %d", b.MaxChatHistoryTokens)
+	}
+}
+
+func TestChatHistoryBudget(t *testing.T) {
+	tests := []struct {
+		name          string
+		contextWindow int
+		expectedMin   int
+		expectedMax   int
+	}{
+		{"32K context", 32_000, 1024, 2048},
+		{"128K context", 128_000, 8000, 8192},
+		{"200K context", 200_000, 8192, 8192},
+		{"1M context", 1_000_000, 8192, 8192},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			budget := ContextBudgetForModel(tt.contextWindow)
+			if budget.MaxChatHistoryTokens < tt.expectedMin {
+				t.Errorf("MaxChatHistoryTokens %d < expected min %d",
+					budget.MaxChatHistoryTokens, tt.expectedMin)
+			}
+			if budget.MaxChatHistoryTokens > tt.expectedMax {
+				t.Errorf("MaxChatHistoryTokens %d > expected max %d",
+					budget.MaxChatHistoryTokens, tt.expectedMax)
+			}
+		})
+	}
+}
+
+func TestChatHistoryBudget_NonCachingProvider(t *testing.T) {
+	budgetCaching := ContextBudgetForProvider(200_000, true)
+	budgetNoCaching := ContextBudgetForProvider(200_000, false)
+
+	if budgetNoCaching.MaxChatHistoryTokens >= budgetCaching.MaxChatHistoryTokens {
+		t.Errorf("non-caching history budget (%d) should be less than caching (%d)",
+			budgetNoCaching.MaxChatHistoryTokens, budgetCaching.MaxChatHistoryTokens)
+	}
+	if budgetNoCaching.MaxChatHistoryTokens > 4096 {
+		t.Errorf("non-caching history budget (%d) should be <= 4096",
+			budgetNoCaching.MaxChatHistoryTokens)
+	}
+}
+
+func TestEnforceSummaryCap(t *testing.T) {
+	small := "short summary"
+	result := EnforceSummaryCap(small, 1000)
+	if result != small {
+		t.Error("small summary should be unchanged")
+	}
+
+	large := make([]byte, 40000)
+	for i := range large {
+		large[i] = 'x'
+	}
+	result = EnforceSummaryCap(string(large), 2000)
+	if len(result) >= len(large) {
+		t.Errorf("large summary should be truncated: got %d chars", len(result))
+	}
+}
+
+func TestEnforceSummaryCap_ZeroBudget(t *testing.T) {
+	result := EnforceSummaryCap("test", 0)
+	if result != "test" {
+		t.Error("zero budget should return summary unchanged")
+	}
 }

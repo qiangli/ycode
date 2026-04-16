@@ -31,6 +31,15 @@ type Config struct {
 	// LLM-based summarization for compaction (uses API call; default false)
 	LLMSummarizationEnabled bool `json:"llmSummarizationEnabled,omitempty"`
 
+	// Weak model for cheap secondary tasks (summarization, commit messages).
+	// When set, LLM summarization tries this model first, falling back to the
+	// main model on failure. Examples: "claude-haiku-4-5-20251001", "gpt-4o-mini".
+	WeakModel string `json:"weakModel,omitempty"`
+
+	// Cache warming: background pings to keep Anthropic prompt cache alive.
+	// Only effective when the provider supports prompt caching.
+	CacheWarmingEnabled bool `json:"cacheWarmingEnabled,omitempty"`
+
 	// Model aliases (user-defined short names → full model IDs)
 	Aliases map[string]string `json:"aliases,omitempty"`
 
@@ -243,6 +252,12 @@ func mergeFromFile(cfg *Config, path string) error {
 	}
 	if overlay.LLMSummarizationEnabled {
 		cfg.LLMSummarizationEnabled = true
+	}
+	if overlay.WeakModel != "" {
+		cfg.WeakModel = overlay.WeakModel
+	}
+	if overlay.CacheWarmingEnabled {
+		cfg.CacheWarmingEnabled = true
 	}
 	if overlay.Parallel.Enabled {
 		cfg.Parallel.Enabled = true

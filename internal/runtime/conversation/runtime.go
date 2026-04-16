@@ -43,6 +43,9 @@ type Runtime struct {
 	// Optional LLM-based summarizer for compaction. If nil, heuristic is used.
 	llmSummarizer *session.LLMSummarizer
 
+	// Context budget for history caps and compaction thresholds.
+	contextBudget session.ContextBudget
+
 	// Activated deferred tools — tools discovered via ToolSearch that must
 	// be included in subsequent API requests so the provider accepts tool_use calls.
 	activatedTools map[string]bool
@@ -50,6 +53,9 @@ type Runtime struct {
 	// Completion cache — short-TTL cache that skips the LLM entirely
 	// for identical requests (retries, error recovery).
 	completionCache *api.CompletionCache
+
+	// Cache warmer — background pings to keep prompt cache alive.
+	cacheWarmer *api.CacheWarmer
 
 	// Plan mode — when true, write tools are filtered out and plan-mode
 	// instructions are injected into the system prompt.
@@ -77,6 +83,8 @@ func NewRuntime(
 	if cfg.ProviderCapabilities != nil && cfg.ProviderCapabilities.CachingSupported != nil {
 		cachingSupported = *cfg.ProviderCapabilities.CachingSupported
 	}
+	contextBudget := session.ContextBudgetForProvider(caps.MaxContextTokens, cachingSupported)
+
 	var distillCfg session.DistillConfig
 	if cachingSupported {
 		distillCfg = session.DefaultDistillConfig()
@@ -102,6 +110,7 @@ func NewRuntime(
 		logger:           slog.Default(),
 		cachingSupported: cachingSupported,
 		contextBaseline:  prompt.NewContextBaseline(),
+		contextBudget:    contextBudget,
 		distillCfg:       distillCfg,
 		routingCache:     session.NewRoutingCache(),
 		activatedTools:   make(map[string]bool),
@@ -114,6 +123,11 @@ func NewRuntime(
 // falling back to heuristic extraction on failure.
 func (r *Runtime) SetLLMSummarizer(s *session.LLMSummarizer) {
 	r.llmSummarizer = s
+}
+
+// SetCacheWarmer enables background cache warming for prompt caching providers.
+func (r *Runtime) SetCacheWarmer(cw *api.CacheWarmer) {
+	r.cacheWarmer = cw
 }
 
 // SetPlanMode enables or disables plan mode for this runtime.
@@ -313,6 +327,12 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		StopReason: result.StopReason,
 		Usage:      result.Usage,
 	})
+
+	// Update cache warmer context so keep-alive pings use current system prompt.
+	if r.cacheWarmer != nil {
+		r.cacheWarmer.UpdateContext(req.Model, req.System, req.Tools)
+		r.cacheWarmer.Start() // no-op if already running
+	}
 
 	return result, nil
 }
@@ -672,10 +692,11 @@ func (r *Runtime) proactiveCompactCtx(ctx context.Context, sessionMsgs []session
 	}
 
 	var compactResult *session.CompactionResult
+	historyBudget := r.contextBudget.MaxChatHistoryTokens
 	if r.llmSummarizer != nil {
-		compactResult = session.CompactWithLLM(ctx, sessionMsgs, r.session.Summary, r.llmSummarizer)
+		compactResult = session.CompactWithLLM(ctx, sessionMsgs, r.session.Summary, r.llmSummarizer, historyBudget)
 	} else {
-		compactResult = session.Compact(sessionMsgs, r.session.Summary)
+		compactResult = session.Compact(sessionMsgs, r.session.Summary, historyBudget)
 	}
 	if compactResult == nil {
 		return nil
@@ -696,6 +717,11 @@ func (r *Runtime) proactiveCompactCtx(ctx context.Context, sessionMsgs []session
 
 	// Clear completion cache — context has changed, old responses are invalid.
 	r.completionCache.Clear()
+
+	// Restart cache warmer — cached context has changed.
+	if r.cacheWarmer != nil {
+		r.cacheWarmer.Restart()
+	}
 
 	return compactResult
 }

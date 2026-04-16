@@ -50,7 +50,8 @@ func EstimateMessageTokens(msg ConversationMessage) int {
 
 // Compact produces a summary from older messages, keeping recent ones.
 // It ensures tool-use/tool-result pairs are not split at the compaction boundary.
-func Compact(messages []ConversationMessage, previousSummary string) *CompactionResult {
+// When maxHistoryTokens is provided and > 0, the summary is capped to that budget.
+func Compact(messages []ConversationMessage, previousSummary string, maxHistoryTokens ...int) *CompactionResult {
 	if len(messages) <= PreserveLastMessages {
 		return nil
 	}
@@ -106,6 +107,11 @@ func Compact(messages []ConversationMessage, previousSummary string) *Compaction
 		summary = mergeCompactSummaries(previousSummary, summary)
 	} else if existingSummary := extractExistingCompactedSummary(messages[0]); existingSummary != "" {
 		summary = mergeCompactSummaries(existingSummary, summary)
+	}
+
+	// Enforce history budget cap if specified.
+	if len(maxHistoryTokens) > 0 && maxHistoryTokens[0] > 0 {
+		summary = EnforceSummaryCap(summary, maxHistoryTokens[0])
 	}
 
 	formatted := formatCompactSummary(summary)
@@ -614,7 +620,8 @@ func stripTagBlock(content, tag string) string {
 
 // CompactWithLLM is like Compact but uses an LLM summarizer when available.
 // If the LLM call fails, it falls back to the heuristic buildIntentSummary.
-func CompactWithLLM(ctx context.Context, messages []ConversationMessage, previousSummary string, summarizer *LLMSummarizer) *CompactionResult {
+// When maxHistoryTokens > 0, the summary is capped to fit the history budget.
+func CompactWithLLM(ctx context.Context, messages []ConversationMessage, previousSummary string, summarizer *LLMSummarizer, maxHistoryTokens ...int) *CompactionResult {
 	if len(messages) <= PreserveLastMessages {
 		return nil
 	}
@@ -677,6 +684,11 @@ func CompactWithLLM(ctx context.Context, messages []ConversationMessage, previou
 		summary = mergeCompactSummaries(existingSummary, summary)
 	}
 
+	// Enforce history budget cap if specified.
+	if len(maxHistoryTokens) > 0 && maxHistoryTokens[0] > 0 {
+		summary = EnforceSummaryCap(summary, maxHistoryTokens[0])
+	}
+
 	formatted := formatCompactSummary(summary)
 
 	return &CompactionResult{
@@ -686,6 +698,35 @@ func CompactWithLLM(ctx context.Context, messages []ConversationMessage, previou
 		CompactedCount:   len(toCompact),
 		PreviousSummary:  previousSummary,
 	}
+}
+
+// EnforceSummaryCap truncates a summary to fit within maxTokens.
+// Uses recursive head/tail splitting: keeps the tail (most recent context)
+// and truncates the head. This matches aider's recursive summarization pattern.
+func EnforceSummaryCap(summary string, maxTokens int) string {
+	if maxTokens <= 0 {
+		return summary
+	}
+	estimated := len(summary)/4 + 1
+	if estimated <= maxTokens {
+		return summary
+	}
+
+	// Truncate to approximately maxTokens * 4 characters.
+	maxChars := maxTokens * 4
+	if len(summary) <= maxChars {
+		return summary
+	}
+
+	// Keep the tail (more recent context is more valuable).
+	tailChars := maxChars * 2 / 3
+	headChars := maxChars - tailChars - 50 // room for the marker
+
+	head := summary[:headChars]
+	tail := summary[len(summary)-tailChars:]
+	omitted := len(summary) - headChars - tailChars
+
+	return head + fmt.Sprintf("\n[... %d chars of summary omitted to fit history budget ...]\n", omitted) + tail
 }
 
 // collapseBlankLines collapses consecutive blank lines into one.

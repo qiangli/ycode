@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -42,30 +43,61 @@ Omit any section that has no entries. Be concise but preserve critical details â
 Here is the conversation to summarize:`
 )
 
-// LLMSummarizer generates compaction summaries using an LLM provider.
-type LLMSummarizer struct {
-	provider api.Provider
-	model    string
+// ModelSpec identifies a model for summarization.
+type ModelSpec struct {
+	Provider api.Provider
+	Model    string
 }
 
-// NewLLMSummarizer creates a new LLM-based summarizer.
+// LLMSummarizer generates compaction summaries using an LLM provider.
+// It supports a fallback chain: tries each model in order, using the first
+// that succeeds. This allows using a cheap model (e.g., Haiku) first and
+// falling back to the main model, following aider's pattern.
+type LLMSummarizer struct {
+	models []ModelSpec
+}
+
+// NewLLMSummarizer creates a new LLM-based summarizer with a single model.
 func NewLLMSummarizer(provider api.Provider, model string) *LLMSummarizer {
 	return &LLMSummarizer{
-		provider: provider,
-		model:    model,
+		models: []ModelSpec{{Provider: provider, Model: model}},
 	}
 }
 
-// Summarize generates a structured intent summary of the given messages using the LLM.
-// Returns the summary text, or an error if the LLM call fails.
+// NewLLMSummarizerChain creates a summarizer with a fallback chain of models.
+// Models are tried in order; the first successful response wins.
+// Typical usage: [weakModel, mainModel] where weakModel is cheaper.
+func NewLLMSummarizerChain(models []ModelSpec) *LLMSummarizer {
+	return &LLMSummarizer{models: models}
+}
+
+// Summarize generates a structured intent summary of the given messages.
+// Tries each model in the chain; returns the first successful result.
 func (s *LLMSummarizer) Summarize(ctx context.Context, messages []ConversationMessage) (string, error) {
 	conversationText := formatMessagesForSummary(messages)
 
+	var lastErr error
+	for _, ms := range s.models {
+		summary, err := s.summarizeWith(ctx, ms, conversationText)
+		if err != nil {
+			slog.Info("summarization failed, trying next model", "model", ms.Model, "error", err)
+			lastErr = err
+			continue
+		}
+		slog.Info("summarization succeeded", "model", ms.Model)
+		return summary, nil
+	}
+
+	return "", fmt.Errorf("all summarization models failed (last: %w)", lastErr)
+}
+
+// summarizeWith sends the summarization request to a specific model.
+func (s *LLMSummarizer) summarizeWith(ctx context.Context, ms ModelSpec, conversationText string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, LLMSummaryTimeout)
 	defer cancel()
 
 	req := &api.Request{
-		Model:     s.model,
+		Model:     ms.Model,
 		MaxTokens: LLMSummaryMaxTokens,
 		Messages: []api.Message{
 			{
@@ -78,7 +110,7 @@ func (s *LLMSummarizer) Summarize(ctx context.Context, messages []ConversationMe
 		Stream: true,
 	}
 
-	events, errc := s.provider.Send(ctx, req)
+	events, errc := ms.Provider.Send(ctx, req)
 
 	var textParts []string
 	for ev := range events {
@@ -93,12 +125,12 @@ func (s *LLMSummarizer) Summarize(ctx context.Context, messages []ConversationMe
 	}
 
 	if err := <-errc; err != nil {
-		return "", fmt.Errorf("llm summarization: %w", err)
+		return "", fmt.Errorf("llm summarization (%s): %w", ms.Model, err)
 	}
 
 	summary := strings.Join(textParts, "")
 	if strings.TrimSpace(summary) == "" {
-		return "", fmt.Errorf("llm summarization returned empty response")
+		return "", fmt.Errorf("llm summarization (%s) returned empty response", ms.Model)
 	}
 
 	// Ensure the response contains the expected format; if not, wrap it.

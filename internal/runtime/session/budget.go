@@ -10,15 +10,38 @@ type ContextBudget struct {
 	ReservedTokens int
 	// CompactionThreshold is the token count at which compaction triggers.
 	CompactionThreshold int
+	// MaxChatHistoryTokens caps the size of summarized chat history.
+	// Inspired by aider's formula: min(max(input_tokens/16, 1024), 8192).
+	// This prevents history from dominating the context, especially for
+	// non-caching providers where every token costs full price.
+	MaxChatHistoryTokens int
 }
 
 // DefaultContextBudget returns the default budget (100K threshold, matching existing behavior).
 func DefaultContextBudget() ContextBudget {
 	return ContextBudget{
-		ContextWindow:       200_000,
-		ReservedTokens:      40_000,
-		CompactionThreshold: CompactionThreshold, // 100K
+		ContextWindow:        200_000,
+		ReservedTokens:       40_000,
+		CompactionThreshold:  CompactionThreshold, // 100K
+		MaxChatHistoryTokens: chatHistoryBudget(200_000),
 	}
+}
+
+// chatHistoryBudget calculates the max chat history tokens for a given context window.
+// Formula from aider: min(max(input_tokens/16, 1024), 8192).
+func chatHistoryBudget(contextWindow int) int {
+	budget := contextWindow / 16
+	budget = max(budget, 1024)
+	budget = min(budget, 8192)
+	return budget
+}
+
+// chatHistoryBudgetAggressive calculates a tighter history budget for non-caching providers.
+func chatHistoryBudgetAggressive(contextWindow int) int {
+	budget := contextWindow / 24
+	budget = max(budget, 1024)
+	budget = min(budget, 4096)
+	return budget
 }
 
 // ContextBudgetForModel calculates appropriate thresholds for a given model's
@@ -55,9 +78,10 @@ func ContextBudgetForModel(contextWindow int) ContextBudget {
 	compactionAt = max(compactionAt, 10_000)
 
 	return ContextBudget{
-		ContextWindow:       contextWindow,
-		ReservedTokens:      reserved,
-		CompactionThreshold: compactionAt,
+		ContextWindow:        contextWindow,
+		ReservedTokens:       reserved,
+		CompactionThreshold:  compactionAt,
+		MaxChatHistoryTokens: chatHistoryBudget(contextWindow),
 	}
 }
 
@@ -76,6 +100,7 @@ func ContextBudgetForProvider(contextWindow int, cachingSupported bool) ContextB
 			int(float64(budget.CompactionThreshold)*NonCachingCompactionDiscount),
 			10_000,
 		)
+		budget.MaxChatHistoryTokens = chatHistoryBudgetAggressive(contextWindow)
 	}
 	return budget
 }
