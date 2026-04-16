@@ -10,6 +10,10 @@ const (
 	// For a CLI agent with smaller conversations, 10 is appropriate.
 	ObservationMaskingWindow = 10
 
+	// ObservationMaskingWindowAggressive is used for non-caching providers where
+	// every input token costs full price. A smaller window masks more old results.
+	ObservationMaskingWindowAggressive = 6
+
 	// maskedPlaceholder replaces old tool results in observation masking (Layer 0).
 	maskedPlaceholder = "<MASKED>"
 
@@ -217,7 +221,14 @@ func (h ContextHealth) NeedsCompactionNow() bool {
 // This is Layer 0 — the lightest possible compaction, inspired by OpenHands'
 // ObservationMaskingCondenser. Only tool results outside the attention window
 // are masked. Returns a new slice (original not modified).
-func MaskOldObservations(messages []ConversationMessage) ([]ConversationMessage, int) {
+// The window parameter controls how many recent tool results remain unmasked.
+// Use ObservationMaskingWindow (10) for caching providers or
+// ObservationMaskingWindowAggressive (6) for non-caching providers.
+func MaskOldObservations(messages []ConversationMessage, window int) ([]ConversationMessage, int) {
+	if window <= 0 {
+		window = ObservationMaskingWindow
+	}
+
 	// Count tool results from the end to find the masking boundary.
 	toolResultCount := 0
 	for i := len(messages) - 1; i >= 0; i-- {
@@ -228,7 +239,7 @@ func MaskOldObservations(messages []ConversationMessage) ([]ConversationMessage,
 		}
 	}
 
-	if toolResultCount <= ObservationMaskingWindow {
+	if toolResultCount <= window {
 		return messages, 0 // Nothing to mask.
 	}
 
@@ -236,14 +247,14 @@ func MaskOldObservations(messages []ConversationMessage) ([]ConversationMessage,
 	maskedCount := 0
 	seenFromEnd := 0
 
-	// Walk backwards, protecting the last ObservationMaskingWindow tool results.
+	// Walk backwards, protecting the last N tool results within the window.
 	for i := len(masked) - 1; i >= 0; i-- {
 		for j := len(masked[i].Content) - 1; j >= 0; j-- {
 			if masked[i].Content[j].Type != ContentTypeToolResult {
 				continue
 			}
 			seenFromEnd++
-			if seenFromEnd > ObservationMaskingWindow {
+			if seenFromEnd > window {
 				// This tool result is outside the window — mask it.
 				if masked[i].Content[j].Content != maskedPlaceholder && len(masked[i].Content[j].Content) > len(maskedPlaceholder) {
 					masked[i].Content[j].Content = maskedPlaceholder

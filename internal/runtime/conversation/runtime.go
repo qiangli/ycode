@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/qiangli/ycode/internal/api"
@@ -41,6 +43,14 @@ type Runtime struct {
 	// Optional LLM-based summarizer for compaction. If nil, heuristic is used.
 	llmSummarizer *session.LLMSummarizer
 
+	// Activated deferred tools — tools discovered via ToolSearch that must
+	// be included in subsequent API requests so the provider accepts tool_use calls.
+	activatedTools map[string]bool
+
+	// Completion cache — short-TTL cache that skips the LLM entirely
+	// for identical requests (retries, error recovery).
+	completionCache *api.CompletionCache
+
 	// Plan mode — when true, write tools are filtered out and plan-mode
 	// instructions are injected into the system prompt.
 	planMode bool
@@ -67,9 +77,20 @@ func NewRuntime(
 	if cfg.ProviderCapabilities != nil && cfg.ProviderCapabilities.CachingSupported != nil {
 		cachingSupported = *cfg.ProviderCapabilities.CachingSupported
 	}
-	distillCfg := session.DefaultDistillConfig()
+	var distillCfg session.DistillConfig
+	if cachingSupported {
+		distillCfg = session.DefaultDistillConfig()
+	} else {
+		distillCfg = session.AggressiveDistillConfig()
+	}
 	if sess != nil {
 		distillCfg.FullOutputDir = sess.ToolOutputDir()
+	}
+
+	// Set up completion cache directory under the session.
+	var completionCacheDir string
+	if sess != nil {
+		completionCacheDir = filepath.Join(sess.Dir, "completion-cache")
 	}
 
 	return &Runtime{
@@ -83,6 +104,8 @@ func NewRuntime(
 		contextBaseline:  prompt.NewContextBaseline(),
 		distillCfg:       distillCfg,
 		routingCache:     session.NewRoutingCache(),
+		activatedTools:   make(map[string]bool),
+		completionCache:  api.NewCompletionCache(completionCacheDir, api.CompletionCacheTTL),
 	}
 }
 
@@ -145,6 +168,21 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 	} else {
 		toolSpecs = r.registry.AlwaysAvailable()
 	}
+
+	// Include activated deferred tools (discovered via ToolSearch).
+	seen := make(map[string]bool, len(toolSpecs))
+	for _, s := range toolSpecs {
+		seen[s.Name] = true
+	}
+	for name := range r.activatedTools {
+		if seen[name] {
+			continue
+		}
+		if spec, ok := r.registry.Get(name); ok {
+			toolSpecs = append(toolSpecs, spec)
+		}
+	}
+
 	var toolDefs []api.ToolDefinition
 	for _, spec := range toolSpecs {
 		toolDefs = append(toolDefs, api.ToolDefinition{
@@ -168,6 +206,14 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		Messages:  messages,
 		Tools:     toolDefs,
 		Stream:    true,
+	}
+
+	// Check completion cache — skip the LLM entirely for identical requests.
+	reqHash := api.RequestHash(req)
+	if cached := r.completionCache.Lookup(reqHash); cached != nil {
+		result := r.responseToTurnResult(cached)
+		result.Duration = 0 // Instant — from cache.
+		return result, nil
 	}
 
 	// Send request and track timing.
@@ -260,7 +306,57 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 	result.Duration = time.Since(start)
 	result.TextContent = joinParts(textParts)
 	result.ThinkingContent = joinParts(thinkingParts)
+
+	// Cache the completed response for short-TTL reuse.
+	r.completionCache.Store(reqHash, &api.Response{
+		Content:    r.turnResultToContentBlocks(result),
+		StopReason: result.StopReason,
+		Usage:      result.Usage,
+	})
+
 	return result, nil
+}
+
+// responseToTurnResult converts a cached api.Response into a TurnResult.
+func (r *Runtime) responseToTurnResult(resp *api.Response) *TurnResult {
+	result := &TurnResult{
+		Response:   resp,
+		StopReason: resp.StopReason,
+		Usage:      resp.Usage,
+	}
+	for _, block := range resp.Content {
+		switch block.Type {
+		case api.ContentTypeText:
+			result.TextContent += block.Text
+		case api.ContentTypeToolUse:
+			result.ToolCalls = append(result.ToolCalls, ToolCall{
+				ID:    block.ID,
+				Name:  block.Name,
+				Input: block.Input,
+			})
+		}
+	}
+	return result
+}
+
+// turnResultToContentBlocks converts a TurnResult into api.ContentBlocks for caching.
+func (r *Runtime) turnResultToContentBlocks(result *TurnResult) []api.ContentBlock {
+	var blocks []api.ContentBlock
+	if result.TextContent != "" {
+		blocks = append(blocks, api.ContentBlock{
+			Type: api.ContentTypeText,
+			Text: result.TextContent,
+		})
+	}
+	for _, tc := range result.ToolCalls {
+		blocks = append(blocks, api.ContentBlock{
+			Type:  api.ContentTypeToolUse,
+			ID:    tc.ID,
+			Name:  tc.Name,
+			Input: tc.Input,
+		})
+	}
+	return blocks
 }
 
 // ExecuteTools runs tool calls and returns tool result messages.
@@ -274,7 +370,32 @@ func (r *Runtime) ExecuteTools(ctx context.Context, calls []ToolCall, progress c
 	} else {
 		results = r.executeToolsParallel(ctx, calls, progress)
 	}
+
+	// Activate deferred tools discovered via ToolSearch so they are included
+	// in subsequent API requests (providers reject tool_use for unknown tools).
+	for i, call := range calls {
+		if call.Name == "ToolSearch" && i < len(results) && !results[i].IsError {
+			r.activateToolsFromResult(results[i].Content)
+		}
+	}
+
 	return r.distillResults(calls, results)
+}
+
+// activateToolsFromResult parses a ToolSearch result and activates the
+// discovered tools so their schemas are included in subsequent API requests.
+func (r *Runtime) activateToolsFromResult(content string) {
+	// ToolSearch returns tool names in JSON objects within <function> tags.
+	// Extract tool names by looking for "name":"..." patterns.
+	for _, name := range r.registry.Names() {
+		// Check if the tool name appears in the ToolSearch output (as a JSON field value).
+		if strings.Contains(content, `"name":"`+name+`"`) || strings.Contains(content, `"name": "`+name+`"`) {
+			if !r.activatedTools[name] {
+				r.activatedTools[name] = true
+				r.logger.Info("activated deferred tool", "tool", name)
+			}
+		}
+	}
 }
 
 // executeToolsSequential runs tool calls one at a time (original behavior).
@@ -380,7 +501,7 @@ func (r *Runtime) distillResults(calls []ToolCall, results []api.ContentBlock) [
 		before := len(results[i].Content)
 
 		// Step 1: Content routing — classify the result.
-		route := session.RouteContent(toolName, results[i].Content, false, r.routingCache)
+		route := session.RouteContent(toolName, results[i].Content, false, r.routingCache, r.distillCfg.AggressiveMode)
 
 		// Step 2: Apply route or distillation.
 		switch route {
@@ -438,7 +559,12 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 	recovery := &RecoveryResult{}
 
 	// --- Layer 0: Observation masking (cheapest defense — always runs) ---
-	masked, maskedCount := session.MaskOldObservations(sessionMsgs)
+	// Non-caching providers use a smaller masking window to reduce token cost.
+	maskWindow := session.ObservationMaskingWindow
+	if !r.cachingSupported {
+		maskWindow = session.ObservationMaskingWindowAggressive
+	}
+	masked, maskedCount := session.MaskOldObservations(sessionMsgs, maskWindow)
 	if maskedCount > 0 {
 		r.logger.Info("layer 0: masked old observations", "count", maskedCount)
 		sessionMsgs = masked
@@ -567,6 +693,9 @@ func (r *Runtime) proactiveCompactCtx(ctx context.Context, sessionMsgs []session
 
 	// Reset differential context baseline — next turn must send full context.
 	r.contextBaseline.Reset()
+
+	// Clear completion cache — context has changed, old responses are invalid.
+	r.completionCache.Clear()
 
 	return compactResult
 }

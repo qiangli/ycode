@@ -50,7 +50,8 @@ func (rc *RoutingCache) Set(contentHash string, route ContentRoute) {
 }
 
 // RouteContent determines the routing for a tool result based on heuristics.
-func RouteContent(toolName string, content string, isError bool, cache *RoutingCache) ContentRoute {
+// When aggressive is true, thresholds are tighter for non-caching providers.
+func RouteContent(toolName string, content string, isError bool, cache *RoutingCache, aggressive bool) ContentRoute {
 	hash := contentHash(content)
 
 	// Check cache first.
@@ -60,7 +61,7 @@ func RouteContent(toolName string, content string, isError bool, cache *RoutingC
 		}
 	}
 
-	route := classifyContent(toolName, content, isError)
+	route := classifyContent(toolName, content, isError, aggressive)
 
 	if cache != nil {
 		cache.Set(hash, route)
@@ -69,7 +70,8 @@ func RouteContent(toolName string, content string, isError bool, cache *RoutingC
 }
 
 // classifyContent applies heuristic rules to determine routing.
-func classifyContent(toolName string, content string, isError bool) ContentRoute {
+// When aggressive is true, thresholds are tighter for non-caching providers.
+func classifyContent(toolName string, content string, isError bool, aggressive bool) ContentRoute {
 	// Error outputs are always kept in full — they contain critical diagnostics.
 	if isError {
 		return RouteFull
@@ -80,7 +82,11 @@ func classifyContent(toolName string, content string, isError bool) ContentRoute
 		"read_file": true, "read_multiple_files": true,
 	}
 	if readTools[toolName] {
-		if len(content) < 5000 {
+		threshold := 5000
+		if aggressive {
+			threshold = 3000
+		}
+		if len(content) < threshold {
 			return RouteFull
 		}
 		return RoutePartial
@@ -99,7 +105,11 @@ func classifyContent(toolName string, content string, isError bool) ContentRoute
 		"glob_search": true, "grep_search": true,
 	}
 	if searchTools[toolName] {
-		if len(content) < 1000 {
+		threshold := 1000
+		if aggressive {
+			threshold = 500
+		}
+		if len(content) < threshold {
 			return RouteFull
 		}
 		return RoutePartial
@@ -113,14 +123,22 @@ func classifyContent(toolName string, content string, isError bool) ContentRoute
 			strings.Contains(lower, "error") || strings.Contains(lower, "warning") {
 			return RoutePartial
 		}
-		if len(content) > 3000 {
+		summaryThreshold := 3000
+		if aggressive {
+			summaryThreshold = 1500
+		}
+		if len(content) > summaryThreshold {
 			return RouteSummary
 		}
 		return RoutePartial
 	}
 
 	// Default: partial for anything large, full for small.
-	if len(content) > 2000 {
+	defaultThreshold := 2000
+	if aggressive {
+		defaultThreshold = 1000
+	}
+	if len(content) > defaultThreshold {
 		return RoutePartial
 	}
 	return RouteFull

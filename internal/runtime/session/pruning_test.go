@@ -160,6 +160,48 @@ func TestCheckContextHealth(t *testing.T) {
 	}
 }
 
+func TestMaskOldObservations_WindowParameter(t *testing.T) {
+	// Create 12 messages with tool results. Content must be longer than
+	// maskedPlaceholder ("<MASKED>") to be eligible for masking.
+	var messages []ConversationMessage
+	for i := range 12 {
+		messages = append(messages, ConversationMessage{
+			Role: RoleUser,
+			Content: []ContentBlock{
+				{Type: ContentTypeToolResult, ToolUseID: "t" + strings.Repeat("x", i),
+					Content: "This is a sufficiently long tool result content for masking test #" + strings.Repeat("x", 20+i)},
+			},
+		})
+	}
+
+	// Window=10: should mask 2 (12-10).
+	_, maskedNormal := MaskOldObservations(messages, ObservationMaskingWindow)
+	// Window=6: should mask 6 (12-6).
+	_, maskedAggressive := MaskOldObservations(messages, ObservationMaskingWindowAggressive)
+
+	if maskedNormal != 2 {
+		t.Errorf("window=10: expected 2 masked, got %d", maskedNormal)
+	}
+	if maskedAggressive != 6 {
+		t.Errorf("window=6: expected 6 masked, got %d", maskedAggressive)
+	}
+}
+
+func TestMaskOldObservations_NothingToMask(t *testing.T) {
+	var messages []ConversationMessage
+	for range 5 {
+		messages = append(messages, ConversationMessage{
+			Role:    RoleUser,
+			Content: []ContentBlock{{Type: ContentTypeToolResult, ToolUseID: "t", Content: "result"}},
+		})
+	}
+
+	_, masked := MaskOldObservations(messages, 10)
+	if masked != 0 {
+		t.Errorf("expected 0 masked when within window, got %d", masked)
+	}
+}
+
 func TestContextHealth_String(t *testing.T) {
 	h := ContextHealth{
 		EstimatedTokens: 75000,

@@ -19,10 +19,20 @@ const (
 	// DefaultMaxLineLength caps individual line length (protects against minified files).
 	DefaultMaxLineLength = 2000
 
+	// Aggressive thresholds for non-caching providers (~50% of normal).
+	aggressiveMaxInlineChars = 1000
+	aggressiveMaxInlineBytes = 25 * 1024
+	aggressiveMaxInlineLines = 1000
+	aggressiveMaxLineLength  = 1000
+
 	// distillHeadLines is how many lines to keep at the head of large outputs.
 	distillHeadLines = 20
 	// distillTailLines is how many lines to keep at the tail of large outputs.
 	distillTailLines = 10
+
+	// Aggressive head/tail for non-caching providers.
+	aggressiveHeadLines = 12
+	aggressiveTailLines = 6
 )
 
 // DistillConfig controls tool output distillation behavior.
@@ -51,6 +61,11 @@ type DistillConfig struct {
 	// ExemptTools are tool names that bypass distillation.
 	// Typically includes "read_file" whose output IS the point.
 	ExemptTools []string `json:"exemptTools,omitempty"`
+
+	// AggressiveMode enables tighter distillation thresholds for non-caching
+	// providers (OpenAI, Moonshot/Kimi) where every input token is billed at
+	// full price every turn. Thresholds are roughly halved.
+	AggressiveMode bool `json:"aggressiveMode,omitempty"`
 }
 
 // DefaultDistillConfig returns sensible defaults.
@@ -60,6 +75,18 @@ func DefaultDistillConfig() DistillConfig {
 		MaxInlineBytes: DefaultMaxInlineBytes,
 		MaxInlineLines: DefaultMaxInlineLines,
 		MaxLineLength:  DefaultMaxLineLength,
+		ExemptTools:    []string{"read_file", "read_multiple_files"},
+	}
+}
+
+// AggressiveDistillConfig returns tighter thresholds for non-caching providers.
+func AggressiveDistillConfig() DistillConfig {
+	return DistillConfig{
+		MaxInlineChars: aggressiveMaxInlineChars,
+		MaxInlineBytes: aggressiveMaxInlineBytes,
+		MaxInlineLines: aggressiveMaxInlineLines,
+		MaxLineLength:  aggressiveMaxLineLength,
+		AggressiveMode: true,
 		ExemptTools:    []string{"read_file", "read_multiple_files"},
 	}
 }
@@ -93,15 +120,21 @@ func DistillToolOutput(toolName string, output string, cfg DistillConfig) string
 		return output
 	}
 
+	// Select head/tail line counts based on mode.
+	headN, tailN := distillHeadLines, distillTailLines
+	if cfg.AggressiveMode {
+		headN, tailN = aggressiveHeadLines, aggressiveTailLines
+	}
+
 	// If few enough lines, just truncate by chars.
-	if totalLines <= distillHeadLines+distillTailLines {
+	if totalLines <= headN+tailN {
 		return truncateChars(output, cfg.MaxInlineChars)
 	}
 
 	// Stage 1: Structural truncation — head + tail lines.
-	head := lines[:distillHeadLines]
-	tail := lines[totalLines-distillTailLines:]
-	omitted := totalLines - distillHeadLines - distillTailLines
+	head := lines[:headN]
+	tail := lines[totalLines-tailN:]
+	omitted := totalLines - headN - tailN
 
 	// Stage 2: Save full output to disk if configured.
 	var savedPath string

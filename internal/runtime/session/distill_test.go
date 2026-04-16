@@ -123,6 +123,46 @@ func TestDistillToolOutput_FewLinesButLargeContent(t *testing.T) {
 	}
 }
 
+func TestAggressiveDistillConfig(t *testing.T) {
+	normal := DefaultDistillConfig()
+	aggressive := AggressiveDistillConfig()
+
+	if aggressive.MaxInlineChars >= normal.MaxInlineChars {
+		t.Errorf("aggressive MaxInlineChars (%d) should be less than normal (%d)",
+			aggressive.MaxInlineChars, normal.MaxInlineChars)
+	}
+	if aggressive.MaxInlineBytes >= normal.MaxInlineBytes {
+		t.Errorf("aggressive MaxInlineBytes (%d) should be less than normal (%d)",
+			aggressive.MaxInlineBytes, normal.MaxInlineBytes)
+	}
+	if !aggressive.AggressiveMode {
+		t.Error("aggressive config should have AggressiveMode=true")
+	}
+}
+
+func TestDistillToolOutput_AggressiveHeadTail(t *testing.T) {
+	// Create output with enough lines to trigger head+tail truncation.
+	lines := make([]string, 100)
+	for i := range lines {
+		lines[i] = strings.Repeat("x", 50)
+	}
+	output := strings.Join(lines, "\n")
+
+	normalCfg := DefaultDistillConfig()
+	normalCfg.MaxInlineChars = 500
+	normalResult := DistillToolOutput("bash", output, normalCfg)
+
+	aggCfg := AggressiveDistillConfig()
+	aggCfg.MaxInlineChars = 500
+	aggResult := DistillToolOutput("bash", output, aggCfg)
+
+	// Aggressive should be shorter (fewer head+tail lines).
+	if len(aggResult) >= len(normalResult) {
+		t.Errorf("aggressive result (%d chars) should be shorter than normal (%d chars)",
+			len(aggResult), len(normalResult))
+	}
+}
+
 func TestDistillToolOutput_DefaultExemptions(t *testing.T) {
 	cfg := DefaultDistillConfig()
 	exempts := cfg.ExemptTools

@@ -37,3 +37,6 @@ debug/
 # ycode local artifacts
 .ycode/settings.local.json
 .ycode/sessions/
+
+#
+tmp/

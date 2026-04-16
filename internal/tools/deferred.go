@@ -42,10 +42,15 @@ func RegisterToolSearchHandler(r *Registry) {
 			return "No matching tools found.", nil
 		}
 
+		// Return full tool schemas so the LLM can invoke discovered tools.
+		// Format matches the <functions> block pattern used by the harness.
 		var sb strings.Builder
+		sb.WriteString("<functions>\n")
 		for _, res := range results {
-			fmt.Fprintf(&sb, "- %s (score: %d): %s\n", res.Spec.Name, res.Score, res.Spec.Description)
+			schema := toolDefJSON(res.Spec)
+			fmt.Fprintf(&sb, "<function>%s</function>\n", schema)
 		}
+		sb.WriteString("</functions>")
 		return sb.String(), nil
 	}
 }
@@ -148,6 +153,25 @@ func (t *ToolSearchIndex) Search(registry *Registry, query string, maxResults in
 		}
 	}
 	return scores
+}
+
+// toolDefJSON returns a compact JSON representation of a tool spec
+// suitable for inclusion in ToolSearch results.
+func toolDefJSON(spec *ToolSpec) string {
+	def := struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Parameters  json.RawMessage `json:"parameters"`
+	}{
+		Name:        spec.Name,
+		Description: spec.Description,
+		Parameters:  spec.InputSchema,
+	}
+	b, err := json.Marshal(def)
+	if err != nil {
+		return fmt.Sprintf(`{"name":%q,"description":%q}`, spec.Name, spec.Description)
+	}
+	return string(b)
 }
 
 // scoreMatch computes a relevance score.
