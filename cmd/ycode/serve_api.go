@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/qiangli/ycode/internal/bus"
+	"github.com/qiangli/ycode/internal/cli"
 	internalserver "github.com/qiangli/ycode/internal/server"
 	"github.com/qiangli/ycode/internal/service"
 )
@@ -21,6 +22,7 @@ var (
 
 // apiStack holds the API/NATS server state for the unified serve command.
 type apiStack struct {
+	app     *cli.App
 	memBus  *bus.MemoryBus
 	svc     *service.LocalService
 	handler http.Handler // HTTP handler for the API/WebSocket server
@@ -50,6 +52,7 @@ func buildAPIStack(noNATS bool) (*apiStack, error) {
 	srv := internalserver.New(internalserver.Config{Token: token}, svc)
 
 	stack := &apiStack{
+		app:     app,
 		memBus:  memBus,
 		svc:     svc,
 		handler: srv.Mux(),
@@ -77,6 +80,9 @@ func (s *apiStack) stop() {
 	}
 	if s.memBus != nil {
 		s.memBus.Close()
+	}
+	if s.app != nil {
+		s.app.Close()
 	}
 }
 

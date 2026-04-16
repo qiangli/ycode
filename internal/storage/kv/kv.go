@@ -29,7 +29,7 @@ func Open(dir string) (*Store, error) {
 
 	dbPath := filepath.Join(dir, "ycode.kv")
 	db, err := bolt.Open(dbPath, 0o600, &bolt.Options{
-		Timeout:      2 * time.Second, // Fail fast if another process holds the lock.
+		Timeout:      200 * time.Millisecond, // Fail fast if another process holds the lock.
 		NoGrowSync:   false,
 		FreelistType: bolt.FreelistMapType,
 	})

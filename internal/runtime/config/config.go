@@ -154,7 +154,7 @@ func DefaultConfig() *Config {
 			MaxLLM:      2,
 		},
 		Observability: &ObservabilityConfig{
-			Enabled:          true,
+			Enabled:          false, // Only enabled explicitly via "ycode serve" or user config.
 			LogConversations: true,
 		},
 	}

@@ -53,6 +53,9 @@ type App struct {
 	// OTEL conversation instrumentation (optional).
 	convOTEL  *conversation.OTELConfig
 	turnIndex int // monotonically increasing turn counter for OTEL
+
+	// Cleanup functions called on Close (OTEL shutdown, context cancel, etc.).
+	cleanupFuncs []func()
 }
 
 // AppOptions holds optional configuration for App creation.
@@ -569,9 +572,29 @@ func suppressLogOutput() {
 }
 
 // Close shuts down the application and releases resources.
+// RegisterCleanup adds a function to be called during Close.
+// Used for OTEL shutdown, context cancellation, and other teardown.
+func (a *App) RegisterCleanup(fn func()) {
+	a.cleanupFuncs = append(a.cleanupFuncs, fn)
+}
+
 func (a *App) Close() error {
+	// Run cleanup functions in reverse order (LIFO).
+	// rootCancel runs here, signaling background goroutines to stop.
+	for i := len(a.cleanupFuncs) - 1; i >= 0; i-- {
+		a.cleanupFuncs[i]()
+	}
 	if a.storage != nil {
-		return a.storage.Close()
+		// Storage close may block if background indexers haven't released locks yet.
+		// Use a timeout to avoid hanging the process.
+		done := make(chan error, 1)
+		go func() { done <- a.storage.Close() }()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(2 * time.Second):
+			return nil // Best-effort — process is exiting anyway.
+		}
 	}
 	return nil
 }

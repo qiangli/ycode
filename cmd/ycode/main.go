@@ -91,6 +91,15 @@ func realMain() error {
 }
 
 func newApp() (*cli.App, error) {
+	// Root context for all background goroutines — cancelled on App.Close().
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+	success := false
+	defer func() {
+		if !success {
+			rootCancel() // Clean up if newApp fails before registering cleanup.
+		}
+	}()
+
 	// Determine config directories.
 	home, _ := os.UserHomeDir()
 	userDir := filepath.Join(home, ".config", "ycode")
@@ -146,7 +155,7 @@ func newApp() (*cli.App, error) {
 	}
 
 	// Start background storage initialization (Phase 2: SQLite, Phase 3: vector/search).
-	storageMgr.StartBackground(context.Background())
+	storageMgr.StartBackground(rootCtx)
 
 	// Cache merged config in bbolt for cross-process access and stale detection.
 	if kvStore := storageMgr.KV(); kvStore != nil {
@@ -177,7 +186,7 @@ func newApp() (*cli.App, error) {
 	}
 
 	// Start background prompt cache eviction (waits for SQL to be ready).
-	go storageMgr.StartEviction(context.Background())
+	go storageMgr.StartEviction(rootCtx)
 
 	// Memory directory for persistent memories.
 	memoryDir := filepath.Join(home, ".ycode", "projects", "memory")
@@ -240,7 +249,7 @@ func newApp() (*cli.App, error) {
 
 	// Wire Bleve search index and background codebase indexer once search backend is ready.
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(rootCtx, 30*time.Second)
 		defer cancel()
 		searchStore := storageMgr.Search(ctx)
 		if searchStore == nil {
@@ -261,12 +270,12 @@ func newApp() (*cli.App, error) {
 
 		// Start background codebase indexer.
 		codeIndexer := indexer.New(cwd, searchStore, storageMgr.KV())
-		go codeIndexer.Run(context.Background())
+		go codeIndexer.Run(rootCtx)
 	}()
 
 	// Attach SQLite dual-writer, index sessions, and start metrics once SQL is ready.
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(rootCtx, 30*time.Second)
 		defer cancel()
 		sqlStore := storageMgr.SQL(ctx)
 		if sqlStore == nil {
@@ -297,7 +306,7 @@ func newApp() (*cli.App, error) {
 
 	// Wire vector store and background embedder once vector backend is ready.
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(rootCtx, 30*time.Second)
 		defer cancel()
 		vectorStore := storageMgr.Vector(ctx)
 		if vectorStore == nil {
@@ -318,7 +327,7 @@ func newApp() (*cli.App, error) {
 
 		// Embed documentation files (CLAUDE.md, README, etc.).
 		go func() {
-			embedCtx := context.Background()
+			embedCtx := rootCtx
 			for _, cf := range promptCtx.ContextFiles {
 				if cf.Content != "" {
 					relPath := cf.Path
@@ -334,7 +343,7 @@ func newApp() (*cli.App, error) {
 
 		// Embed code files.
 		go func() {
-			if n, err := embedder.RunCodeEmbedding(context.Background()); err != nil {
+			if n, err := embedder.RunCodeEmbedding(rootCtx); err != nil {
 				slog.Debug("embedder: code pass", "error", err)
 			} else if n > 0 {
 				slog.Debug("embedder: code pass", "embedded", n)
@@ -381,6 +390,13 @@ func newApp() (*cli.App, error) {
 	// Register compact_context tool handler — needs the app for session access.
 	tools.RegisterCompactContextHandler(toolReg, app.CompactContext)
 
+	// Register cleanup: cancel background goroutines, then OTEL shutdown.
+	app.RegisterCleanup(rootCancel)
+	if otelRes != nil {
+		app.RegisterCleanup(otelRes.shutdown)
+	}
+
+	success = true
 	return app, nil
 }
 
@@ -462,6 +478,7 @@ var rootCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
+			defer app.Close()
 			if printFlag {
 				app.SetPrintMode(true)
 			}
@@ -472,6 +489,7 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer app.Close()
 		return app.RunInteractive(context.Background())
 	},
 }
@@ -485,6 +503,7 @@ var promptCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer app.Close()
 		if printFlag {
 			app.SetPrintMode(true)
 		}
@@ -530,6 +549,7 @@ var loopCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer app.Close()
 
 		fmt.Printf("Starting loop: every %s with prompt from %s\n", interval, promptFile)
 		fmt.Println("Press Ctrl+C to stop.")
