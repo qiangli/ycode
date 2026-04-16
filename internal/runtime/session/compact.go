@@ -33,19 +33,46 @@ func NeedsCompaction(estimatedTokens int) bool {
 }
 
 // EstimateMessageTokens roughly estimates the token footprint of a message.
+// Uses CJK-aware estimation: ASCII chars ≈ 0.25 tokens, non-ASCII ≈ 1.3 tokens.
 func EstimateMessageTokens(msg ConversationMessage) int {
 	total := 0
 	for _, block := range msg.Content {
 		switch block.Type {
 		case ContentTypeText:
-			total += len(block.Text)/4 + 1
+			total += EstimateTextTokens(block.Text)
 		case ContentTypeToolUse:
-			total += (len(block.Name)+len(block.Input))/4 + 1
+			total += EstimateTextTokens(block.Name) + EstimateTextTokens(string(block.Input))
 		case ContentTypeToolResult:
-			total += (len(block.Name)+len(block.Content))/4 + 1
+			total += EstimateTextTokens(block.Name) + EstimateTextTokens(block.Content)
 		}
 	}
 	return total
+}
+
+// maxCharsForFullHeuristic is the threshold above which we use the fast len/4
+// approximation instead of per-character scanning.
+const maxCharsForFullHeuristic = 100_000
+
+// EstimateTextTokens estimates token count for a text string with CJK awareness.
+// ASCII characters (0-127) ≈ 0.25 tokens/char; non-ASCII (CJK, etc.) ≈ 1.3 tokens/char.
+// For very large strings (>100K chars), falls back to len/4 for performance.
+// Inspired by Gemini CLI's tokenCalculation.ts.
+func EstimateTextTokens(text string) int {
+	if len(text) == 0 {
+		return 0
+	}
+	if len(text) > maxCharsForFullHeuristic {
+		return len(text)/4 + 1
+	}
+	tokens := 0.0
+	for _, r := range text {
+		if r <= 127 {
+			tokens += 0.25
+		} else {
+			tokens += 1.3
+		}
+	}
+	return int(tokens) + 1
 }
 
 // Compact produces a summary from older messages, keeping recent ones.

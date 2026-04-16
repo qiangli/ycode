@@ -150,7 +150,7 @@ func ApplyRoute(content string, route ContentRoute, toolName string) string {
 	case RouteFull:
 		return content
 	case RoutePartial:
-		return partialContent(content, 400, 200)
+		return partialContent(content, SoftTrimHeadChars, SoftTrimTailChars)
 	case RouteSummary:
 		return summarizeContent(content, toolName)
 	case RouteExcluded:

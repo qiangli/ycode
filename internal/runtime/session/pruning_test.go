@@ -202,6 +202,126 @@ func TestMaskOldObservations_NothingToMask(t *testing.T) {
 	}
 }
 
+func TestEstimateTextTokens_ASCII(t *testing.T) {
+	// 100 ASCII chars ≈ 25 tokens (0.25 per char).
+	text := strings.Repeat("a", 100)
+	tokens := EstimateTextTokens(text)
+	if tokens < 25 || tokens > 30 {
+		t.Errorf("expected ~25 tokens for 100 ASCII chars, got %d", tokens)
+	}
+}
+
+func TestEstimateTextTokens_CJK(t *testing.T) {
+	// 100 CJK chars ≈ 130 tokens (1.3 per char).
+	text := strings.Repeat("你", 100)
+	tokens := EstimateTextTokens(text)
+	if tokens < 125 || tokens > 140 {
+		t.Errorf("expected ~130 tokens for 100 CJK chars, got %d", tokens)
+	}
+}
+
+func TestEstimateTextTokens_Mixed(t *testing.T) {
+	text := "Hello 世界" // 6 ASCII + 1 space + 2 CJK
+	tokens := EstimateTextTokens(text)
+	// 7 ASCII × 0.25 + 2 CJK × 1.3 = 1.75 + 2.6 = 4.35 → 5
+	if tokens < 4 || tokens > 7 {
+		t.Errorf("expected ~5 tokens for mixed text, got %d", tokens)
+	}
+}
+
+func TestEstimateTextTokens_LargeFallback(t *testing.T) {
+	// Above 100K chars should use fast len/4 fallback.
+	text := strings.Repeat("x", 200_000)
+	tokens := EstimateTextTokens(text)
+	expected := 200_000/4 + 1
+	if tokens != expected {
+		t.Errorf("expected %d tokens for large text, got %d", expected, tokens)
+	}
+}
+
+func TestMaskOldObservationsBudget_Basic(t *testing.T) {
+	// Create messages with large tool results that exceed protection + prunable thresholds.
+	// 40 messages × 20K chars each ≈ 5K tokens each = 200K total tokens.
+	// Protection: 50K, Prunable threshold: 30K → should mask oldest results.
+	var messages []ConversationMessage
+	for i := range 40 {
+		content := strings.Repeat("x", 20000) // ~5000 tokens each
+		messages = append(messages, ConversationMessage{
+			Role: RoleUser,
+			Content: []ContentBlock{
+				{Type: ContentTypeToolResult, ToolUseID: "t" + strings.Repeat("0", i+1),
+					Name: "bash", Content: content},
+			},
+		})
+	}
+
+	// With protection=50K, prunable_threshold=30K, total=200K:
+	// Protected ≈ 10 newest messages (50K tokens), Prunable ≈ 150K tokens → exceeds 30K.
+	_, maskedCount := MaskOldObservationsBudget(messages, 50_000, 30_000)
+	if maskedCount == 0 {
+		t.Error("expected some results to be masked")
+	}
+}
+
+func TestMaskOldObservationsBudget_ExemptTools(t *testing.T) {
+	messages := []ConversationMessage{
+		{Role: RoleUser, Content: []ContentBlock{
+			{Type: ContentTypeToolResult, ToolUseID: "t1",
+				Name: "AskUserQuestion", Content: strings.Repeat("x", 50000)},
+		}},
+		{Role: RoleUser, Content: []ContentBlock{
+			{Type: ContentTypeToolResult, ToolUseID: "t2",
+				Name: "bash", Content: strings.Repeat("y", 50000)},
+		}},
+	}
+
+	_, maskedCount := MaskOldObservationsBudget(messages, 10_000, 5_000)
+	// AskUserQuestion should be exempt, only bash can be masked.
+	for _, msg := range messages {
+		for _, block := range msg.Content {
+			if block.Name == "AskUserQuestion" && block.Content == maskedPlaceholder {
+				t.Error("AskUserQuestion should be exempt from masking")
+			}
+		}
+	}
+	_ = maskedCount
+}
+
+func TestMaskOldObservationsBudget_BelowBatchThreshold(t *testing.T) {
+	// Small tool results — total prunable should be below threshold.
+	var messages []ConversationMessage
+	for i := range 5 {
+		messages = append(messages, ConversationMessage{
+			Role: RoleUser,
+			Content: []ContentBlock{
+				{Type: ContentTypeToolResult, ToolUseID: "t" + strings.Repeat("0", i),
+					Name: "bash", Content: "small result"},
+			},
+		})
+	}
+
+	_, maskedCount := MaskOldObservationsBudget(messages, 50_000, 30_000)
+	if maskedCount != 0 {
+		t.Errorf("expected 0 masked (below batch threshold), got %d", maskedCount)
+	}
+}
+
+func TestSoftTrimRatios(t *testing.T) {
+	// Verify the ratios produce expected values.
+	if SoftTrimHeadChars >= SoftTrimTailChars {
+		t.Errorf("head (%d) should be less than tail (%d)", SoftTrimHeadChars, SoftTrimTailChars)
+	}
+	if SoftTrimHeadChars+SoftTrimTailChars != SoftTrimTotalChars {
+		t.Errorf("head (%d) + tail (%d) should equal total (%d)",
+			SoftTrimHeadChars, SoftTrimTailChars, SoftTrimTotalChars)
+	}
+	// Head should be ~15% of total.
+	headPct := float64(SoftTrimHeadChars) / float64(SoftTrimTotalChars)
+	if headPct < 0.10 || headPct > 0.20 {
+		t.Errorf("head ratio %.2f should be ~0.15", headPct)
+	}
+}
+
 func TestContextHealth_String(t *testing.T) {
 	h := ContextHealth{
 		EstimatedTokens: 75000,

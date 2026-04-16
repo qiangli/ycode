@@ -579,12 +579,16 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 	recovery := &RecoveryResult{}
 
 	// --- Layer 0: Observation masking (cheapest defense — always runs) ---
-	// Non-caching providers use a smaller masking window to reduce token cost.
-	maskWindow := session.ObservationMaskingWindow
+	// Uses token-budget-based masking: protects newest tool outputs up to a budget,
+	// only masks when prunable tokens exceed a batch threshold.
+	// Non-caching providers use tighter budgets.
+	protectionBudget := session.ToolMaskingProtectionBudget
+	minPrunable := session.ToolMaskingMinPrunable
 	if !r.cachingSupported {
-		maskWindow = session.ObservationMaskingWindowAggressive
+		protectionBudget = protectionBudget * 60 / 100 // 30K for non-caching
+		minPrunable = minPrunable * 60 / 100           // 18K for non-caching
 	}
-	masked, maskedCount := session.MaskOldObservations(sessionMsgs, maskWindow)
+	masked, maskedCount := session.MaskOldObservationsBudget(sessionMsgs, protectionBudget, minPrunable)
 	if maskedCount > 0 {
 		r.logger.Info("layer 0: masked old observations", "count", maskedCount)
 		sessionMsgs = masked

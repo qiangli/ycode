@@ -14,6 +14,15 @@ const (
 	// every input token costs full price. A smaller window masks more old results.
 	ObservationMaskingWindowAggressive = 6
 
+	// ToolMaskingProtectionBudget is the default token budget for protecting recent
+	// tool outputs from masking. Newest outputs totaling up to this budget are safe.
+	ToolMaskingProtectionBudget = 50_000
+
+	// ToolMaskingMinPrunable is the minimum prunable tokens before masking triggers.
+	// Avoids overhead for small savings. Effectively masking starts at ~80K total
+	// tool output tokens (50K protected + 30K prunable).
+	ToolMaskingMinPrunable = 30_000
+
 	// maskedPlaceholder replaces old tool results in observation masking (Layer 0).
 	maskedPlaceholder = "<MASKED>"
 
@@ -25,11 +34,19 @@ const (
 	// At 80K estimated tokens, old tool results are replaced with placeholders.
 	HardClearRatio = 0.80
 
+	// SoftTrimTotalChars is the total character budget for soft-trimmed results.
+	SoftTrimTotalChars = 600
+
+	// SoftTrimHeadRatio is the fraction of the budget kept from the start.
+	// 15% head preserves headers/context; 85% tail preserves error messages/results.
+	// Inspired by Gemini CLI's normalizationHeadRatio.
+	SoftTrimHeadRatio = 0.15
+
 	// SoftTrimHeadChars is the number of leading characters to keep in soft-trimmed results.
-	SoftTrimHeadChars = 400
+	SoftTrimHeadChars = int(SoftTrimTotalChars * SoftTrimHeadRatio) // 90
 
 	// SoftTrimTailChars is the number of trailing characters to keep in soft-trimmed results.
-	SoftTrimTailChars = 200
+	SoftTrimTailChars = SoftTrimTotalChars - SoftTrimHeadChars // 510
 
 	// RecentMessagesProtected is the number of recent messages never pruned.
 	RecentMessagesProtected = 6
@@ -215,6 +232,96 @@ func (h ContextHealth) NeedsPruning() bool {
 // NeedsCompactionNow returns true if the context is at or above the compaction threshold.
 func (h ContextHealth) NeedsCompactionNow() bool {
 	return h.Level >= ContextOverflow
+}
+
+// ExemptFromMasking is the set of tool names whose outputs are always high-signal
+// and should never be masked, regardless of position in conversation history.
+// Inspired by Gemini CLI's EXEMPT_TOOLS.
+var ExemptFromMasking = map[string]bool{
+	"AskUserQuestion": true,
+	"MemosStore":      true,
+	"MemosSearch":     true,
+	"MemosList":       true,
+	"EnterPlanMode":   true,
+	"ExitPlanMode":    true,
+	"Skill":           true,
+}
+
+// MaskOldObservationsBudget is an enhanced masking approach that uses token budgets
+// instead of simple count-based windows. It implements a "Hybrid Backward Scanned FIFO":
+//  1. Protection window: newest tool outputs totaling up to protectionBudget tokens are safe
+//  2. Batch threshold: only mask if total prunable tokens > minPrunable
+//  3. Exempt tools: outputs from certain tools are never masked
+//
+// Returns a new slice and the count of masked results.
+func MaskOldObservationsBudget(messages []ConversationMessage, protectionBudget, minPrunable int) ([]ConversationMessage, int) {
+	if protectionBudget <= 0 {
+		protectionBudget = ToolMaskingProtectionBudget
+	}
+	if minPrunable <= 0 {
+		minPrunable = ToolMaskingMinPrunable
+	}
+
+	// Phase 1: Backward scan to identify protected vs prunable tool results.
+	type toolResultLoc struct {
+		msgIdx   int
+		blockIdx int
+		tokens   int
+		exempt   bool
+	}
+	var locs []toolResultLoc
+
+	for i := len(messages) - 1; i >= 0; i-- {
+		for j := len(messages[i].Content) - 1; j >= 0; j-- {
+			block := messages[i].Content[j]
+			if block.Type != ContentTypeToolResult {
+				continue
+			}
+			tokens := EstimateTextTokens(block.Content)
+			exempt := ExemptFromMasking[block.Name]
+			locs = append(locs, toolResultLoc{i, j, tokens, exempt})
+		}
+	}
+
+	// Phase 2: Classify as protected or prunable (backwards = newest first).
+	protectedTokens := 0
+	prunableTokens := 0
+	isPrunable := make(map[int]map[int]bool) // msgIdx → blockIdx → prunable
+
+	for _, loc := range locs {
+		if loc.exempt {
+			continue // Never prunable.
+		}
+		if protectedTokens+loc.tokens <= protectionBudget {
+			protectedTokens += loc.tokens
+		} else {
+			prunableTokens += loc.tokens
+			if isPrunable[loc.msgIdx] == nil {
+				isPrunable[loc.msgIdx] = make(map[int]bool)
+			}
+			isPrunable[loc.msgIdx][loc.blockIdx] = true
+		}
+	}
+
+	// Phase 3: Only mask if prunable tokens exceed batch threshold.
+	if prunableTokens < minPrunable {
+		return messages, 0
+	}
+
+	// Phase 4: Apply masking.
+	masked := deepCopyMessages(messages)
+	maskedCount := 0
+	for msgIdx, blocks := range isPrunable {
+		for blockIdx := range blocks {
+			block := &masked[msgIdx].Content[blockIdx]
+			if block.Content != maskedPlaceholder && len(block.Content) > len(maskedPlaceholder) {
+				block.Content = maskedPlaceholder
+				maskedCount++
+			}
+		}
+	}
+
+	return masked, maskedCount
 }
 
 // MaskOldObservations replaces old tool result content with a short placeholder.
