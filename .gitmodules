@@ -37,3 +37,6 @@
 [submodule "priorart/memos"]
 	path = priorart/memos
 	url = https://github.com/usememos/memos.git
+[submodule "priorart/kimicli"]
+	path = priorart/kimicli
+	url = https://github.com/MoonshotAI/kimi-cli.git
