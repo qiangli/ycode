@@ -115,6 +115,51 @@ func NormalizeHistory(messages []ConversationMessage) []ConversationMessage {
 	return result
 }
 
+// MergeAdjacentUserMessages merges consecutive user-role messages into single
+// messages by concatenating their content blocks. This eliminates per-message
+// structural overhead (role tokens, boundary framing) when system reminders or
+// dynamic injections are stored as separate user messages.
+//
+// Messages containing tool results are never merged (they're linked to specific
+// tool_use IDs). Only pure text user messages are candidates for merging.
+//
+// Inspired by Kimi CLI's normalize_history() in dynamic_injection.py.
+func MergeAdjacentUserMessages(messages []ConversationMessage) []ConversationMessage {
+	if len(messages) <= 1 {
+		return messages
+	}
+
+	result := make([]ConversationMessage, 0, len(messages))
+
+	for _, msg := range messages {
+		// Only merge user messages that don't contain tool results.
+		canMerge := msg.Role == RoleUser && !hasToolResult(msg)
+
+		if canMerge && len(result) > 0 {
+			prev := &result[len(result)-1]
+			if prev.Role == RoleUser && !hasToolResult(*prev) {
+				// Merge: append this message's content to the previous one.
+				prev.Content = append(prev.Content, msg.Content...)
+				continue
+			}
+		}
+
+		result = append(result, msg)
+	}
+
+	return result
+}
+
+// hasToolResult checks if a message contains any tool result content blocks.
+func hasToolResult(msg ConversationMessage) bool {
+	for _, b := range msg.Content {
+		if b.Type == ContentTypeToolResult {
+			return true
+		}
+	}
+	return false
+}
+
 // ValidateHistory returns a list of issues found in the message history.
 func ValidateHistory(messages []ConversationMessage) []string {
 	toolUseIDs := make(map[string]bool)

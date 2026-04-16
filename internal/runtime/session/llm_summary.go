@@ -141,6 +141,18 @@ func (s *LLMSummarizer) summarizeWith(ctx context.Context, ms ModelSpec, convers
 	return strings.TrimSpace(summary), nil
 }
 
+// isThinkingContent detects content blocks that contain thinking/reasoning output.
+// These can be very large and don't add value to compaction summaries.
+func isThinkingContent(text string) bool {
+	if len(text) < 20 {
+		return false
+	}
+	trimmed := strings.TrimSpace(text)
+	return strings.HasPrefix(trimmed, "<thinking>") ||
+		strings.HasPrefix(trimmed, "<antThinking>") ||
+		strings.HasPrefix(trimmed, "<reasoning>")
+}
+
 // formatMessagesForSummary converts conversation messages to a readable text format
 // suitable for LLM summarization.
 func formatMessagesForSummary(messages []ConversationMessage) string {
@@ -152,6 +164,12 @@ func formatMessagesForSummary(messages []ConversationMessage) string {
 			switch c.Type {
 			case ContentTypeText:
 				text := c.Text
+				// Strip thinking/reasoning blocks — they can be very large (10K+
+				// tokens for extended thinking) and don't add value to summaries.
+				if isThinkingContent(text) {
+					b.WriteString("[thinking block omitted]")
+					continue
+				}
 				if len(text) > 500 {
 					text = text[:500] + "..."
 				}

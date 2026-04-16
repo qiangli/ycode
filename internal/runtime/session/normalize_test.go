@@ -109,6 +109,54 @@ func TestValidateHistory_ReportsIssues(t *testing.T) {
 	}
 }
 
+func TestMergeAdjacentUserMessages_Basic(t *testing.T) {
+	messages := []ConversationMessage{
+		{Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeText, Text: "hello"}}},
+		{Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeText, Text: "world"}}},
+		{Role: RoleAssistant, Content: []ContentBlock{{Type: ContentTypeText, Text: "hi"}}},
+	}
+
+	merged := MergeAdjacentUserMessages(messages)
+	if len(merged) != 2 {
+		t.Fatalf("expected 2 messages after merge, got %d", len(merged))
+	}
+	if len(merged[0].Content) != 2 {
+		t.Errorf("expected 2 content blocks in merged message, got %d", len(merged[0].Content))
+	}
+}
+
+func TestMergeAdjacentUserMessages_NoMergeToolResult(t *testing.T) {
+	messages := []ConversationMessage{
+		{Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeText, Text: "text"}}},
+		{Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeToolResult, ToolUseID: "t1", Content: "result"}}},
+	}
+
+	merged := MergeAdjacentUserMessages(messages)
+	if len(merged) != 2 {
+		t.Fatalf("should not merge when second message has tool result, got %d messages", len(merged))
+	}
+}
+
+func TestMergeAdjacentUserMessages_NoMergeAssistant(t *testing.T) {
+	messages := []ConversationMessage{
+		{Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeText, Text: "a"}}},
+		{Role: RoleAssistant, Content: []ContentBlock{{Type: ContentTypeText, Text: "b"}}},
+		{Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeText, Text: "c"}}},
+	}
+
+	merged := MergeAdjacentUserMessages(messages)
+	if len(merged) != 3 {
+		t.Fatalf("should not merge across assistant, got %d messages", len(merged))
+	}
+}
+
+func TestMergeAdjacentUserMessages_Empty(t *testing.T) {
+	merged := MergeAdjacentUserMessages(nil)
+	if len(merged) != 0 {
+		t.Error("nil input should return empty")
+	}
+}
+
 func TestValidateHistory_Clean(t *testing.T) {
 	messages := []ConversationMessage{
 		{Role: RoleAssistant, Content: []ContentBlock{

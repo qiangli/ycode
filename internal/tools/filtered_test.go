@@ -65,3 +65,52 @@ func TestFilteredRegistry_NilAllowlist(t *testing.T) {
 		t.Error("nil allowlist should allow all tools")
 	}
 }
+
+func TestFilteredRegistry_HideUnhide(t *testing.T) {
+	reg := NewRegistry()
+	_ = reg.Register(&ToolSpec{
+		Name:            "bash",
+		Description:     "run bash",
+		InputSchema:     json.RawMessage(`{}`),
+		AlwaysAvailable: true,
+	})
+	_ = reg.Register(&ToolSpec{
+		Name:            "read_file",
+		Description:     "read a file",
+		InputSchema:     json.RawMessage(`{}`),
+		AlwaysAvailable: true,
+	})
+
+	fr := NewFilteredRegistry(reg, nil)
+
+	// Both visible initially.
+	if _, ok := fr.Get("bash"); !ok {
+		t.Error("bash should be visible")
+	}
+	if _, ok := fr.Get("read_file"); !ok {
+		t.Error("read_file should be visible")
+	}
+
+	// Hide bash.
+	fr.Hide("bash")
+	if _, ok := fr.Get("bash"); ok {
+		t.Error("bash should be hidden after Hide")
+	}
+	if _, ok := fr.Get("read_file"); !ok {
+		t.Error("read_file should still be visible")
+	}
+
+	// AlwaysAvailable should exclude hidden tools.
+	always := fr.AlwaysAvailable()
+	for _, s := range always {
+		if s.Name == "bash" {
+			t.Error("hidden tool should not appear in AlwaysAvailable")
+		}
+	}
+
+	// Unhide bash.
+	fr.Unhide("bash")
+	if _, ok := fr.Get("bash"); !ok {
+		t.Error("bash should be visible after Unhide")
+	}
+}

@@ -15,6 +15,22 @@ type ContextBudget struct {
 	// This prevents history from dominating the context, especially for
 	// non-caching providers where every token costs full price.
 	MaxChatHistoryTokens int
+
+	// ReservedBuffer is tokens reserved as safety margin against overflow.
+	// When current_tokens + ReservedBuffer >= ContextWindow - ReservedTokens,
+	// compaction triggers even if CompactionThreshold hasn't been reached.
+	// Inspired by Kimi CLI's dual compaction trigger.
+	ReservedBuffer int
+}
+
+// ShouldCompact implements Kimi CLI's dual compaction trigger:
+//  1. Ratio-based: currentTokens >= CompactionThreshold
+//  2. Reserved-buffer: currentTokens + ReservedBuffer >= ContextWindow - ReservedTokens
+//
+// Returns true when either condition fires.
+func (b ContextBudget) ShouldCompact(currentTokens int) bool {
+	return currentTokens >= b.CompactionThreshold ||
+		currentTokens+b.ReservedBuffer >= b.ContextWindow-b.ReservedTokens
 }
 
 // DefaultContextBudget returns the default budget (100K threshold, matching existing behavior).
@@ -24,6 +40,7 @@ func DefaultContextBudget() ContextBudget {
 		ReservedTokens:       40_000,
 		CompactionThreshold:  CompactionThreshold, // 100K
 		MaxChatHistoryTokens: chatHistoryBudget(200_000),
+		ReservedBuffer:       20_000, // 10% of context window
 	}
 }
 
@@ -82,6 +99,7 @@ func ContextBudgetForModel(contextWindow int) ContextBudget {
 		ReservedTokens:       reserved,
 		CompactionThreshold:  compactionAt,
 		MaxChatHistoryTokens: chatHistoryBudget(contextWindow),
+		ReservedBuffer:       contextWindow / 10, // 10% safety margin
 	}
 }
 

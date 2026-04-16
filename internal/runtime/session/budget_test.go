@@ -129,3 +129,37 @@ func TestEnforceSummaryCap_ZeroBudget(t *testing.T) {
 		t.Error("zero budget should return summary unchanged")
 	}
 }
+
+func TestShouldCompact_RatioBased(t *testing.T) {
+	budget := ContextBudgetForModel(200_000)
+	// Below threshold — should not compact.
+	if budget.ShouldCompact(50_000) {
+		t.Error("50K tokens should not trigger compaction")
+	}
+	// Above threshold — should compact.
+	if !budget.ShouldCompact(budget.CompactionThreshold + 1) {
+		t.Error("above CompactionThreshold should trigger compaction")
+	}
+}
+
+func TestShouldCompact_ReservedBuffer(t *testing.T) {
+	budget := ContextBudgetForModel(200_000)
+	// Below ratio threshold but close to context limit with reserved buffer.
+	nearLimit := budget.ContextWindow - budget.ReservedTokens - budget.ReservedBuffer
+	if !budget.ShouldCompact(nearLimit) {
+		t.Errorf("at %d tokens (near limit), should trigger via reserved buffer", nearLimit)
+	}
+}
+
+func TestReservedBuffer_Proportional(t *testing.T) {
+	b32 := ContextBudgetForModel(32_000)
+	b200 := ContextBudgetForModel(200_000)
+
+	if b32.ReservedBuffer >= b200.ReservedBuffer {
+		t.Errorf("32K buffer (%d) should be less than 200K buffer (%d)",
+			b32.ReservedBuffer, b200.ReservedBuffer)
+	}
+	if b200.ReservedBuffer != 20_000 {
+		t.Errorf("200K context should have 20K reserved buffer, got %d", b200.ReservedBuffer)
+	}
+}

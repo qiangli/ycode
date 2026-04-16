@@ -593,6 +593,12 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 		recovery.MaskedCount = maskedCount
 	}
 
+	// Merge adjacent user messages to reduce per-message structural overhead.
+	// This is especially valuable for non-caching providers where system reminders
+	// and dynamic injections are stored as separate user messages.
+	sessionMsgs = session.MergeAdjacentUserMessages(sessionMsgs)
+	messages = r.sessionMessagesToAPI(sessionMsgs)
+
 	health := session.CheckContextHealth(sessionMsgs)
 	r.logger.Info("context health", "tokens", health.EstimatedTokens, "level", health.Level.String())
 

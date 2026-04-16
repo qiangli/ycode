@@ -12,9 +12,11 @@ import (
 
 // FilteredRegistry wraps a Registry and restricts tool access to a subset.
 // Tools not in the allowlist are invisible (Get returns false, Invoke returns error).
+// Tools can also be dynamically hidden/unhidden without changing the allowlist.
 type FilteredRegistry struct {
 	inner   *Registry
 	allowed map[string]bool
+	hidden  map[string]bool // dynamically hidden tools
 	mu      sync.RWMutex
 }
 
@@ -31,14 +33,37 @@ func NewFilteredRegistry(inner *Registry, allowedTools []string) *FilteredRegist
 	return fr
 }
 
-// isAllowed returns true if the tool passes the allowlist filter.
+// isAllowed returns true if the tool passes both the allowlist and hidden filters.
 func (fr *FilteredRegistry) isAllowed(name string) bool {
 	fr.mu.RLock()
 	defer fr.mu.RUnlock()
+	if fr.hidden != nil && fr.hidden[name] {
+		return false // dynamically hidden
+	}
 	if fr.allowed == nil {
-		return true // no filter — all tools allowed
+		return true // no allowlist filter — all tools allowed
 	}
 	return fr.allowed[name]
+}
+
+// Hide dynamically hides a tool from API requests without removing it.
+// The tool can still be invoked directly if needed.
+func (fr *FilteredRegistry) Hide(name string) {
+	fr.mu.Lock()
+	defer fr.mu.Unlock()
+	if fr.hidden == nil {
+		fr.hidden = make(map[string]bool)
+	}
+	fr.hidden[name] = true
+}
+
+// Unhide reverses a previous Hide call, making the tool visible again.
+func (fr *FilteredRegistry) Unhide(name string) {
+	fr.mu.Lock()
+	defer fr.mu.Unlock()
+	if fr.hidden != nil {
+		delete(fr.hidden, name)
+	}
 }
 
 // Get returns a tool spec if it exists and is allowed.
@@ -98,12 +123,12 @@ func (fr *FilteredRegistry) Names() []string {
 }
 
 func (fr *FilteredRegistry) filterSpecs(specs []*ToolSpec) []*ToolSpec {
-	if fr.allowed == nil {
+	if fr.allowed == nil && (fr.hidden == nil || len(fr.hidden) == 0) {
 		return specs
 	}
 	var filtered []*ToolSpec
 	for _, s := range specs {
-		if fr.allowed[s.Name] {
+		if fr.isAllowed(s.Name) {
 			filtered = append(filtered, s)
 		}
 	}
