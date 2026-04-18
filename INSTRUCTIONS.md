@@ -51,7 +51,7 @@ Integration tests: `go test -tags integration -v -count=1 ./internal/integration
 
 ### Committing Changes
 
-When asked to commit changes in this project, follow the `/commit` skill (`skills/commit/skill.md`). Key points:
+When asked to commit changes in this project, follow the `/commit` skill (embedded in the ycode binary). Key points:
 
 - **Gather context in parallel.** Run `git status`, `git diff`, and `git log --oneline -5` concurrently before drafting a commit message.
 - **Stage files by name.** Never use `git add -A` or `git add .`.

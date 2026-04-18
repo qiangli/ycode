@@ -284,6 +284,15 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		return b.String(), nil
 	})
 
+	// /commit: builtin executor returns the embedded commit skill instructions.
+	// Works in any repository — no project-specific skill file needed.
+	builtin.RegisterSkillExecutor("commit", func(ctx context.Context, args string) (string, error) {
+		if args != "" {
+			return strings.ReplaceAll(commitSkillContent, "{{ARGS}}", args), nil
+		}
+		return strings.ReplaceAll(commitSkillContent, "{{ARGS}}", "(none)"), nil
+	})
+
 	// Discovery commands
 	r.Register(&Spec{
 		Name:        "doctor",
