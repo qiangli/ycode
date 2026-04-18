@@ -44,6 +44,34 @@ func (m *mockProvider) Send(_ context.Context, _ *api.Request) (<-chan *api.Stre
 	return events, errc
 }
 
+// mockThinkingProvider simulates a reasoning model that only returns thinking content.
+type mockThinkingProvider struct {
+	thinking string
+}
+
+func (m *mockThinkingProvider) Kind() api.ProviderKind { return api.ProviderOpenAI }
+
+func (m *mockThinkingProvider) Send(_ context.Context, _ *api.Request) (<-chan *api.StreamEvent, <-chan error) {
+	events := make(chan *api.StreamEvent, 4)
+	errc := make(chan error, 1)
+
+	go func() {
+		defer close(events)
+		defer close(errc)
+
+		delta, _ := json.Marshal(struct {
+			Type     string `json:"type"`
+			Thinking string `json:"thinking"`
+		}{Type: "thinking_delta", Thinking: m.thinking})
+		events <- &api.StreamEvent{
+			Type:  "content_block_delta",
+			Delta: delta,
+		}
+	}()
+
+	return events, errc
+}
+
 func TestModelChain_SingleShot_Success(t *testing.T) {
 	provider := &mockProvider{response: "feat: add login endpoint"}
 	chain := &ModelChain{
@@ -107,6 +135,70 @@ func TestModelChain_SingleShot_EmptyResponse(t *testing.T) {
 	_, err := chain.SingleShot(context.Background(), "system", "user", 256)
 	if err == nil {
 		t.Fatal("expected error for empty response")
+	}
+}
+
+// TestSingleShot_ThinkingFallback verifies that reasoning model output
+// (thinking deltas only, no text) is handled by extracting the commit message.
+func TestSingleShot_ThinkingFallback(t *testing.T) {
+	provider := &mockThinkingProvider{
+		thinking: "The user wants a commit message.\n\nfeat(builtin): add thinking fallback for reasoning models",
+	}
+	chain := &ModelChain{
+		Models: []session.ModelSpec{
+			{Provider: provider, Model: "reasoning-model"},
+		},
+	}
+
+	got, err := chain.SingleShot(context.Background(), "system", "user content", 256)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "feat(builtin): add thinking fallback for reasoning models" {
+		t.Errorf("got %q, want extracted commit message", got)
+	}
+}
+
+func TestExtractFromThinking(t *testing.T) {
+	tests := []struct {
+		name     string
+		thinking string
+		want     string
+	}{
+		{
+			"message at end",
+			"Analysis of changes...\n\nfeat: add login endpoint",
+			"feat: add login endpoint",
+		},
+		{
+			"message with backticks",
+			"The commit message should be:\n`fix(api): handle nil response`",
+			"fix(api): handle nil response",
+		},
+		{
+			"message with quotes",
+			"I'll generate:\n\"refactor: extract commit logic\"",
+			"refactor: extract commit logic",
+		},
+		{
+			"message in middle",
+			"Looking at diffs...\nfeat: add endpoint\nThis covers the changes.",
+			"feat: add endpoint",
+		},
+		{
+			"no conventional commit",
+			"This is just thinking with no commit message.",
+			"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractFromThinking(tt.thinking)
+			if got != tt.want {
+				t.Errorf("extractFromThinking() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

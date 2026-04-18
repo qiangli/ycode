@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -68,6 +69,10 @@ func singleShotWith(ctx context.Context, ms session.ModelSpec, systemPrompt, use
 		// calls (some OpenAI-compatible models have streaming quirks). The
 		// Anthropic provider overrides this to always stream regardless.
 		Stream: false,
+		// Disable thinking/reasoning for single-shot calls — we want a direct
+		// answer, not chain-of-thought (e.g., kimi-k2.5 puts everything in
+		// reasoning_content otherwise).
+		ReasoningEffort: "none",
 	}
 
 	events, errc := ms.Provider.Send(ctx, req)
@@ -101,11 +106,12 @@ func singleShotWith(ctx context.Context, ms session.ModelSpec, systemPrompt, use
 		return "", fmt.Errorf("single-shot (%s): %w", ms.Model, err)
 	}
 
-	// Prefer text content; fall back to thinking content for reasoning
-	// models that put the answer in reasoning_content (e.g., kimi-k2.5).
+	// Prefer text content; fall back to extracting the answer from thinking
+	// content for reasoning models that put everything in reasoning_content
+	// and leave content empty (e.g., kimi-k2.5).
 	text := strings.TrimSpace(strings.Join(textParts, ""))
-	if text == "" {
-		text = strings.TrimSpace(strings.Join(thinkingParts, ""))
+	if text == "" && len(thinkingParts) > 0 {
+		text = extractFromThinking(strings.Join(thinkingParts, ""))
 	}
 	if text == "" {
 		return "", fmt.Errorf("single-shot (%s) returned empty response", ms.Model)
@@ -136,6 +142,32 @@ func ResolveModelChain(cfg *config.Config, mainProvider api.Provider) *ModelChai
 // SkillExecutor is a function that directly executes a builtin operation
 // when the LLM invokes the Skill tool with a matching name.
 type SkillExecutor func(ctx context.Context, args string) (string, error)
+
+// conventionalCommitPrefix matches the start of a Conventional Commits message.
+// Covers: fix, feat, build, chore, ci, docs, style, refactor, perf, test
+// with optional scope in parentheses.
+var conventionalCommitPrefix = regexp.MustCompile(
+	`^(fix|feat|build|chore|ci|docs|style|refactor|perf|test)(\([^)]+\))?:\s`,
+)
+
+// extractFromThinking scans reasoning/thinking output for a line that looks
+// like a conventional commit message. Reasoning models (e.g., kimi-k2.5) may
+// put the final answer within their chain-of-thought rather than in the
+// content field.
+func extractFromThinking(thinking string) string {
+	// Scan lines in reverse — the answer is typically near the end.
+	lines := strings.Split(thinking, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		// Strip markdown formatting: backticks, quotes, bold.
+		line = strings.Trim(line, "`\"'*")
+		line = strings.TrimSpace(line)
+		if conventionalCommitPrefix.MatchString(line) {
+			return line
+		}
+	}
+	return ""
+}
 
 // skillExecutors maps skill names to builtin executors.
 var skillExecutors = map[string]SkillExecutor{}

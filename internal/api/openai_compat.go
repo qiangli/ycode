@@ -94,6 +94,20 @@ type openaiRequest struct {
 	Stream        bool                 `json:"stream"`
 	Tools         []openaiTool         `json:"tools,omitempty"`
 	StreamOptions *openaiStreamOptions `json:"stream_options,omitempty"`
+
+	// Thinking controls reasoning behavior for models that support it.
+	// Kimi K2.5: {"type":"enabled"} or {"type":"disabled"}.
+	// OpenAI o-series: uses ReasoningEffort instead.
+	Thinking *openaiThinking `json:"thinking,omitempty"`
+
+	// ReasoningEffort controls thinking depth for OpenAI o-series models.
+	// Values: "low", "medium", "high".
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+}
+
+// openaiThinking controls thinking/reasoning for providers that use this format (e.g., Kimi).
+type openaiThinking struct {
+	Type string `json:"type"` // "enabled" or "disabled"
 }
 
 // openaiStreamOptions enables usage reporting in streaming mode.
@@ -138,6 +152,18 @@ func (c *OpenAICompatClient) buildRequest(req *Request) *openaiRequest {
 	// Enable usage reporting in streaming mode.
 	if req.Stream {
 		oReq.StreamOptions = &openaiStreamOptions{IncludeUsage: true}
+	}
+
+	// Map reasoning effort to provider-specific fields.
+	if req.ReasoningEffort != "" {
+		switch req.ReasoningEffort {
+		case "none":
+			// Disable thinking entirely (Kimi K2.5 format).
+			oReq.Thinking = &openaiThinking{Type: "disabled"}
+		default:
+			// OpenAI o-series format.
+			oReq.ReasoningEffort = req.ReasoningEffort
+		}
 	}
 
 	// Add system message if present.
