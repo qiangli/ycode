@@ -278,5 +278,43 @@ func bundledSkillDescription(name string) string {
 
 func bundledSkillContent(name string) string {
 	desc := bundledSkillDescription(name)
-	return fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n# %s\n\n%s\n", name, desc, name, desc)
+
+	// Provide detailed instructions for skills that need LLM guidance.
+	switch name {
+	case "commit":
+		return `---
+name: commit
+description: Create a well-formatted git commit based on changes
+---
+
+# Commit
+
+Create a well-formatted git commit message based on the actual changes in the repository.
+
+## Steps
+
+1. Check what files have changed using git status
+2. Read the diff of staged (or unstaged) changes using git diff
+3. Analyze the changes to understand:
+   - What was modified/added/deleted
+   - Why the change was made (if apparent from context)
+   - The scope of impact
+4. Generate a commit message following conventional commits format:
+   - Format: type(scope): subject
+   - Types: feat, fix, docs, style, refactor, test, chore
+   - Subject: imperative mood, lowercase, no period, max 50 chars
+   - Body (optional): detailed explanation wrapped at 72 chars
+5. Stage files if needed: git add <files>
+6. Create the commit: git commit -m "message"
+
+## Guidelines
+
+- Be specific about what changed (e.g., "fix auth" → "fix(auth): handle expired token refresh")
+- Keep the first line concise and meaningful
+- Use the hint/args provided by the user for additional context
+- If no changes to commit, report that clearly
+`
+	default:
+		return fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n# %s\n\n%s\n", name, desc, name, desc)
+	}
 }

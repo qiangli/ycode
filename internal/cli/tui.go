@@ -520,6 +520,9 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case busEventMsg:
 		return m.handleBusEvent(msg.Event)
 
+	case alertDoneMsg:
+		m.handleAlertDone()
+
 	case repaintMsg:
 		// No-op; triggers Update/View cycle.
 	}
@@ -912,7 +915,8 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 
 	// Start agentic turn — handles regular prompts and skill slash commands.
 	m.appendOutput(fmt.Sprintf("> %s\n", text))
-	return tea.Batch(alertReset(), m.startAgentTurn(text))
+	m.resetTitle()
+	return m.startAgentTurn(text)
 }
 
 // startAgentTurn begins an agentic conversation turn with system prompt, tools, and history.

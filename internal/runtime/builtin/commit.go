@@ -3,9 +3,7 @@ package builtin
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -126,9 +124,7 @@ func (cg *CommitGenerator) Generate(ctx context.Context, req *CommitRequest) (*C
 	// Step 4: Generate commit message via LLM.
 	message, err := cg.generateMessage(ctx, gc, req.Hint, req.Context)
 	if err != nil {
-		slog.Error("LLM commit message generation failed, using template fallback",
-			"error", err, "diff_len", len(gc.diff), "stat", gc.stat)
-		message = cg.templateFallback(gc)
+		return nil, fmt.Errorf("generate commit message: %w", err)
 	}
 	result.Message = message
 
@@ -264,111 +260,6 @@ func (cg *CommitGenerator) generateMessage(ctx context.Context, gc *gitContext, 
 	}
 
 	return cleanCommitMessage(raw), nil
-}
-
-// templateFallback generates a commit message from the stat output without LLM.
-func (cg *CommitGenerator) templateFallback(gc *gitContext) string {
-	files := gc.stagedFiles
-	if len(files) == 0 {
-		files = gc.modifiedFiles
-	}
-	if len(files) == 0 {
-		return "chore: update files"
-	}
-
-	// Infer type from file paths.
-	commitType := inferCommitType(gc.stagedFiles, gc.modifiedFiles)
-
-	if len(files) == 1 {
-		return fmt.Sprintf("%s: update %s", commitType, filepath.Base(files[0]))
-	}
-
-	// Find the common directory prefix to describe the scope.
-	scope := commonDir(files)
-
-	// List up to 3 base names for specificity.
-	const maxNames = 3
-	names := make([]string, 0, maxNames)
-	for i, f := range files {
-		if i >= maxNames {
-			break
-		}
-		names = append(names, filepath.Base(f))
-	}
-
-	summary := strings.Join(names, ", ")
-	if len(files) > maxNames {
-		summary += fmt.Sprintf(" and %d more", len(files)-maxNames)
-	}
-
-	if scope != "" {
-		return fmt.Sprintf("%s(%s): update %s", commitType, scope, summary)
-	}
-	return fmt.Sprintf("%s: update %s", commitType, summary)
-}
-
-// commonDir finds the deepest common directory among file paths.
-// Returns "" if files span multiple top-level directories.
-func commonDir(files []string) string {
-	if len(files) == 0 {
-		return ""
-	}
-
-	parts := strings.Split(filepath.Dir(files[0]), string(filepath.Separator))
-	for _, f := range files[1:] {
-		fParts := strings.Split(filepath.Dir(f), string(filepath.Separator))
-		// Trim parts to the common prefix.
-		n := len(parts)
-		if len(fParts) < n {
-			n = len(fParts)
-		}
-		match := 0
-		for i := 0; i < n; i++ {
-			if parts[i] != fParts[i] {
-				break
-			}
-			match++
-		}
-		parts = parts[:match]
-	}
-
-	result := strings.Join(parts, "/")
-	if result == "." || result == "" {
-		return ""
-	}
-	return result
-}
-
-// inferCommitType guesses the conventional commit type from file paths.
-func inferCommitType(staged, modified []string) string {
-	files := staged
-	if len(files) == 0 {
-		files = modified
-	}
-
-	var hasTest, hasDocs, hasCode bool
-	for _, f := range files {
-		lower := strings.ToLower(f)
-		switch {
-		case strings.Contains(lower, "_test.go") || strings.Contains(lower, "test_") ||
-			strings.HasPrefix(lower, "test") || strings.Contains(lower, "/test/"):
-			hasTest = true
-		case strings.HasSuffix(lower, ".md") || strings.Contains(lower, "/docs/") ||
-			strings.Contains(lower, "readme") || strings.Contains(lower, "changelog"):
-			hasDocs = true
-		default:
-			hasCode = true
-		}
-	}
-
-	switch {
-	case hasTest && !hasCode && !hasDocs:
-		return "test"
-	case hasDocs && !hasCode && !hasTest:
-		return "docs"
-	default:
-		return "chore"
-	}
 }
 
 // truncateDiff limits diff size to maxDiffBytes.

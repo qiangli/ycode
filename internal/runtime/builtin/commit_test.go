@@ -60,60 +60,6 @@ func TestCleanCommitMessage(t *testing.T) {
 	}
 }
 
-func TestInferCommitType(t *testing.T) {
-	tests := []struct {
-		files []string
-		want  string
-	}{
-		{[]string{"internal/auth/auth_test.go"}, "test"},
-		{[]string{"README.md"}, "docs"},
-		{[]string{"docs/architecture.md"}, "docs"},
-		{[]string{"internal/api/client.go"}, "chore"},
-		{[]string{"main.go", "main_test.go"}, "chore"}, // mixed = chore
-	}
-
-	for _, tt := range tests {
-		got := inferCommitType(tt.files, nil)
-		if got != tt.want {
-			t.Errorf("inferCommitType(%v) = %q, want %q", tt.files, got, tt.want)
-		}
-	}
-}
-
-func TestTemplateFallback(t *testing.T) {
-	gen := &CommitGenerator{workDir: "."}
-
-	gc := &gitContext{
-		stagedFiles: []string{"internal/api/client.go"},
-	}
-	got := gen.templateFallback(gc)
-	if !strings.HasPrefix(got, "chore:") {
-		t.Errorf("expected chore prefix, got %q", got)
-	}
-	if !strings.Contains(got, "client.go") {
-		t.Errorf("single file should appear in message, got %q", got)
-	}
-
-	gc2 := &gitContext{
-		modifiedFiles: []string{"a.go", "b.go", "c.go"},
-	}
-	got2 := gen.templateFallback(gc2)
-	if !strings.Contains(got2, "a.go") || !strings.Contains(got2, "b.go") || !strings.Contains(got2, "c.go") {
-		t.Errorf("multi-file message should list file names, got %q", got2)
-	}
-
-	gc3 := &gitContext{
-		modifiedFiles: []string{"internal/api/a.go", "internal/api/b.go", "internal/api/c.go", "internal/api/d.go", "internal/api/e.go"},
-	}
-	got3 := gen.templateFallback(gc3)
-	if !strings.Contains(got3, "internal/api") {
-		t.Errorf("multi-file message with common dir should include scope, got %q", got3)
-	}
-	if !strings.Contains(got3, "2 more") {
-		t.Errorf("should indicate remaining files, got %q", got3)
-	}
-}
-
 func TestFormatResult(t *testing.T) {
 	r := &CommitResult{
 		Hash:    "abc1234",
@@ -261,8 +207,8 @@ func TestCommitGenerator_NoChanges(t *testing.T) {
 	}
 }
 
-// TestCommitGenerator_LLMFallback verifies template fallback when LLM fails.
-func TestCommitGenerator_LLMFallback(t *testing.T) {
+// TestCommitGenerator_LLMFailure verifies error is returned when LLM fails.
+func TestCommitGenerator_LLMFailure(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -285,17 +231,14 @@ func TestCommitGenerator_LLMFallback(t *testing.T) {
 	}
 	gen := NewCommitGenerator(chain, dir)
 
-	result, err := gen.Generate(context.Background(), &CommitRequest{
+	_, err := gen.Generate(context.Background(), &CommitRequest{
 		FilesToStage: []string{"main.go"},
 	})
-	if err != nil {
-		t.Fatalf("should succeed with template fallback, got: %v", err)
+	if err == nil {
+		t.Fatal("expected error when LLM fails, got nil")
 	}
-	if result.Hash == "" {
-		t.Error("should have committed with fallback message")
-	}
-	if result.Message == "" {
-		t.Error("should have a fallback message")
+	if !strings.Contains(err.Error(), "generate commit message") {
+		t.Errorf("error should mention message generation, got: %v", err)
 	}
 }
 
