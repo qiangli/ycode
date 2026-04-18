@@ -28,17 +28,17 @@ User-provided focus or constraints (honor these if non-empty):
 
 Use ONLY these built-in tools:
 
-- **Read** — read file contents (not `cat`, `head`, `tail`)
-- **Glob** — find files by pattern (not `find`, `ls`, `tree`)
-- **Grep** — search file contents by regex (not `grep`, `rg`)
-- **Edit** — modify existing files
-- **Write** — create new files
+- **read_file** — read file contents (not `cat`, `head`, `tail`)
+- **glob_search** — find files by pattern (not `find`, `ls`, `tree`)
+- **grep_search** — search file contents by regex (not `grep`, `rg`)
+- **edit_file** — modify existing files
+- **write_file** — create new files
 
-Run Read/Glob calls **in parallel** when checking multiple files.
+Run read_file/glob_search calls **in parallel** when checking multiple files.
 
 ## Step 1: Quick project scan
 
-Use Glob and Read to check which of these files exist:
+Use glob_search and read_file to check which of these files exist:
 
 - `README.md`, `USAGE.md`, `INSTRUCTIONS.md`
 - `CLAUDE.md`, `AGENTS.md`
@@ -50,7 +50,7 @@ manifest file.
 
 ## Step 2: Enhance AGENTS.md
 
-Read the generated AGENTS.md. Update it using Edit with any project-specific
+Read the generated AGENTS.md. Update it using edit_file with any project-specific
 additions worth keeping:
 
 ### Required content:

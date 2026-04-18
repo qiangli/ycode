@@ -253,9 +253,19 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Handler:     exportHandler(deps),
 	})
 
-	// /init: builtin executor handles scaffold (dirs, config, gitignore, template
+	// /init: command handler creates scaffold (dirs, config, gitignore, template
 	// files) deterministically, then returns skill.md instructions for the LLM to
 	// do targeted project analysis and enhance the generated files.
+	r.Register(&Spec{
+		Name:        "init",
+		Description: "Initialize workspace and generate context-aware AGENTS.md",
+		Usage:       "/init [focus]",
+		Category:    "workspace",
+		Handler:     initHandler(deps),
+	})
+
+	// Also register as a skill executor so the LLM can call Skill("init")
+	// during agentic turns to scaffold + get enhancement instructions.
 	builtin.RegisterSkillExecutor("init", func(ctx context.Context, args string) (string, error) {
 		cwd := deps.WorkDir
 		if cwd == "" {
@@ -271,7 +281,6 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			return "", fmt.Errorf("init scaffold failed: %w", err)
 		}
 
-		// Return scaffold report + embedded skill instructions for the LLM.
 		var b strings.Builder
 		b.WriteString("## Scaffold Complete\n\n")
 		b.WriteString(report.Render())
@@ -550,6 +559,26 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 // AI-generated message using the builtin commit generator. This bypasses the
 // full conversation runtime, running git commands directly and making a single
 // cheap LLM call.
+func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error) {
+	return func(ctx context.Context, args string) (string, error) {
+		cwd := deps.WorkDir
+		if cwd == "" {
+			var err error
+			cwd, err = os.Getwd()
+			if err != nil {
+				return "", fmt.Errorf("get working directory: %w", err)
+			}
+		}
+
+		report, err := InitializeRepo(cwd)
+		if err != nil {
+			return "", fmt.Errorf("init scaffold failed: %w", err)
+		}
+
+		return report.Render(), nil
+	}
+}
+
 func commitHandler(deps *RuntimeDeps) func(context.Context, string) (string, error) {
 	return func(ctx context.Context, args string) (string, error) {
 		if deps.Provider == nil {
