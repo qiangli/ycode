@@ -176,6 +176,54 @@ func TestCommitGenerator_DryRun(t *testing.T) {
 	}
 }
 
+// TestCommitGenerator_PreStaged tests case 2: files already staged, no FilesToStage,
+// no unstaged changes. The generator should use the pre-staged files directly.
+func TestCommitGenerator_PreStaged(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init")
+	mustRun(t, dir, "git", "config", "user.email", "test@example.com")
+	mustRun(t, dir, "git", "config", "user.name", "Test User")
+	writeFile(t, dir, "README.md", "# test\n")
+	mustRun(t, dir, "git", "add", "README.md")
+	mustRun(t, dir, "git", "commit", "-m", "initial")
+
+	// Modify and stage — but don't pass FilesToStage.
+	writeFile(t, dir, "README.md", "# updated\n")
+	mustRun(t, dir, "git", "add", "README.md")
+
+	provider := &mockProvider{response: "docs: update readme"}
+	chain := &ModelChain{
+		Models: []session.ModelSpec{
+			{Provider: provider, Model: "test-model"},
+		},
+	}
+	gen := NewCommitGenerator(chain, dir)
+
+	result, err := gen.Generate(context.Background(), &CommitRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Hash == "" {
+		t.Error("expected a commit hash")
+	}
+	if result.Message != "docs: update readme" {
+		t.Errorf("unexpected message: %q", result.Message)
+	}
+	if len(result.Staged) == 0 {
+		t.Error("expected staged files to be populated")
+	}
+
+	// Verify commit exists.
+	out := mustOutput(t, dir, "git", "log", "--oneline", "-1")
+	if !strings.Contains(out, "docs: update readme") {
+		t.Errorf("commit message not in git log: %s", out)
+	}
+}
+
 // TestCommitGenerator_NoChanges verifies error when nothing to commit.
 func TestCommitGenerator_NoChanges(t *testing.T) {
 	if testing.Short() {

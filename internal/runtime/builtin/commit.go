@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"time"
@@ -94,6 +95,13 @@ func (cg *CommitGenerator) Generate(ctx context.Context, req *CommitRequest) (*C
 		return nil, fmt.Errorf("gather git context: %w", err)
 	}
 
+	slog.Info("commit: pre-stage context",
+		"staged", len(gc.stagedFiles),
+		"modified", len(gc.modifiedFiles),
+		"staged_files", gc.stagedFiles,
+		"modified_files", gc.modifiedFiles,
+	)
+
 	if len(gc.stagedFiles) == 0 && len(gc.modifiedFiles) == 0 {
 		return nil, fmt.Errorf("no changes to commit")
 	}
@@ -119,12 +127,26 @@ func (cg *CommitGenerator) Generate(ctx context.Context, req *CommitRequest) (*C
 
 	// Step 3: Now read the diff from staged changes — this captures
 	// previously untracked files that are now staged.
-	gc.diff, gc.stat = cg.readStagedDiff()
+	gc.diff, gc.stat, err = cg.readStagedDiff()
+	if err != nil {
+		return nil, fmt.Errorf("read staged diff: %w", err)
+	}
+
+	slog.Info("commit: staged diff",
+		"diff_bytes", len(gc.diff),
+		"stat_bytes", len(gc.stat),
+		"result_staged", result.Staged,
+	)
+
+	if gc.diff == "" && gc.stat == "" {
+		return nil, fmt.Errorf("no diff content for staged files %v; nothing to generate a message from", result.Staged)
+	}
 
 	// Step 4: Generate commit message via LLM.
 	message, err := cg.generateMessage(ctx, gc, req.Hint, req.Context)
 	if err != nil {
-		return nil, fmt.Errorf("generate commit message: %w", err)
+		return nil, fmt.Errorf("generate commit message (diff_bytes=%d, stat_bytes=%d, staged=%v): %w",
+			len(gc.diff), len(gc.stat), result.Staged, err)
 	}
 	result.Message = message
 
@@ -205,14 +227,19 @@ func (cg *CommitGenerator) gatherPreStageContext() (*gitContext, error) {
 
 // readStagedDiff reads the diff and stat from currently staged changes.
 // Called after staging so that untracked files are included.
-func (cg *CommitGenerator) readStagedDiff() (diff, stat string) {
-	if out, err := cg.git("diff", "--cached"); err == nil {
-		diff = strings.TrimSpace(out)
+func (cg *CommitGenerator) readStagedDiff() (diff, stat string, err error) {
+	out, gitErr := cg.git("diff", "--cached")
+	if gitErr != nil {
+		return "", "", fmt.Errorf("git diff --cached: %w", gitErr)
 	}
-	if out, err := cg.git("diff", "--cached", "--stat"); err == nil {
-		stat = strings.TrimSpace(out)
+	diff = strings.TrimSpace(out)
+
+	out, gitErr = cg.git("diff", "--cached", "--stat")
+	if gitErr != nil {
+		return "", "", fmt.Errorf("git diff --cached --stat: %w", gitErr)
 	}
-	return
+	stat = strings.TrimSpace(out)
+	return diff, stat, nil
 }
 
 // generateMessage builds the LLM prompt and makes one API call.
@@ -254,7 +281,16 @@ func (cg *CommitGenerator) generateMessage(ctx context.Context, gc *gitContext, 
 	}
 	userContent.WriteString(diff)
 
-	raw, err := cg.chain.SingleShot(ctx, commitSystemPrompt, userContent.String(), commitMaxTokens)
+	prompt := userContent.String()
+	slog.Info("commit: LLM prompt",
+		"prompt_bytes", len(prompt),
+		"has_context", conversationContext != "",
+		"has_hint", hint != "",
+		"has_diff", gc.diff != "",
+		"has_stat", gc.stat != "",
+	)
+
+	raw, err := cg.chain.SingleShot(ctx, commitSystemPrompt, prompt, commitMaxTokens)
 	if err != nil {
 		return "", err
 	}

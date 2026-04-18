@@ -64,20 +64,36 @@ func singleShotWith(ctx context.Context, ms session.ModelSpec, systemPrompt, use
 				},
 			},
 		},
-		Stream: true,
+		// Non-streaming is more reliable across providers for short single-shot
+		// calls (some OpenAI-compatible models have streaming quirks). The
+		// Anthropic provider overrides this to always stream regardless.
+		Stream: false,
 	}
 
 	events, errc := ms.Provider.Send(ctx, req)
 
-	var parts []string
+	var textParts []string
+	var thinkingParts []string
 	for ev := range events {
 		if ev.Delta != nil {
 			var delta struct {
-				Text string `json:"text"`
+				Type     string `json:"type"`
+				Text     string `json:"text"`
+				Thinking string `json:"thinking"`
 			}
-			if err := json.Unmarshal(ev.Delta, &delta); err == nil && delta.Text != "" {
-				parts = append(parts, delta.Text)
+			if err := json.Unmarshal(ev.Delta, &delta); err == nil {
+				if delta.Text != "" {
+					textParts = append(textParts, delta.Text)
+				}
+				if delta.Thinking != "" {
+					thinkingParts = append(thinkingParts, delta.Thinking)
+				}
 			}
+		}
+		// Also extract text from content blocks (some providers emit these
+		// instead of or in addition to deltas).
+		if ev.ContentBlock != nil && ev.ContentBlock.Text != "" {
+			textParts = append(textParts, ev.ContentBlock.Text)
 		}
 	}
 
@@ -85,7 +101,12 @@ func singleShotWith(ctx context.Context, ms session.ModelSpec, systemPrompt, use
 		return "", fmt.Errorf("single-shot (%s): %w", ms.Model, err)
 	}
 
-	text := strings.TrimSpace(strings.Join(parts, ""))
+	// Prefer text content; fall back to thinking content for reasoning
+	// models that put the answer in reasoning_content (e.g., kimi-k2.5).
+	text := strings.TrimSpace(strings.Join(textParts, ""))
+	if text == "" {
+		text = strings.TrimSpace(strings.Join(thinkingParts, ""))
+	}
 	if text == "" {
 		return "", fmt.Errorf("single-shot (%s) returned empty response", ms.Model)
 	}
