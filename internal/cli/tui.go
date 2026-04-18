@@ -507,6 +507,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case commandOutputMsg:
+		m.working = false
 		m.appendOutput(msg.Echo)
 		if msg.Err != nil {
 			m.appendOutput(fmt.Sprintf("Error: %v\n\n", msg.Err))
@@ -899,10 +900,12 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 
 	// Check for high-confidence builtin intent before the expensive agentic loop.
 	if intent := builtin.DetectIntent(text); intent != nil {
-		echo := fmt.Sprintf("> %s\n", text)
+		m.appendOutput(fmt.Sprintf("> %s\n", text))
+		m.appendOutput("⧗ Running builtin /" + intent.Operation + "...\n")
+		m.working = true
 		return func() tea.Msg {
 			output, err := m.app.commands.Execute(context.Background(), intent.Operation, intent.Args)
-			return commandOutputMsg{Echo: echo, Text: output, Err: err}
+			return commandOutputMsg{Text: output, Err: err}
 		}
 	}
 

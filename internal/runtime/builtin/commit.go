@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -55,74 +56,76 @@ type CommitRequest struct {
 
 // CommitResult holds the outcome of a commit operation.
 type CommitResult struct {
-	Message   string   // generated commit message
-	Hash      string   // short commit hash (empty if DryRun)
-	Staged    []string // files that were staged
-	Remaining []string // files still uncommitted after the commit
-	HookError string   // non-empty if pre-commit hook failed
+	Message   string        // generated commit message
+	Hash      string        // short commit hash (empty if DryRun)
+	Staged    []string      // files that were staged
+	Remaining []string      // files still uncommitted after the commit
+	HookError string        // non-empty if pre-commit hook failed
+	Duration  time.Duration // total wall-clock time for the operation
 }
 
-// Generate runs the full commit workflow: gather git context, generate a
-// commit message via a single LLM call, stage files, and commit.
+// Generate runs the full commit workflow:
+//  1. Check for changes
+//  2. Stage files (so git diff --cached works for untracked files too)
+//  3. Gather diff from staged changes
+//  4. Generate commit message via single LLM call
+//  5. Commit
 func (cg *CommitGenerator) Generate(ctx context.Context, req *CommitRequest) (*CommitResult, error) {
 	if req == nil {
 		req = &CommitRequest{}
 	}
 
-	// Step 1: Gather git context.
-	gc, err := cg.gatherContext()
+	start := time.Now()
+	result := &CommitResult{}
+
+	// Step 1: Check what needs committing.
+	gc, err := cg.gatherPreStageContext()
 	if err != nil {
 		return nil, fmt.Errorf("gather git context: %w", err)
 	}
 
-	if gc.diff == "" && gc.stat == "" && len(gc.stagedFiles) == 0 && len(gc.modifiedFiles) == 0 {
+	if len(gc.stagedFiles) == 0 && len(gc.modifiedFiles) == 0 {
 		return nil, fmt.Errorf("no changes to commit")
 	}
 
-	// Step 2: Stage files if requested.
-	staged := req.FilesToStage
-	if len(staged) > 0 && !req.DryRun {
-		if err := cg.stageFiles(staged); err != nil {
-			return nil, fmt.Errorf("stage files: %w", err)
-		}
-		// Re-read staged diff after staging.
-		if out, err := cg.git("diff", "--cached"); err == nil && strings.TrimSpace(out) != "" {
-			gc.diff = strings.TrimSpace(out)
-		}
-		if out, err := cg.git("diff", "--cached", "--stat"); err == nil {
-			gc.stat = strings.TrimSpace(out)
+	// Step 2: Stage files BEFORE reading the diff — this is critical because
+	// git diff doesn't show untracked files, so we need them staged first.
+	if !req.DryRun {
+		if len(req.FilesToStage) > 0 {
+			if err := cg.stageFiles(req.FilesToStage); err != nil {
+				return nil, fmt.Errorf("stage files: %w", err)
+			}
+			result.Staged = req.FilesToStage
+		} else if len(gc.stagedFiles) == 0 {
+			// Nothing pre-staged and no explicit files — stage everything.
+			if out, err := cg.git("add", "-A"); err != nil {
+				return nil, fmt.Errorf("stage files: %s", strings.TrimSpace(out))
+			}
+			result.Staged = gc.modifiedFiles
+		} else {
+			result.Staged = gc.stagedFiles
 		}
 	}
 
-	// Step 3: Generate commit message.
+	// Step 3: Now read the diff from staged changes — this captures
+	// previously untracked files that are now staged.
+	gc.diff, gc.stat = cg.readStagedDiff()
+
+	// Step 4: Generate commit message.
 	message, err := cg.generateMessage(ctx, gc, req.Hint)
 	if err != nil {
 		slog.Warn("LLM commit message generation failed, using template fallback", "error", err)
 		message = cg.templateFallback(gc)
 	}
-
-	result := &CommitResult{
-		Message: message,
-		Staged:  gc.stagedFiles,
-	}
+	result.Message = message
 
 	if req.DryRun {
 		return result, nil
 	}
 
-	// Step 4: Stage remaining files if nothing was explicitly staged.
-	if len(staged) == 0 && len(gc.stagedFiles) == 0 {
-		// Nothing staged — stage all tracked modified files + new untracked files.
-		if out, err := cg.git("add", "-A"); err != nil {
-			return nil, fmt.Errorf("stage files: %s", strings.TrimSpace(out))
-		}
-		result.Staged = gc.modifiedFiles
-	}
-
 	// Step 5: Commit.
 	commitOut, err := cg.git("commit", "-m", message)
 	if err != nil {
-		// Check for hook failure or other commit error.
 		result.HookError = strings.TrimSpace(commitOut)
 		return result, fmt.Errorf("git commit failed: %s", strings.TrimSpace(commitOut))
 	}
@@ -139,6 +142,7 @@ func (cg *CommitGenerator) Generate(ctx context.Context, req *CommitRequest) (*C
 		}
 	}
 
+	result.Duration = time.Since(start)
 	return result, nil
 }
 
@@ -151,8 +155,9 @@ type gitContext struct {
 	modifiedFiles []string // all modified/untracked files
 }
 
-// gatherContext runs git commands to collect diff, stat, log, and file lists.
-func (cg *CommitGenerator) gatherContext() (*gitContext, error) {
+// gatherPreStageContext collects the file lists and recent log BEFORE staging.
+// The diff is read later (after staging) via readStagedDiff().
+func (cg *CommitGenerator) gatherPreStageContext() (*gitContext, error) {
 	gc := &gitContext{}
 
 	// Recent commit log for style matching.
@@ -160,30 +165,12 @@ func (cg *CommitGenerator) gatherContext() (*gitContext, error) {
 		gc.recentLog = strings.TrimSpace(out)
 	}
 
-	// Check for staged changes first.
+	// Already-staged files.
 	if out, err := cg.git("diff", "--cached", "--name-only"); err == nil {
 		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 			if line != "" {
 				gc.stagedFiles = append(gc.stagedFiles, line)
 			}
-		}
-	}
-
-	if len(gc.stagedFiles) > 0 {
-		// Use staged diff.
-		if out, err := cg.git("diff", "--cached"); err == nil {
-			gc.diff = strings.TrimSpace(out)
-		}
-		if out, err := cg.git("diff", "--cached", "--stat"); err == nil {
-			gc.stat = strings.TrimSpace(out)
-		}
-	} else {
-		// Nothing staged — use unstaged diff.
-		if out, err := cg.git("diff"); err == nil {
-			gc.diff = strings.TrimSpace(out)
-		}
-		if out, err := cg.git("diff", "--stat"); err == nil {
-			gc.stat = strings.TrimSpace(out)
 		}
 	}
 
@@ -205,6 +192,18 @@ func (cg *CommitGenerator) gatherContext() (*gitContext, error) {
 	}
 
 	return gc, nil
+}
+
+// readStagedDiff reads the diff and stat from currently staged changes.
+// Called after staging so that untracked files are included.
+func (cg *CommitGenerator) readStagedDiff() (diff, stat string) {
+	if out, err := cg.git("diff", "--cached"); err == nil {
+		diff = strings.TrimSpace(out)
+	}
+	if out, err := cg.git("diff", "--cached", "--stat"); err == nil {
+		stat = strings.TrimSpace(out)
+	}
+	return
 }
 
 // generateMessage builds the LLM prompt and makes one API call.
@@ -370,18 +369,22 @@ func FormatResult(r *CommitResult) string {
 	}
 
 	if r.Hash != "" {
-		fmt.Fprintf(&b, "Committed: %s\n", r.Hash)
+		fmt.Fprintf(&b, "✓ Committed: %s\n", r.Hash)
 	}
-	fmt.Fprintf(&b, "Message: %s\n", firstLine(r.Message))
+	fmt.Fprintf(&b, "  Message: %s\n", firstLine(r.Message))
 
 	if len(r.Staged) > 0 {
-		fmt.Fprintf(&b, "Staged: %s\n", strings.Join(r.Staged, ", "))
+		fmt.Fprintf(&b, "  Files: %s\n", strings.Join(r.Staged, ", "))
+	}
+
+	if r.Duration > 0 {
+		fmt.Fprintf(&b, "  Duration: %.1fs\n", r.Duration.Seconds())
 	}
 
 	if len(r.Remaining) > 0 {
-		fmt.Fprintf(&b, "\nRemaining uncommitted:\n")
+		fmt.Fprintf(&b, "\n  Remaining uncommitted:\n")
 		for _, f := range r.Remaining {
-			fmt.Fprintf(&b, "  %s\n", f)
+			fmt.Fprintf(&b, "    %s\n", f)
 		}
 	}
 
