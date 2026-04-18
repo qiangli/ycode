@@ -143,7 +143,7 @@ func NewTUIModel(app *App) *TUIModel {
 }
 
 func (m *TUIModel) Init() tea.Cmd {
-	return m.textarea.Focus()
+	return tea.Batch(m.textarea.Focus(), tea.SetWindowTitle(appTitle))
 }
 
 func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -438,6 +438,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appendOutput(formatSessionSummary(m.app.usageTracker, m.app.sessionStart))
 			m.appendOutput("\n")
 			cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
+			cmds = append(cmds, alertDone())
 			break
 		}
 
@@ -911,7 +912,7 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 
 	// Start agentic turn — handles regular prompts and skill slash commands.
 	m.appendOutput(fmt.Sprintf("> %s\n", text))
-	return m.startAgentTurn(text)
+	return tea.Batch(alertReset(), m.startAgentTurn(text))
 }
 
 // startAgentTurn begins an agentic conversation turn with system prompt, tools, and history.
@@ -1230,7 +1231,7 @@ func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
 		m.appendOutput("\n✓ Done.\n\n")
 		m.appendOutput(formatSessionSummary(m.app.usageTracker, m.app.sessionStart))
 		m.appendOutput("\n")
-		return m, func() tea.Msg { return repaintMsg{} }
+		return m, tea.Batch(func() tea.Msg { return repaintMsg{} }, alertDone())
 
 	case bus.EventTurnError:
 		m.working = false
