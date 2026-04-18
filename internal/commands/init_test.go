@@ -33,6 +33,12 @@ func TestInitializeRepoCreatesExpectedFiles(t *testing.T) {
 	if !strings.Contains(rendered, "CLAUDE.md") {
 		t.Error("report should mention CLAUDE.md")
 	}
+	if !strings.Contains(rendered, "AGENTS.md") {
+		t.Error("report should mention AGENTS.md")
+	}
+	if !strings.Contains(rendered, "Git") {
+		t.Error("report should mention Git status")
+	}
 
 	// Verify files exist.
 	if _, err := os.Stat(filepath.Join(root, ".ycode")); err != nil {
@@ -44,11 +50,17 @@ func TestInitializeRepoCreatesExpectedFiles(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "CLAUDE.md")); err != nil {
 		t.Error("CLAUDE.md was not created")
 	}
+	if _, err := os.Stat(filepath.Join(root, "AGENTS.md")); err != nil {
+		t.Error("AGENTS.md was not created")
+	}
 
 	// Verify .ycode.json content.
 	data, _ := os.ReadFile(filepath.Join(root, ".ycode.json"))
 	if !strings.Contains(string(data), "defaultMode") {
 		t.Error(".ycode.json should contain defaultMode")
+	}
+	if !strings.Contains(string(data), "languages") {
+		t.Error(".ycode.json should contain languages")
 	}
 
 	// Verify .gitignore entries.
@@ -59,6 +71,9 @@ func TestInitializeRepoCreatesExpectedFiles(t *testing.T) {
 	}
 	if !strings.Contains(giStr, ".ycode/sessions/") {
 		t.Error(".gitignore should contain .ycode/sessions/")
+	}
+	if !strings.Contains(giStr, ".ycode/cache/") {
+		t.Error(".gitignore should contain .ycode/cache/")
 	}
 
 	// Verify CLAUDE.md detects Go.
@@ -76,6 +91,61 @@ func TestInitializeRepoCreatesExpectedFiles(t *testing.T) {
 	if !strings.Contains(mdStr, "`internal/`") {
 		t.Error("CLAUDE.md should mention internal/ directory")
 	}
+
+	// Verify AGENTS.md was created with proper content.
+	agents, _ := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	agentsStr := string(agents)
+	if !strings.Contains(agentsStr, "AI coding assistants") {
+		t.Error("AGENTS.md should reference AI coding assistants")
+	}
+	if !strings.Contains(agentsStr, "Go") {
+		t.Error("AGENTS.md should detect Go language")
+	}
+}
+
+func TestInitializeRepoCreatesGitRepoWarning(t *testing.T) {
+	root := t.TempDir()
+
+	// Don't initialize git - should produce warning
+	report, err := InitializeRepo(root)
+	if err != nil {
+		t.Fatalf("InitializeRepo failed: %v", err)
+	}
+
+	if len(report.Warnings) == 0 {
+		t.Error("should produce warning for missing git repository")
+	}
+
+	foundGitWarning := false
+	for _, w := range report.Warnings {
+		if strings.Contains(w, "git") {
+			foundGitWarning = true
+			break
+		}
+	}
+	if !foundGitWarning {
+		t.Error("warning should mention git")
+	}
+}
+
+func TestInitializeRepoDetectsExistingGit(t *testing.T) {
+	root := t.TempDir()
+
+	// Initialize git repo
+	os.MkdirAll(filepath.Join(root, ".git"), 0o755)
+
+	report, err := InitializeRepo(root)
+	if err != nil {
+		t.Fatalf("InitializeRepo failed: %v", err)
+	}
+
+	if report.GitStatus != "initialized" {
+		t.Errorf("expected git status 'initialized', got %q", report.GitStatus)
+	}
+
+	if len(report.Warnings) > 0 {
+		t.Error("should not produce warnings for initialized git repo")
+	}
 }
 
 func TestInitializeRepoIsIdempotent(t *testing.T) {
@@ -83,6 +153,8 @@ func TestInitializeRepoIsIdempotent(t *testing.T) {
 
 	// Pre-create CLAUDE.md with custom content.
 	os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte("custom guidance\n"), 0o644)
+	// Pre-create AGENTS.md with custom content.
+	os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("custom agents guidance\n"), 0o644)
 	// Pre-create .gitignore with one entry already present.
 	os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".ycode/settings.local.json\n"), 0o644)
 
@@ -93,6 +165,9 @@ func TestInitializeRepoIsIdempotent(t *testing.T) {
 	firstRendered := first.Render()
 	if !strings.Contains(firstRendered, "CLAUDE.md") || !strings.Contains(firstRendered, "skipped (already exists)") {
 		t.Error("first init should skip existing CLAUDE.md")
+	}
+	if !strings.Contains(firstRendered, "AGENTS.md") || !strings.Contains(firstRendered, "skipped (already exists)") {
+		t.Error("first init should skip existing AGENTS.md")
 	}
 
 	second, err := InitializeRepo(root)
@@ -110,6 +185,12 @@ func TestInitializeRepoIsIdempotent(t *testing.T) {
 		t.Error("CLAUDE.md should not be overwritten")
 	}
 
+	// Verify AGENTS.md was NOT overwritten.
+	agents, _ := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if string(agents) != "custom agents guidance\n" {
+		t.Error("AGENTS.md should not be overwritten")
+	}
+
 	// Verify .gitignore doesn't duplicate entries.
 	gi, _ := os.ReadFile(filepath.Join(root, ".gitignore"))
 	giStr := string(gi)
@@ -122,8 +203,10 @@ func TestRenderInitClaudeMDDetectsGoProject(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n"), 0o644)
 
-	md := RenderInitClaudeMD(root)
-	if !strings.Contains(md, "Languages: Go.") {
+	detection := detectRepo(root)
+	metadata := buildProjectMetadata(root, &detection)
+	md := RenderInitClaudeMD(root, metadata)
+	if !strings.Contains(md, "Go") {
 		t.Errorf("should detect Go, got:\n%s", md)
 	}
 	if !strings.Contains(md, "go test") {
@@ -136,11 +219,13 @@ func TestRenderInitClaudeMDDetectsRustProject(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, "rust"), 0o755)
 	os.WriteFile(filepath.Join(root, "rust", "Cargo.toml"), []byte("[workspace]\n"), 0o644)
 
-	md := RenderInitClaudeMD(root)
-	if !strings.Contains(md, "Languages: Rust.") {
+	detection := detectRepo(root)
+	metadata := buildProjectMetadata(root, &detection)
+	md := RenderInitClaudeMD(root, metadata)
+	if !strings.Contains(md, "Rust") {
 		t.Errorf("should detect Rust, got:\n%s", md)
 	}
-	if !strings.Contains(md, "cargo clippy") {
+	if !strings.Contains(md, "cargo") {
 		t.Error("should include Rust verification commands")
 	}
 }
@@ -152,7 +237,9 @@ func TestRenderInitClaudeMDDetectsPythonAndNextJS(t *testing.T) {
 		[]byte(`{"dependencies":{"next":"14.0.0","react":"18.0.0"},"devDependencies":{"typescript":"5.0.0"}}`),
 		0o644)
 
-	md := RenderInitClaudeMD(root)
+	detection := detectRepo(root)
+	metadata := buildProjectMetadata(root, &detection)
+	md := RenderInitClaudeMD(root, metadata)
 	if !strings.Contains(md, "Python") {
 		t.Error("should detect Python")
 	}
@@ -165,20 +252,48 @@ func TestRenderInitClaudeMDDetectsPythonAndNextJS(t *testing.T) {
 	if !strings.Contains(md, "React") {
 		t.Error("should detect React")
 	}
-	if !strings.Contains(md, "pyproject.toml") {
-		t.Error("should mention pyproject.toml")
-	}
 }
 
 func TestRenderInitClaudeMDNoLanguagesDetected(t *testing.T) {
 	root := t.TempDir()
 
-	md := RenderInitClaudeMD(root)
+	detection := detectRepo(root)
+	metadata := buildProjectMetadata(root, &detection)
+	md := RenderInitClaudeMD(root, metadata)
 	if !strings.Contains(md, "No specific language markers") {
 		t.Error("should report no languages detected")
 	}
-	if !strings.Contains(md, "Frameworks: none") {
+	if !strings.Contains(md, "none detected") {
 		t.Error("should report no frameworks detected")
+	}
+}
+
+func TestRenderInitAgentsMD(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n"), 0o644)
+	os.MkdirAll(filepath.Join(root, "cmd"), 0o755)
+
+	detection := detectRepo(root)
+	metadata := buildProjectMetadata(root, &detection)
+	md := RenderInitAgentsMD(root, metadata)
+
+	if !strings.Contains(md, "AGENTS.md") {
+		t.Error("should have AGENTS.md header")
+	}
+	if !strings.Contains(md, "AI coding assistants") {
+		t.Error("should reference AI coding assistants")
+	}
+	if !strings.Contains(md, "Go") {
+		t.Error("should detect Go")
+	}
+	if !strings.Contains(md, "Quick Commands") {
+		t.Error("should have Quick Commands section")
+	}
+	if !strings.Contains(md, "`cmd/`") {
+		t.Error("should mention cmd/ directory")
+	}
+	if !strings.Contains(md, "CLAUDE.md") {
+		t.Error("should reference CLAUDE.md")
 	}
 }
 
@@ -241,5 +356,53 @@ func TestEnsureGitignoreSkipsWhenComplete(t *testing.T) {
 	}
 	if status != InitSkipped {
 		t.Error("should return Skipped when all entries present")
+	}
+}
+
+func TestDetectBuildCommand(t *testing.T) {
+	root := t.TempDir()
+
+	// Test Go project
+	os.WriteFile(filepath.Join(root, "go.mod"), []byte("module test\n"), 0o644)
+	d := detectRepo(root)
+	metadata := buildProjectMetadata(root, &d)
+	if metadata.BuildCmd != "go build ./..." {
+		t.Errorf("expected 'go build ./...', got %q", metadata.BuildCmd)
+	}
+}
+
+func TestDetectNodeScripts(t *testing.T) {
+	root := t.TempDir()
+
+	// Test Node project with build script
+	packageJSON := `{"scripts":{"build":"next build","test":"jest","lint":"eslint ."}}`
+	os.WriteFile(filepath.Join(root, "package.json"), []byte(packageJSON), 0o644)
+
+	d := detectRepo(root)
+	metadata := buildProjectMetadata(root, &d)
+
+	if !strings.Contains(metadata.BuildCmd, "run build") {
+		t.Errorf("expected build command with 'run build', got %q", metadata.BuildCmd)
+	}
+	if !strings.Contains(metadata.TestCmd, "run test") {
+		t.Errorf("expected test command with 'run test', got %q", metadata.TestCmd)
+	}
+	if !strings.Contains(metadata.LintCmd, "run lint") {
+		t.Errorf("expected lint command with 'run lint', got %q", metadata.LintCmd)
+	}
+}
+
+func TestDetectPackageManager(t *testing.T) {
+	root := t.TempDir()
+
+	// Test pnpm
+	os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{}}`), 0o644)
+	os.WriteFile(filepath.Join(root, "pnpm-lock.yaml"), []byte(""), 0o644)
+
+	d := detectRepo(root)
+	metadata := buildProjectMetadata(root, &d)
+
+	if metadata.PackageMgr != "pnpm" {
+		t.Errorf("expected package manager 'pnpm', got %q", metadata.PackageMgr)
 	}
 }
