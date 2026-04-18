@@ -1,4 +1,3 @@
-<!-- Canonical source. Embedded copy at internal/commands/init_skill.md — keep in sync. -->
 ---
 name: init
 description: Initialize ycode workspace and generate context-aware AGENTS.md
