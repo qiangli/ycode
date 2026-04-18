@@ -98,8 +98,19 @@ func TestTemplateFallback(t *testing.T) {
 		modifiedFiles: []string{"a.go", "b.go", "c.go"},
 	}
 	got2 := gen.templateFallback(gc2)
-	if !strings.Contains(got2, "3 files") {
-		t.Errorf("expected '3 files', got %q", got2)
+	if !strings.Contains(got2, "a.go") || !strings.Contains(got2, "b.go") || !strings.Contains(got2, "c.go") {
+		t.Errorf("multi-file message should list file names, got %q", got2)
+	}
+
+	gc3 := &gitContext{
+		modifiedFiles: []string{"internal/api/a.go", "internal/api/b.go", "internal/api/c.go", "internal/api/d.go", "internal/api/e.go"},
+	}
+	got3 := gen.templateFallback(gc3)
+	if !strings.Contains(got3, "internal/api") {
+		t.Errorf("multi-file message with common dir should include scope, got %q", got3)
+	}
+	if !strings.Contains(got3, "2 more") {
+		t.Errorf("should indicate remaining files, got %q", got3)
 	}
 }
 

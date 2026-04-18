@@ -19,7 +19,7 @@ import (
 
 const (
 	// singleShotTimeout is the maximum time for a single-shot LLM call.
-	singleShotTimeout = 15 * time.Second
+	singleShotTimeout = 30 * time.Second
 )
 
 // ModelChain tries a sequence of models in order, returning the first

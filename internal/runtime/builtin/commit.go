@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	// maxDiffBytes caps the diff content sent to the LLM (~3000 tokens).
-	maxDiffBytes = 12_000
+	// maxDiffBytes caps the diff content sent to the LLM (~6000 tokens).
+	maxDiffBytes = 24_000
 
 	// commitMaxTokens limits the LLM output for commit message generation.
 	commitMaxTokens = 256
@@ -23,7 +23,8 @@ Rules:
 - Use conventional commit format: <type>: <short summary>
 - Types: fix, feat, docs, refactor, test, chore, perf
 - Match the style of the recent commits shown
-- Focus on WHY the change was made, not a mechanical list of what changed
+- The summary MUST describe what specifically changed — name the feature, module, function, or config affected
+- Do NOT write vague messages like "update files" or "make changes" — be specific about what was added, fixed, or modified
 - Keep the first line under 72 characters
 - Add a blank line and a brief body only if the change needs explanation
 - Output ONLY the commit message — no markdown fences, no commentary`
@@ -240,28 +241,75 @@ func (cg *CommitGenerator) generateMessage(ctx context.Context, gc *gitContext, 
 
 // templateFallback generates a commit message from the stat output without LLM.
 func (cg *CommitGenerator) templateFallback(gc *gitContext) string {
-	fileCount := len(gc.stagedFiles)
-	if fileCount == 0 {
-		fileCount = len(gc.modifiedFiles)
+	files := gc.stagedFiles
+	if len(files) == 0 {
+		files = gc.modifiedFiles
 	}
-	if fileCount == 0 {
-		fileCount = 1
+	if len(files) == 0 {
+		return "chore: update files"
 	}
 
 	// Infer type from file paths.
 	commitType := inferCommitType(gc.stagedFiles, gc.modifiedFiles)
 
-	if fileCount == 1 {
-		files := gc.stagedFiles
-		if len(files) == 0 {
-			files = gc.modifiedFiles
-		}
-		if len(files) > 0 {
-			return fmt.Sprintf("%s: update %s", commitType, filepath.Base(files[0]))
-		}
+	if len(files) == 1 {
+		return fmt.Sprintf("%s: update %s", commitType, filepath.Base(files[0]))
 	}
 
-	return fmt.Sprintf("%s: update %d files", commitType, fileCount)
+	// Find the common directory prefix to describe the scope.
+	scope := commonDir(files)
+
+	// List up to 3 base names for specificity.
+	const maxNames = 3
+	names := make([]string, 0, maxNames)
+	for i, f := range files {
+		if i >= maxNames {
+			break
+		}
+		names = append(names, filepath.Base(f))
+	}
+
+	summary := strings.Join(names, ", ")
+	if len(files) > maxNames {
+		summary += fmt.Sprintf(" and %d more", len(files)-maxNames)
+	}
+
+	if scope != "" {
+		return fmt.Sprintf("%s(%s): update %s", commitType, scope, summary)
+	}
+	return fmt.Sprintf("%s: update %s", commitType, summary)
+}
+
+// commonDir finds the deepest common directory among file paths.
+// Returns "" if files span multiple top-level directories.
+func commonDir(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+
+	parts := strings.Split(filepath.Dir(files[0]), string(filepath.Separator))
+	for _, f := range files[1:] {
+		fParts := strings.Split(filepath.Dir(f), string(filepath.Separator))
+		// Trim parts to the common prefix.
+		n := len(parts)
+		if len(fParts) < n {
+			n = len(fParts)
+		}
+		match := 0
+		for i := 0; i < n; i++ {
+			if parts[i] != fParts[i] {
+				break
+			}
+			match++
+		}
+		parts = parts[:match]
+	}
+
+	result := strings.Join(parts, "/")
+	if result == "." || result == "" {
+		return ""
+	}
+	return result
 }
 
 // inferCommitType guesses the conventional commit type from file paths.
