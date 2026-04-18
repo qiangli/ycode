@@ -87,7 +87,7 @@ The prompt builder assembles sections in two groups separated by a **cache bound
 ### Contextual Memory (Layer 4): Instruction Files
 
 The discovery system walks from CWD to filesystem root searching for:
-- `CLAUDE.md`, `CLAUDE.local.md`, `.ycode/CLAUDE.md`, `.ycode/instructions.md`
+- `CLAUDE.md`, `CLAUDE.local.md`, `.agents/ycode/CLAUDE.md`, `.agents/ycode/instructions.md`
 
 **Budget constraints**:
 - 4,000 chars per file (`MaxFileContentBudget`)

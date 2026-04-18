@@ -11,7 +11,7 @@
 **Effort:** Medium | **Reference:** OpenCode, OpenClaw, Claw Code
 **Files:** `internal/tools/agent.go`, new `internal/runtime/agents/`
 
-- [ ] Support `.ycode/agents/*.toml` files for custom agent definitions
+- [ ] Support `.agents/ycode/agents/*.toml` files for custom agent definitions
 - [ ] Fields: name, description, model, reasoning_effort, tool_allowlist, system_prompt
 - [ ] Discovery: scan project → user dirs with shadowing
 - [ ] Integrate with Agent tool: `subagent_type` maps to custom agent names

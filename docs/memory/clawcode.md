@@ -346,9 +346,9 @@ Permission checking happens:
 | Aspect | Claw Code | ycode |
 |--------|-----------|-------|
 | Language | Rust | Go |
-| Instruction files | `.claw/CLAUDE.md` | `.ycode/CLAUDE.md` |
+| Instruction files | `.claw/CLAUDE.md` | `.agents/ycode/CLAUDE.md` |
 | Session storage | `.claw/sessions/` | `~/.local/share/ycode/sessions/` |
-| Config files | `.claw.json`, `~/.claw.json` | `.ycode/settings.json`, `~/.ycode/settings.json` |
+| Config files | `.claw.json`, `~/.claw.json` | `.agents/ycode/settings.json`, `~/.ycode/settings.json` |
 | Persistent memory | External (OmX layer) | Built-in file-based store (`~/.ycode/projects/`) |
 | Memory types | No built-in types | `user`, `feedback`, `project`, `reference` |
 | Staleness/aging | Not built-in | Automatic with type-specific thresholds |

@@ -42,7 +42,7 @@ The `PACKAGES` variable in the Makefile excludes `priorart/` from all Go command
 - **`RuntimeContext` struct** holds all registries — no global state
 - **Per-tool middleware** for permission, logging, timing as composable wrappers
 - **Runtime tool registration** — plugins and MCP add tools without recompilation
-- **Three-tier config merge**: user (`~/.config/ycode/`) > project (`.ycode/`) > local (`.ycode/settings.local.json`)
+- **Three-tier config merge**: user (`~/.config/ycode/`) > project (`.agents/ycode/`) > local (`.agents/ycode/settings.local.json`)
 - **Five-layer memory**: working (context) → short-term (session JSONL) → long-term (compaction) → contextual (CLAUDE.md ancestry) → persistent (file-based)
 - **Three-layer build system**: Makefile (deps only) → scripts/ (bash orchestration) → Go (all logic)
 

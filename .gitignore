@@ -27,21 +27,9 @@ Thumbs.db
 *.log
 debug/
 
-#
-# Session data
-.ycode/
-
 .env
 .env.*
 
-# ycode local artifacts
-.ycode/settings.local.json
-.ycode/sessions/
-
-#
 tmp/
-.agents/ycode.json
-.agents/ycode/settings.local.json
-.agents/ycode/sessions/
-.agents/ycode/cache/
-.agents/ycode/logs/
+.agents/
+

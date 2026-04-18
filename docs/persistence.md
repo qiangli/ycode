@@ -760,8 +760,8 @@ Keep the existing file-based approach for initial bootstrap and portable data:
 
 | Data | Format | Location | Rationale |
 |---|---|---|---|
-| Configuration | JSON | `~/.ycode/settings.json`, `.ycode/settings.json` | Human-editable, mergeable |
-| Sessions | JSONL | `.ycode/sessions/<id>.jsonl` | Append-only durability, interop with clawcode |
+| Configuration | JSON | `~/.ycode/settings.json`, `.agents/ycode/settings.json` | Human-editable, mergeable |
+| Sessions | JSONL | `.agents/ycode/sessions/<id>.jsonl` | Append-only durability, interop with clawcode |
 | Memory entries | Markdown | `~/.ycode/projects/<hash>/memory/` | Human-readable, git-friendly |
 | Memory index | Markdown | `MEMORY.md` | Quick scan without DB |
 | Instruction files | Markdown | `CLAUDE.md` ancestry | Standard convention |

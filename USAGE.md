@@ -128,8 +128,8 @@ Reads the prompt file each iteration, so edits take effect on the next run. Pres
 Config is loaded from three tiers (later overrides earlier):
 
 1. `~/.config/ycode/settings.json` (user)
-2. `.ycode/settings.json` (project)
-3. `.ycode/settings.json` (local/CWD)
+2. `.agents/ycode/settings.json` (project)
+3. `.agents/ycode/settings.json` (local/CWD)
 
 ### Settings
 
@@ -218,7 +218,7 @@ Sessions are persisted as JSONL files. Auto-compaction produces semantic summari
 
 Skills are discovered from a hierarchy of directories:
 
-1. `.ycode/skills/` in project ancestors (CWD to root)
+1. `.agents/ycode/skills/` in project ancestors (CWD to root)
 2. `~/.ycode/skills/` (home)
 3. `$YCODE_SKILLS_DIR` (environment variable)
 
@@ -390,7 +390,7 @@ Five layers: working (context window) → short-term (session JSONL) → long-te
 
 ### Config (`internal/runtime/config/`)
 
-Three-tier merge: user (`~/.config/ycode/settings.json`) > project (`.ycode/settings.json`) > local (`.ycode/settings.local.json`).
+Three-tier merge: user (`~/.config/ycode/settings.json`) > project (`.agents/ycode/settings.json`) > local (`.agents/ycode/settings.local.json`).
 
 ### Permission (`internal/runtime/permission/`)
 

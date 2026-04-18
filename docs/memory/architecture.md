@@ -89,7 +89,7 @@ When estimated token count exceeds 100K (`CompactionThreshold`), the compactor r
 
 The discovery system (`internal/runtime/prompt/discovery.go`) walks from CWD to the filesystem root searching for:
 
-- `CLAUDE.md`, `CLAUDE.local.md`, `.ycode/CLAUDE.md`, `.ycode/instructions.md`
+- `CLAUDE.md`, `CLAUDE.local.md`, `.agents/ycode/CLAUDE.md`, `.agents/ycode/instructions.md`
 
 Files are deduplicated by SHA-256 content hash. Budget: 4,000 chars per file (`MaxFileContentBudget`), 12,000 chars total (`MaxTotalBudget`). Contents are injected into the system prompt below the dynamic boundary.
 

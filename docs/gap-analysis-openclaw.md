@@ -152,7 +152,7 @@ Comparison of Open Claw (`priorart/openclaw`) features against YCode's current i
 
 8. **T1 — Plugin system with manifests**
    - Define `plugin.json` manifest schema (name, version, tools, hooks)
-   - Plugin discovery: scan `~/.ycode/plugins/` and project `.ycode/plugins/`
+   - Plugin discovery: scan `~/.ycode/plugins/` and project `.agents/ycode/plugins/`
    - Plugin loader: resolve manifest → register tools in registry
 
 ### Phase 3: Communication — Queues & Detection (Medium Priority)

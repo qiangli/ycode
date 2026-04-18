@@ -248,7 +248,7 @@ Agents can spawn child agents up to a configurable depth (default: 3). Each agen
 
 ### Markdown Working Memory
 
-`.ycode/scratchpad/` for per-session scratch files, `.ycode/checkpoints/` for progress snapshots, `.ycode/worklog.md` for append-only narrative. Auto-checkpoint on compaction when enabled.
+`.agents/ycode/scratchpad/` for per-session scratch files, `.agents/ycode/checkpoints/` for progress snapshots, `.agents/ycode/worklog.md` for append-only narrative. Auto-checkpoint on compaction when enabled.
 
 ---
 
@@ -263,7 +263,7 @@ skills/{name}/
   resources/        Data files, templates
 ```
 
-Discovery chain: project `skills/` → `.ycode/skills/` ancestors → `~/.ycode/skills/` → `$YCODE_SKILLS_DIR`.
+Discovery chain: project `skills/` → `.agents/ycode/skills/` ancestors → `~/.ycode/skills/` → `$YCODE_SKILLS_DIR`.
 
 ---
 
@@ -275,7 +275,7 @@ Plugins extend ycode with lifecycle hooks:
 - **PostToolUse**: process results after execution
 - **PostToolUseFailure**: handle errors
 
-Plugins are discovered from `~/.ycode/plugins/` and project `.ycode/plugins/`. Each plugin has a manifest declaring hooks, permissions, and dependencies.
+Plugins are discovered from `~/.ycode/plugins/` and project `.agents/ycode/plugins/`. Each plugin has a manifest declaring hooks, permissions, and dependencies.
 
 ---
 
@@ -284,8 +284,8 @@ Plugins are discovered from `~/.ycode/plugins/` and project `.ycode/plugins/`. E
 Three-tier merge (later overrides earlier):
 
 1. `~/.config/ycode/settings.json` (user)
-2. `.ycode/settings.json` (project)
-3. `.ycode/settings.local.json` (local, git-ignored)
+2. `.agents/ycode/settings.json` (project)
+3. `.agents/ycode/settings.local.json` (local, git-ignored)
 
 Key settings: model, maxTokens, permissionMode, autoMemoryEnabled, autoCompactEnabled, autoDreamEnabled, fileCheckpointingEnabled, observability.
 

@@ -30,7 +30,7 @@ func RegisterTodoHandler(r *Registry, workDir string) {
 			return "", fmt.Errorf("parse TodoWrite input: %w", err)
 		}
 
-		path := filepath.Join(workDir, ".ycode-todos.json")
+		path := filepath.Join(workDir, ".agents", "ycode", "todos.json")
 		data, err := json.MarshalIndent(params.Todos, "", "  ")
 		if err != nil {
 			return "", fmt.Errorf("marshal todos: %w", err)
