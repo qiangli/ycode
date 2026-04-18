@@ -38,6 +38,7 @@ Include this paragraph verbatim in your AI tool's instruction file
 | Command     | Description |
 |-------------|-------------|
 | `/build`    | Build binary with full quality checks, fix errors, commit on success |
+| `/init`     | Initialize ycode workspace with context-aware CLAUDE.md and AGENTS.md |
 | `/claude`   | Run Claude Code CLI with a single prompt |
 | `/commit`   | Plan and commit local changes with a convention-following message |
 | `/deploy`   | Deploy to host, ensures build first |

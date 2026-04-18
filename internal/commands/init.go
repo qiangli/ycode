@@ -8,13 +8,6 @@ import (
 	"strings"
 )
 
-const starterYcodeJSON = `{
-  "permissions": {
-    "defaultMode": "dontAsk"
-  }
-}
-`
-
 const gitignoreComment = "# ycode local artifacts"
 
 var gitignoreEntries = []string{

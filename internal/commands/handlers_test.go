@@ -63,7 +63,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 		// session
 		"help", "status", "cost", "version", "model", "retry", "revert", "rename",
 		// workspace
-		"clear", "compact", "config", "export", "memory", "init",
+		"clear", "compact", "config", "export", "memory",
 		// discovery
 		"doctor", "context", "skills", "tasks",
 		// automation
