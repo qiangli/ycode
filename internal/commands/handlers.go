@@ -550,8 +550,16 @@ func commitHandler(deps *RuntimeDeps) func(context.Context, string) (string, err
 		chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
 		gen := builtin.NewCommitGenerator(chain, workDir)
 
+		// Extract recent conversation context so the LLM understands what
+		// changes were made and why — not just the raw diff.
+		var conversationCtx string
+		if deps.Session != nil {
+			conversationCtx = deps.Session.RecentContext(6)
+		}
+
 		result, err := gen.Generate(ctx, &builtin.CommitRequest{
-			Hint: strings.TrimSpace(args),
+			Hint:    strings.TrimSpace(args),
+			Context: conversationCtx,
 		})
 		if err != nil {
 			if result != nil && result.HookError != "" {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -256,4 +257,59 @@ func (s *Session) LastUserMessage() string {
 		}
 	}
 	return ""
+}
+
+// RecentContext returns a text summary of the last N user/assistant text
+// exchanges, formatted as "ROLE: message" lines. This provides conversation
+// context for commit message generation (similar to aider's context parameter).
+// Tool-use and tool-result blocks are omitted to keep the context concise.
+func (s *Session) RecentContext(maxTurns int) string {
+	if len(s.Messages) == 0 || maxTurns <= 0 {
+		return ""
+	}
+
+	// Collect the last maxTurns messages that have text content.
+	type entry struct {
+		role string
+		text string
+	}
+	var entries []entry
+
+	for i := len(s.Messages) - 1; i >= 0 && len(entries) < maxTurns; i-- {
+		msg := s.Messages[i]
+		if msg.Role != RoleUser && msg.Role != RoleAssistant {
+			continue
+		}
+
+		for _, block := range msg.Content {
+			if block.Type == ContentTypeText && block.Text != "" {
+				label := "USER"
+				if msg.Role == RoleAssistant {
+					label = "ASSISTANT"
+				}
+				entries = append(entries, entry{role: label, text: block.Text})
+				break // one text block per message is enough
+			}
+		}
+	}
+
+	if len(entries) == 0 {
+		return ""
+	}
+
+	// Reverse to chronological order.
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+
+	var b strings.Builder
+	for _, e := range entries {
+		// Truncate very long messages to keep context compact.
+		text := e.text
+		if len(text) > 500 {
+			text = text[:500] + "..."
+		}
+		fmt.Fprintf(&b, "%s: %s\n", e.role, text)
+	}
+	return strings.TrimSpace(b.String())
 }

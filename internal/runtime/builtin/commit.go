@@ -11,23 +11,29 @@ import (
 )
 
 const (
-	// maxDiffBytes caps the diff content sent to the LLM (~6000 tokens).
+	// maxDiffBytes caps the diff content sent to the LLM.
 	maxDiffBytes = 24_000
 
 	// commitMaxTokens limits the LLM output for commit message generation.
 	commitMaxTokens = 256
 
-	commitSystemPrompt = `Generate a concise git commit message for the given diff.
+	// commitSystemPrompt is adapted from aider's proven prompt, which follows
+	// the Conventional Commits specification (https://www.conventionalcommits.org/en/v1.0.0/).
+	commitSystemPrompt = `You are an expert software engineer that generates concise, one-line Git commit messages based on the provided diffs.
+Review the provided context and diffs which are about to be committed to a git repo.
+Review the diffs carefully.
+Generate a one-line commit message for those changes.
+The commit message MUST be structured as: <type>[optional scope]: <description>
+Use these for <type>: fix, feat, build, chore, ci, docs, style, refactor, perf, test
+Optionally add a scope in parentheses when changes are localized, e.g. fix(api): handle nil response.
 
-Rules:
-- Use conventional commit format: <type>: <short summary>
-- Types: fix, feat, docs, refactor, test, chore, perf
-- Match the style of the recent commits shown
-- The summary MUST describe what specifically changed — name the feature, module, function, or config affected
-- Do NOT write vague messages like "update files" or "make changes" — be specific about what was added, fixed, or modified
-- Keep the first line under 72 characters
-- Add a blank line and a brief body only if the change needs explanation
-- Output ONLY the commit message — no markdown fences, no commentary`
+Ensure the commit message:
+- Starts with the appropriate type prefix.
+- Is in the imperative mood (e.g., "add feature" not "added feature" or "adding feature").
+- Does not exceed 72 characters.
+- Specifically names the feature, module, or component affected — never use vague descriptions like "update files" or "make changes".
+
+Reply only with the one-line commit message, without any additional text, explanations, or line breaks.`
 )
 
 // CommitGenerator creates git commits with LLM-generated messages,
@@ -53,6 +59,11 @@ type CommitRequest struct {
 
 	// Hint provides additional context for the LLM (e.g., "fixes login bug").
 	Hint string
+
+	// Context provides conversation history or other context about what
+	// changes were made and why — passed to the LLM alongside the diff
+	// (similar to aider's context parameter).
+	Context string
 }
 
 // CommitResult holds the outcome of a commit operation.
@@ -112,10 +123,11 @@ func (cg *CommitGenerator) Generate(ctx context.Context, req *CommitRequest) (*C
 	// previously untracked files that are now staged.
 	gc.diff, gc.stat = cg.readStagedDiff()
 
-	// Step 4: Generate commit message.
-	message, err := cg.generateMessage(ctx, gc, req.Hint)
+	// Step 4: Generate commit message via LLM.
+	message, err := cg.generateMessage(ctx, gc, req.Hint, req.Context)
 	if err != nil {
-		slog.Warn("LLM commit message generation failed, using template fallback", "error", err)
+		slog.Error("LLM commit message generation failed, using template fallback",
+			"error", err, "diff_len", len(gc.diff), "stat", gc.stat)
 		message = cg.templateFallback(gc)
 	}
 	result.Message = message
@@ -208,8 +220,22 @@ func (cg *CommitGenerator) readStagedDiff() (diff, stat string) {
 }
 
 // generateMessage builds the LLM prompt and makes one API call.
-func (cg *CommitGenerator) generateMessage(ctx context.Context, gc *gitContext, hint string) (string, error) {
+// Content assembly follows aider's proven pattern: context first, then diffs.
+func (cg *CommitGenerator) generateMessage(ctx context.Context, gc *gitContext, hint, conversationContext string) (string, error) {
 	var userContent strings.Builder
+
+	// Context section — conversation history and/or hint explaining what
+	// changes were made and why. Placed before diffs so the LLM reads the
+	// intent before seeing the code changes (same order as aider).
+	if conversationContext != "" {
+		userContent.WriteString(conversationContext)
+		userContent.WriteString("\n\n")
+	}
+	if hint != "" {
+		userContent.WriteString("Context: ")
+		userContent.WriteString(hint)
+		userContent.WriteString("\n\n")
+	}
 
 	if gc.recentLog != "" {
 		userContent.WriteString("Recent commits (for style reference):\n")
@@ -223,13 +249,14 @@ func (cg *CommitGenerator) generateMessage(ctx context.Context, gc *gitContext, 
 		userContent.WriteString("\n\n")
 	}
 
-	userContent.WriteString("Diff:\n")
-	userContent.WriteString(truncateDiff(gc.diff))
-
-	if hint != "" {
-		userContent.WriteString("\n\nAdditional context: ")
-		userContent.WriteString(hint)
+	// Diffs section — prefixed with marker like aider does.
+	userContent.WriteString("# Diffs:\n")
+	diff := truncateDiff(gc.diff)
+	if diff == "" {
+		// If staged diff is empty (shouldn't happen after staging), use stat.
+		diff = gc.stat
 	}
+	userContent.WriteString(diff)
 
 	raw, err := cg.chain.SingleShot(ctx, commitSystemPrompt, userContent.String(), commitMaxTokens)
 	if err != nil {
