@@ -262,6 +262,7 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Usage:       "/init [focus]",
 		Category:    "workspace",
 		Handler:     initHandler(deps),
+		AgentTurn:   true,
 	})
 
 	// Also register as a skill executor so the LLM can call Skill("init")
@@ -555,10 +556,6 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 	})
 }
 
-// commitHandler returns a handler that creates a git commit with an
-// AI-generated message using the builtin commit generator. This bypasses the
-// full conversation runtime, running git commands directly and making a single
-// cheap LLM call.
 func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error) {
 	return func(ctx context.Context, args string) (string, error) {
 		cwd := deps.WorkDir

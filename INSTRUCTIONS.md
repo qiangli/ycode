@@ -13,6 +13,37 @@ This repository uses a **skill system** — reusable, agent-agnostic slash comma
 
 See [skills/README.md](./skills/README.md) for the full convention and available commands.
 
+### Internal Skills (embedded in the ycode binary)
+
+Some skills are **internal** — compiled into the ycode binary with no `skills/<name>/skill.md` file on disk. They are dispatched via the `Skill` tool or as registered commands with `AgentTurn: true`.
+
+#### `/init [focus]` — Guided AGENTS.md Setup
+
+The `/init` command is a **two-phase command** — it runs a deterministic scaffold, then chains into an agentic conversation turn where the LLM enhances the generated files.
+
+**Phase 1 — Scaffold (deterministic, no LLM):**
+The command handler creates the workspace structure immediately, before the LLM is involved:
+- `.agents/ycode/` directory (config, sessions, cache, logs)
+- `.agents/ycode.json` with auto-detected project metadata (languages, frameworks, build commands)
+- `.gitignore` entries for ycode artifacts
+- Template `AGENTS.md` (if it doesn't already exist)
+
+This phase is idempotent — running `/init` again skips existing files. The scaffold report is displayed to the user.
+
+**Phase 2 — Enhancement (LLM-driven):**
+After the scaffold completes, an agentic turn starts automatically. The LLM receives the original `/init [focus]` input, calls the `Skill("init")` tool, and gets back instructions to:
+1. Scan the project (README, manifests, CI config, existing instruction files)
+2. Enhance `AGENTS.md` with project-specific content — build commands, architecture notes, testing quirks, conventions that differ from defaults
+3. Keep it compact: every line must answer "would an agent miss this without help?"
+
+The enhancement instructions are embedded in the binary (`init_skill.md`). The LLM uses only read-only tools (`read_file`, `glob_search`, `grep_search`) during the scan, plus `edit_file`/`write_file` to update AGENTS.md.
+
+**Design rationale:** Phase 1 guarantees the workspace exists even if the LLM call fails or is cancelled. Phase 2 produces high-quality, project-specific agent instructions that would otherwise require manual authoring. This matches the pattern used by modern agentic tools (e.g. opencode's `/init` guided setup).
+
+#### `/commit [message]`
+
+The `/commit` skill is also embedded in the binary. It generates a commit message via a single LLM call and runs git commands directly, bypassing the full conversation runtime.
+
 ## Project Conventions
 
 ### Layered Build System

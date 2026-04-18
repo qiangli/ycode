@@ -68,6 +68,8 @@ When committing, also apply this Claude Code-specific behavior on top of the `/c
 
 When a user message starts with `/<name>`, read `skills/<name>/skill.md` and follow its instructions. List available skills with `ls skills/*/skill.md`.
 
+**Internal skills** (`/init`, `/commit`) are embedded in the binary — no `skills/<name>/skill.md` on disk. `/init` is a two-phase command: scaffold runs deterministically, then the LLM enhances `AGENTS.md` in an agentic turn via the `Skill("init")` tool. See [INSTRUCTIONS.md](./INSTRUCTIONS.md) § Internal Skills for details.
+
 ## For More Detail
 
 Read these on demand, not upfront:

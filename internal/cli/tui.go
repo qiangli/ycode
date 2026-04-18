@@ -100,9 +100,10 @@ type toolTaskProgress struct {
 // Custom message types.
 
 type commandOutputMsg struct {
-	Echo string
-	Text string
-	Err  error
+	Echo        string
+	Text        string
+	Err         error
+	AgentPrompt string // if non-empty, start an agentic turn after displaying Text
 }
 
 // turnResultMsg is sent when a conversation turn completes.
@@ -508,14 +509,23 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case commandOutputMsg:
-		m.working = false
 		m.appendOutput(msg.Echo)
 		if msg.Err != nil {
+			m.working = false
 			m.appendOutput(fmt.Sprintf("Error: %v\n\n", msg.Err))
-		} else if msg.Text != "" {
-			m.appendOutput(msg.Text + "\n\n")
+			cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
+		} else {
+			if msg.Text != "" {
+				m.appendOutput(msg.Text + "\n\n")
+			}
+			if msg.AgentPrompt != "" {
+				// Chain into an agentic turn (e.g. /init scaffold → LLM enhancement).
+				cmds = append(cmds, m.startAgentTurn(msg.AgentPrompt))
+			} else {
+				m.working = false
+				cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
+			}
 		}
-		cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
 
 	case busEventMsg:
 		return m.handleBusEvent(msg.Event)
@@ -893,11 +903,17 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 
 		// Try built-in commands first; fall through to agent for unregistered
 		// names (e.g. skill slash commands like /claude, /build).
-		if _, ok := m.app.commands.Get(name); ok {
+		if spec, ok := m.app.commands.Get(name); ok {
 			echo := fmt.Sprintf("> %s\n", text)
+			agentTurn := spec.AgentTurn
+			userInput := text
 			return func() tea.Msg {
 				output, err := m.app.commands.Execute(context.Background(), name, args)
-				return commandOutputMsg{Echo: echo, Text: output, Err: err}
+				msg := commandOutputMsg{Echo: echo, Text: output, Err: err}
+				if agentTurn && err == nil {
+					msg.AgentPrompt = userInput
+				}
+				return msg
 			}
 		}
 	}
