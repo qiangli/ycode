@@ -18,11 +18,12 @@ func TestDistillToolOutput_SmallOutput(t *testing.T) {
 
 func TestDistillToolOutput_ExemptTool(t *testing.T) {
 	cfg := DefaultDistillConfig()
+	cfg.ExemptTools = []string{"custom_tool"}
 	// Create a large output.
 	output := strings.Repeat("x\n", 1000)
-	result := DistillToolOutput("read_file", output, cfg)
+	result := DistillToolOutput("custom_tool", output, cfg)
 	if result != output {
-		t.Error("exempt tool output should be unchanged regardless of size")
+		t.Error("explicitly exempt tool output should be unchanged regardless of size")
 	}
 }
 
@@ -163,28 +164,26 @@ func TestDistillToolOutput_AggressiveHeadTail(t *testing.T) {
 	}
 }
 
-func TestDistillToolOutput_DefaultExemptions(t *testing.T) {
+func TestDistillToolOutput_NoDefaultExemptions(t *testing.T) {
 	cfg := DefaultDistillConfig()
-	exempts := cfg.ExemptTools
 
-	expected := map[string]bool{"read_file": true, "read_multiple_files": true}
-	for _, e := range exempts {
-		if !expected[e] {
-			t.Errorf("unexpected exempt tool: %s", e)
-		}
+	// No tools are exempt from distillation by default.
+	if len(cfg.ExemptTools) != 0 {
+		t.Errorf("expected no exempt tools, got %v", cfg.ExemptTools)
 	}
 
-	// Verify file exists on disk.
 	dir := t.TempDir()
 	cfg.FullOutputDir = dir
 
 	bigOutput := strings.Repeat("line\n", 500)
+
+	// read_file should now be distilled like all other tools.
 	result := DistillToolOutput("read_file", bigOutput, cfg)
-	if result != bigOutput {
-		t.Error("read_file should bypass distillation")
+	if result == bigOutput {
+		t.Error("read_file should be distilled (no longer exempt)")
 	}
 
-	// But bash should be distilled.
+	// bash should also be distilled.
 	result = DistillToolOutput("bash", bigOutput, cfg)
 	if result == bigOutput {
 		t.Error("bash should be distilled")
@@ -192,6 +191,6 @@ func TestDistillToolOutput_DefaultExemptions(t *testing.T) {
 
 	entries, _ := os.ReadDir(filepath.Join(dir))
 	if len(entries) == 0 {
-		t.Error("expected saved output file for bash")
+		t.Error("expected saved output file")
 	}
 }

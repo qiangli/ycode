@@ -49,7 +49,12 @@ func TasksSection() string {
  - Do not create files unless they are required to complete the task.
  - If an approach fails, diagnose the failure before switching tactics.
  - Be careful not to introduce security vulnerabilities such as command injection, XSS, or SQL injection.
- - Report outcomes faithfully: if verification fails or was not run, say so explicitly.`
+ - Report outcomes faithfully: if verification fails or was not run, say so explicitly.
+
+# Efficient tool usage
+ - Use grep_search in files_with_matches mode first to locate relevant files, then read specific files.
+ - For large files, use read_file with offset and limit instead of reading the entire file.
+ - Use read_multiple_files to batch-read several small files in one call instead of sequential read_file calls.`
 }
 
 // ActionsSection returns guidance for safe actions.
@@ -84,44 +89,49 @@ func EnvironmentSection(ctx *ProjectContext) string {
 	return strings.TrimRight(s, "\n")
 }
 
-// ProjectSection returns project context with date, instruction count, git status/diff.
+// maxProjectGitDiffChars caps the git diff in the project section to prevent
+// large diffs from bloating the system prompt on every turn.
+const maxProjectGitDiffChars = 1000
+
+// ProjectSection returns project context with instruction count, git status/diff.
+// Date and working directory are emitted by EnvironmentSection and not repeated here.
 func ProjectSection(ctx *ProjectContext) string {
 	var lines []string
 	lines = append(lines, "# Project context")
 
-	var bullets []string
-	if ctx.CurrentDate != "" {
-		bullets = append(bullets, fmt.Sprintf("Today's date is %s.", ctx.CurrentDate))
-	}
-	bullets = append(bullets, fmt.Sprintf("Working directory: %s", ctx.WorkDir))
 	if len(ctx.ContextFiles) > 0 {
-		bullets = append(bullets, fmt.Sprintf("Claude instruction files discovered: %d.", len(ctx.ContextFiles)))
-	}
-	for _, b := range bullets {
-		lines = append(lines, " - "+b)
+		lines = append(lines, fmt.Sprintf(" - Instruction files discovered: %d.", len(ctx.ContextFiles)))
 	}
 
 	// Git status snapshot (initial, captured at session start).
 	if ctx.GitStatus != "" {
 		lines = append(lines, "")
-		lines = append(lines, "Initial git status (captured at session start):")
+		lines = append(lines, "Initial git status:")
 		lines = append(lines, ctx.GitStatus)
 	}
 
-	// Recent commits.
+	// Recent commits (capped at 3 to save tokens).
 	if len(ctx.RecentCommits) > 0 {
 		lines = append(lines, "")
-		lines = append(lines, "Recent commits (last 5):")
-		for _, c := range ctx.RecentCommits {
+		maxCommits := 3
+		if len(ctx.RecentCommits) < maxCommits {
+			maxCommits = len(ctx.RecentCommits)
+		}
+		lines = append(lines, fmt.Sprintf("Recent commits (%d):", maxCommits))
+		for _, c := range ctx.RecentCommits[:maxCommits] {
 			lines = append(lines, "  "+c)
 		}
 	}
 
-	// Git diff snapshot (initial, captured at session start).
+	// Git diff snapshot (capped to prevent large diffs from bloating context).
 	if ctx.GitDiff != "" {
 		lines = append(lines, "")
-		lines = append(lines, "Initial git diff (captured at session start):")
-		lines = append(lines, ctx.GitDiff)
+		diff := ctx.GitDiff
+		if len(diff) > maxProjectGitDiffChars {
+			diff = diff[:maxProjectGitDiffChars] + "\n... (diff truncated)"
+		}
+		lines = append(lines, "Initial git diff:")
+		lines = append(lines, diff)
 	}
 
 	return strings.Join(lines, "\n")
@@ -192,20 +202,11 @@ func FilesystemSection(allowedDirs []string) string {
 
 	var lines []string
 	lines = append(lines, "# Filesystem access")
-	lines = append(lines, "All filesystem operations are validated against allowed directories. Paths outside these directories are rejected.")
-	lines = append(lines, "")
+	lines = append(lines, "Operations validated against allowed directories. Absolute paths required. Max file size: 10 MB.")
 	lines = append(lines, "Allowed directories:")
 	for _, d := range allowedDirs {
 		lines = append(lines, " - "+d)
 	}
-	lines = append(lines, "")
-	lines = append(lines, "Rules:")
-	lines = append(lines, " - All paths must be absolute.")
-	lines = append(lines, " - Symbolic links that resolve within allowed directories are permitted without approval.")
-	lines = append(lines, " - Symbolic links that resolve outside allowed directories require user approval.")
-	lines = append(lines, " - Maximum file size for read/write operations: 10 MB.")
-	lines = append(lines, "")
-	lines = append(lines, "Additional filesystem tools (copy_file, move_file, delete_file, create_directory, list_directory, tree, get_file_info, read_multiple_files, list_roots) are available via ToolSearch.")
 	return strings.Join(lines, "\n")
 }
 

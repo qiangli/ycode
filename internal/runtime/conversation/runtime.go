@@ -48,7 +48,11 @@ type Runtime struct {
 
 	// Activated deferred tools — tools discovered via ToolSearch that must
 	// be included in subsequent API requests so the provider accepts tool_use calls.
-	activatedTools map[string]bool
+	// Value is the turn number when the tool was last used/activated.
+	activatedTools map[string]int
+
+	// turnCount tracks the current conversation turn for tool expiration.
+	turnCount int
 
 	// Completion cache — short-TTL cache that skips the LLM entirely
 	// for identical requests (retries, error recovery).
@@ -113,7 +117,7 @@ func NewRuntime(
 		contextBudget:    contextBudget,
 		distillCfg:       distillCfg,
 		routingCache:     session.NewRoutingCache(),
-		activatedTools:   make(map[string]bool),
+		activatedTools:   make(map[string]int),
 		completionCache:  api.NewCompletionCache(completionCacheDir, api.CompletionCacheTTL),
 	}
 }
@@ -170,8 +174,14 @@ type ToolCall struct {
 	Error  string          `json:"error,omitempty"`
 }
 
+// activatedToolTTL is the number of turns after which an activated deferred
+// tool is expired if not used. Keeps the tool list lean in long sessions.
+const activatedToolTTL = 3
+
 // Turn executes one turn of the conversation: send messages, get response, execute tools.
 func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult, error) {
+	r.turnCount++
+
 	// Build system prompt.
 	systemPrompt := prompt.BuildDefault(r.promptCtx, r.planMode, r.cachingSupported, r.contextBaseline)
 
@@ -181,6 +191,14 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		toolSpecs = r.registry.AlwaysAvailableForMode(permission.ReadOnly)
 	} else {
 		toolSpecs = r.registry.AlwaysAvailable()
+	}
+
+	// Expire activated tools not used in the last N turns.
+	for name, lastUsed := range r.activatedTools {
+		if r.turnCount-lastUsed > activatedToolTTL {
+			delete(r.activatedTools, name)
+			r.logger.Info("expired deferred tool", "tool", name, "lastUsed", lastUsed, "turn", r.turnCount)
+		}
 	}
 
 	// Include activated deferred tools (discovered via ToolSearch).
@@ -397,6 +415,10 @@ func (r *Runtime) ExecuteTools(ctx context.Context, calls []ToolCall, progress c
 		if call.Name == "ToolSearch" && i < len(results) && !results[i].IsError {
 			r.activateToolsFromResult(results[i].Content)
 		}
+		// Refresh turn counter for activated tools that are actually used.
+		if _, ok := r.activatedTools[call.Name]; ok {
+			r.activatedTools[call.Name] = r.turnCount
+		}
 	}
 
 	return r.distillResults(calls, results)
@@ -410,10 +432,10 @@ func (r *Runtime) activateToolsFromResult(content string) {
 	for _, name := range r.registry.Names() {
 		// Check if the tool name appears in the ToolSearch output (as a JSON field value).
 		if strings.Contains(content, `"name":"`+name+`"`) || strings.Contains(content, `"name": "`+name+`"`) {
-			if !r.activatedTools[name] {
-				r.activatedTools[name] = true
+			if _, ok := r.activatedTools[name]; !ok {
 				r.logger.Info("activated deferred tool", "tool", name)
 			}
+			r.activatedTools[name] = r.turnCount
 		}
 	}
 }

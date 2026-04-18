@@ -75,7 +75,7 @@ func DefaultDistillConfig() DistillConfig {
 		MaxInlineBytes: DefaultMaxInlineBytes,
 		MaxInlineLines: DefaultMaxInlineLines,
 		MaxLineLength:  DefaultMaxLineLength,
-		ExemptTools:    []string{"read_file", "read_multiple_files"},
+		ExemptTools:    nil,
 	}
 }
 
@@ -87,7 +87,7 @@ func AggressiveDistillConfig() DistillConfig {
 		MaxInlineLines: aggressiveMaxInlineLines,
 		MaxLineLength:  aggressiveMaxLineLength,
 		AggressiveMode: true,
-		ExemptTools:    []string{"read_file", "read_multiple_files"},
+		ExemptTools:    nil,
 	}
 }
 

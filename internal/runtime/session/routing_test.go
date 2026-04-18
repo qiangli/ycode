@@ -21,7 +21,7 @@ func TestRouteContent_ReadFileSmall(t *testing.T) {
 }
 
 func TestRouteContent_ReadFileLarge(t *testing.T) {
-	route := RouteContent("read_file", strings.Repeat("x", 6000), false, nil, false)
+	route := RouteContent("read_file", strings.Repeat("x", 3000), false, nil, false)
 	if route != RoutePartial {
 		t.Errorf("large read_file should be RoutePartial, got %s", route)
 	}
@@ -93,32 +93,32 @@ func TestApplyRoute_Excluded(t *testing.T) {
 }
 
 func TestRouteContent_AggressiveSearchThreshold(t *testing.T) {
-	// 800 chars: above aggressive threshold (500) but below normal (1000).
-	content := strings.Repeat("x", 800)
+	// 400 chars: above aggressive threshold (300) but below normal (500).
+	content := strings.Repeat("x", 400)
 
 	normal := RouteContent("grep_search", content, false, nil, false)
 	aggressive := RouteContent("grep_search", content, false, nil, true)
 
 	if normal != RouteFull {
-		t.Errorf("normal routing for 800-char search should be RouteFull, got %s", normal)
+		t.Errorf("normal routing for 400-char search should be RouteFull, got %s", normal)
 	}
 	if aggressive != RoutePartial {
-		t.Errorf("aggressive routing for 800-char search should be RoutePartial, got %s", aggressive)
+		t.Errorf("aggressive routing for 400-char search should be RoutePartial, got %s", aggressive)
 	}
 }
 
 func TestRouteContent_AggressiveBashSummary(t *testing.T) {
-	// 2000 chars: above aggressive summary threshold (1500) but below normal (3000).
-	content := strings.Repeat("x", 2000)
+	// 800 chars: above aggressive summary threshold (500) but below normal (1000).
+	content := strings.Repeat("x", 800)
 
 	normal := RouteContent("bash", content, false, nil, false)
 	aggressive := RouteContent("bash", content, false, nil, true)
 
 	if normal != RoutePartial {
-		t.Errorf("normal routing for 2000-char bash should be RoutePartial, got %s", normal)
+		t.Errorf("normal routing for 800-char bash should be RoutePartial, got %s", normal)
 	}
 	if aggressive != RouteSummary {
-		t.Errorf("aggressive routing for 2000-char bash should be RouteSummary, got %s", aggressive)
+		t.Errorf("aggressive routing for 800-char bash should be RouteSummary, got %s", aggressive)
 	}
 }
 

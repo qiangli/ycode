@@ -6,7 +6,7 @@ import (
 
 const (
 	// MaxRefreshBudget is the maximum characters for post-compaction context refresh.
-	MaxRefreshBudget = 3000
+	MaxRefreshBudget = 1500
 )
 
 // PostCompactionRefresh extracts critical sections from instruction files

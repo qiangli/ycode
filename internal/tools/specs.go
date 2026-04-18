@@ -118,7 +118,7 @@ func builtinSpecs() []*ToolSpec {
 		},
 		{
 			Name:         "read_multiple_files",
-			Description:  "Read multiple files at once, returning their contents concatenated with headers.",
+			Description:  "Read multiple files in one call. Preferred over sequential read_file calls during exploration.",
 			InputSchema:  mustJSON(readMultipleFilesSchema),
 			RequiredMode: permission.ReadOnly,
 			Source:       SourceBuiltin,

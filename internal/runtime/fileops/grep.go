@@ -91,7 +91,7 @@ func GrepSearch(params GrepParams) (*GrepResult, error) {
 
 	headLimit := params.HeadLimit
 	if headLimit <= 0 {
-		headLimit = 250
+		headLimit = 100
 	}
 
 	result := &GrepResult{}

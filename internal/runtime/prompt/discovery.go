@@ -9,9 +9,9 @@ import (
 
 const (
 	// MaxFileContentBudget per instruction file.
-	MaxFileContentBudget = 4000
+	MaxFileContentBudget = 2500
 	// MaxTotalBudget for all instruction files combined.
-	MaxTotalBudget = 12000
+	MaxTotalBudget = 6000
 )
 
 // InstructionFileNames are the filenames to search for.

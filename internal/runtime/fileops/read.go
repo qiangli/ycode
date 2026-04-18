@@ -13,6 +13,9 @@ const (
 	DefaultReadLimit = 2000
 	// MaxFileSize is the maximum file size to read (10 MB).
 	MaxFileSize = 10 * 1024 * 1024
+	// MaxReadOutputBytes caps inline output size (50 KB, matching OpenCode).
+	// Prevents pathologically large file reads from bloating conversation context.
+	MaxReadOutputBytes = 50 * 1024
 )
 
 // ReadFileParams configures file reading.
@@ -78,6 +81,18 @@ func ReadFile(params ReadFileParams) (string, error) {
 
 	if b.Len() == 0 {
 		return fmt.Sprintf("(file %s is empty or offset is past end of file)", params.Path), nil
+	}
+
+	// Cap output size to prevent bloating conversation context.
+	if b.Len() > MaxReadOutputBytes {
+		output := b.String()[:MaxReadOutputBytes]
+		// Find the last newline to avoid cutting mid-line.
+		if idx := strings.LastIndex(output, "\n"); idx > 0 {
+			output = output[:idx+1]
+		}
+		nextOffset := params.Offset + linesRead
+		return output + fmt.Sprintf("\n[Output truncated at %dKB. Use offset=%d to continue reading.]",
+			MaxReadOutputBytes/1024, nextOffset), nil
 	}
 
 	return b.String(), nil

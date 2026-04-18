@@ -77,14 +77,14 @@ func classifyContent(toolName string, content string, isError bool, aggressive b
 		return RouteFull
 	}
 
-	// Read operations — the content IS what the user needs.
+	// Read operations — keep full only if small, partial otherwise.
 	readTools := map[string]bool{
 		"read_file": true, "read_multiple_files": true,
 	}
 	if readTools[toolName] {
-		threshold := 5000
+		threshold := 2000
 		if aggressive {
-			threshold = 3000
+			threshold = 1000
 		}
 		if len(content) < threshold {
 			return RouteFull
@@ -105,9 +105,9 @@ func classifyContent(toolName string, content string, isError bool, aggressive b
 		"glob_search": true, "grep_search": true,
 	}
 	if searchTools[toolName] {
-		threshold := 1000
+		threshold := 500
 		if aggressive {
-			threshold = 500
+			threshold = 300
 		}
 		if len(content) < threshold {
 			return RouteFull
@@ -118,14 +118,15 @@ func classifyContent(toolName string, content string, isError bool, aggressive b
 	// Bash outputs — varies widely.
 	if toolName == "bash" {
 		lower := strings.ToLower(content)
-		// Test results and build output — keep more.
+		// Test results and build output — keep partial for diagnostics.
 		if strings.Contains(lower, "pass") || strings.Contains(lower, "fail") ||
 			strings.Contains(lower, "error") || strings.Contains(lower, "warning") {
 			return RoutePartial
 		}
-		summaryThreshold := 3000
+		// Non-diagnostic output: summarize when large.
+		summaryThreshold := 1000
 		if aggressive {
-			summaryThreshold = 1500
+			summaryThreshold = 500
 		}
 		if len(content) > summaryThreshold {
 			return RouteSummary

@@ -38,8 +38,13 @@ func Open(dir string) (*Store, error) {
 }
 
 // getOrCreateIndex lazily opens or creates a Bleve index.
+// Returns an error if the store has been closed.
 func (s *Store) getOrCreateIndex(name string) (bleve.Index, error) {
 	s.mu.RLock()
+	if s.indexes == nil {
+		s.mu.RUnlock()
+		return nil, fmt.Errorf("search store is closed")
+	}
 	idx, ok := s.indexes[name]
 	s.mu.RUnlock()
 	if ok {
@@ -48,6 +53,11 @@ func (s *Store) getOrCreateIndex(name string) (bleve.Index, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Store has been closed — indexes map set to nil during shutdown.
+	if s.indexes == nil {
+		return nil, fmt.Errorf("search store is closed")
+	}
 
 	// Double-check after acquiring write lock.
 	if idx, ok := s.indexes[name]; ok {

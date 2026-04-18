@@ -40,3 +40,8 @@ debug/
 
 #
 tmp/
+.agents/ycode.json
+.agents/ycode/settings.local.json
+.agents/ycode/sessions/
+.agents/ycode/cache/
+.agents/ycode/logs/

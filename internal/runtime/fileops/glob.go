@@ -1,6 +1,7 @@
 package fileops
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -90,6 +91,15 @@ func GlobSearch(params GlobParams) (*GlobResult, error) {
 		}
 		return infoI.ModTime().After(infoJ.ModTime())
 	})
+
+	// Cap results to prevent bloating conversation context.
+	const maxGlobResults = 100
+	if len(matches) > maxGlobResults {
+		total := len(matches)
+		matches = matches[:maxGlobResults]
+		matches = append(matches,
+			fmt.Sprintf("(Showing %d of %d matches. Narrow the pattern for more specific results.)", maxGlobResults, total))
+	}
 
 	return &GlobResult{Files: matches}, nil
 }

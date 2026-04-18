@@ -13,8 +13,8 @@ func TestProjectSection_InitialGitStatusLabel(t *testing.T) {
 
 	result := ProjectSection(ctx)
 
-	if !strings.Contains(result, "Initial git status (captured at session start):") {
-		t.Error("should label git status as initial snapshot captured at session start")
+	if !strings.Contains(result, "Initial git status:") {
+		t.Error("should label git status")
 	}
 	if !strings.Contains(result, "M file.go") {
 		t.Error("should include the actual git status content")
@@ -29,8 +29,8 @@ func TestProjectSection_InitialGitDiffLabel(t *testing.T) {
 
 	result := ProjectSection(ctx)
 
-	if !strings.Contains(result, "Initial git diff (captured at session start):") {
-		t.Error("should label git diff as initial snapshot captured at session start")
+	if !strings.Contains(result, "Initial git diff:") {
+		t.Error("should label git diff")
 	}
 	if !strings.Contains(result, "+added line") {
 		t.Error("should include the actual git diff content")
@@ -52,19 +52,38 @@ func TestProjectSection_OmitsEmptyGitFields(t *testing.T) {
 	}
 }
 
-func TestProjectSection_RecentCommits(t *testing.T) {
+func TestProjectSection_RecentCommitsCappedAt3(t *testing.T) {
 	ctx := &ProjectContext{
 		WorkDir:       "/tmp/project",
-		RecentCommits: []string{"abc1234 fix: something", "def5678 feat: another"},
+		RecentCommits: []string{"a fix: one", "b feat: two", "c docs: three", "d test: four", "e ci: five"},
 	}
 
 	result := ProjectSection(ctx)
 
-	if !strings.Contains(result, "Recent commits (last 5):") {
-		t.Error("should include recent commits section")
+	if !strings.Contains(result, "Recent commits (3):") {
+		t.Error("should include recent commits section capped at 3")
 	}
-	if !strings.Contains(result, "abc1234 fix: something") {
-		t.Error("should include commit entries")
+	if !strings.Contains(result, "a fix: one") {
+		t.Error("should include first commit")
+	}
+	if !strings.Contains(result, "c docs: three") {
+		t.Error("should include third commit")
+	}
+	if strings.Contains(result, "d test: four") {
+		t.Error("should NOT include fourth commit (capped at 3)")
+	}
+}
+
+func TestProjectSection_GitDiffTruncation(t *testing.T) {
+	ctx := &ProjectContext{
+		WorkDir: "/tmp/project",
+		GitDiff: strings.Repeat("x", 2000),
+	}
+
+	result := ProjectSection(ctx)
+
+	if !strings.Contains(result, "diff truncated") {
+		t.Error("large git diff should be truncated")
 	}
 }
 
@@ -92,6 +111,23 @@ func TestProjectSection_AllGitFieldsTogether(t *testing.T) {
 	}
 	if commitsIdx > diffIdx {
 		t.Error("recent commits should appear before git diff")
+	}
+}
+
+func TestProjectSection_NoDuplicateDateOrWorkDir(t *testing.T) {
+	ctx := &ProjectContext{
+		WorkDir:     "/tmp/project",
+		CurrentDate: "2026-04-17",
+	}
+
+	result := ProjectSection(ctx)
+
+	// Date and working directory should NOT be in ProjectSection (they're in EnvironmentSection).
+	if strings.Contains(result, "2026-04-17") {
+		t.Error("should not duplicate date (already in EnvironmentSection)")
+	}
+	if strings.Contains(result, "Working directory:") {
+		t.Error("should not duplicate working directory (already in EnvironmentSection)")
 	}
 }
 
