@@ -10,36 +10,48 @@ The workspace scaffold is already complete (directories, config, gitignore,
 template AGENTS.md). Your job is to **review and enhance** the generated
 AGENTS.md based on what the project actually contains.
 
+This project may be written in any language or may be a data repository
+with no code at all. Do not assume anything about the project type.
+
 User-provided focus or constraints (honor these if non-empty):
 {{ARGS}}
 
+## What you must NOT do
+
+- **NEVER** build, compile, run, or execute the project
+- **NEVER** run `make`, `go build`, `npm install`, `cargo build`, or any build command
+- **NEVER** run the project binary or any project scripts
+- **NEVER** use Bash to run shell commands — use only built-in tools listed below
+- **NEVER** install dependencies or modify project state beyond AGENTS.md
+
 ## Tool usage rules
 
-**Use ONLY built-in tools. NEVER use Bash for file discovery or reading.**
+Use ONLY these built-in tools:
 
-- Use **Glob** to find files (not `find`, `ls`, or `tree`)
-- Use **Grep** to search file contents (not `grep`, `rg`, or `cat`)
-- Use **Read** to read files (not `cat`, `head`, or `tail`)
-- Use **Write** or **Edit** to create or modify files
-- Run Glob/Read calls **in parallel** when checking multiple files
+- **Read** — read file contents (not `cat`, `head`, `tail`)
+- **Glob** — find files by pattern (not `find`, `ls`, `tree`)
+- **Grep** — search file contents by regex (not `grep`, `rg`)
+- **Edit** — modify existing files
+- **Write** — create new files
+
+Run Read/Glob calls **in parallel** when checking multiple files.
 
 ## Step 1: Quick project scan
 
-Use Glob to check which of these files exist (one Glob call with pattern,
-or parallel Read calls — do NOT run shell commands):
+Use Glob and Read to check which of these files exist:
 
 - `README.md`, `USAGE.md`, `INSTRUCTIONS.md`
 - `CLAUDE.md`, `AGENTS.md`
 - `Makefile`, `go.mod`, `package.json`, `Cargo.toml`, `pyproject.toml`
 
-Read only the files that exist. Skip files that are not found.
-Read at most 5 files total — prioritize README.md, USAGE.md, and the
-primary manifest (go.mod, package.json, etc.).
+Read only the files that exist. Skip files not found.
+Read at most 5 files — prioritize README.md, USAGE.md, and the primary
+manifest file.
 
 ## Step 2: Enhance AGENTS.md
 
-Read the generated AGENTS.md (from the scaffold step). Update it using the
-Edit tool with any project-specific additions worth keeping:
+Read the generated AGENTS.md. Update it using Edit with any project-specific
+additions worth keeping:
 
 ### Required content:
 
@@ -55,9 +67,9 @@ tools, and workflows.`
 Claude Code-specific guidance.`
 
 **Quick commands**: Only if USAGE.md does NOT exist — add build/test/lint
-commands. If USAGE.md covers these, a reference is sufficient.
+commands found in manifest files. If USAGE.md covers these, omit them.
 
-**Repo-specific guidance**: Only include facts an agent would miss:
+**Repo-specific guidance**: Only facts an agent would miss without help:
 - Non-obvious architectural boundaries
 - Testing quirks or prerequisites
 - Conventions differing from language defaults
