@@ -6,9 +6,7 @@ user_invocable: true
 
 # /commit — Commit Local Changes
 
-> **Fast path**: When invoked as a slash command (`/commit [hint]`), this operation uses the builtin commit generator — a single cheap LLM call with no tool dispatch, yielding ~95% token savings. The full agentic workflow below is used only when the LLM invokes the commit skill organically during conversation.
-
-Analyze uncommitted changes, draft an appropriate commit message, and create a clean git commit that follows the repository's existing conventions.
+Analyze uncommitted changes, draft an appropriate commit message following [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), and create a clean git commit.
 
 ## Instructions
 

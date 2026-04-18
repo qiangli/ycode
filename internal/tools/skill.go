@@ -50,18 +50,20 @@ func discoverSkill(name string) (string, error) {
 	// Search paths: project → home → env vars.
 	searchDirs := skillSearchDirs()
 
-	for _, dir := range searchDirs {
-		path := filepath.Join(dir, skillName, "SKILL.md")
-		content, err := os.ReadFile(path)
-		if err == nil {
-			return string(content), nil
-		}
+	// Try multiple filename conventions (SKILL.md, skill.md, <name>.md).
+	filenames := []string{
+		filepath.Join(skillName, "SKILL.md"),
+		filepath.Join(skillName, "skill.md"),
+		skillName + ".md",
+	}
 
-		// Try direct file match.
-		path = filepath.Join(dir, skillName+".md")
-		content, err = os.ReadFile(path)
-		if err == nil {
-			return string(content), nil
+	for _, dir := range searchDirs {
+		for _, fn := range filenames {
+			path := filepath.Join(dir, fn)
+			content, err := os.ReadFile(path)
+			if err == nil {
+				return string(content), nil
+			}
 		}
 	}
 
@@ -72,11 +74,13 @@ func discoverSkill(name string) (string, error) {
 func skillSearchDirs() []string {
 	var dirs []string
 
-	// Project directory.
+	// Project directory — walk up from cwd looking for skill directories.
 	cwd, err := os.Getwd()
 	if err == nil {
 		dir := cwd
 		for {
+			// Check both the project-local skills/ dir and the .agents/ycode/skills/ dir.
+			dirs = append(dirs, filepath.Join(dir, "skills"))
 			dirs = append(dirs, filepath.Join(dir, ".agents", "ycode", "skills"))
 			parent := filepath.Dir(dir)
 			if parent == dir {

@@ -323,9 +323,11 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Category:    "automation",
 		Handler:     commitFn,
 	})
-	// Also register as a builtin skill executor so the LLM's Skill tool
-	// calls for "commit" run the optimized path instead of loading SKILL.md.
-	builtin.RegisterSkillExecutor("commit", commitFn)
+	// NOTE: We intentionally do NOT register a builtin skill executor for
+	// "commit". When the main agent calls Skill("commit"), it should fall
+	// through to skill.md discovery so the agent composes the commit message
+	// itself using its full conversation context. The /commit slash command
+	// still uses the builtin handler above for the fast-path.
 
 	r.Register(&Spec{
 		Name:        "review",
