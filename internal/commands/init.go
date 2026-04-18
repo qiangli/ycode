@@ -650,71 +650,22 @@ func RenderInitClaudeMD(cwd string, metadata *ProjectMetadata) string {
 	return strings.Join(lines, "\n")
 }
 
-// RenderInitAgentsMD generates a starter AGENTS.md for generic AI agent instructions.
+// RenderInitAgentsMD generates a minimal AGENTS.md with references to USAGE.md
+// for detailed instructions. If CLAUDE.md exists, a reference is included so
+// ycode (and other tools) can follow its instructions too.
 func RenderInitAgentsMD(cwd string, metadata *ProjectMetadata) string {
 	var lines []string
 
-	lines = append(lines, "# AGENTS.md")
-	lines = append(lines, "")
+	lines = append(lines, "# AGENTS.md", "")
 
-	// Project name
-	if metadata.Name != "" && metadata.Name != filepath.Base(cwd) {
-		lines = append(lines, metadata.Name)
-		lines = append(lines, "")
+	lines = append(lines, "Instructions for AI coding assistants working in this repository.", "")
+
+	// Reference CLAUDE.md if it exists (Claude Code compatibility).
+	if fileExists(filepath.Join(cwd, "CLAUDE.md")) {
+		lines = append(lines, "**Read [CLAUDE.md](./CLAUDE.md)** for additional project conventions and Claude Code-specific guidance.", "")
 	}
 
-	lines = append(lines, "This file provides guidance to AI coding assistants (Claude Code, OpenCode, Cursor, Copilot, etc.) when working with code in this repository.", "")
-
-	lines = append(lines, "## Project Overview")
-	if len(metadata.Languages) > 0 {
-		lines = append(lines, fmt.Sprintf("- **Primary Languages**: %s", strings.Join(metadata.Languages, ", ")))
-	}
-	if len(metadata.Frameworks) > 0 {
-		lines = append(lines, fmt.Sprintf("- **Frameworks**: %s", strings.Join(metadata.Frameworks, ", ")))
-	}
-	if metadata.PackageMgr != "" {
-		lines = append(lines, fmt.Sprintf("- **Package Manager**: %s", metadata.PackageMgr))
-	}
-	if !metadata.HasGit {
-		lines = append(lines, "- **Version Control**: Git repository not initialized. Run `git init` to set up version control.")
-	}
-	lines = append(lines, "")
-
-	lines = append(lines, "## Quick Commands")
-	if metadata.BuildCmd != "" {
-		lines = append(lines, fmt.Sprintf("- **Build**: `%s`", metadata.BuildCmd))
-	}
-	if metadata.TestCmd != "" {
-		lines = append(lines, fmt.Sprintf("- **Test**: `%s`", metadata.TestCmd))
-	}
-	if metadata.LintCmd != "" {
-		lines = append(lines, fmt.Sprintf("- **Lint**: `%s`", metadata.LintCmd))
-	}
-	if metadata.BuildCmd == "" && metadata.TestCmd == "" && metadata.LintCmd == "" {
-		lines = append(lines, "- Add build, test, and lint commands here once the project structure is established.")
-	}
-	lines = append(lines, "")
-
-	lines = append(lines, "## AI Agent Guidelines")
-	lines = append(lines, "- **Read First**: Check for existing documentation in `README.md`, `CLAUDE.md`, or `docs/` before making changes.")
-	lines = append(lines, "- **Testing**: Always run tests after making changes. If tests don't exist, consider adding them.")
-	lines = append(lines, "- **Commits**: Make focused, atomic commits with clear messages. Follow existing commit conventions.")
-	lines = append(lines, "- **Dependencies**: Be mindful of adding new dependencies. Prefer standard library solutions when possible.")
-	lines = append(lines, "")
-
-	lines = append(lines, "## Project Structure")
-	d := detectRepo(cwd)
-	if shapeLines := repositoryShapeLines(&d); len(shapeLines) > 0 {
-		lines = append(lines, shapeLines...)
-	} else {
-		lines = append(lines, "- Document key directories and their purposes here.")
-	}
-	lines = append(lines, "")
-
-	lines = append(lines, "## Tool-Specific Notes")
-	lines = append(lines, "- **Claude Code**: See `CLAUDE.md` for Claude-specific conventions.")
-	lines = append(lines, "- **Other Tools**: Add tool-specific guidance as needed.")
-	lines = append(lines, "")
+	lines = append(lines, "**Read [USAGE.md](./USAGE.md)** for detailed instructions on build commands, configuration, tools, and workflows.", "")
 
 	return strings.Join(lines, "\n")
 }

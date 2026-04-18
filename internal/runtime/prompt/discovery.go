@@ -16,6 +16,7 @@ const (
 
 // InstructionFileNames are the filenames to search for.
 var InstructionFileNames = []string{
+	"AGENTS.md",
 	"CLAUDE.md",
 	"CLAUDE.local.md",
 	".agents/ycode/CLAUDE.md",

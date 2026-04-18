@@ -101,8 +101,8 @@ func TestInitializeRepoCreatesExpectedFiles(t *testing.T) {
 	if !strings.Contains(agentsStr, "AI coding assistants") {
 		t.Error("AGENTS.md should reference AI coding assistants")
 	}
-	if !strings.Contains(agentsStr, "Go") {
-		t.Error("AGENTS.md should detect Go language")
+	if !strings.Contains(agentsStr, "USAGE.md") {
+		t.Error("AGENTS.md should reference USAGE.md")
 	}
 }
 
@@ -286,17 +286,30 @@ func TestRenderInitAgentsMD(t *testing.T) {
 	if !strings.Contains(md, "AI coding assistants") {
 		t.Error("should reference AI coding assistants")
 	}
-	if !strings.Contains(md, "Go") {
-		t.Error("should detect Go")
+	if !strings.Contains(md, "USAGE.md") {
+		t.Error("should reference USAGE.md")
 	}
-	if !strings.Contains(md, "Quick Commands") {
-		t.Error("should have Quick Commands section")
+	// Should NOT reference CLAUDE.md when it doesn't exist.
+	if strings.Contains(md, "CLAUDE.md") {
+		t.Error("should not reference CLAUDE.md when it doesn't exist")
 	}
-	if !strings.Contains(md, "`cmd/`") {
-		t.Error("should mention cmd/ directory")
-	}
+}
+
+func TestRenderInitAgentsMDWithClaudeMD(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n"), 0o644)
+	// Create CLAUDE.md so the reference is included.
+	os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte("# CLAUDE.md\n"), 0o644)
+
+	detection := detectRepo(root)
+	metadata := buildProjectMetadata(root, &detection)
+	md := RenderInitAgentsMD(root, metadata)
+
 	if !strings.Contains(md, "CLAUDE.md") {
-		t.Error("should reference CLAUDE.md")
+		t.Error("should reference CLAUDE.md when it exists")
+	}
+	if !strings.Contains(md, "USAGE.md") {
+		t.Error("should still reference USAGE.md")
 	}
 }
 
