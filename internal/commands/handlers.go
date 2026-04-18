@@ -262,7 +262,13 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Usage:       "/init [focus]",
 		Category:    "workspace",
 		Handler:     initHandler(deps),
-		AgentTurn:   true,
+		AgentPrompt: func(args string) string {
+			content := initSkillContent
+			if args != "" {
+				return strings.ReplaceAll(content, "{{ARGS}}", args)
+			}
+			return strings.ReplaceAll(content, "{{ARGS}}", "(none)")
+		},
 	})
 
 	// Also register as a skill executor so the LLM can call Skill("init")

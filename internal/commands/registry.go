@@ -17,11 +17,11 @@ type Spec struct {
 	Usage       string
 	Category    string
 	Handler     HandlerFunc
-	// AgentTurn indicates this command chains into an agentic conversation
-	// turn after the handler completes. The handler runs first (e.g. scaffold),
-	// its output is displayed, then the original user input is sent to the LLM
-	// as a new agentic turn.
-	AgentTurn bool
+	// AgentPrompt, when non-nil, chains into an agentic conversation turn
+	// after the handler completes. The handler runs first (e.g. scaffold),
+	// its output is displayed, then AgentPrompt is called to produce the
+	// prompt sent to the LLM for the agentic turn.
+	AgentPrompt func(args string) string
 }
 
 // Registry holds all registered slash commands.

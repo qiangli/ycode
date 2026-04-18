@@ -905,13 +905,13 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 		// names (e.g. skill slash commands like /claude, /build).
 		if spec, ok := m.app.commands.Get(name); ok {
 			echo := fmt.Sprintf("> %s\n", text)
-			agentTurn := spec.AgentTurn
-			userInput := text
+			promptFn := spec.AgentPrompt
+			cmdArgs := args
 			return func() tea.Msg {
-				output, err := m.app.commands.Execute(context.Background(), name, args)
+				output, err := m.app.commands.Execute(context.Background(), name, cmdArgs)
 				msg := commandOutputMsg{Echo: echo, Text: output, Err: err}
-				if agentTurn && err == nil {
-					msg.AgentPrompt = userInput
+				if promptFn != nil && err == nil {
+					msg.AgentPrompt = promptFn(cmdArgs)
 				}
 				return msg
 			}
