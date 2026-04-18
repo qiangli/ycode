@@ -670,6 +670,24 @@ func RenderInitAgentsMD(cwd string, metadata *ProjectMetadata) string {
 	return strings.Join(lines, "\n")
 }
 
+// findInitSkill locates the init skill.md by searching the project's skills
+// directory and then the standard skill search paths.
+func findInitSkill(cwd string) string {
+	candidates := []string{
+		filepath.Join(cwd, "skills", "init", "skill.md"),
+		filepath.Join(cwd, ".agents", "ycode", "skills", "init", "skill.md"),
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".agents", "ycode", "skills", "init", "skill.md"))
+	}
+	for _, p := range candidates {
+		if fileExists(p) {
+			return p
+		}
+	}
+	return filepath.Join(cwd, "skills", "init", "skill.md") // fallback path
+}
+
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()

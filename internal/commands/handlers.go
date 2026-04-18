@@ -253,10 +253,43 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Handler:     exportHandler(deps),
 	})
 
-	// /init is now an LLM skill (skills/init/skill.md) — no longer a builtin command.
-	// When the user types /init, the TUI falls through to an agentic turn that
-	// discovers and follows the skill instructions. The Go library functions in
-	// init.go remain available for programmatic use.
+	// /init: builtin executor handles scaffold (dirs, config, gitignore, template
+	// files) deterministically, then returns skill.md instructions for the LLM to
+	// do targeted project analysis and enhance the generated files.
+	builtin.RegisterSkillExecutor("init", func(ctx context.Context, args string) (string, error) {
+		cwd := deps.WorkDir
+		if cwd == "" {
+			var err error
+			cwd, err = os.Getwd()
+			if err != nil {
+				return "", fmt.Errorf("get working directory: %w", err)
+			}
+		}
+
+		report, err := InitializeRepo(cwd)
+		if err != nil {
+			return "", fmt.Errorf("init scaffold failed: %w", err)
+		}
+
+		// Load the skill.md for LLM-powered analysis phase.
+		skillContent, err := os.ReadFile(findInitSkill(cwd))
+		if err != nil {
+			// Skill.md not found — return just the scaffold report.
+			return report.Render(), nil
+		}
+
+		// Return scaffold report + skill instructions for the LLM to follow.
+		var b strings.Builder
+		b.WriteString("## Scaffold Complete\n\n")
+		b.WriteString(report.Render())
+		b.WriteString("\n---\n\n")
+		if args != "" {
+			b.WriteString(strings.ReplaceAll(string(skillContent), "{{ARGS}}", args))
+		} else {
+			b.WriteString(strings.ReplaceAll(string(skillContent), "{{ARGS}}", "(none)"))
+		}
+		return b.String(), nil
+	})
 
 	// Discovery commands
 	r.Register(&Spec{
