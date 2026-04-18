@@ -46,6 +46,12 @@ tidy: ## Run mod tidy, fmt, and vet
 clean: ## Remove build artifacts
 	rm -rf bin/ dist/
 
+install: build ## Install ycode to ~/bin/
+	@mkdir -p ~/bin
+	@cp bin/ycode ~/bin/ycode
+	@echo "Installed ycode to ~/bin/ycode"
+	@echo 'Make sure ~/bin is in your PATH: export PATH="$$HOME/bin:$$PATH"'
+
 all: build ## Full quality gate (alias for build)
 
 # ─── Cross-Compile ──────────────────────────────────────────────────────────

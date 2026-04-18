@@ -301,6 +301,35 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cmdPalette.open(m.buildPaletteItems())
 				return m, nil
 			}
+		case msg.Type == tea.KeyUp:
+			if m.working || len(m.history) == 0 {
+				break
+			}
+			// Save current input if starting history navigation.
+			if m.historyIndex == -1 {
+				m.inputBuffer = m.textarea.Value()
+				m.historyIndex = len(m.history) - 1
+			} else if m.historyIndex > 0 {
+				m.historyIndex--
+			}
+			m.textarea.SetValue(m.history[m.historyIndex])
+			m.textarea.CursorEnd()
+			return m, nil
+		case msg.Type == tea.KeyDown:
+			if m.working || m.historyIndex == -1 {
+				break
+			}
+			// Move forward in history or restore original input.
+			if m.historyIndex < len(m.history)-1 {
+				m.historyIndex++
+				m.textarea.SetValue(m.history[m.historyIndex])
+			} else {
+				// At end of history, restore original input.
+				m.textarea.SetValue(m.inputBuffer)
+				m.historyIndex = -1
+			}
+			m.textarea.CursorEnd()
+			return m, nil
 		case msg.Type == tea.KeyEnter:
 			if m.working {
 				break
