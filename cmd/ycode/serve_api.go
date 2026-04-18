@@ -101,7 +101,7 @@ func writeTokenFile(token string) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(home, ".ycode")
+	dir := filepath.Join(home, ".agents", "ycode")
 	_ = os.MkdirAll(dir, 0o755)
 	return os.WriteFile(filepath.Join(dir, "server.token"), []byte(token), 0o600)
 }

@@ -1128,7 +1128,7 @@ func formatSessionSummary(tracker *usage.Tracker, startTime time.Time) string {
 func (m *TUIModel) toggleMode() tea.Cmd {
 	if m.app.planMode == nil {
 		return func() tea.Msg {
-			return commandOutputMsg{Text: "Mode switching not available (no .ycode/ directory)"}
+			return commandOutputMsg{Text: "Mode switching not available (no .agents/ycode/ directory)"}
 		}
 	}
 

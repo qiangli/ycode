@@ -18,11 +18,11 @@ type PlanModeState struct {
 
 // PlanModeManager implements PlanModeController using file-based state.
 type PlanModeManager struct {
-	localConfigPath string // .ycode/settings.local.json
-	stateFilePath   string // .ycode/tool-state/plan-mode.json
+	localConfigPath string // .agents/ycode/settings.local.json
+	stateFilePath   string // .agents/ycode/tool-state/plan-mode.json
 }
 
-// NewPlanModeManager creates a new PlanModeManager for the given .ycode directory.
+// NewPlanModeManager creates a new PlanModeManager for the given .agents/ycode directory.
 func NewPlanModeManager(ycodeDir string) *PlanModeManager {
 	return &PlanModeManager{
 		localConfigPath: filepath.Join(ycodeDir, "settings.local.json"),

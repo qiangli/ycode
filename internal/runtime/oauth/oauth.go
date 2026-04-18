@@ -290,7 +290,7 @@ func credentialsPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".ycode", "credentials.json"), nil
+	return filepath.Join(home, ".agents", "ycode", "credentials.json"), nil
 }
 
 // readCredentialsRoot reads and parses the credentials.json file.
@@ -329,7 +329,7 @@ func writeCredentialsRoot(root map[string]json.RawMessage) error {
 	return os.WriteFile(path, append(data, '\n'), 0o600)
 }
 
-// SaveCredentials persists OAuth tokens to ~/.ycode/credentials.json under the "oauth" key.
+// SaveCredentials persists OAuth tokens to ~/.agents/ycode/credentials.json under the "oauth" key.
 func SaveCredentials(token *Token) error {
 	root, err := readCredentialsRoot()
 	if err != nil {
@@ -343,7 +343,7 @@ func SaveCredentials(token *Token) error {
 	return writeCredentialsRoot(root)
 }
 
-// LoadCredentials reads OAuth tokens from ~/.ycode/credentials.json.
+// LoadCredentials reads OAuth tokens from ~/.agents/ycode/credentials.json.
 func LoadCredentials() (*Token, error) {
 	root, err := readCredentialsRoot()
 	if err != nil {
@@ -360,7 +360,7 @@ func LoadCredentials() (*Token, error) {
 	return &token, nil
 }
 
-// ClearCredentials removes the OAuth tokens from ~/.ycode/credentials.json.
+// ClearCredentials removes the OAuth tokens from ~/.agents/ycode/credentials.json.
 func ClearCredentials() error {
 	root, err := readCredentialsRoot()
 	if err != nil {

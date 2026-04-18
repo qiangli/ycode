@@ -17,7 +17,7 @@ import (
 type Manager struct {
 	mu sync.RWMutex
 
-	dataDir string // e.g. ~/.ycode/projects/{hash}/
+	dataDir string // e.g. ~/.agents/ycode/projects/{hash}/
 
 	kv     KVStore
 	sql    SQLStore

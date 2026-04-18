@@ -10,7 +10,7 @@ import (
 
 func newTestManager(t *testing.T) *PlanModeManager {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), ".ycode")
+	dir := filepath.Join(t.TempDir(), ".agents", "ycode")
 	os.MkdirAll(dir, 0o755)
 	return NewPlanModeManager(dir)
 }

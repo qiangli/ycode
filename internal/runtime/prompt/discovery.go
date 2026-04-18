@@ -18,8 +18,8 @@ const (
 var InstructionFileNames = []string{
 	"CLAUDE.md",
 	"CLAUDE.local.md",
-	".ycode/CLAUDE.md",
-	".ycode/instructions.md",
+	".agents/ycode/CLAUDE.md",
+	".agents/ycode/instructions.md",
 }
 
 // DiscoverInstructionFiles walks from startDir to root, collecting instruction files.

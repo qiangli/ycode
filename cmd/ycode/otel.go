@@ -24,7 +24,7 @@ type otelResult struct {
 }
 
 // resolveOTELDataDir returns the OTEL storage path using the priority:
-// OTEL_STORAGE_PATH env > config dataDir > default ~/.ycode/otel.
+// OTEL_STORAGE_PATH env > config dataDir > default ~/.agents/ycode/otel.
 func resolveOTELDataDir(obs *config.ObservabilityConfig) string {
 	if v := os.Getenv("OTEL_STORAGE_PATH"); v != "" {
 		return v
@@ -33,7 +33,7 @@ func resolveOTELDataDir(obs *config.ObservabilityConfig) string {
 		return obs.DataDir
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".ycode", "otel")
+	return filepath.Join(home, ".agents", "ycode", "otel")
 }
 
 // setupOTEL initializes OTEL instrumentation and returns the result.

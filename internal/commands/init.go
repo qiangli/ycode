@@ -18,10 +18,11 @@ const starterYcodeJSON = `{
 const gitignoreComment = "# ycode local artifacts"
 
 var gitignoreEntries = []string{
-	".ycode/settings.local.json",
-	".ycode/sessions/",
-	".ycode/cache/",
-	".ycode/logs/",
+	".agents/ycode.json",
+	".agents/ycode/settings.local.json",
+	".agents/ycode/sessions/",
+	".agents/ycode/cache/",
+	".agents/ycode/logs/",
 }
 
 // InitStatus describes the outcome of creating a single artifact.
@@ -108,21 +109,21 @@ func InitializeRepo(cwd string) (*InitReport, error) {
 		warnings = append(warnings, "No git repository detected. Run 'git init' to initialize version control.")
 	}
 
-	// Create .ycode/ directory
-	ycodeDir := filepath.Join(cwd, ".ycode")
+	// Create .agents/ycode/ directory
+	ycodeDir := filepath.Join(cwd, ".agents", "ycode")
 	status, err := ensureDir(ycodeDir)
 	if err != nil {
-		return nil, fmt.Errorf("create .ycode/: %w", err)
+		return nil, fmt.Errorf("create .agents/ycode/: %w", err)
 	}
-	artifacts = append(artifacts, InitArtifact{Name: ".ycode/", Status: status})
+	artifacts = append(artifacts, InitArtifact{Name: ".agents/ycode/", Status: status})
 
-	// Create .ycode.json with enhanced content
-	ycodeJSON := filepath.Join(cwd, ".ycode.json")
+	// Create .agents/ycode.json with enhanced content
+	ycodeJSON := filepath.Join(cwd, ".agents", "ycode.json")
 	status, err = writeYcodeJSON(ycodeJSON, metadata)
 	if err != nil {
-		return nil, fmt.Errorf("create .ycode.json: %w", err)
+		return nil, fmt.Errorf("create .agents/ycode.json: %w", err)
 	}
-	artifacts = append(artifacts, InitArtifact{Name: ".ycode.json", Status: status})
+	artifacts = append(artifacts, InitArtifact{Name: ".agents/ycode.json", Status: status})
 
 	// Update .gitignore
 	gitignorePath := filepath.Join(cwd, ".gitignore")
@@ -649,7 +650,7 @@ func RenderInitClaudeMD(cwd string, metadata *ProjectMetadata) string {
 
 	lines = append(lines, "## Working Conventions")
 	lines = append(lines, "- Prefer small, reviewable changes and keep generated bootstrap files aligned with actual repo workflows.")
-	lines = append(lines, "- Keep shared defaults in `.ycode.json`; reserve `.ycode/settings.local.json` for machine-local overrides.")
+	lines = append(lines, "- Keep shared defaults in `.agents/ycode.json`; reserve `.agents/ycode/settings.local.json` for machine-local overrides.")
 	lines = append(lines, "- Do not overwrite existing `CLAUDE.md` content automatically; update it intentionally when repo workflows change.")
 	lines = append(lines, "")
 

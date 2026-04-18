@@ -21,11 +21,11 @@ func TestInitializeRepoCreatesExpectedFiles(t *testing.T) {
 	}
 
 	rendered := report.Render()
-	if !strings.Contains(rendered, ".ycode/") {
-		t.Error("report should mention .ycode/")
+	if !strings.Contains(rendered, ".agents/ycode/") {
+		t.Error("report should mention .agents/ycode/")
 	}
-	if !strings.Contains(rendered, ".ycode.json") {
-		t.Error("report should mention .ycode.json")
+	if !strings.Contains(rendered, ".agents/ycode.json") {
+		t.Error("report should mention .agents/ycode.json")
 	}
 	if !strings.Contains(rendered, "created") {
 		t.Error("report should show created status")
@@ -41,11 +41,11 @@ func TestInitializeRepoCreatesExpectedFiles(t *testing.T) {
 	}
 
 	// Verify files exist.
-	if _, err := os.Stat(filepath.Join(root, ".ycode")); err != nil {
-		t.Error(".ycode/ directory was not created")
+	if _, err := os.Stat(filepath.Join(root, ".agents", "ycode")); err != nil {
+		t.Error(".agents/ycode/ directory was not created")
 	}
-	if _, err := os.Stat(filepath.Join(root, ".ycode.json")); err != nil {
-		t.Error(".ycode.json was not created")
+	if _, err := os.Stat(filepath.Join(root, ".agents", "ycode.json")); err != nil {
+		t.Error(".agents/ycode.json was not created")
 	}
 	if _, err := os.Stat(filepath.Join(root, "CLAUDE.md")); err != nil {
 		t.Error("CLAUDE.md was not created")
@@ -54,26 +54,29 @@ func TestInitializeRepoCreatesExpectedFiles(t *testing.T) {
 		t.Error("AGENTS.md was not created")
 	}
 
-	// Verify .ycode.json content.
-	data, _ := os.ReadFile(filepath.Join(root, ".ycode.json"))
+	// Verify .agents/ycode.json content.
+	data, _ := os.ReadFile(filepath.Join(root, ".agents", "ycode.json"))
 	if !strings.Contains(string(data), "defaultMode") {
-		t.Error(".ycode.json should contain defaultMode")
+		t.Error(".agents/ycode.json should contain defaultMode")
 	}
 	if !strings.Contains(string(data), "languages") {
-		t.Error(".ycode.json should contain languages")
+		t.Error(".agents/ycode.json should contain languages")
 	}
 
 	// Verify .gitignore entries.
 	gi, _ := os.ReadFile(filepath.Join(root, ".gitignore"))
 	giStr := string(gi)
-	if !strings.Contains(giStr, ".ycode/settings.local.json") {
-		t.Error(".gitignore should contain .ycode/settings.local.json")
+	if !strings.Contains(giStr, ".agents/ycode.json") {
+		t.Error(".gitignore should contain .agents/ycode.json")
 	}
-	if !strings.Contains(giStr, ".ycode/sessions/") {
-		t.Error(".gitignore should contain .ycode/sessions/")
+	if !strings.Contains(giStr, ".agents/ycode/settings.local.json") {
+		t.Error(".gitignore should contain .agents/ycode/settings.local.json")
 	}
-	if !strings.Contains(giStr, ".ycode/cache/") {
-		t.Error(".gitignore should contain .ycode/cache/")
+	if !strings.Contains(giStr, ".agents/ycode/sessions/") {
+		t.Error(".gitignore should contain .agents/ycode/sessions/")
+	}
+	if !strings.Contains(giStr, ".agents/ycode/cache/") {
+		t.Error(".gitignore should contain .agents/ycode/cache/")
 	}
 
 	// Verify CLAUDE.md detects Go.
@@ -156,7 +159,7 @@ func TestInitializeRepoIsIdempotent(t *testing.T) {
 	// Pre-create AGENTS.md with custom content.
 	os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("custom agents guidance\n"), 0o644)
 	// Pre-create .gitignore with one entry already present.
-	os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".ycode/settings.local.json\n"), 0o644)
+	os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".agents/ycode/settings.local.json\n"), 0o644)
 
 	first, err := InitializeRepo(root)
 	if err != nil {
@@ -194,7 +197,7 @@ func TestInitializeRepoIsIdempotent(t *testing.T) {
 	// Verify .gitignore doesn't duplicate entries.
 	gi, _ := os.ReadFile(filepath.Join(root, ".gitignore"))
 	giStr := string(gi)
-	if strings.Count(giStr, ".ycode/settings.local.json") != 1 {
+	if strings.Count(giStr, ".agents/ycode/settings.local.json") != 1 {
 		t.Error(".gitignore should not have duplicate entries")
 	}
 }

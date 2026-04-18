@@ -25,7 +25,7 @@ type RuntimeDeps struct {
 	ConfigDirs ConfigDirs // config file paths for /config display
 
 	// Memory dependencies
-	MemoryDir string // persistent memory directory (e.g., ~/.ycode/projects/{hash}/memory/)
+	MemoryDir string // persistent memory directory (e.g., ~/.agents/ycode/projects/{hash}/memory/)
 
 	// Session dependency
 	Session *session.Session
@@ -250,7 +250,7 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 
 	r.Register(&Spec{
 		Name:        "init",
-		Description: "Initialize ycode for current project (creates .ycode/, .ycode.json, .gitignore entries, CLAUDE.md)",
+		Description: "Initialize ycode for current project (creates .agents/ycode/, .agents/ycode.json, .gitignore entries, CLAUDE.md)",
 		Category:    "workspace",
 		Handler: func(ctx context.Context, args string) (string, error) {
 			cwd := deps.WorkDir

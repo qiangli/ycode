@@ -46,8 +46,8 @@ func newTestRegistry(t *testing.T) *Registry {
 		Config:       cfg,
 		ConfigDirs: ConfigDirs{
 			UserDir:    filepath.Join(workDir, "user-config"),
-			ProjectDir: filepath.Join(workDir, ".ycode"),
-			LocalDir:   filepath.Join(workDir, ".ycode"),
+			ProjectDir: filepath.Join(workDir, ".agents", "ycode"),
+			LocalDir:   filepath.Join(workDir, ".agents", "ycode"),
 		},
 		MemoryDir: filepath.Join(workDir, "memory"),
 		Session:   sess,

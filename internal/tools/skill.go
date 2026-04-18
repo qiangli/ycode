@@ -69,7 +69,7 @@ func skillSearchDirs() []string {
 	if err == nil {
 		dir := cwd
 		for {
-			dirs = append(dirs, filepath.Join(dir, ".ycode", "skills"))
+			dirs = append(dirs, filepath.Join(dir, ".agents", "ycode", "skills"))
 			parent := filepath.Dir(dir)
 			if parent == dir {
 				break
@@ -81,7 +81,7 @@ func skillSearchDirs() []string {
 	// Home directory.
 	home, err := os.UserHomeDir()
 	if err == nil {
-		dirs = append(dirs, filepath.Join(home, ".ycode", "skills"))
+		dirs = append(dirs, filepath.Join(home, ".agents", "ycode", "skills"))
 	}
 
 	// Environment variable.

@@ -104,7 +104,7 @@ func newApp() (*cli.App, error) {
 	home, _ := os.UserHomeDir()
 	userDir := filepath.Join(home, ".config", "ycode")
 	cwd, _ := os.Getwd()
-	projectDir := filepath.Join(cwd, ".ycode")
+	projectDir := filepath.Join(cwd, ".agents", "ycode")
 
 	// Load config.
 	loader := config.NewLoader(userDir, projectDir, projectDir)
@@ -134,7 +134,7 @@ func newApp() (*cli.App, error) {
 		provider = api.NewProvider(providerCfg)
 	}
 	// Initialize storage manager (Phase 1: KV store is instant).
-	storageDataDir := filepath.Join(home, ".ycode", "projects", "data")
+	storageDataDir := filepath.Join(home, ".agents", "ycode", "projects", "data")
 	storageMgr, err := storage.NewManager(context.Background(), storage.Config{
 		DataDir: storageDataDir,
 		KVFactory: func(ctx context.Context) (storage.KVStore, error) {
@@ -189,10 +189,10 @@ func newApp() (*cli.App, error) {
 	go storageMgr.StartEviction(rootCtx)
 
 	// Memory directory for persistent memories.
-	memoryDir := filepath.Join(home, ".ycode", "projects", "memory")
+	memoryDir := filepath.Join(home, ".agents", "ycode", "projects", "memory")
 
 	// Plan mode manager.
-	ycodeDir := filepath.Join(cwd, ".ycode")
+	ycodeDir := filepath.Join(cwd, ".agents", "ycode")
 	planMode := tools.NewPlanModeManager(ycodeDir)
 
 	// Build VFS with allowed directories (includes OTEL storage for cross-instance access).
@@ -425,7 +425,7 @@ func buildPromptContext(workDir, model string) *prompt.ProjectContext {
 		ctx.RecentCommits = gitCtx.RecentCommits
 	}
 
-	// Instruction files (CLAUDE.md, .ycode/instructions.md, etc.).
+	// Instruction files (CLAUDE.md, .agents/ycode/instructions.md, etc.).
 	ctx.ContextFiles = discoverContextFiles(workDir)
 
 	return ctx
@@ -649,7 +649,7 @@ var doctorCmd = &cobra.Command{
 			}},
 			{"Storage backends", func() (string, bool) {
 				home, _ := os.UserHomeDir()
-				dataDir := filepath.Join(home, ".ycode", "projects", "data")
+				dataDir := filepath.Join(home, ".agents", "ycode", "projects", "data")
 
 				var parts []string
 				// Check KV store.

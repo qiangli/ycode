@@ -35,8 +35,8 @@ type ProviderConfig struct {
 	SampleRate     float64 // 1.0 = sample everything
 
 	// File-based persistence.
-	DataDir        string // root OTEL storage dir (e.g. ~/.ycode/otel) — used for retention cleanup
-	InstanceDir    string // per-instance subdir (e.g. ~/.ycode/otel/instances/{id}) — used for file exports
+	DataDir        string // root OTEL storage dir (e.g. ~/.agents/ycode/otel) — used for retention cleanup
+	InstanceDir    string // per-instance subdir (e.g. ~/.agents/ycode/otel/instances/{id}) — used for file exports
 	PersistTraces  bool
 	PersistMetrics bool
 	Opener         FileOpener // optional VFS-backed file opener for path validation

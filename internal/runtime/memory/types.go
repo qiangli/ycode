@@ -16,9 +16,9 @@ const (
 type Scope string
 
 const (
-	// ScopeGlobal stores memories in ~/.ycode/memory/ (shared across all projects).
+	// ScopeGlobal stores memories in ~/.agents/ycode/memory/ (shared across all projects).
 	ScopeGlobal Scope = "global"
-	// ScopeProject stores memories in ~/.ycode/projects/{hash}/memory/ (project-specific).
+	// ScopeProject stores memories in ~/.agents/ycode/projects/{hash}/memory/ (project-specific).
 	ScopeProject Scope = "project"
 )
 

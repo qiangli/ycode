@@ -9,7 +9,7 @@ import (
 
 // Manager handles scratch file operations.
 type Manager struct {
-	dir string // e.g., .ycode/scratchpad/
+	dir string // e.g., .agents/ycode/scratchpad/
 }
 
 // NewManager creates a new scratchpad manager.

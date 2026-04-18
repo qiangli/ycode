@@ -55,7 +55,7 @@ var serveStopCmd = &cobra.Command{
 	Short: "Stop the running server",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		home, _ := os.UserHomeDir()
-		pidPath := filepath.Join(home, ".ycode", "serve.pid")
+		pidPath := filepath.Join(home, ".agents", "ycode", "serve.pid")
 		data, err := os.ReadFile(pidPath)
 		if err != nil {
 			return fmt.Errorf("no server PID file found: %w", err)
@@ -134,8 +134,8 @@ var serveResetCmd = &cobra.Command{
 	Short: "Remove all observability data",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		home, _ := os.UserHomeDir()
-		dataDir := filepath.Join(home, ".ycode", "observability")
-		otelDir := filepath.Join(home, ".ycode", "otel")
+		dataDir := filepath.Join(home, ".agents", "ycode", "observability")
+		otelDir := filepath.Join(home, ".agents", "ycode", "otel")
 
 		fmt.Printf("This will remove all data in:\n  %s\n  %s\n", dataDir, otelDir)
 		fmt.Print("Continue? [y/N] ")
@@ -161,7 +161,7 @@ var serveAuditCmd = &cobra.Command{
 		if lastN <= 0 {
 			lastN = 10
 		}
-		logsDir := filepath.Join(home, ".ycode", "otel", "logs")
+		logsDir := filepath.Join(home, ".agents", "ycode", "otel", "logs")
 		entries, err := os.ReadDir(logsDir)
 		if err != nil {
 			return fmt.Errorf("read logs dir: %w (is observability enabled?)", err)
@@ -247,7 +247,7 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 				chatCfg = &config.ChatConfig{Enabled: true}
 			}
 			if chatCfg.Enabled && api.natsSrv != nil {
-				chatHub := buildChatHub(api.natsSrv.Conn(), chatCfg, filepath.Join(home, ".ycode", "chat"), api.svc)
+				chatHub := buildChatHub(api.natsSrv.Conn(), chatCfg, filepath.Join(home, ".agents", "ycode", "chat"), api.svc)
 				if err := mgr.AddLateComponent(ctx, chatHub); err != nil {
 					slog.Warn("chat hub not available", "error", err)
 				} else {
@@ -260,7 +260,7 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	fmt.Println("\nPress Ctrl+C to stop.")
 
 	// Write PID file.
-	pidPath := filepath.Join(home, ".ycode", "serve.pid")
+	pidPath := filepath.Join(home, ".agents", "ycode", "serve.pid")
 	_ = os.MkdirAll(filepath.Dir(pidPath), 0o755)
 	_ = os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644)
 	defer os.Remove(pidPath)
@@ -299,7 +299,7 @@ func detachServer(cfg *config.ObservabilityConfig, dataDir string) error {
 	}
 
 	home, _ := os.UserHomeDir()
-	logDir := filepath.Join(home, ".ycode", "observability")
+	logDir := filepath.Join(home, ".agents", "ycode", "observability")
 	_ = os.MkdirAll(logDir, 0o755)
 	logFile, err := os.OpenFile(filepath.Join(logDir, "serve.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -390,8 +390,8 @@ func loadFullServeConfig() (*config.Config, *config.ObservabilityConfig, string,
 	cwd, _ := os.Getwd()
 	loader := config.NewLoader(
 		filepath.Join(home, ".config", "ycode"),
-		filepath.Join(cwd, ".ycode"),
-		filepath.Join(cwd, ".ycode"),
+		filepath.Join(cwd, ".agents", "ycode"),
+		filepath.Join(cwd, ".agents", "ycode"),
 	)
 	cfg, err := loader.Load()
 	if err != nil {
@@ -403,7 +403,7 @@ func loadFullServeConfig() (*config.Config, *config.ObservabilityConfig, string,
 		obsCfg = &config.ObservabilityConfig{}
 	}
 
-	dataDir := filepath.Join(home, ".ycode", "observability")
+	dataDir := filepath.Join(home, ".agents", "ycode", "observability")
 	return cfg, obsCfg, dataDir, nil
 }
 

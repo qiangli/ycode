@@ -268,7 +268,7 @@ func splitDocChunks(content string, maxSize int) []string {
 func isSkipDir(name string) bool {
 	skip := map[string]bool{
 		".git": true, ".hg": true, "node_modules": true, "vendor": true,
-		"__pycache__": true, ".ycode": true, ".claw": true, ".claude": true,
+		"__pycache__": true, ".agents": true, ".claw": true, ".claude": true,
 		"dist": true, "build": true, "target": true, "bin": true, "priorart": true,
 	}
 	return skip[name]

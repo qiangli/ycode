@@ -69,13 +69,13 @@ func runNATSRemoteTUI(url string) error {
 	return nil
 }
 
-// readTokenFile reads the auth token from ~/.ycode/server.token.
+// readTokenFile reads the auth token from ~/.agents/ycode/server.token.
 func readTokenFile() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	data, err := os.ReadFile(filepath.Join(home, ".ycode", "server.token"))
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "ycode", "server.token"))
 	if err != nil {
 		return ""
 	}

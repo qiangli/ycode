@@ -14,7 +14,7 @@ import (
 // StackManager orchestrates all embedded observability components and the reverse proxy.
 type StackManager struct {
 	cfg     *config.ObservabilityConfig
-	dataDir string // ~/.ycode/observability/
+	dataDir string // ~/.agents/ycode/observability/
 
 	mu         sync.Mutex
 	components []Component

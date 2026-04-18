@@ -10,7 +10,7 @@ import (
 
 // Store handles file-based memory persistence.
 type Store struct {
-	dir string // e.g., ~/.ycode/projects/{hash}/memory/
+	dir string // e.g., ~/.agents/ycode/projects/{hash}/memory/
 }
 
 // NewStore creates a new memory store at the given directory.

@@ -109,7 +109,7 @@ type ObservabilityConfig struct {
 	Federation  []FederationTarget  `json:"federation,omitempty"`
 
 	// Local persistence under DataDir
-	DataDir          string `json:"dataDir"`          // default "~/.ycode/otel"
+	DataDir          string `json:"dataDir"`          // default "~/.agents/ycode/otel"
 	LogRetentionDays int    `json:"logRetentionDays"` // default 3
 	LogConversations bool   `json:"logConversations"` // log full conversations, default true when enabled
 	LogToolDetails   bool   `json:"logToolDetails"`   // log full tool input/output, default true
@@ -172,8 +172,8 @@ func DefaultConfig() *Config {
 // Loader loads and merges configuration from multiple tiers.
 type Loader struct {
 	userDir    string // ~/.config/ycode/
-	projectDir string // .ycode/ in project root
-	localDir   string // .ycode/ in CWD
+	projectDir string // .agents/ycode/ in project root
+	localDir   string // .agents/ycode/ in CWD
 }
 
 // NewLoader creates a config loader.

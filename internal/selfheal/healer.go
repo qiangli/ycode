@@ -92,7 +92,7 @@ func DefaultConfig() *Config {
 		BuildCommand:     "go build -o bin/ycode ./cmd/ycode/",
 		BuildTimeout:     5 * time.Minute,
 		HealablePaths:    []string{"*.go", "go.mod", "go.sum", "internal/**/*.go", "cmd/**/*.go", "pkg/**/*.go"},
-		ProtectedPaths:   []string{".git/", "vendor/", "node_modules/", ".ycode/"},
+		ProtectedPaths:   []string{".git/", "vendor/", "node_modules/", ".agents/"},
 	}
 }
 
