@@ -67,7 +67,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 		// discovery
 		"doctor", "context", "skills", "tasks",
 		// automation
-		"review", "advisor", "security-review", "team", "cron", "loop",
+		"commit", "review", "advisor", "security-review", "team", "cron", "loop",
 		// plugin
 		"plugin",
 	}
@@ -100,6 +100,7 @@ func TestAllCommandsExecute(t *testing.T) {
 		"retry":  true,
 		"revert": true,
 		"rename": true, // requires args
+		"commit": true, // requires Provider
 	}
 
 	for _, spec := range r.List() {

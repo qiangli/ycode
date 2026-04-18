@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/qiangli/ycode/internal/api"
+	"github.com/qiangli/ycode/internal/runtime/builtin"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/session"
 )
@@ -29,6 +31,9 @@ type RuntimeDeps struct {
 
 	// Session dependency
 	Session *session.Session
+
+	// Provider for builtin operations (commit message generation, etc.).
+	Provider api.Provider
 
 	// ModelSwitcher switches the active model at runtime.
 	ModelSwitcher func(name string) (string, error)
@@ -311,6 +316,14 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 
 	// Automation commands
 	r.Register(&Spec{
+		Name:        "commit",
+		Description: "Commit changes with AI-generated message",
+		Usage:       "/commit [hint]",
+		Category:    "automation",
+		Handler:     commitHandler(deps),
+	})
+
+	r.Register(&Spec{
 		Name:        "review",
 		Description: "Review code changes (staged or recent commits)",
 		Usage:       "/review [commit|staged|branch]",
@@ -506,4 +519,43 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			}
 		},
 	})
+}
+
+// commitHandler returns a handler that creates a git commit with an
+// AI-generated message using the builtin commit generator. This bypasses the
+// full conversation runtime, running git commands directly and making a single
+// cheap LLM call.
+func commitHandler(deps *RuntimeDeps) func(context.Context, string) (string, error) {
+	return func(ctx context.Context, args string) (string, error) {
+		if deps.Provider == nil {
+			return "", fmt.Errorf("commit requires an API provider; check your API key configuration")
+		}
+		if deps.Config == nil {
+			return "", fmt.Errorf("commit requires configuration")
+		}
+
+		workDir := deps.WorkDir
+		if workDir == "" {
+			var err error
+			workDir, err = os.Getwd()
+			if err != nil {
+				return "", fmt.Errorf("get working directory: %w", err)
+			}
+		}
+
+		chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
+		gen := builtin.NewCommitGenerator(chain, workDir)
+
+		result, err := gen.Generate(ctx, &builtin.CommitRequest{
+			Hint: strings.TrimSpace(args),
+		})
+		if err != nil {
+			if result != nil && result.HookError != "" {
+				return builtin.FormatResult(result), nil
+			}
+			return "", err
+		}
+
+		return builtin.FormatResult(result), nil
+	}
 }

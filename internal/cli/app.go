@@ -124,6 +124,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		ConfigDirs:    o.ConfigDirs,
 		MemoryDir:     o.MemoryDir,
 		Session:       sess,
+		Provider:      app.provider,
 		ModelSwitcher: app.SwitchModel,
 		RetryTurn:     app.RetryTurn,
 		RevertFiles:   app.RevertFiles,
