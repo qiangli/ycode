@@ -112,9 +112,9 @@ func (cg *CommitGenerator) Generate(ctx context.Context, req *CommitRequest) (*C
 
 	// Step 4: Stage remaining files if nothing was explicitly staged.
 	if len(staged) == 0 && len(gc.stagedFiles) == 0 {
-		// Nothing staged — stage all modified/added files.
-		if err := cg.stageAll(gc.modifiedFiles); err != nil {
-			return nil, fmt.Errorf("stage files: %w", err)
+		// Nothing staged — stage all tracked modified files + new untracked files.
+		if out, err := cg.git("add", "-A"); err != nil {
+			return nil, fmt.Errorf("stage files: %s", strings.TrimSpace(out))
 		}
 		result.Staged = gc.modifiedFiles
 	}
@@ -122,9 +122,9 @@ func (cg *CommitGenerator) Generate(ctx context.Context, req *CommitRequest) (*C
 	// Step 5: Commit.
 	commitOut, err := cg.git("commit", "-m", message)
 	if err != nil {
-		// Check for hook failure.
+		// Check for hook failure or other commit error.
 		result.HookError = strings.TrimSpace(commitOut)
-		return result, fmt.Errorf("git commit failed: %w", err)
+		return result, fmt.Errorf("git commit failed: %s", strings.TrimSpace(commitOut))
 	}
 
 	// Step 6: Get commit hash and remaining status.
@@ -190,8 +190,16 @@ func (cg *CommitGenerator) gatherContext() (*gitContext, error) {
 	// All modified/untracked files from porcelain status.
 	if out, err := cg.git("status", "--porcelain"); err == nil {
 		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if len(line) > 3 {
-				gc.modifiedFiles = append(gc.modifiedFiles, strings.TrimSpace(line[3:]))
+			if len(line) < 4 {
+				continue
+			}
+			path := strings.TrimSpace(line[3:])
+			// Handle renames: "R  old -> new" — use the new path.
+			if idx := strings.Index(path, " -> "); idx >= 0 {
+				path = path[idx+4:]
+			}
+			if path != "" {
+				gc.modifiedFiles = append(gc.modifiedFiles, path)
 			}
 		}
 	}
@@ -337,16 +345,11 @@ func cleanCommitMessage(raw string) string {
 // stageFiles runs git add on specific files.
 func (cg *CommitGenerator) stageFiles(files []string) error {
 	args := append([]string{"add", "--"}, files...)
-	_, err := cg.git(args...)
-	return err
-}
-
-// stageAll stages a list of modified files.
-func (cg *CommitGenerator) stageAll(files []string) error {
-	if len(files) == 0 {
-		return nil
+	out, err := cg.git(args...)
+	if err != nil {
+		return fmt.Errorf("%s: %w", strings.TrimSpace(out), err)
 	}
-	return cg.stageFiles(files)
+	return nil
 }
 
 // git runs a git command in the working directory and returns combined output.

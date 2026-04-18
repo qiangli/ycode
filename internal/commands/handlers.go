@@ -315,13 +315,17 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 	})
 
 	// Automation commands
+	commitFn := commitHandler(deps)
 	r.Register(&Spec{
 		Name:        "commit",
 		Description: "Commit changes with AI-generated message",
 		Usage:       "/commit [hint]",
 		Category:    "automation",
-		Handler:     commitHandler(deps),
+		Handler:     commitFn,
 	})
+	// Also register as a builtin skill executor so the LLM's Skill tool
+	// calls for "commit" run the optimized path instead of loading SKILL.md.
+	builtin.RegisterSkillExecutor("commit", commitFn)
 
 	r.Register(&Spec{
 		Name:        "review",

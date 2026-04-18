@@ -16,6 +16,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/commands"
+	"github.com/qiangli/ycode/internal/runtime/builtin"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
@@ -175,6 +176,17 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 	if a.provider == nil {
 		return fmt.Errorf("no LLM provider configured; set ANTHROPIC_API_KEY, OPENAI_API_KEY, MOONSHOT_API_KEY, or KIMI_API_KEY")
 	}
+
+	// Check for high-confidence builtin intent before the expensive agentic loop.
+	if intent := builtin.DetectIntent(userPrompt); intent != nil {
+		output, err := a.commands.Execute(ctx, intent.Operation, intent.Args)
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(a.stdout, output)
+		return nil
+	}
+
 	rt := a.conversationRuntime()
 
 	// Build conversation history from session + new user message.

@@ -112,6 +112,26 @@ func ResolveModelChain(cfg *config.Config, mainProvider api.Provider) *ModelChai
 	return &ModelChain{Models: specs}
 }
 
+// SkillExecutor is a function that directly executes a builtin operation
+// when the LLM invokes the Skill tool with a matching name.
+type SkillExecutor func(ctx context.Context, args string) (string, error)
+
+// skillExecutors maps skill names to builtin executors.
+var skillExecutors = map[string]SkillExecutor{}
+
+// RegisterSkillExecutor registers a function that directly executes a builtin
+// operation when the LLM invokes the Skill tool with the given name. This
+// short-circuits SKILL.md loading and runs the optimized path instead.
+func RegisterSkillExecutor(name string, fn SkillExecutor) {
+	skillExecutors[strings.ToLower(name)] = fn
+}
+
+// GetSkillExecutor returns the builtin executor for a skill name, if one exists.
+func GetSkillExecutor(name string) (SkillExecutor, bool) {
+	fn, ok := skillExecutors[strings.ToLower(name)]
+	return fn, ok
+}
+
 // resolveProviderForModel attempts to detect the correct provider for a model.
 // Falls back to the given default provider if detection fails.
 func resolveProviderForModel(model string, fallback api.Provider) api.Provider {

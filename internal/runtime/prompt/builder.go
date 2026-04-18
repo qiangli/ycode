@@ -142,6 +142,7 @@ func BuildDefault(ctx *ProjectContext, planMode bool, cachingSupported bool, bas
 	b.AddStaticSection(SectionSystem, SystemSection())
 	b.AddStaticSection(SectionTasks, TasksSection())
 	b.AddStaticSection(SectionActions, ActionsSection())
+	b.AddStaticSection(SectionBuiltinSkills, BuiltinSkillsSection())
 
 	// Dynamic sections.
 	b.AddDynamicSection(SectionFilesystem, FilesystemSection(ctx.AllowedDirs))

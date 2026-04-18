@@ -17,6 +17,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/bus"
+	"github.com/qiangli/ycode/internal/runtime/builtin"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/git"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
@@ -893,6 +894,15 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 				output, err := m.app.commands.Execute(context.Background(), name, args)
 				return commandOutputMsg{Echo: echo, Text: output, Err: err}
 			}
+		}
+	}
+
+	// Check for high-confidence builtin intent before the expensive agentic loop.
+	if intent := builtin.DetectIntent(text); intent != nil {
+		echo := fmt.Sprintf("> %s\n", text)
+		return func() tea.Msg {
+			output, err := m.app.commands.Execute(context.Background(), intent.Operation, intent.Args)
+			return commandOutputMsg{Echo: echo, Text: output, Err: err}
 		}
 	}
 

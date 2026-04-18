@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/qiangli/ycode/internal/runtime/builtin"
 )
 
 // RegisterSkillHandler registers the Skill tool handler.
@@ -24,6 +26,12 @@ func RegisterSkillHandler(r *Registry) {
 			return "", fmt.Errorf("parse Skill input: %w", err)
 		}
 
+		// Check for builtin executor first — runs optimized path directly.
+		if executor, ok := builtin.GetSkillExecutor(params.Skill); ok {
+			return executor(ctx, params.Args)
+		}
+
+		// Fall through to SKILL.md discovery.
 		content, err := discoverSkill(params.Skill)
 		if err != nil {
 			return "", err

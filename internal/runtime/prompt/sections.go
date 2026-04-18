@@ -7,17 +7,18 @@ import (
 
 // Section types for system prompt assembly.
 const (
-	SectionIntro        = "intro"
-	SectionSystem       = "system"
-	SectionTasks        = "tasks"
-	SectionActions      = "actions"
-	SectionEnvironment  = "environment"
-	SectionProject      = "project"
-	SectionGit          = "git"
-	SectionInstructions = "instructions"
-	SectionMemory       = "memory"
-	SectionConfig       = "config"
-	SectionFilesystem   = "filesystem"
+	SectionIntro         = "intro"
+	SectionSystem        = "system"
+	SectionTasks         = "tasks"
+	SectionActions       = "actions"
+	SectionEnvironment   = "environment"
+	SectionProject       = "project"
+	SectionGit           = "git"
+	SectionInstructions  = "instructions"
+	SectionMemory        = "memory"
+	SectionConfig        = "config"
+	SectionFilesystem    = "filesystem"
+	SectionBuiltinSkills = "builtin-skills"
 )
 
 // FrontierModelName is the human-readable model family name for prompts.
@@ -61,6 +62,23 @@ func TasksSection() string {
 func ActionsSection() string {
 	return `# Executing actions with care
 Carefully consider reversibility and blast radius. Local, reversible actions like editing files or running tests are usually fine. Actions that affect shared systems, publish state, delete data, or otherwise have high blast radius should be explicitly authorized by the user or durable workspace instructions.`
+}
+
+// BuiltinSkillsSection returns guidance for optimized builtin operations.
+// This teaches the LLM to invoke the Skill tool for operations that have
+// optimized builtin implementations.
+func BuiltinSkillsSection() string {
+	return `# Builtin Skills
+When the user asks you to perform one of these operations, invoke the Skill tool
+instead of running git commands manually. These skills are optimized and handle
+the full workflow in a single call.
+
+Available builtin skills:
+- commit: Create a git commit with an AI-generated message. Invoke with:
+  Skill(skill: "commit", args: "<optional context hint>")
+  Use when the user wants to commit, stage and commit, or create a commit.
+  DO NOT use for: questions about commits, viewing commit history, reverting
+  commits, amending commits, or any git log/show/blame operations.`
 }
 
 // EnvironmentSection returns environment context.

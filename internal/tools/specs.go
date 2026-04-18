@@ -163,7 +163,7 @@ func builtinSpecs() []*ToolSpec {
 		},
 		{
 			Name:            "Skill",
-			Description:     "Load a skill definition.",
+			Description:     "Execute a skill or load a skill definition. Builtin skills (commit, review, pr) run optimized operations directly. Pass the skill name and optional arguments.",
 			InputSchema:     mustJSON(skillSchema),
 			RequiredMode:    permission.ReadOnly,
 			Source:          SourceBuiltin,
