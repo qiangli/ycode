@@ -44,6 +44,10 @@ type RuntimeDeps struct {
 
 	// RevertFiles reverts file changes from the last agent turn.
 	RevertFiles func() (string, error)
+
+	// TrackUsage tracks token usage from builtin operations (optional).
+	// Called by commands that make LLM calls to report token usage.
+	TrackUsage func(inputTokens, outputTokens, cacheCreate, cacheRead int)
 }
 
 // ConfigDirs holds the config directory paths for display.
@@ -295,10 +299,14 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			if genErr == nil && initResult != nil {
 				// Generate AGENTS.md via single LLM call.
 				// initResult.SystemPrompt = LLM role, initResult.UserPrompt = instructions + context
-				content, llmErr := chain.SingleShot(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096)
-				if llmErr == nil && content != "" {
+				llmResult, llmErr := chain.SingleShotWithUsage(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096)
+				if llmErr == nil && llmResult != nil && llmResult.Text != "" {
 					agentsPath := filepath.Join(cwd, "AGENTS.md")
-					if err := os.WriteFile(agentsPath, []byte(content), 0o644); err == nil {
+					if err := os.WriteFile(agentsPath, []byte(llmResult.Text), 0o644); err == nil {
+						// Track usage if tracker is available.
+						if deps.TrackUsage != nil {
+							deps.TrackUsage(llmResult.InputTokens, llmResult.OutputTokens, llmResult.CacheCreate, llmResult.CacheRead)
+						}
 						resultMsg := fmt.Sprintf("%s\n\nEnhanced AGENTS.md (analyzed: %v)",
 							report.Render(), initResult.FilesRead)
 						if len(initResult.Questions) > 0 {
@@ -306,6 +314,12 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 							for _, q := range initResult.Questions {
 								resultMsg += fmt.Sprintf("  - %s\n", q)
 							}
+						}
+						// Show token usage if available.
+						if llmResult.InputTokens > 0 || llmResult.OutputTokens > 0 {
+							totalTokens := llmResult.InputTokens + llmResult.OutputTokens
+							resultMsg += fmt.Sprintf("\n  Tokens: %d in, %d out (%d total)\n",
+								llmResult.InputTokens, llmResult.OutputTokens, totalTokens)
 						}
 						return resultMsg, nil
 					}
@@ -606,16 +620,26 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 			if genErr == nil && initResult != nil {
 				// Generate AGENTS.md via single LLM call.
 				// initResult.SystemPrompt = LLM role, initResult.UserPrompt = instructions + context
-				content, llmErr := chain.SingleShot(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096)
-				if llmErr == nil && content != "" {
+				llmResult, llmErr := chain.SingleShotWithUsage(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096)
+				if llmErr == nil && llmResult != nil && llmResult.Text != "" {
 					agentsPath := filepath.Join(cwd, "AGENTS.md")
-					if err := os.WriteFile(agentsPath, []byte(content), 0o644); err == nil {
+					if err := os.WriteFile(agentsPath, []byte(llmResult.Text), 0o644); err == nil {
+						// Track usage if tracker is available.
+						if deps.TrackUsage != nil {
+							deps.TrackUsage(llmResult.InputTokens, llmResult.OutputTokens, llmResult.CacheCreate, llmResult.CacheRead)
+						}
 						resultMsg := report.Render() + fmt.Sprintf("\n  Analyzed: %v", initResult.FilesRead)
 						if len(initResult.Questions) > 0 {
 							resultMsg += "\n\n  Consider answering these questions to improve AGENTS.md:\n"
 							for _, q := range initResult.Questions {
 								resultMsg += fmt.Sprintf("    - %s\n", q)
 							}
+						}
+						// Show token usage if available.
+						if llmResult.InputTokens > 0 || llmResult.OutputTokens > 0 {
+							totalTokens := llmResult.InputTokens + llmResult.OutputTokens
+							resultMsg += fmt.Sprintf("\n  Tokens: %d in, %d out (%d total)\n",
+								llmResult.InputTokens, llmResult.OutputTokens, totalTokens)
 						}
 						return resultMsg, nil
 					}

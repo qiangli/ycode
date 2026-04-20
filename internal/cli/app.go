@@ -129,6 +129,9 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		ModelSwitcher: app.SwitchModel,
 		RetryTurn:     app.RetryTurn,
 		RevertFiles:   app.RevertFiles,
+		TrackUsage: func(inputTokens, outputTokens, cacheCreate, cacheRead int) {
+			app.usageTracker.Add(inputTokens, outputTokens, cacheCreate, cacheRead)
+		},
 	})
 	app.commands = cmdRegistry
 

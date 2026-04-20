@@ -30,26 +30,55 @@ type ModelChain struct {
 	Models []session.ModelSpec
 }
 
+// SingleShotResult holds the result of a single-shot LLM call.
+type SingleShotResult struct {
+	Text         string
+	InputTokens  int
+	OutputTokens int
+	CacheCreate  int
+	CacheRead    int
+}
+
 // SingleShot sends a single system+user message pair to the LLM with no tools
 // and no conversation history. It tries each model in the chain, returning the
 // first successful response.
 func (mc *ModelChain) SingleShot(ctx context.Context, systemPrompt, userContent string, maxTokens int) (string, error) {
+	result, err := mc.SingleShotWithUsage(ctx, systemPrompt, userContent, maxTokens)
+	if err != nil {
+		return "", err
+	}
+	return result.Text, nil
+}
+
+// SingleShotWithUsage sends a single system+user message pair to the LLM and
+// returns both the text response and token usage. It tries each model in the
+// chain, returning the first successful response.
+func (mc *ModelChain) SingleShotWithUsage(ctx context.Context, systemPrompt, userContent string, maxTokens int) (*SingleShotResult, error) {
 	var lastErr error
 	for _, ms := range mc.Models {
-		text, err := singleShotWith(ctx, ms, systemPrompt, userContent, maxTokens)
+		result, err := singleShotWithUsage(ctx, ms, systemPrompt, userContent, maxTokens)
 		if err != nil {
 			slog.Info("single-shot call failed, trying next model", "model", ms.Model, "error", err)
 			lastErr = err
 			continue
 		}
-		slog.Info("single-shot call succeeded", "model", ms.Model)
-		return text, nil
+		slog.Info("single-shot call succeeded", "model", ms.Model, "input_tokens", result.InputTokens, "output_tokens", result.OutputTokens)
+		return result, nil
 	}
-	return "", fmt.Errorf("all models failed (last: %w)", lastErr)
+	return nil, fmt.Errorf("all models failed (last: %w)", lastErr)
 }
 
 // singleShotWith sends the request to a specific model.
 func singleShotWith(ctx context.Context, ms session.ModelSpec, systemPrompt, userContent string, maxTokens int) (string, error) {
+	result, err := singleShotWithUsage(ctx, ms, systemPrompt, userContent, maxTokens)
+	if err != nil {
+		return "", err
+	}
+	return result.Text, nil
+}
+
+// singleShotWithUsage sends the request to a specific model and returns usage.
+func singleShotWithUsage(ctx context.Context, ms session.ModelSpec, systemPrompt, userContent string, maxTokens int) (*SingleShotResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, singleShotTimeout)
 	defer cancel()
 
@@ -79,7 +108,30 @@ func singleShotWith(ctx context.Context, ms session.ModelSpec, systemPrompt, use
 
 	var textParts []string
 	var thinkingParts []string
+	var usage api.Usage
+
 	for ev := range events {
+		// Capture usage from events.
+		if ev.Type == "message_start" && ev.Message != nil {
+			usage.InputTokens += ev.Message.Usage.InputTokens + ev.Message.Usage.PromptTokens
+			usage.CacheCreationInput += ev.Message.Usage.CacheCreationInput
+			usage.CacheReadInput += ev.Message.Usage.CacheReadInput
+		}
+		if ev.Type == "message_delta" && ev.Usage != nil {
+			usage.OutputTokens += ev.Usage.OutputTokens + ev.Usage.CompletionTokens
+		}
+		if ev.Usage != nil {
+			// Fallback: capture any usage we see.
+			if ev.Usage.InputTokens > 0 || ev.Usage.PromptTokens > 0 {
+				usage.InputTokens += ev.Usage.InputTokens + ev.Usage.PromptTokens
+			}
+			if ev.Usage.OutputTokens > 0 || ev.Usage.CompletionTokens > 0 {
+				usage.OutputTokens += ev.Usage.OutputTokens + ev.Usage.CompletionTokens
+			}
+			usage.CacheCreationInput += ev.Usage.CacheCreationInput
+			usage.CacheReadInput += ev.Usage.CacheReadInput
+		}
+
 		if ev.Delta != nil {
 			var delta struct {
 				Type     string `json:"type"`
@@ -103,7 +155,7 @@ func singleShotWith(ctx context.Context, ms session.ModelSpec, systemPrompt, use
 	}
 
 	if err := <-errc; err != nil {
-		return "", fmt.Errorf("single-shot (%s): %w", ms.Model, err)
+		return nil, fmt.Errorf("single-shot (%s): %w", ms.Model, err)
 	}
 
 	// Prefer text content; fall back to extracting the answer from thinking
@@ -114,10 +166,16 @@ func singleShotWith(ctx context.Context, ms session.ModelSpec, systemPrompt, use
 		text = extractFromThinking(strings.Join(thinkingParts, ""))
 	}
 	if text == "" {
-		return "", fmt.Errorf("single-shot (%s) returned empty response", ms.Model)
+		return nil, fmt.Errorf("single-shot (%s) returned empty response", ms.Model)
 	}
 
-	return text, nil
+	return &SingleShotResult{
+		Text:         text,
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		CacheCreate:  usage.CacheCreationInput,
+		CacheRead:    usage.CacheReadInput,
+	}, nil
 }
 
 // ResolveModelChain builds a ModelChain from config, using the weak model
