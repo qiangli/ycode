@@ -134,13 +134,31 @@ func NewTUIModel(app *App) *TUIModel {
 	// Customize textarea key bindings: Enter submits, no newlines in input.
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 
-	return &TUIModel{
+	m := &TUIModel{
 		app:           app,
 		textarea:      ta,
 		history:       make([]string, 0),
 		historyIndex:  -1,
 		completionAll: buildCompletionItems(app.commands, app.workDir),
 	}
+
+	return m
+}
+
+// SetProgram sets the tea.Program and configures the progress callback.
+func (m *TUIModel) SetProgram(p *tea.Program) {
+	m.program = p
+	// Set up progress callback to send messages to the TUI.
+	m.app.SetProgressFunc(func(message string) {
+		if m.program != nil {
+			m.program.Send(progressMsg{message: message})
+		}
+	})
+}
+
+// progressMsg is sent to show a progress update during command execution.
+type progressMsg struct {
+	message string
 }
 
 func (m *TUIModel) Init() tea.Cmd {
@@ -151,6 +169,11 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case progressMsg:
+		// Show progress message during command execution.
+		m.appendOutput(msg.message + "\n")
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height

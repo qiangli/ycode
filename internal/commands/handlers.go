@@ -48,6 +48,10 @@ type RuntimeDeps struct {
 	// TrackUsage tracks token usage from builtin operations (optional).
 	// Called by commands that make LLM calls to report token usage.
 	TrackUsage func(inputTokens, outputTokens, cacheCreate, cacheRead int)
+
+	// LogProgress logs a progress message during command execution (optional).
+	// Called by commands to show status updates in the TUI.
+	LogProgress func(message string)
 }
 
 // ConfigDirs holds the config directory paths for display.
@@ -294,11 +298,16 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
 
 			// Gather context using opencode-style investigation.
+			if deps.LogProgress != nil {
+				deps.LogProgress("⧗ Analyzing project structure...")
+			}
 			gen := builtin.NewInitGenerator(cwd)
 			initResult, genErr := gen.Generate(args)
 			if genErr == nil && initResult != nil {
 				// Generate AGENTS.md via single LLM call.
-				// initResult.SystemPrompt = LLM role, initResult.UserPrompt = instructions + context
+				if deps.LogProgress != nil {
+					deps.LogProgress("⧗ Generating AGENTS.md via LLM...")
+				}
 				llmResult, llmErr := chain.SingleShotWithUsage(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096)
 				if llmErr == nil && llmResult != nil && llmResult.Text != "" {
 					agentsPath := filepath.Join(cwd, "AGENTS.md")
@@ -615,11 +624,16 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 			chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
 
 			// Gather context using opencode-style investigation.
+			if deps.LogProgress != nil {
+				deps.LogProgress("⧗ Analyzing project structure...")
+			}
 			gen := builtin.NewInitGenerator(cwd)
 			initResult, genErr := gen.Generate(args)
 			if genErr == nil && initResult != nil {
 				// Generate AGENTS.md via single LLM call.
-				// initResult.SystemPrompt = LLM role, initResult.UserPrompt = instructions + context
+				if deps.LogProgress != nil {
+					deps.LogProgress("⧗ Generating AGENTS.md via LLM...")
+				}
 				llmResult, llmErr := chain.SingleShotWithUsage(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096)
 				if llmErr == nil && llmResult != nil && llmResult.Text != "" {
 					agentsPath := filepath.Join(cwd, "AGENTS.md")

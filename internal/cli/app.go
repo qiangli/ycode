@@ -57,6 +57,9 @@ type App struct {
 
 	// Cleanup functions called on Close (OTEL shutdown, context cancel, etc.).
 	cleanupFuncs []func()
+
+	// Progress callback for command status updates (set by TUI).
+	progressFunc func(message string)
 }
 
 // AppOptions holds optional configuration for App creation.
@@ -131,6 +134,9 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		RevertFiles:   app.RevertFiles,
 		TrackUsage: func(inputTokens, outputTokens, cacheCreate, cacheRead int) {
 			app.usageTracker.Add(inputTokens, outputTokens, cacheCreate, cacheRead)
+		},
+		LogProgress: func(message string) {
+			app.LogProgress(message)
 		},
 	})
 	app.commands = cmdRegistry
@@ -530,6 +536,18 @@ func (a *App) RevertFiles() (string, error) {
 // UsageTracker returns the usage tracker.
 func (a *App) UsageTracker() *usage.Tracker { return a.usageTracker }
 
+// SetProgressFunc sets the progress callback function (called by TUI).
+func (a *App) SetProgressFunc(fn func(message string)) {
+	a.progressFunc = fn
+}
+
+// LogProgress logs a progress message via the registered callback.
+func (a *App) LogProgress(message string) {
+	if a.progressFunc != nil {
+		a.progressFunc(message)
+	}
+}
+
 // TurnIndex returns the current turn index and increments it.
 func (a *App) NextTurnIndex() int {
 	a.turnIndex++
@@ -544,7 +562,7 @@ func (a *App) RunInteractiveWithClient(ctx context.Context, cl agentClient) erro
 	m := NewTUIModel(a)
 	m.cl = cl
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
-	m.program = p
+	m.SetProgram(p)
 
 	if a.toolRegistry != nil {
 		prompter := NewTUIPrompter(p)
@@ -568,7 +586,7 @@ func (a *App) RunInteractive(ctx context.Context) error {
 
 	m := NewTUIModel(a)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
-	m.program = p
+	m.SetProgram(p)
 
 	// Wire TUI-based permission prompter into the tool registry so that
 	// tools requiring elevated permissions can ask the user interactively.
