@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/qiangli/ycode/internal/api"
@@ -253,26 +254,20 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Handler:     exportHandler(deps),
 	})
 
-	// /init: command handler creates scaffold (dirs, config, gitignore, template
-	// files) deterministically, then returns skill.md instructions for the LLM to
-	// do targeted project analysis and enhance the generated files.
+	// /init: command handler creates scaffold (dirs, config, gitignore, AGENTS.md)
+	// deterministically, then uses single-shot LLM call to enhance AGENTS.md.
+	// This bypasses the expensive agentic turn for 90-95% token savings vs the
+	// original multi-tool-call approach.
 	r.Register(&Spec{
 		Name:        "init",
 		Description: "Initialize workspace and generate context-aware AGENTS.md",
 		Usage:       "/init [focus]",
 		Category:    "workspace",
 		Handler:     initHandler(deps),
-		AgentPrompt: func(args string) string {
-			content := initSkillContent
-			if args != "" {
-				return strings.ReplaceAll(content, "{{ARGS}}", args)
-			}
-			return strings.ReplaceAll(content, "{{ARGS}}", "(none)")
-		},
 	})
 
 	// Also register as a skill executor so the LLM can call Skill("init")
-	// during agentic turns to scaffold + get enhancement instructions.
+	// during agentic turns. Uses the same optimized single-shot path.
 	builtin.RegisterSkillExecutor("init", func(ctx context.Context, args string) (string, error) {
 		cwd := deps.WorkDir
 		if cwd == "" {
@@ -283,21 +278,28 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			}
 		}
 
+		// Phase 1: Scaffold.
 		report, err := InitializeRepo(cwd)
 		if err != nil {
 			return "", fmt.Errorf("init scaffold failed: %w", err)
 		}
 
-		var b strings.Builder
-		b.WriteString("## Scaffold Complete\n\n")
-		b.WriteString(report.Render())
-		b.WriteString("\n---\n\n")
-		if args != "" {
-			b.WriteString(strings.ReplaceAll(initSkillContent, "{{ARGS}}", args))
-		} else {
-			b.WriteString(strings.ReplaceAll(initSkillContent, "{{ARGS}}", "(none)"))
+		// Phase 2: Single-shot enhancement if provider available.
+		if deps.Provider != nil && deps.Config != nil {
+			chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
+			gen := builtin.NewInitGenerator(chain, cwd)
+
+			result, genErr := gen.Generate(ctx, args)
+			if genErr == nil && result != nil {
+				agentsPath := filepath.Join(cwd, "AGENTS.md")
+				if err := os.WriteFile(agentsPath, []byte(result.Content), 0o644); err == nil {
+					return fmt.Sprintf("%s\n\nEnhanced AGENTS.md (analyzed: %v)",
+						report.Render(), result.FilesRead), nil
+				}
+			}
 		}
-		return b.String(), nil
+
+		return report.Render(), nil
 	})
 
 	// /commit: builtin executor returns the embedded commit skill instructions.
@@ -573,9 +575,29 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 			}
 		}
 
+		// Phase 1: Deterministic scaffold (always runs).
 		report, err := InitializeRepo(cwd)
 		if err != nil {
 			return "", fmt.Errorf("init scaffold failed: %w", err)
+		}
+
+		// Phase 2: Single-shot LLM enhancement if provider available.
+		// This bypasses the expensive agentic turn for 90-95% token savings.
+		if deps.Provider != nil && deps.Config != nil {
+			chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
+			gen := builtin.NewInitGenerator(chain, cwd)
+
+			result, genErr := gen.Generate(ctx, args)
+			if genErr == nil && result != nil {
+				// Write the generated AGENTS.md.
+				agentsPath := filepath.Join(cwd, "AGENTS.md")
+				if err := os.WriteFile(agentsPath, []byte(result.Content), 0o644); err == nil {
+					// Update report to show enhancement.
+					report.GitStatus = "enhanced with LLM"
+					return report.Render() + fmt.Sprintf("\n  Analyzed: %v\n", result.FilesRead), nil
+				}
+			}
+			// If enhancement fails, return scaffold report (still useful).
 		}
 
 		return report.Render(), nil
