@@ -17,13 +17,8 @@ var commitSkillContent string
 
 const gitignoreComment = "# ycode local artifacts"
 
-var gitignoreEntries = []string{
-	".agents/ycode.json",
-	".agents/ycode/settings.local.json",
-	".agents/ycode/sessions/",
-	".agents/ycode/cache/",
-	".agents/ycode/logs/",
-}
+// agentsIgnorePattern is the single pattern used to ignore all .agents/ content
+const agentsIgnorePattern = ".agents/"
 
 // InitStatus describes the outcome of creating a single artifact.
 type InitStatus int
@@ -224,10 +219,25 @@ func writeYcodeJSON(path string, metadata *ProjectMetadata) (InitStatus, error) 
 	return InitCreated, nil
 }
 
+// hasAgentsIgnore checks if .gitignore already excludes .agents or .agents/
+func hasAgentsIgnore(lines []string) bool {
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Check for exact matches or directory patterns
+		if trimmed == ".agents" || trimmed == ".agents/" ||
+			strings.HasPrefix(trimmed, ".agents/") ||
+			trimmed == "**/.agents/" ||
+			trimmed == ".agents"+string(filepath.Separator) {
+			return true
+		}
+	}
+	return false
+}
+
 func ensureGitignoreEntries(path string) (InitStatus, error) {
+	// Create new .gitignore with just .agents/ if it doesn't exist
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		lines := []string{gitignoreComment}
-		lines = append(lines, gitignoreEntries...)
+		lines := []string{gitignoreComment, agentsIgnorePattern}
 		return InitCreated, os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 	}
 
@@ -236,32 +246,14 @@ func ensureGitignoreEntries(path string) (InitStatus, error) {
 		return 0, err
 	}
 	existing := strings.Split(string(data), "\n")
-	changed := false
 
-	hasLine := func(needle string) bool {
-		for _, line := range existing {
-			if line == needle {
-				return true
-			}
-		}
-		return false
-	}
-
-	if !hasLine(gitignoreComment) {
-		existing = append(existing, gitignoreComment)
-		changed = true
-	}
-	for _, entry := range gitignoreEntries {
-		if !hasLine(entry) {
-			existing = append(existing, entry)
-			changed = true
-		}
-	}
-
-	if !changed {
+	// Check if .agents is already ignored (either .agents or .agents/)
+	if hasAgentsIgnore(existing) {
 		return InitSkipped, nil
 	}
 
+	// Append .agents/ pattern
+	existing = append(existing, gitignoreComment, agentsIgnorePattern)
 	return InitUpdated, os.WriteFile(path, []byte(strings.Join(existing, "\n")+"\n"), 0o644)
 }
 

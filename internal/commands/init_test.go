@@ -66,17 +66,8 @@ func TestInitializeRepoCreatesExpectedFiles(t *testing.T) {
 	// Verify .gitignore entries.
 	gi, _ := os.ReadFile(filepath.Join(root, ".gitignore"))
 	giStr := string(gi)
-	if !strings.Contains(giStr, ".agents/ycode.json") {
-		t.Error(".gitignore should contain .agents/ycode.json")
-	}
-	if !strings.Contains(giStr, ".agents/ycode/settings.local.json") {
-		t.Error(".gitignore should contain .agents/ycode/settings.local.json")
-	}
-	if !strings.Contains(giStr, ".agents/ycode/sessions/") {
-		t.Error(".gitignore should contain .agents/ycode/sessions/")
-	}
-	if !strings.Contains(giStr, ".agents/ycode/cache/") {
-		t.Error(".gitignore should contain .agents/ycode/cache/")
+	if !strings.Contains(giStr, ".agents/") {
+		t.Error(".gitignore should contain .agents/")
 	}
 
 	// Verify CLAUDE.md detects Go.
@@ -330,10 +321,8 @@ func TestEnsureGitignoreCreatesNewFile(t *testing.T) {
 	if !strings.Contains(content, gitignoreComment) {
 		t.Error("should contain comment header")
 	}
-	for _, entry := range gitignoreEntries {
-		if !strings.Contains(content, entry) {
-			t.Errorf("should contain entry %q", entry)
-		}
+	if !strings.Contains(content, agentsIgnorePattern) {
+		t.Errorf("should contain entry %q", agentsIgnorePattern)
 	}
 }
 
@@ -363,7 +352,8 @@ func TestEnsureGitignoreUpdatesExistingFile(t *testing.T) {
 func TestEnsureGitignoreSkipsWhenComplete(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, ".gitignore")
-	lines := append([]string{gitignoreComment}, gitignoreEntries...)
+	// Test that .agents/ already present causes skip
+	lines := []string{gitignoreComment, agentsIgnorePattern}
 	os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 
 	status, err := ensureGitignoreEntries(path)
@@ -371,7 +361,37 @@ func TestEnsureGitignoreSkipsWhenComplete(t *testing.T) {
 		t.Fatalf("ensureGitignoreEntries failed: %v", err)
 	}
 	if status != InitSkipped {
-		t.Error("should return Skipped when all entries present")
+		t.Error("should return Skipped when .agents/ already present")
+	}
+}
+
+func TestEnsureGitignoreSkipsWhenDotAgentsIgnored(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".gitignore")
+	// Test that .agents (without trailing slash) already present causes skip
+	os.WriteFile(path, []byte(".agents\n"), 0o644)
+
+	status, err := ensureGitignoreEntries(path)
+	if err != nil {
+		t.Fatalf("ensureGitignoreEntries failed: %v", err)
+	}
+	if status != InitSkipped {
+		t.Error("should return Skipped when .agents already present")
+	}
+}
+
+func TestEnsureGitignoreSkipsWhenAnyAgentsPathIgnored(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".gitignore")
+	// Test that any .agents/ path already present causes skip
+	os.WriteFile(path, []byte(".agents/something\n"), 0o644)
+
+	status, err := ensureGitignoreEntries(path)
+	if err != nil {
+		t.Fatalf("ensureGitignoreEntries failed: %v", err)
+	}
+	if status != InitSkipped {
+		t.Error("should return Skipped when any .agents/ path is already present")
 	}
 }
 
