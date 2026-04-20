@@ -286,11 +286,14 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			}
 		}
 
-		// Phase 1: Scaffold.
+		var outputParts []string
+
+		// Phase 1: Scaffold (always shown first).
 		report, err := InitializeRepo(cwd)
 		if err != nil {
 			return "", fmt.Errorf("init scaffold failed: %w", err)
 		}
+		outputParts = append(outputParts, report.Render())
 
 		// Phase 2: Single-shot enhancement if provider available.
 		// Uses opencode-style template with structured investigation guidance.
@@ -298,16 +301,12 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
 
 			// Gather context using opencode-style investigation.
-			if deps.LogProgress != nil {
-				deps.LogProgress("⧗ Analyzing project structure...")
-			}
+			outputParts = append(outputParts, "⧗ Analyzing project structure...")
 			gen := builtin.NewInitGenerator(cwd)
 			initResult, genErr := gen.Generate(args)
 			if genErr == nil && initResult != nil {
 				// Generate AGENTS.md via single LLM call.
-				if deps.LogProgress != nil {
-					deps.LogProgress("⧗ Generating AGENTS.md via LLM...")
-				}
+				outputParts = append(outputParts, "⧗ Generating AGENTS.md via LLM...")
 				llmResult, llmErr := chain.SingleShotWithUsage(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096)
 				if llmErr == nil && llmResult != nil && llmResult.Text != "" {
 					agentsPath := filepath.Join(cwd, "AGENTS.md")
@@ -316,27 +315,27 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 						if deps.TrackUsage != nil {
 							deps.TrackUsage(llmResult.InputTokens, llmResult.OutputTokens, llmResult.CacheCreate, llmResult.CacheRead)
 						}
-						resultMsg := fmt.Sprintf("%s\n\nEnhanced AGENTS.md (analyzed: %v)",
-							report.Render(), initResult.FilesRead)
+						outputParts = append(outputParts, fmt.Sprintf("✓ Enhanced AGENTS.md (analyzed: %v)", initResult.FilesRead))
 						if len(initResult.Questions) > 0 {
-							resultMsg += "\n\nConsider answering these questions to improve AGENTS.md:\n"
+							outputParts = append(outputParts, "")
+							outputParts = append(outputParts, "Consider answering these questions to improve AGENTS.md:")
 							for _, q := range initResult.Questions {
-								resultMsg += fmt.Sprintf("  - %s\n", q)
+								outputParts = append(outputParts, fmt.Sprintf("  - %s", q))
 							}
 						}
 						// Show token usage if available.
 						if llmResult.InputTokens > 0 || llmResult.OutputTokens > 0 {
 							totalTokens := llmResult.InputTokens + llmResult.OutputTokens
-							resultMsg += fmt.Sprintf("\n  Tokens: %d in, %d out (%d total)\n",
-								llmResult.InputTokens, llmResult.OutputTokens, totalTokens)
+							outputParts = append(outputParts, fmt.Sprintf("  Tokens: %d in, %d out (%d total)",
+								llmResult.InputTokens, llmResult.OutputTokens, totalTokens))
 						}
-						return resultMsg, nil
+						return strings.Join(outputParts, "\n"), nil
 					}
 				}
 			}
 		}
 
-		return report.Render(), nil
+		return strings.Join(outputParts, "\n"), nil
 	})
 
 	// /commit: builtin executor returns the embedded commit skill instructions.
@@ -612,11 +611,14 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 			}
 		}
 
-		// Phase 1: Deterministic scaffold (always runs).
+		var outputParts []string
+
+		// Phase 1: Deterministic scaffold (always shown first).
 		report, err := InitializeRepo(cwd)
 		if err != nil {
 			return "", fmt.Errorf("init scaffold failed: %w", err)
 		}
+		outputParts = append(outputParts, report.Render())
 
 		// Phase 2: Single-shot LLM enhancement if provider available.
 		// Uses opencode-style template with structured investigation guidance.
@@ -624,16 +626,12 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 			chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
 
 			// Gather context using opencode-style investigation.
-			if deps.LogProgress != nil {
-				deps.LogProgress("⧗ Analyzing project structure...")
-			}
+			outputParts = append(outputParts, "⧗ Analyzing project structure...")
 			gen := builtin.NewInitGenerator(cwd)
 			initResult, genErr := gen.Generate(args)
 			if genErr == nil && initResult != nil {
 				// Generate AGENTS.md via single LLM call.
-				if deps.LogProgress != nil {
-					deps.LogProgress("⧗ Generating AGENTS.md via LLM...")
-				}
+				outputParts = append(outputParts, "⧗ Generating AGENTS.md via LLM...")
 				llmResult, llmErr := chain.SingleShotWithUsage(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096)
 				if llmErr == nil && llmResult != nil && llmResult.Text != "" {
 					agentsPath := filepath.Join(cwd, "AGENTS.md")
@@ -642,27 +640,28 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 						if deps.TrackUsage != nil {
 							deps.TrackUsage(llmResult.InputTokens, llmResult.OutputTokens, llmResult.CacheCreate, llmResult.CacheRead)
 						}
-						resultMsg := report.Render() + fmt.Sprintf("\n  Analyzed: %v", initResult.FilesRead)
+						outputParts = append(outputParts, fmt.Sprintf("✓ Analyzed: %v", initResult.FilesRead))
 						if len(initResult.Questions) > 0 {
-							resultMsg += "\n\n  Consider answering these questions to improve AGENTS.md:\n"
+							outputParts = append(outputParts, "")
+							outputParts = append(outputParts, "Consider answering these questions to improve AGENTS.md:")
 							for _, q := range initResult.Questions {
-								resultMsg += fmt.Sprintf("    - %s\n", q)
+								outputParts = append(outputParts, fmt.Sprintf("  - %s", q))
 							}
 						}
 						// Show token usage if available.
 						if llmResult.InputTokens > 0 || llmResult.OutputTokens > 0 {
 							totalTokens := llmResult.InputTokens + llmResult.OutputTokens
-							resultMsg += fmt.Sprintf("\n  Tokens: %d in, %d out (%d total)\n",
-								llmResult.InputTokens, llmResult.OutputTokens, totalTokens)
+							outputParts = append(outputParts, fmt.Sprintf("  Tokens: %d in, %d out (%d total)",
+								llmResult.InputTokens, llmResult.OutputTokens, totalTokens))
 						}
-						return resultMsg, nil
+						return strings.Join(outputParts, "\n"), nil
 					}
 				}
 			}
 			// If enhancement fails, return scaffold report (still useful).
 		}
 
-		return report.Render(), nil
+		return strings.Join(outputParts, "\n"), nil
 	}
 }
 
