@@ -294,7 +294,8 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			initResult, genErr := gen.Generate(args)
 			if genErr == nil && initResult != nil {
 				// Generate AGENTS.md via single LLM call.
-				content, llmErr := chain.SingleShot(ctx, initResult.Content, "", 4096)
+				// initResult.SystemPrompt = LLM role, initResult.UserPrompt = instructions + context
+				content, llmErr := chain.SingleShot(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096)
 				if llmErr == nil && content != "" {
 					agentsPath := filepath.Join(cwd, "AGENTS.md")
 					if err := os.WriteFile(agentsPath, []byte(content), 0o644); err == nil {
@@ -604,7 +605,8 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 			initResult, genErr := gen.Generate(args)
 			if genErr == nil && initResult != nil {
 				// Generate AGENTS.md via single LLM call.
-				content, llmErr := chain.SingleShot(ctx, initResult.Content, "", 4096)
+				// initResult.SystemPrompt = LLM role, initResult.UserPrompt = instructions + context
+				content, llmErr := chain.SingleShot(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096)
 				if llmErr == nil && content != "" {
 					agentsPath := filepath.Join(cwd, "AGENTS.md")
 					if err := os.WriteFile(agentsPath, []byte(content), 0o644); err == nil {

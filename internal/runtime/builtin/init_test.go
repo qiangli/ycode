@@ -41,16 +41,21 @@ func TestInitGenerator_GatherContext(t *testing.T) {
 		t.Error("expected FilesRead to be non-empty")
 	}
 
-	// Verify prompt was generated.
-	if result.Content == "" {
-		t.Error("expected non-empty prompt content")
+	// Verify system prompt was generated.
+	if result.SystemPrompt == "" {
+		t.Error("expected non-empty system prompt")
 	}
 
-	// Verify template variables were substituted.
-	if strings.Contains(result.Content, "{{ARGS}}") {
+	// Verify user prompt was generated.
+	if result.UserPrompt == "" {
+		t.Error("expected non-empty user prompt")
+	}
+
+	// Verify template variables were substituted in user prompt.
+	if strings.Contains(result.UserPrompt, "{{ARGS}}") {
 		t.Error("template variable {{ARGS}} was not substituted")
 	}
-	if strings.Contains(result.Content, "{{PATH}}") {
+	if strings.Contains(result.UserPrompt, "{{PATH}}") {
 		t.Error("template variable {{PATH}} was not substituted")
 	}
 }
@@ -70,9 +75,9 @@ func TestInitGenerator_WithArgs(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	// Verify args were substituted.
-	if !strings.Contains(result.Content, "backend focus") {
-		t.Error("expected args to be substituted in prompt")
+	// Verify args were substituted in user prompt.
+	if !strings.Contains(result.UserPrompt, "backend focus") {
+		t.Error("expected args to be substituted in user prompt")
 	}
 }
 

@@ -14,6 +14,12 @@ var initTemplate string
 const (
 	// initMaxTokens limits LLM output for AGENTS.md generation.
 	initMaxTokens = 4096
+
+	// initSystemPrompt provides the LLM with its role.
+	initSystemPrompt = `You are an expert at creating AGENTS.md files for software repositories.
+Your task is to analyze project context and generate a concise, high-quality AGENTS.md file.
+Follow the investigation guidance and writing rules provided in the user prompt.
+Output only the AGENTS.md content without any additional explanation.`
 )
 
 // InitGenerator creates AGENTS.md with single-shot LLM call.
@@ -28,26 +34,29 @@ func NewInitGenerator(cwd string) *InitGenerator {
 
 // InitResult holds the outcome of init generation.
 type InitResult struct {
-	Content        string
+	SystemPrompt   string // System prompt for LLM role
+	UserPrompt     string // User prompt with instructions and context
 	FilesRead      []string
 	Questions      []string // Questions to ask the user
 	MissingContext []string // Missing context that couldn't be inferred
 }
 
-// Generate prepares all context and builds the prompt for AGENTS.md generation.
+// Generate prepares all context and builds the prompts for AGENTS.md generation.
+// Returns both system prompt (LLM role) and user prompt (instructions + context).
 // The actual LLM call is made by the caller using their preferred provider.
 func (ig *InitGenerator) Generate(args string) (*InitResult, error) {
 	// Gather project context by reading files directly.
 	ctx := ig.gatherContext()
 
-	// Build the prompt from template.
-	prompt := ig.buildPrompt(ctx, args)
+	// Build the user prompt from template.
+	userPrompt := ig.buildPrompt(ctx, args)
 
 	// Identify potential questions based on missing context.
 	questions := ig.identifyQuestions(ctx)
 
 	return &InitResult{
-		Content:        prompt,
+		SystemPrompt:   initSystemPrompt,
+		UserPrompt:     userPrompt,
 		FilesRead:      ctx.FilesRead,
 		Questions:      questions,
 		MissingContext: ctx.MissingContext,
