@@ -285,16 +285,29 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		}
 
 		// Phase 2: Single-shot enhancement if provider available.
+		// Uses opencode-style template with structured investigation guidance.
 		if deps.Provider != nil && deps.Config != nil {
 			chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
-			gen := builtin.NewInitGenerator(chain, cwd)
 
-			result, genErr := gen.Generate(ctx, args)
-			if genErr == nil && result != nil {
-				agentsPath := filepath.Join(cwd, "AGENTS.md")
-				if err := os.WriteFile(agentsPath, []byte(result.Content), 0o644); err == nil {
-					return fmt.Sprintf("%s\n\nEnhanced AGENTS.md (analyzed: %v)",
-						report.Render(), result.FilesRead), nil
+			// Gather context using opencode-style investigation.
+			gen := builtin.NewInitGenerator(cwd)
+			initResult, genErr := gen.Generate(args)
+			if genErr == nil && initResult != nil {
+				// Generate AGENTS.md via single LLM call.
+				content, llmErr := chain.SingleShot(ctx, initResult.Content, "", 4096)
+				if llmErr == nil && content != "" {
+					agentsPath := filepath.Join(cwd, "AGENTS.md")
+					if err := os.WriteFile(agentsPath, []byte(content), 0o644); err == nil {
+						resultMsg := fmt.Sprintf("%s\n\nEnhanced AGENTS.md (analyzed: %v)",
+							report.Render(), initResult.FilesRead)
+						if len(initResult.Questions) > 0 {
+							resultMsg += "\n\nConsider answering these questions to improve AGENTS.md:\n"
+							for _, q := range initResult.Questions {
+								resultMsg += fmt.Sprintf("  - %s\n", q)
+							}
+						}
+						return resultMsg, nil
+					}
 				}
 			}
 		}
@@ -582,19 +595,28 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 		}
 
 		// Phase 2: Single-shot LLM enhancement if provider available.
-		// This bypasses the expensive agentic turn for 90-95% token savings.
+		// Uses opencode-style template with structured investigation guidance.
 		if deps.Provider != nil && deps.Config != nil {
 			chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
-			gen := builtin.NewInitGenerator(chain, cwd)
 
-			result, genErr := gen.Generate(ctx, args)
-			if genErr == nil && result != nil {
-				// Write the generated AGENTS.md.
-				agentsPath := filepath.Join(cwd, "AGENTS.md")
-				if err := os.WriteFile(agentsPath, []byte(result.Content), 0o644); err == nil {
-					// Update report to show enhancement.
-					report.GitStatus = "enhanced with LLM"
-					return report.Render() + fmt.Sprintf("\n  Analyzed: %v\n", result.FilesRead), nil
+			// Gather context using opencode-style investigation.
+			gen := builtin.NewInitGenerator(cwd)
+			initResult, genErr := gen.Generate(args)
+			if genErr == nil && initResult != nil {
+				// Generate AGENTS.md via single LLM call.
+				content, llmErr := chain.SingleShot(ctx, initResult.Content, "", 4096)
+				if llmErr == nil && content != "" {
+					agentsPath := filepath.Join(cwd, "AGENTS.md")
+					if err := os.WriteFile(agentsPath, []byte(content), 0o644); err == nil {
+						resultMsg := report.Render() + fmt.Sprintf("\n  Analyzed: %v", initResult.FilesRead)
+						if len(initResult.Questions) > 0 {
+							resultMsg += "\n\n  Consider answering these questions to improve AGENTS.md:\n"
+							for _, q := range initResult.Questions {
+								resultMsg += fmt.Sprintf("    - %s\n", q)
+							}
+						}
+						return resultMsg, nil
+					}
 				}
 			}
 			// If enhancement fails, return scaffold report (still useful).

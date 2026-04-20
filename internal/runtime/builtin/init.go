@@ -1,78 +1,56 @@
 package builtin
 
 import (
-	"context"
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
+//go:embed init_template.txt
+var initTemplate string
+
 const (
 	// initMaxTokens limits LLM output for AGENTS.md generation.
-	initMaxTokens = 2048
-
-	// initSystemPrompt guides the LLM to generate concise AGENTS.md.
-	initSystemPrompt = `You are an expert at creating developer documentation. Given project context, generate a concise AGENTS.md file.
-
-AGENTS.md provides guidance to AI coding assistants working in the repository. Every line must answer: "Would an agent likely miss this without help?"
-
-Output format:
-- Start with: # AGENTS.md followed by a blank line
-- One-sentence project description
-- Reference key files if they exist (CLAUDE.md, USAGE.md, README.md)
-- Quick reference section with exact build/test/lint commands found in the project
-- Project-specific notes: non-obvious architecture, testing quirks, conventions differing from defaults
-- Keep under 40 lines
-- Use bullet points, not prose
-- Never fabricate commands - only include what was verified from the project files
-
-Reference files like this:
-**Read [CLAUDE.md](./CLAUDE.md)** for additional guidance.
-
-Example quick reference format:
-` + "```bash\n" +
-		"make build    # quality gate: tidy -> fmt -> vet -> test\n" +
-		"make test     # unit tests only\n" +
-		"```"
+	initMaxTokens = 4096
 )
 
 // InitGenerator creates AGENTS.md with single-shot LLM call.
 type InitGenerator struct {
-	chain *ModelChain
-	cwd   string
+	cwd string
 }
 
 // NewInitGenerator creates an InitGenerator.
-func NewInitGenerator(chain *ModelChain, cwd string) *InitGenerator {
-	return &InitGenerator{chain: chain, cwd: cwd}
+func NewInitGenerator(cwd string) *InitGenerator {
+	return &InitGenerator{cwd: cwd}
 }
 
 // InitResult holds the outcome of init generation.
 type InitResult struct {
-	Content   string
-	FilesRead []string
+	Content        string
+	FilesRead      []string
+	Questions      []string // Questions to ask the user
+	MissingContext []string // Missing context that couldn't be inferred
 }
 
-// Generate creates AGENTS.md via single LLM call.
-// It reads relevant files from the project and generates instructions.
-func (ig *InitGenerator) Generate(ctx context.Context, focus string) (*InitResult, error) {
+// Generate prepares all context and builds the prompt for AGENTS.md generation.
+// The actual LLM call is made by the caller using their preferred provider.
+func (ig *InitGenerator) Generate(args string) (*InitResult, error) {
 	// Gather project context by reading files directly.
-	context := ig.gatherContext()
-	context.Focus = focus
+	ctx := ig.gatherContext()
 
-	// Build user prompt with all context.
-	prompt := buildInitPrompt(context)
+	// Build the prompt from template.
+	prompt := ig.buildPrompt(ctx, args)
 
-	// Single LLM call - no tools, no conversation history.
-	content, err := ig.chain.SingleShot(ctx, initSystemPrompt, prompt, initMaxTokens)
-	if err != nil {
-		return nil, fmt.Errorf("generate AGENTS.md: %w", err)
-	}
+	// Identify potential questions based on missing context.
+	questions := ig.identifyQuestions(ctx)
 
 	return &InitResult{
-		Content:   cleanInitOutput(content),
-		FilesRead: context.FilesRead,
+		Content:        prompt,
+		FilesRead:      ctx.FilesRead,
+		Questions:      questions,
+		MissingContext: ctx.MissingContext,
 	}, nil
 }
 
@@ -80,9 +58,11 @@ func (ig *InitGenerator) Generate(ctx context.Context, focus string) (*InitResul
 type initContext struct {
 	ProjectName      string
 	Languages        []string
+	Frameworks       []string
 	BuildCmd         string
 	TestCmd          string
 	LintCmd          string
+	TypecheckCmd     string
 	HasREADME        bool
 	HasUSAGE         bool
 	HasCLAUDE        bool
@@ -92,95 +72,90 @@ type initContext struct {
 	PkgJSONContent   string
 	PyProjectContent string
 	CargoContent     string
+	DockerContent    string
 	CIFiles          map[string]string // filename -> content
+	ConfigFiles      map[string]string // other config files
 	Focus            string
 	FilesRead        []string
+	MissingContext   []string
 }
 
-// gatherContext reads relevant project files.
+// gatherContext reads relevant project files following opencode's priority order.
 func (ig *InitGenerator) gatherContext() *initContext {
 	ctx := &initContext{
-		CIFiles:   make(map[string]string),
-		Languages: detectLanguages(ig.cwd),
+		CIFiles:     make(map[string]string),
+		ConfigFiles: make(map[string]string),
+		Languages:   []string{},
 	}
 
-	// Read key documentation files.
-	if content, ok := ig.readFile("README.md"); ok {
-		ctx.HasREADME = true
-		ctx.FilesRead = append(ctx.FilesRead, "README.md")
-		// Extract first line as project description.
-		lines := strings.Split(content, "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line != "" && !strings.HasPrefix(line, "#") {
-				ctx.ProjectName = line
-				break
-			}
+	// Phase 1: Read highest-value sources first (README, manifests)
+	ig.readREADME(ctx)
+	ig.readManifests(ctx)
+
+	// Phase 2: Read build/test config
+	ig.readBuildConfig(ctx)
+
+	// Phase 3: Read CI/workflows
+	ig.readCIConfig(ctx)
+
+	// Phase 4: Read existing instruction files
+	ig.readInstructionFiles(ctx)
+
+	// Phase 5: Detect frameworks
+	ctx.Frameworks = ig.detectFrameworks()
+
+	return ctx
+}
+
+func (ig *InitGenerator) readREADME(ctx *initContext) {
+	// Try multiple README variants
+	variants := []string{"README.md", "README.txt", "README.rst", "README"}
+	for _, name := range variants {
+		if content, ok := ig.readFile(name); ok {
+			ctx.HasREADME = true
+			ctx.FilesRead = append(ctx.FilesRead, name)
+			ctx.ProjectName = ig.extractProjectName(content, name)
+			break
 		}
-		// If no plain line found, use first h1.
-		if ctx.ProjectName == "" {
-			for _, line := range lines {
-				if strings.HasPrefix(line, "# ") {
-					ctx.ProjectName = strings.TrimPrefix(line, "# ")
-					break
-				}
-			}
-		}
 	}
+}
 
-	if _, ok := ig.readFile("USAGE.md"); ok {
-		ctx.HasUSAGE = true
-		ctx.FilesRead = append(ctx.FilesRead, "USAGE.md")
-	}
-
-	if _, ok := ig.readFile("CLAUDE.md"); ok {
-		ctx.HasCLAUDE = true
-		ctx.FilesRead = append(ctx.FilesRead, "CLAUDE.md")
-	}
-
-	if _, ok := ig.readFile("AGENTS.md"); ok {
-		ctx.HasAGENTS = true
-	}
-
-	// Read manifest files to extract commands.
-	if content, ok := ig.readFile("Makefile"); ok {
-		ctx.HasMakefile = true
-		ctx.BuildCmd, ctx.TestCmd, ctx.LintCmd = extractMakeTargets(content)
-		ctx.FilesRead = append(ctx.FilesRead, "Makefile")
-	}
-
+func (ig *InitGenerator) readManifests(ctx *initContext) {
+	// go.mod
 	if content, ok := ig.readFile("go.mod"); ok {
-		ctx.GoModContent = truncateContent(content, 50)
+		ctx.GoModContent = truncateContent(content, 30)
 		ctx.FilesRead = append(ctx.FilesRead, "go.mod")
-		if ctx.BuildCmd == "" {
-			ctx.BuildCmd = "go build ./..."
-		}
-		if ctx.TestCmd == "" {
-			ctx.TestCmd = "go test -race ./..."
-		}
-		if ctx.LintCmd == "" {
-			ctx.LintCmd = "go vet ./..."
-		}
+		ctx.Languages = append(ctx.Languages, "Go")
+		ctx.BuildCmd = "go build ./..."
+		ctx.TestCmd = "go test -race ./..."
+		ctx.LintCmd = "go vet ./..."
+		ctx.TypecheckCmd = "go build ./..."
 	}
 
+	// package.json
 	if content, ok := ig.readFile("package.json"); ok {
-		ctx.PkgJSONContent = truncateContent(content, 100)
+		ctx.PkgJSONContent = truncateContent(content, 50)
 		ctx.FilesRead = append(ctx.FilesRead, "package.json")
-		build, test, lint := extractPkgJSONScripts(content)
+		ctx.Languages = append(ctx.Languages, ig.detectJSLanguage(content))
+
+		// Extract scripts
+		scripts := ig.extractNPMScripts(content)
 		if ctx.BuildCmd == "" {
-			ctx.BuildCmd = build
+			ctx.BuildCmd = scripts["build"]
 		}
 		if ctx.TestCmd == "" {
-			ctx.TestCmd = test
+			ctx.TestCmd = scripts["test"]
 		}
 		if ctx.LintCmd == "" {
-			ctx.LintCmd = lint
+			ctx.LintCmd = scripts["lint"]
 		}
 	}
 
+	// pyproject.toml / setup.py / requirements.txt
 	if content, ok := ig.readFile("pyproject.toml"); ok {
-		ctx.PyProjectContent = truncateContent(content, 50)
+		ctx.PyProjectContent = truncateContent(content, 30)
 		ctx.FilesRead = append(ctx.FilesRead, "pyproject.toml")
+		ctx.Languages = append(ctx.Languages, "Python")
 		if ctx.BuildCmd == "" {
 			ctx.BuildCmd = "python -m build"
 		}
@@ -190,11 +165,19 @@ func (ig *InitGenerator) gatherContext() *initContext {
 		if ctx.LintCmd == "" {
 			ctx.LintCmd = "ruff check ."
 		}
+	} else if _, ok := ig.readFile("setup.py"); ok {
+		ctx.FilesRead = append(ctx.FilesRead, "setup.py")
+		ctx.Languages = append(ctx.Languages, "Python")
+	} else if _, ok := ig.readFile("requirements.txt"); ok {
+		ctx.FilesRead = append(ctx.FilesRead, "requirements.txt")
+		ctx.Languages = append(ctx.Languages, "Python")
 	}
 
+	// Cargo.toml
 	if content, ok := ig.readFile("Cargo.toml"); ok {
-		ctx.CargoContent = truncateContent(content, 50)
+		ctx.CargoContent = truncateContent(content, 30)
 		ctx.FilesRead = append(ctx.FilesRead, "Cargo.toml")
+		ctx.Languages = append(ctx.Languages, "Rust")
 		if ctx.BuildCmd == "" {
 			ctx.BuildCmd = "cargo build"
 		}
@@ -206,23 +189,248 @@ func (ig *InitGenerator) gatherContext() *initContext {
 		}
 	}
 
-	// Read CI configs for testing insights.
-	ciFiles := []string{
-		".github/workflows/ci.yml",
-		".github/workflows/test.yml",
-		".github/workflows/build.yml",
-		".gitlab-ci.yml",
-		"azure-pipelines.yml",
-		"Jenkinsfile",
+	// Dockerfile
+	if content, ok := ig.readFile("Dockerfile"); ok {
+		ctx.DockerContent = truncateContent(content, 20)
+		ctx.FilesRead = append(ctx.FilesRead, "Dockerfile")
 	}
-	for _, f := range ciFiles {
-		if content, ok := ig.readFile(f); ok {
-			ctx.CIFiles[f] = truncateContent(content, 30)
-			ctx.FilesRead = append(ctx.FilesRead, f)
+}
+
+func (ig *InitGenerator) readBuildConfig(ctx *initContext) {
+	// Makefile
+	if content, ok := ig.readFile("Makefile"); ok {
+		ctx.HasMakefile = true
+		ctx.FilesRead = append(ctx.FilesRead, "Makefile")
+
+		// Extract common targets
+		targets := ig.extractMakeTargets(content)
+		if ctx.BuildCmd == "" && targets["build"] != "" {
+			ctx.BuildCmd = "make build"
+		}
+		if ctx.TestCmd == "" && targets["test"] != "" {
+			ctx.TestCmd = "make test"
+		}
+		if ctx.LintCmd == "" && targets["lint"] != "" {
+			ctx.LintCmd = "make lint"
 		}
 	}
 
-	return ctx
+	// Taskfile (task runner)
+	if content, ok := ig.readFile("Taskfile.yml"); ok {
+		ctx.ConfigFiles["Taskfile.yml"] = truncateContent(content, 30)
+		ctx.FilesRead = append(ctx.FilesRead, "Taskfile.yml")
+	}
+
+	// Justfile
+	if content, ok := ig.readFile("justfile"); ok {
+		ctx.ConfigFiles["justfile"] = truncateContent(content, 20)
+		ctx.FilesRead = append(ctx.FilesRead, "justfile")
+	}
+}
+
+func (ig *InitGenerator) readCIConfig(ctx *initContext) {
+	// GitHub Actions
+	ciDir := ".github/workflows"
+	entries, err := os.ReadDir(filepath.Join(ig.cwd, ciDir))
+	if err == nil {
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.Name(), ".yml") || strings.HasSuffix(entry.Name(), ".yaml") {
+				name := filepath.Join(ciDir, entry.Name())
+				if content, ok := ig.readFile(name); ok {
+					ctx.CIFiles[name] = truncateContent(content, 25)
+					ctx.FilesRead = append(ctx.FilesRead, name)
+				}
+			}
+		}
+	}
+
+	// Other CI configs
+	ciFiles := []string{
+		".gitlab-ci.yml",
+		"azure-pipelines.yml",
+		"Jenkinsfile",
+		".circleci/config.yml",
+		".buildkite/pipeline.yml",
+	}
+	for _, name := range ciFiles {
+		if content, ok := ig.readFile(name); ok {
+			ctx.CIFiles[name] = truncateContent(content, 25)
+			ctx.FilesRead = append(ctx.FilesRead, name)
+		}
+	}
+}
+
+func (ig *InitGenerator) readInstructionFiles(ctx *initContext) {
+	// Existing AGENTS.md
+	if content, ok := ig.readFile("AGENTS.md"); ok {
+		ctx.HasAGENTS = true
+		ctx.FilesRead = append(ctx.FilesRead, "AGENTS.md")
+		// Store first 20 lines for context
+		ctx.ConfigFiles["AGENTS.md"] = truncateContent(content, 20)
+	}
+
+	// CLAUDE.md
+	if _, ok := ig.readFile("CLAUDE.md"); ok {
+		ctx.HasCLAUDE = true
+		ctx.FilesRead = append(ctx.FilesRead, "CLAUDE.md")
+	}
+
+	// USAGE.md
+	if _, ok := ig.readFile("USAGE.md"); ok {
+		ctx.HasUSAGE = true
+		ctx.FilesRead = append(ctx.FilesRead, "USAGE.md")
+	}
+
+	// .cursorrules
+	if _, ok := ig.readFile(".cursorrules"); ok {
+		ctx.FilesRead = append(ctx.FilesRead, ".cursorrules")
+	}
+
+	// .cursor/rules
+	if _, ok := ig.readFile(".cursor/rules"); ok {
+		ctx.FilesRead = append(ctx.FilesRead, ".cursor/rules")
+	}
+}
+
+func (ig *InitGenerator) detectFrameworks() []string {
+	var frameworks []string
+
+	// Check for framework indicators
+	indicators := map[string]string{
+		"next.config.js":       "Next.js",
+		"next.config.ts":       "Next.js",
+		"svelte.config.js":     "Svelte",
+		"angular.json":         "Angular",
+		"vue.config.js":        "Vue",
+		"nuxt.config.ts":       "Nuxt",
+		"astro.config.mjs":     "Astro",
+		"remix.config.js":      "Remix",
+		"gatsby-config.js":     "Gatsby",
+		"vite.config.ts":       "Vite",
+		"vite.config.js":       "Vite",
+		"tailwind.config.js":   "Tailwind CSS",
+		"tailwind.config.ts":   "Tailwind CSS",
+		"prisma/schema.prisma": "Prisma",
+		"drizzle.config.ts":    "Drizzle",
+		"docker-compose.yml":   "Docker Compose",
+		"k8s":                  "Kubernetes",
+		"terraform":            "Terraform",
+	}
+
+	for file, framework := range indicators {
+		if _, err := os.Stat(filepath.Join(ig.cwd, file)); err == nil {
+			frameworks = append(frameworks, framework)
+		}
+	}
+
+	return frameworks
+}
+
+func (ig *InitGenerator) identifyQuestions(ctx *initContext) []string {
+	var questions []string
+
+	// Only suggest questions for truly missing context
+	if !ctx.HasREADME && ctx.ProjectName == "" {
+		questions = append(questions, "What is the name/purpose of this project?")
+	}
+
+	if ctx.BuildCmd == "" && len(ctx.Languages) > 0 {
+		questions = append(questions, fmt.Sprintf("What is the build command for this %s project?", strings.Join(ctx.Languages, "/")))
+	}
+
+	if ctx.TestCmd == "" {
+		questions = append(questions, "How do you run tests in this project?")
+	}
+
+	// Check for common missing setup
+	if _, ok := ig.readFile(".env.example"); ok {
+		if _, hasEnv := ig.readFile(".env"); !hasEnv {
+			questions = append(questions, "Are there required environment variables from .env.example?")
+		}
+	}
+
+	return questions
+}
+
+// extractProjectName extracts project name from README content.
+func (ig *InitGenerator) extractProjectName(content, filename string) string {
+	lines := strings.Split(content, "\n")
+
+	// Try first h1
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "# ") {
+			return strings.TrimPrefix(line, "# ")
+		}
+	}
+
+	// Fallback to first non-empty line
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+
+	return ""
+}
+
+// detectJSLanguage detects if it's TypeScript or JavaScript.
+func (ig *InitGenerator) detectJSLanguage(pkgJSON string) string {
+	if strings.Contains(pkgJSON, "typescript") ||
+		ig.fileExists("tsconfig.json") {
+		return "TypeScript"
+	}
+	return "JavaScript"
+}
+
+// extractNPMScripts extracts npm scripts from package.json.
+func (ig *InitGenerator) extractNPMScripts(content string) map[string]string {
+	scripts := make(map[string]string)
+
+	// Simple extraction - look for script names
+	scriptNames := []string{"build", "test", "lint", "dev", "start", "typecheck"}
+	for _, name := range scriptNames {
+		if strings.Contains(content, fmt.Sprintf(`"%s"`, name)) {
+			switch name {
+			case "build":
+				scripts["build"] = "npm run build"
+			case "test":
+				scripts["test"] = "npm test"
+			case "lint":
+				scripts["lint"] = "npm run lint"
+			case "dev":
+				scripts["dev"] = "npm run dev"
+			case "typecheck":
+				scripts["typecheck"] = "npm run typecheck"
+			}
+		}
+	}
+
+	return scripts
+}
+
+// extractMakeTargets extracts common targets from Makefile.
+func (ig *InitGenerator) extractMakeTargets(content string) map[string]string {
+	targets := make(map[string]string)
+	lines := strings.Split(content, "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		for _, target := range []string{"build", "test", "lint", "check", "fmt", "all"} {
+			if strings.HasPrefix(line, target+":") {
+				targets[target] = target
+			}
+		}
+	}
+
+	return targets
+}
+
+// fileExists checks if a file exists relative to cwd.
+func (ig *InitGenerator) fileExists(name string) bool {
+	_, err := os.Stat(filepath.Join(ig.cwd, name))
+	return err == nil
 }
 
 // readFile reads a file relative to cwd.
@@ -244,159 +452,13 @@ func truncateContent(content string, maxLines int) string {
 	return strings.Join(lines[:maxLines], "\n") + "\n... [truncated]"
 }
 
-// buildInitPrompt constructs the user prompt for the LLM.
-func buildInitPrompt(ctx *initContext) string {
-	var b strings.Builder
+// buildPrompt constructs the user prompt from the template.
+func (ig *InitGenerator) buildPrompt(ctx *initContext, args string) string {
+	prompt := initTemplate
 
-	b.WriteString("Generate an AGENTS.md file for this project.\n\n")
+	// Substitute variables
+	prompt = strings.ReplaceAll(prompt, "{{ARGS}}", args)
+	prompt = strings.ReplaceAll(prompt, "{{PATH}}", ig.cwd)
 
-	if ctx.Focus != "" {
-		b.WriteString(fmt.Sprintf("User focus: %s\n\n", ctx.Focus))
-	}
-
-	b.WriteString("## Project Overview\n\n")
-
-	if ctx.ProjectName != "" {
-		b.WriteString(fmt.Sprintf("Project: %s\n", ctx.ProjectName))
-	}
-
-	if len(ctx.Languages) > 0 {
-		b.WriteString(fmt.Sprintf("Languages: %s\n", strings.Join(ctx.Languages, ", ")))
-	}
-
-	b.WriteString("\n## Available Documentation\n\n")
-	if ctx.HasREADME {
-		b.WriteString("- README.md exists\n")
-	}
-	if ctx.HasUSAGE {
-		b.WriteString("- USAGE.md exists (reference for detailed commands)\n")
-	}
-	if ctx.HasCLAUDE {
-		b.WriteString("- CLAUDE.md exists (reference for Claude-specific guidance)\n")
-	}
-	if ctx.HasAGENTS {
-		b.WriteString("- AGENTS.md already exists (enhance it)\n")
-	}
-
-	b.WriteString("\n## Build/Test Commands\n\n")
-	if ctx.BuildCmd != "" {
-		b.WriteString(fmt.Sprintf("Build: %s\n", ctx.BuildCmd))
-	}
-	if ctx.TestCmd != "" {
-		b.WriteString(fmt.Sprintf("Test: %s\n", ctx.TestCmd))
-	}
-	if ctx.LintCmd != "" {
-		b.WriteString(fmt.Sprintf("Lint: %s\n", ctx.LintCmd))
-	}
-
-	// Include relevant file snippets.
-	if ctx.GoModContent != "" {
-		b.WriteString("\n## go.mod\n\n```\n")
-		b.WriteString(ctx.GoModContent)
-		b.WriteString("\n```\n")
-	}
-
-	if ctx.PkgJSONContent != "" {
-		b.WriteString("\n## package.json\n\n```json\n")
-		b.WriteString(ctx.PkgJSONContent)
-		b.WriteString("\n```\n")
-	}
-
-	if ctx.HasMakefile {
-		b.WriteString("\n## Makefile Targets\n\n")
-		b.WriteString(fmt.Sprintf("Key targets found: build=%s, test=%s, lint=%s\n",
-			ctx.BuildCmd, ctx.TestCmd, ctx.LintCmd))
-	}
-
-	if len(ctx.CIFiles) > 0 {
-		b.WriteString("\n## CI Configuration\n\n")
-		for name, content := range ctx.CIFiles {
-			b.WriteString(fmt.Sprintf("%s:\n```yaml\n%s\n```\n", name, content))
-		}
-	}
-
-	b.WriteString("\n## Output\n\n")
-	b.WriteString("Generate the AGENTS.md content now. Be concise and accurate. " +
-		"Only include commands and facts verified from the files above.")
-
-	return b.String()
-}
-
-// cleanInitOutput extracts clean markdown from LLM response.
-func cleanInitOutput(raw string) string {
-	content := strings.TrimSpace(raw)
-
-	// Strip markdown fences if present.
-	if strings.HasPrefix(content, "```markdown") {
-		content = strings.TrimPrefix(content, "```markdown")
-		content = strings.TrimSuffix(content, "```")
-		content = strings.TrimSpace(content)
-	} else if strings.HasPrefix(content, "```") {
-		lines := strings.Split(content, "\n")
-		if len(lines) >= 2 && strings.HasPrefix(lines[0], "```") {
-			lines = lines[1:]
-		}
-		if len(lines) >= 1 && strings.HasPrefix(lines[len(lines)-1], "```") {
-			lines = lines[:len(lines)-1]
-		}
-		content = strings.TrimSpace(strings.Join(lines, "\n"))
-	}
-
-	return content
-}
-
-// detectLanguages identifies project languages from file presence.
-func detectLanguages(cwd string) []string {
-	var langs []string
-	files := map[string]string{
-		"go.mod":           "Go",
-		"Cargo.toml":       "Rust",
-		"package.json":     "JavaScript/Node.js",
-		"pyproject.toml":   "Python",
-		"setup.py":         "Python",
-		"requirements.txt": "Python",
-		"pom.xml":          "Java",
-		"build.gradle":     "Java",
-		"Gemfile":          "Ruby",
-		"composer.json":    "PHP",
-	}
-	for file, lang := range files {
-		if _, err := os.Stat(filepath.Join(cwd, file)); err == nil {
-			langs = append(langs, lang)
-		}
-	}
-	return langs
-}
-
-// extractMakeTargets extracts common targets from Makefile.
-func extractMakeTargets(content string) (build, test, lint string) {
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "build:") || strings.HasPrefix(line, "all:") {
-			build = "make build"
-		}
-		if strings.HasPrefix(line, "test:") {
-			test = "make test"
-		}
-		if strings.HasPrefix(line, "lint:") || strings.HasPrefix(line, "check:") {
-			lint = "make lint"
-		}
-	}
-	return
-}
-
-// extractPkgJSONScripts extracts scripts from package.json content.
-func extractPkgJSONScripts(content string) (build, test, lint string) {
-	// Simple string extraction - look for script definitions.
-	if strings.Contains(content, `"build"`) {
-		build = "npm run build"
-	}
-	if strings.Contains(content, `"test"`) {
-		test = "npm test"
-	}
-	if strings.Contains(content, `"lint"`) {
-		lint = "npm run lint"
-	}
-	return
+	return prompt
 }

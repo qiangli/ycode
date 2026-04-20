@@ -24,40 +24,276 @@ func TestInitGenerator_GatherContext(t *testing.T) {
 	}
 
 	// Create InitGenerator.
-	gen := &InitGenerator{cwd: tmpDir}
+	gen := NewInitGenerator(tmpDir)
 
-	// Test gatherContext.
-	ctx := gen.gatherContext()
+	// Test Generate.
+	result, err := gen.Generate("")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
 
-	if !ctx.HasREADME {
-		t.Error("expected HasREADME to be true")
+	if result == nil {
+		t.Fatal("expected non-nil result")
 	}
-	if ctx.ProjectName != "This is a test project." {
-		t.Errorf("expected ProjectName 'This is a test project.', got %q", ctx.ProjectName)
+
+	// Verify files were read.
+	if len(result.FilesRead) == 0 {
+		t.Error("expected FilesRead to be non-empty")
 	}
-	if ctx.BuildCmd != "go build ./..." {
-		t.Errorf("expected BuildCmd 'go build ./...', got %q", ctx.BuildCmd)
+
+	// Verify prompt was generated.
+	if result.Content == "" {
+		t.Error("expected non-empty prompt content")
 	}
-	if len(ctx.Languages) != 1 || ctx.Languages[0] != "Go" {
-		t.Errorf("expected Languages ['Go'], got %v", ctx.Languages)
+
+	// Verify template variables were substituted.
+	if strings.Contains(result.Content, "{{ARGS}}") {
+		t.Error("template variable {{ARGS}} was not substituted")
+	}
+	if strings.Contains(result.Content, "{{PATH}}") {
+		t.Error("template variable {{PATH}} was not substituted")
 	}
 }
 
-func TestDetectLanguages(t *testing.T) {
+func TestInitGenerator_WithArgs(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Test with go.mod.
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test"), 0o644); err != nil {
+	// Write README.md.
+	readme := "# Test Project"
+	if err := os.WriteFile(filepath.Join(tmpDir, "README.md"), []byte(readme), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	langs := detectLanguages(tmpDir)
-	if len(langs) != 1 || langs[0] != "Go" {
-		t.Errorf("expected ['Go'], got %v", langs)
+	gen := NewInitGenerator(tmpDir)
+	result, err := gen.Generate("backend focus")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Verify args were substituted.
+	if !strings.Contains(result.Content, "backend focus") {
+		t.Error("expected args to be substituted in prompt")
+	}
+}
+
+func TestInitGenerator_IdentifyQuestions(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create generator with no files (should have questions).
+	gen := NewInitGenerator(tmpDir)
+	result, err := gen.Generate("")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Should have questions about missing README and build commands.
+	if len(result.Questions) == 0 {
+		t.Error("expected questions for empty project")
+	}
+
+	// Check for expected questions.
+	hasProjectNameQuestion := false
+	for _, q := range result.Questions {
+		if strings.Contains(q, "name") || strings.Contains(q, "purpose") {
+			hasProjectNameQuestion = true
+			break
+		}
+	}
+	if !hasProjectNameQuestion {
+		t.Error("expected question about project name/purpose")
+	}
+}
+
+func TestInitGenerator_GoProject(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Write go.mod.
+	gomod := "module github.com/test/project\n\ngo 1.21"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(gomod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewInitGenerator(tmpDir)
+	result, err := gen.Generate("")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Should detect Go language.
+	foundGo := false
+	for _, lang := range result.FilesRead {
+		if lang == "go.mod" {
+			foundGo = true
+			break
+		}
+	}
+	if !foundGo {
+		t.Error("expected go.mod to be read")
+	}
+
+	// Should have fewer questions (build commands are known).
+	for _, q := range result.Questions {
+		if strings.Contains(q, "build command") {
+			t.Error("should not ask about build command for Go projects")
+		}
+	}
+}
+
+func TestInitGenerator_NPMProject(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Write package.json.
+	pkgJSON := `{
+		"name": "test-project",
+		"scripts": {
+			"build": "tsc",
+			"test": "jest",
+			"lint": "eslint"
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "package.json"), []byte(pkgJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewInitGenerator(tmpDir)
+	result, err := gen.Generate("")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Verify package.json was read.
+	foundPkg := false
+	for _, f := range result.FilesRead {
+		if f == "package.json" {
+			foundPkg = true
+			break
+		}
+	}
+	if !foundPkg {
+		t.Error("expected package.json to be read")
+	}
+}
+
+func TestInitGenerator_WithCI(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create .github/workflows directory.
+	workflowsDir := filepath.Join(tmpDir, ".github", "workflows")
+	if err := os.MkdirAll(workflowsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write CI config.
+	ci := `name: CI
+on: [push]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: go test ./...
+`
+	if err := os.WriteFile(filepath.Join(workflowsDir, "ci.yml"), []byte(ci), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write README.
+	if err := os.WriteFile(filepath.Join(tmpDir, "README.md"), []byte("# Test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewInitGenerator(tmpDir)
+	result, err := gen.Generate("")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Verify CI file was read.
+	foundCI := false
+	for _, f := range result.FilesRead {
+		if strings.Contains(f, "ci.yml") {
+			foundCI = true
+			break
+		}
+	}
+	if !foundCI {
+		t.Error("expected CI config to be read")
+	}
+}
+
+func TestExtractProjectName(t *testing.T) {
+	gen := &InitGenerator{}
+
+	tests := []struct {
+		name     string
+		content  string
+		filename string
+		expected string
+	}{
+		{
+			name:     "h1 title",
+			content:  "# My Project\n\nDescription here.",
+			filename: "README.md",
+			expected: "My Project",
+		},
+		{
+			name:     "first line fallback",
+			content:  "My Project\n\nDescription here.",
+			filename: "README.txt",
+			expected: "My Project",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := gen.extractProjectName(tt.content, tt.filename)
+			if got != tt.expected {
+				t.Errorf("extractProjectName() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDetectJSLanguage(t *testing.T) {
+	gen := &InitGenerator{}
+
+	if lang := gen.detectJSLanguage(`{"name": "test"}`); lang != "JavaScript" {
+		t.Errorf("expected JavaScript, got %s", lang)
+	}
+
+	if lang := gen.detectJSLanguage(`{"devDependencies": {"typescript": "^5.0"}}`); lang != "TypeScript" {
+		t.Errorf("expected TypeScript, got %s", lang)
+	}
+}
+
+func TestExtractNPMScripts(t *testing.T) {
+	gen := &InitGenerator{}
+
+	pkgJSON := `{
+		"scripts": {
+			"build": "tsc",
+			"test": "jest",
+			"lint": "eslint",
+			"dev": "vite"
+		}
+	}`
+
+	scripts := gen.extractNPMScripts(pkgJSON)
+
+	if scripts["build"] != "npm run build" {
+		t.Errorf("expected build='npm run build', got %q", scripts["build"])
+	}
+	if scripts["test"] != "npm test" {
+		t.Errorf("expected test='npm test', got %q", scripts["test"])
+	}
+	if scripts["lint"] != "npm run lint" {
+		t.Errorf("expected lint='npm run lint', got %q", scripts["lint"])
 	}
 }
 
 func TestExtractMakeTargets(t *testing.T) {
+	gen := &InitGenerator{}
+
 	makefile := `
 build:
 	go build
@@ -68,98 +304,17 @@ test:
 lint:
 	golangci-lint run
 `
-	build, test, lint := extractMakeTargets(makefile)
 
-	if build != "make build" {
-		t.Errorf("expected build='make build', got %q", build)
-	}
-	if test != "make test" {
-		t.Errorf("expected test='make test', got %q", test)
-	}
-	if lint != "make lint" {
-		t.Errorf("expected lint='make lint', got %q", lint)
-	}
-}
+	targets := gen.extractMakeTargets(makefile)
 
-func TestExtractPkgJSONScripts(t *testing.T) {
-	pkgJSON := `{
-		"name": "test",
-		"scripts": {
-			"build": "tsc",
-			"test": "jest",
-			"lint": "eslint"
-		}
-	}`
-	build, test, lint := extractPkgJSONScripts(pkgJSON)
-
-	if build != "npm run build" {
-		t.Errorf("expected build='npm run build', got %q", build)
+	if targets["build"] != "build" {
+		t.Errorf("expected build target, got %q", targets["build"])
 	}
-	if test != "npm test" {
-		t.Errorf("expected test='npm test', got %q", test)
+	if targets["test"] != "test" {
+		t.Errorf("expected test target, got %q", targets["test"])
 	}
-	if lint != "npm run lint" {
-		t.Errorf("expected lint='npm run lint', got %q", lint)
-	}
-}
-
-func TestCleanInitOutput(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "plain content",
-			input:    "# AGENTS.md\n\nTest content.",
-			expected: "# AGENTS.md\n\nTest content.",
-		},
-		{
-			name:     "markdown fenced",
-			input:    "```markdown\n# AGENTS.md\n\nTest content.\n```",
-			expected: "# AGENTS.md\n\nTest content.",
-		},
-		{
-			name:     "generic code fence",
-			input:    "```\n# AGENTS.md\n\nTest content.\n```",
-			expected: "# AGENTS.md\n\nTest content.",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := cleanInitOutput(tt.input)
-			if got != tt.expected {
-				t.Errorf("cleanInitOutput() = %q, want %q", got, tt.expected)
-			}
-		})
-	}
-}
-
-func TestBuildInitPrompt(t *testing.T) {
-	ctx := &initContext{
-		ProjectName: "Test Project",
-		Languages:   []string{"Go", "Python"},
-		HasREADME:   true,
-		HasUSAGE:    true,
-		BuildCmd:    "make build",
-		TestCmd:     "make test",
-		Focus:       "backend focus",
-	}
-
-	prompt := buildInitPrompt(ctx)
-
-	if !strings.Contains(prompt, "Test Project") {
-		t.Error("expected prompt to contain project name")
-	}
-	if !strings.Contains(prompt, "Go, Python") {
-		t.Error("expected prompt to contain languages")
-	}
-	if !strings.Contains(prompt, "backend focus") {
-		t.Error("expected prompt to contain focus")
-	}
-	if !strings.Contains(prompt, "make build") {
-		t.Error("expected prompt to contain build command")
+	if targets["lint"] != "lint" {
+		t.Errorf("expected lint target, got %q", targets["lint"])
 	}
 }
 
