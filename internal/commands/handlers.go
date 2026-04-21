@@ -601,6 +601,8 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 }
 
 func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error) {
+	// log sends a progress message to the TUI immediately (if available),
+	// otherwise accumulates for the final return value.
 	return func(ctx context.Context, args string) (string, error) {
 		cwd := deps.WorkDir
 		if cwd == "" {
@@ -611,57 +613,67 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 			}
 		}
 
-		var outputParts []string
+		// progress streams a line to the TUI immediately when available.
+		var finalParts []string
+		progress := func(msg string) {
+			if deps.LogProgress != nil {
+				deps.LogProgress(msg)
+			} else {
+				finalParts = append(finalParts, msg)
+			}
+		}
 
-		// Phase 1: Deterministic scaffold (always shown first).
+		// Phase 1: Deterministic scaffold (shown immediately).
 		report, err := InitializeRepo(cwd)
 		if err != nil {
 			return "", fmt.Errorf("init scaffold failed: %w", err)
 		}
-		outputParts = append(outputParts, report.Render())
+		progress(report.Render())
 
 		// Phase 2: Single-shot LLM enhancement if provider available.
-		// Uses opencode-style template with structured investigation guidance.
 		if deps.Provider != nil && deps.Config != nil {
 			chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
 
-			// Gather context using opencode-style investigation.
-			outputParts = append(outputParts, "⧗ Analyzing project structure...")
+			progress("⧗ Analyzing project structure...")
 			gen := builtin.NewInitGenerator(cwd)
 			initResult, genErr := gen.Generate(args)
 			if genErr == nil && initResult != nil {
-				// Generate AGENTS.md via single LLM call.
-				outputParts = append(outputParts, "⧗ Generating AGENTS.md via LLM...")
+				progress("⧗ Generating AGENTS.md via LLM...")
 				llmResult, llmErr := chain.SingleShotWithUsage(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096)
 				if llmErr == nil && llmResult != nil && llmResult.Text != "" {
 					agentsPath := filepath.Join(cwd, "AGENTS.md")
 					if err := os.WriteFile(agentsPath, []byte(llmResult.Text), 0o644); err == nil {
-						// Track usage if tracker is available.
 						if deps.TrackUsage != nil {
 							deps.TrackUsage(llmResult.InputTokens, llmResult.OutputTokens, llmResult.CacheCreate, llmResult.CacheRead)
 						}
-						outputParts = append(outputParts, fmt.Sprintf("✓ Analyzed: %v", initResult.FilesRead))
+						progress(fmt.Sprintf("✓ Analyzed: %v", initResult.FilesRead))
 						if len(initResult.Questions) > 0 {
-							outputParts = append(outputParts, "")
-							outputParts = append(outputParts, "Consider answering these questions to improve AGENTS.md:")
+							progress("")
+							progress("Consider answering these questions to improve AGENTS.md:")
 							for _, q := range initResult.Questions {
-								outputParts = append(outputParts, fmt.Sprintf("  - %s", q))
+								progress(fmt.Sprintf("  - %s", q))
 							}
 						}
-						// Show token usage if available.
 						if llmResult.InputTokens > 0 || llmResult.OutputTokens > 0 {
 							totalTokens := llmResult.InputTokens + llmResult.OutputTokens
-							outputParts = append(outputParts, fmt.Sprintf("  Tokens: %d in, %d out (%d total)",
+							progress(fmt.Sprintf("  Tokens: %d in, %d out (%d total)",
 								llmResult.InputTokens, llmResult.OutputTokens, totalTokens))
 						}
-						return strings.Join(outputParts, "\n"), nil
+						// When streaming via LogProgress, return empty — output already shown.
+						if deps.LogProgress != nil {
+							return "", nil
+						}
+						return strings.Join(finalParts, "\n"), nil
 					}
 				}
 			}
-			// If enhancement fails, return scaffold report (still useful).
 		}
 
-		return strings.Join(outputParts, "\n"), nil
+		// When streaming via LogProgress, return empty — output already shown.
+		if deps.LogProgress != nil {
+			return "", nil
+		}
+		return strings.Join(finalParts, "\n"), nil
 	}
 }
 

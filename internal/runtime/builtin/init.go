@@ -77,6 +77,7 @@ type initContext struct {
 	HasCLAUDE        bool
 	HasAGENTS        bool
 	HasMakefile      bool
+	READMEContent    string
 	GoModContent     string
 	PkgJSONContent   string
 	PyProjectContent string
@@ -122,6 +123,7 @@ func (ig *InitGenerator) readREADME(ctx *initContext) {
 	for _, name := range variants {
 		if content, ok := ig.readFile(name); ok {
 			ctx.HasREADME = true
+			ctx.READMEContent = truncateContent(content, 80)
 			ctx.FilesRead = append(ctx.FilesRead, name)
 			ctx.ProjectName = ig.extractProjectName(content, name)
 			break
@@ -210,6 +212,7 @@ func (ig *InitGenerator) readBuildConfig(ctx *initContext) {
 	if content, ok := ig.readFile("Makefile"); ok {
 		ctx.HasMakefile = true
 		ctx.FilesRead = append(ctx.FilesRead, "Makefile")
+		ctx.ConfigFiles["Makefile"] = truncateContent(content, 60)
 
 		// Extract common targets
 		targets := ig.extractMakeTargets(content)
@@ -246,7 +249,7 @@ func (ig *InitGenerator) readCIConfig(ctx *initContext) {
 			if strings.HasSuffix(entry.Name(), ".yml") || strings.HasSuffix(entry.Name(), ".yaml") {
 				name := filepath.Join(ciDir, entry.Name())
 				if content, ok := ig.readFile(name); ok {
-					ctx.CIFiles[name] = truncateContent(content, 25)
+					ctx.CIFiles[name] = truncateContent(content, 40)
 					ctx.FilesRead = append(ctx.FilesRead, name)
 				}
 			}
@@ -263,25 +266,25 @@ func (ig *InitGenerator) readCIConfig(ctx *initContext) {
 	}
 	for _, name := range ciFiles {
 		if content, ok := ig.readFile(name); ok {
-			ctx.CIFiles[name] = truncateContent(content, 25)
+			ctx.CIFiles[name] = truncateContent(content, 40)
 			ctx.FilesRead = append(ctx.FilesRead, name)
 		}
 	}
 }
 
 func (ig *InitGenerator) readInstructionFiles(ctx *initContext) {
-	// Existing AGENTS.md
+	// Existing AGENTS.md — read in full so the LLM can improve in place.
 	if content, ok := ig.readFile("AGENTS.md"); ok {
 		ctx.HasAGENTS = true
 		ctx.FilesRead = append(ctx.FilesRead, "AGENTS.md")
-		// Store first 20 lines for context
-		ctx.ConfigFiles["AGENTS.md"] = truncateContent(content, 20)
+		ctx.ConfigFiles["AGENTS.md"] = truncateContent(content, 200)
 	}
 
 	// CLAUDE.md
-	if _, ok := ig.readFile("CLAUDE.md"); ok {
+	if content, ok := ig.readFile("CLAUDE.md"); ok {
 		ctx.HasCLAUDE = true
 		ctx.FilesRead = append(ctx.FilesRead, "CLAUDE.md")
+		ctx.ConfigFiles["CLAUDE.md"] = truncateContent(content, 100)
 	}
 
 	// USAGE.md
@@ -461,7 +464,8 @@ func truncateContent(content string, maxLines int) string {
 	return strings.Join(lines[:maxLines], "\n") + "\n... [truncated]"
 }
 
-// buildPrompt constructs the user prompt from the template.
+// buildPrompt constructs the user prompt from the template and appends
+// gathered project context so the LLM has actual file contents to work with.
 func (ig *InitGenerator) buildPrompt(ctx *initContext, args string) string {
 	prompt := initTemplate
 
@@ -469,5 +473,69 @@ func (ig *InitGenerator) buildPrompt(ctx *initContext, args string) string {
 	prompt = strings.ReplaceAll(prompt, "{{ARGS}}", args)
 	prompt = strings.ReplaceAll(prompt, "{{PATH}}", ig.cwd)
 
+	// Append gathered context so the single-shot LLM has real project info.
+	prompt += "\n\n" + renderContext(ctx)
+
 	return prompt
+}
+
+// renderContext serializes the gathered project context into a structured
+// text block that is appended to the LLM prompt.
+func renderContext(ctx *initContext) string {
+	var b strings.Builder
+
+	b.WriteString("## Project Context (pre-gathered)\n\n")
+	b.WriteString("The following files have been read for you. Use this context to generate AGENTS.md.\n\n")
+
+	// Project summary.
+	b.WriteString("### Project Summary\n")
+	if ctx.ProjectName != "" {
+		fmt.Fprintf(&b, "- **Name**: %s\n", ctx.ProjectName)
+	}
+	if len(ctx.Languages) > 0 {
+		fmt.Fprintf(&b, "- **Languages**: %s\n", strings.Join(ctx.Languages, ", "))
+	}
+	if len(ctx.Frameworks) > 0 {
+		fmt.Fprintf(&b, "- **Frameworks**: %s\n", strings.Join(ctx.Frameworks, ", "))
+	}
+	if ctx.BuildCmd != "" {
+		fmt.Fprintf(&b, "- **Build**: `%s`\n", ctx.BuildCmd)
+	}
+	if ctx.TestCmd != "" {
+		fmt.Fprintf(&b, "- **Test**: `%s`\n", ctx.TestCmd)
+	}
+	if ctx.LintCmd != "" {
+		fmt.Fprintf(&b, "- **Lint**: `%s`\n", ctx.LintCmd)
+	}
+	if ctx.TypecheckCmd != "" {
+		fmt.Fprintf(&b, "- **Typecheck**: `%s`\n", ctx.TypecheckCmd)
+	}
+	b.WriteString("\n")
+
+	// File contents — helper to emit a section.
+	writeSection := func(title, content string) {
+		if content == "" {
+			return
+		}
+		fmt.Fprintf(&b, "### %s\n```\n%s\n```\n\n", title, content)
+	}
+
+	writeSection("README", ctx.READMEContent)
+	writeSection("go.mod", ctx.GoModContent)
+	writeSection("package.json", ctx.PkgJSONContent)
+	writeSection("pyproject.toml", ctx.PyProjectContent)
+	writeSection("Cargo.toml", ctx.CargoContent)
+	writeSection("Dockerfile", ctx.DockerContent)
+
+	// Config files (Makefile, instruction files, etc.)
+	for name, content := range ctx.ConfigFiles {
+		writeSection(name, content)
+	}
+
+	// CI files.
+	for name, content := range ctx.CIFiles {
+		writeSection(name, content)
+	}
+
+	return b.String()
 }

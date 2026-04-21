@@ -927,12 +927,14 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 		// Try built-in commands first; fall through to agent for unregistered
 		// names (e.g. skill slash commands like /claude, /build).
 		if spec, ok := m.app.commands.Get(name); ok {
-			echo := fmt.Sprintf("> %s\n", text)
+			// Show the command echo immediately, before starting execution.
+			m.appendOutput(fmt.Sprintf("> %s\n", text))
+			m.working = true
 			promptFn := spec.AgentPrompt
 			cmdArgs := args
 			return func() tea.Msg {
 				output, err := m.app.commands.Execute(context.Background(), name, cmdArgs)
-				msg := commandOutputMsg{Echo: echo, Text: output, Err: err}
+				msg := commandOutputMsg{Text: output, Err: err}
 				if promptFn != nil && err == nil {
 					msg.AgentPrompt = promptFn(cmdArgs)
 				}

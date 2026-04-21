@@ -182,6 +182,30 @@ const maxToolIterations = 25
 // RunPrompt executes a one-shot prompt with the full agentic loop
 // (system prompt, tools, multi-turn tool execution).
 func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
+	// Dispatch slash commands (e.g. /init, /config) before the provider check
+	// — some commands like /init have a deterministic phase that works without an LLM.
+	if strings.HasPrefix(userPrompt, "/") {
+		rest := userPrompt[1:]
+		name, args, _ := strings.Cut(rest, " ")
+		if _, ok := a.commands.Get(name); ok {
+			// Enable progressive output in one-shot mode so long-running
+			// commands (e.g. /init with LLM call) stream lines immediately.
+			if a.progressFunc == nil {
+				a.progressFunc = func(message string) {
+					fmt.Fprintln(a.stdout, message)
+				}
+			}
+			output, err := a.commands.Execute(ctx, name, args)
+			if err != nil {
+				return err
+			}
+			if output != "" {
+				fmt.Fprint(a.stdout, output)
+			}
+			return nil
+		}
+	}
+
 	if a.provider == nil {
 		return fmt.Errorf("no LLM provider configured; set ANTHROPIC_API_KEY, OPENAI_API_KEY, MOONSHOT_API_KEY, or KIMI_API_KEY")
 	}

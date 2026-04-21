@@ -1,22 +1,17 @@
 Create or update `AGENTS.md` for this repository.
 
-The goal is a compact instruction file that helps future ycode sessions avoid mistakes and ramp up quickly. Every line should answer: "Would an agent likely miss this without help?" If not, leave it out.
+The goal is a compact instruction file that helps future AI coding sessions avoid mistakes and ramp up quickly. Every line should answer: "Would an agent likely miss this without help?" If not, leave it out.
 
 User-provided focus or constraints (honor these):
 {{ARGS}}
 
 ## How to investigate
 
-Read the highest-value sources first:
-- `README*`, root manifests, workspace config, lockfiles
-- build, test, lint, formatter, typecheck, and codegen config
-- CI workflows and pre-commit / task runner config
-- existing instruction files (`AGENTS.md`, `CLAUDE.md`, `.cursor/rules/`, `.cursorrules`)
-- repo-local ycode config such as `.agents/ycode.json`
+Project context has been pre-gathered and is included below. Use it to produce AGENTS.md.
+Focus on synthesizing the provided file contents — do not reference files that are not included.
 
-If architecture is still unclear after reading config and docs, inspect a small number of representative code files to find the real entrypoints, package boundaries, and execution flow. Prefer reading the files that explain how the system is wired together over random leaf files.
-
-Prefer executable sources of truth over prose. If docs conflict with config or scripts, trust the executable source and only keep what you can verify.
+If architecture is still unclear from the provided context, note what additional investigation
+would help, but produce the best AGENTS.md you can from what is available.
 
 ## What to extract
 
@@ -34,14 +29,8 @@ Good `AGENTS.md` content is usually hard-earned context that took reading multip
 
 ## Questions
 
-Only ask the user questions if the repo cannot answer something important.
-
-Good questions:
-- undocumented team conventions
-- branch / PR / release expectations
-- missing setup or test prerequisites that are known but not written down
-
-Do not ask about anything the repo already makes clear.
+If the provided context leaves important questions unanswered, list them at the end of
+your output as a `## Open Questions` section in AGENTS.md so the user can address them.
 
 ## Writing rules
 
@@ -56,7 +45,15 @@ Exclude:
 - generic software advice
 - long tutorials or exhaustive file trees
 - obvious language conventions
-- speculative claims or anything you could not verify
+- speculative claims or anything you could not verify from the provided context
+- content better stored in another file
+
+When in doubt, omit.
+
+Prefer short sections and bullets. If the repo is simple, keep the file simple. If the repo is large, summarize the few structural facts that actually change how an agent should work.
+
+If `AGENTS.md` already exists at `{{PATH}}`, improve it in place rather than rewriting blindly. Preserve verified useful guidance, delete fluff or stale claims, and reconcile it with the provided project context.
+ speculative claims or anything you could not verify
 - content better stored in another file
 
 When in doubt, omit.

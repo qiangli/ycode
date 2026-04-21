@@ -58,6 +58,20 @@ func TestInitGenerator_GatherContext(t *testing.T) {
 	if strings.Contains(result.UserPrompt, "{{PATH}}") {
 		t.Error("template variable {{PATH}} was not substituted")
 	}
+
+	// Verify gathered context is included in the prompt.
+	if !strings.Contains(result.UserPrompt, "## Project Context (pre-gathered)") {
+		t.Error("expected user prompt to contain project context section")
+	}
+	if !strings.Contains(result.UserPrompt, "Test Project") {
+		t.Error("expected user prompt to contain README content")
+	}
+	if !strings.Contains(result.UserPrompt, "github.com/test/project") {
+		t.Error("expected user prompt to contain go.mod content")
+	}
+	if !strings.Contains(result.UserPrompt, "**Languages**: Go") {
+		t.Error("expected user prompt to contain detected language")
+	}
 }
 
 func TestInitGenerator_WithArgs(t *testing.T) {
@@ -320,6 +334,69 @@ lint:
 	}
 	if targets["lint"] != "lint" {
 		t.Errorf("expected lint target, got %q", targets["lint"])
+	}
+}
+
+func TestRenderContext(t *testing.T) {
+	ctx := &initContext{
+		ProjectName:   "myproject",
+		Languages:     []string{"Go", "TypeScript"},
+		Frameworks:    []string{"Next.js"},
+		BuildCmd:      "make build",
+		TestCmd:       "go test ./...",
+		LintCmd:       "go vet ./...",
+		READMEContent: "# My Project\n\nA cool project.",
+		GoModContent:  "module github.com/me/myproject\n\ngo 1.21",
+		CIFiles:       map[string]string{".github/workflows/ci.yml": "name: CI\non: [push]"},
+		ConfigFiles:   map[string]string{"Makefile": "build:\n\tgo build"},
+	}
+
+	rendered := renderContext(ctx)
+
+	// Verify summary section.
+	if !strings.Contains(rendered, "**Name**: myproject") {
+		t.Error("expected project name in rendered context")
+	}
+	if !strings.Contains(rendered, "**Languages**: Go, TypeScript") {
+		t.Error("expected languages in rendered context")
+	}
+	if !strings.Contains(rendered, "**Build**: `make build`") {
+		t.Error("expected build command in rendered context")
+	}
+
+	// Verify file contents are included.
+	if !strings.Contains(rendered, "A cool project") {
+		t.Error("expected README content in rendered context")
+	}
+	if !strings.Contains(rendered, "github.com/me/myproject") {
+		t.Error("expected go.mod content in rendered context")
+	}
+	if !strings.Contains(rendered, "name: CI") {
+		t.Error("expected CI config in rendered context")
+	}
+	if !strings.Contains(rendered, "go build") {
+		t.Error("expected Makefile content in rendered context")
+	}
+}
+
+func TestInitGenerator_ExistingAgentsMD(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Write existing AGENTS.md.
+	existing := "# AGENTS.md\n\nCustom instructions that should be preserved.\n\n## Build\nmake build"
+	if err := os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewInitGenerator(tmpDir)
+	result, err := gen.Generate("")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Verify existing AGENTS.md content is in the prompt.
+	if !strings.Contains(result.UserPrompt, "Custom instructions that should be preserved") {
+		t.Error("expected existing AGENTS.md content in user prompt")
 	}
 }
 
