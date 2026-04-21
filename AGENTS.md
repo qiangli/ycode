@@ -1,49 +1,55 @@
 # AGENTS.md
 
-ycode — pure Go CLI agent harness for autonomous software development.
+Instructions for AI coding agents working on this repository.
 
-**Read [INSTRUCTIONS.md](./INSTRUCTIONS.md) first** — it contains the shared project conventions, build commands, testing guidelines, and skill dispatch rules that apply to all AI agents working on this repo.
+ycode -- pure Go CLI agent harness for autonomous software development. Go 1.26+, permissive-license dependencies only. Single static binary with embedded observability stack.
 
-**Read [CLAUDE.md](./CLAUDE.md)** for Claude Code-specific guidance including build commands, architecture overview, and internal conventions.
+**Read [INSTRUCTIONS.md](./INSTRUCTIONS.md)** -- shared conventions: skill dispatch, build system layers, testing, commit rules.
 
-**Read [USAGE.md](./USAGE.md)** for CLI modes, configuration, tools, and workflows.
-
-## Quick Reference
+## Build Commands
 
 ```bash
-make build        # full quality gate: tidy → fmt → vet → compile → test → verify
-make compile      # quick compile only (bin/ycode)
-make test         # unit tests only (-short -race)
-make deploy       # deploy to localhost:58080 (HOST=<remote> for remote)
-make validate     # integration tests against running instance
+make build          # full quality gate: tidy -> fmt -> vet -> compile -> test -> verify
+make compile        # quick compile only (bin/ycode)
+make test           # unit tests only (-short -race)
+make deploy         # deploy to localhost:58080 (HOST=<remote> for remote)
+make validate       # integration tests against running instance
+make cross          # cross-compile all platforms (dist/)
+make install        # build + install to ~/bin/
+make init           # initialize git submodules (required for observability stack)
 ```
 
 Single test: `go test -short -race -run TestName ./internal/path/to/package/`
 
 Integration tests: `go test -tags integration -v -count=1 ./internal/integration/...`
 
-## Project-Specific Notes
+`PACKAGES` in the Makefile excludes `priorart/` from all Go commands.
 
-- **Go 1.26+ required** — uses Go 1.26.1 in go.mod
-- **Build entry**: `cmd/ycode/main.go` → compiles to `bin/ycode`
-- **Key patterns**: `RuntimeContext` holds all registries (no global state), per-tool middleware wrappers, section-based prompt assembly with dynamic boundary marker
-- **Three-tier config merge**: user (`~/.config/ycode/`) > project (`.agents/ycode/`) > local (`.agents/ycode/local/`)
-- **Skills are internal** — no `skills/<name>/skill.md` on disk; `/init` is a two-phase command with agentic enhancement
-- **Build system**: Three-layer separation — Makefile (deps only) → scripts/ (bash orchestration) → Go (all logic)
-- **Go commands exclude `priorart/`** — the `PACKAGES` variable filters out prior art submodules
+## Architecture
 
-## Development Workflow
+Entry: `cmd/ycode/main.go` -> cobra CLI -> REPL (`internal/cli/app.go`) or one-shot mode.
 
-Standard cycle (also available as skills `/build`, `/deploy`, `/validate`):
+Core loop (`internal/runtime/conversation/runtime.go`): assemble request -> send to provider -> dispatch tool calls -> loop until done.
 
-1. **Build** (`make build`) — must pass before deploy
-2. **Deploy** (`make deploy`) — starts `ycode serve` on localhost:58080
-3. **Validate** (`make validate`) — runs smoke, integration, acceptance, performance tests
+Key subsystems:
+- **Providers** (`internal/api/`): Anthropic, OpenAI-compatible, Gemini
+- **Tools** (`internal/tools/`): map-based registry, always-available vs deferred, per-tool middleware
+- **Prompt** (`internal/runtime/prompt/`): section-based assembly with static/dynamic cache boundary
+- **Session** (`internal/runtime/session/`): JSONL persistence, auto-compaction at 100K tokens
+- **Storage** (`internal/storage/`): KV, SQLite, vector DB, full-text search
+- **Observability** (`internal/collector/`, `internal/observability/`): embedded OTEL stack; submodules in `external/`
+- **Plugins** (`internal/plugins/`): hook lifecycle, runtime tool registration
+- **Self-heal** (`internal/selfheal/`): error classification and auto-recovery
 
-Remote deploy requires passwordless SSH: `ssh -o BatchMode=yes <host> "echo ok"`
+Design: `RuntimeContext` (no global state), three-tier config merge, five-layer memory, three-layer build system (Makefile -> scripts/ -> Go).
 
-## For More Detail
+## Skills
 
-Read these on demand, not upfront:
-- [docs/architecture.md](./docs/architecture.md) — full architecture, design decisions, component details
-- [skills/README.md](./skills/README.md) — skill system convention
+On disk: `build`, `claude`, `deploy`, `learn`, `setup`, `validate` (in `skills/`). Internal: `/init`, `/commit` (embedded in binary). See [INSTRUCTIONS.md](./INSTRUCTIONS.md) for dispatch rules.
+
+## References
+
+Read on demand:
+- [INSTRUCTIONS.md](./INSTRUCTIONS.md) -- conventions, skill system, build/test/commit rules
+- [USAGE.md](./USAGE.md) -- CLI modes, config, tools, workflows
+- [docs/architecture.md](./docs/architecture.md) -- full architecture, design decisions, component details

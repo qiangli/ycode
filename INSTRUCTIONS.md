@@ -86,6 +86,7 @@ When asked to commit changes in this project, follow the `/commit` skill (embedd
 
 - **Gather context in parallel.** Run `git status`, `git diff`, and `git log --oneline -5` concurrently before drafting a commit message.
 - **Stage files by name.** Never use `git add -A` or `git add .`.
+- **Only stage your own changes.** If the working tree was already dirty at session start, do not stage pre-existing modifications — only stage files you changed.
 - **Match the repo's commit style.** Use the prefix convention from `git log` (e.g. `fix:`, `feat:`, `docs:`).
 
 ## For More Detail
