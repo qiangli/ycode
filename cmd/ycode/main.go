@@ -301,7 +301,7 @@ func newApp() (*cli.App, error) {
 	}()
 
 	// Build project context for system prompt.
-	promptCtx := buildPromptContext(cwd, cfg.Model)
+	promptCtx := buildPromptContext(cwd, cfg.Model, cfg.Instructions)
 	promptCtx.AllowedDirs = v.AllowedDirs()
 
 	// Wire vector store and background embedder once vector backend is ready.
@@ -401,7 +401,7 @@ func newApp() (*cli.App, error) {
 }
 
 // buildPromptContext gathers environment and project metadata for the system prompt.
-func buildPromptContext(workDir, model string) *prompt.ProjectContext {
+func buildPromptContext(workDir, model string, configInstructions []string) *prompt.ProjectContext {
 	ctx := &prompt.ProjectContext{
 		WorkDir:     workDir,
 		CurrentDate: time.Now().Format("2006-01-02"),
@@ -418,27 +418,79 @@ func buildPromptContext(workDir, model string) *prompt.ProjectContext {
 	gitCtx := git.Discover(workDir)
 	if gitCtx.IsRepo {
 		ctx.IsGitRepo = true
+		ctx.ProjectRoot = gitCtx.Root
 		ctx.GitBranch = gitCtx.Branch
 		ctx.MainBranch = gitCtx.MainBranch
 		ctx.GitUser = gitCtx.User
 		ctx.GitStatus = gitCtx.Status
 		ctx.RecentCommits = gitCtx.RecentCommits
 	}
+	// Fallback: use workDir as project root if not a git repo.
+	if ctx.ProjectRoot == "" {
+		ctx.ProjectRoot = workDir
+	}
 
 	// Instruction files (CLAUDE.md, .agents/ycode/instructions.md, etc.).
-	ctx.ContextFiles = discoverContextFiles(workDir)
+	ctx.ContextFiles = discoverContextFiles(workDir, ctx.ProjectRoot)
+
+	// Config-based instruction paths (relative, absolute, ~/home, URLs).
+	if len(configInstructions) > 0 {
+		configured := prompt.LoadConfiguredInstructions(configInstructions, ctx.ProjectRoot)
+		// Deduplicate against already-discovered files.
+		seen := make(map[string]bool, len(ctx.ContextFiles))
+		for _, cf := range ctx.ContextFiles {
+			if cf.Hash != "" {
+				seen[cf.Hash] = true
+			}
+		}
+		for _, cf := range configured {
+			if !seen[cf.Hash] {
+				seen[cf.Hash] = true
+				ctx.ContextFiles = append(ctx.ContextFiles, cf)
+			}
+		}
+	}
 
 	return ctx
 }
 
-// discoverContextFiles finds and loads instruction files.
-func discoverContextFiles(workDir string) []prompt.ContextFile {
-	discovered := prompt.DiscoverInstructionFiles(workDir)
+// discoverContextFiles finds and loads instruction files from:
+//  1. Project-level: walk from workDir up to projectRoot (AGENTS.md, CLAUDE.md, etc.)
+//  2. Global: user-level instruction files (~/.config/ycode/, ~/.agents/ycode/)
+func discoverContextFiles(workDir, projectRoot string) []prompt.ContextFile {
+	// Project-level discovery.
+	discovered := prompt.DiscoverInstructionFiles(workDir, projectRoot)
+
+	// Global discovery — check user config directories for user-wide instructions.
+	// Deduplicate against project-level files by content hash.
+	seen := make(map[string]bool, len(discovered))
+	for _, f := range discovered {
+		if f.Hash != "" {
+			seen[f.Hash] = true
+		}
+	}
+
+	home, _ := os.UserHomeDir()
+	globalDirs := []string{
+		filepath.Join(home, ".config", "ycode"),
+		filepath.Join(home, ".agents", "ycode"),
+	}
+	for _, dir := range globalDirs {
+		for _, gf := range prompt.DiscoverGlobalInstructionFiles(dir) {
+			if seen[gf.Hash] {
+				continue
+			}
+			seen[gf.Hash] = true
+			discovered = append(discovered, gf)
+		}
+	}
+
 	var files []prompt.ContextFile
 	for _, f := range discovered {
 		files = append(files, prompt.ContextFile{
 			Path:    f.Path,
 			Content: f.Content,
+			Hash:    f.Hash,
 		})
 	}
 	return files

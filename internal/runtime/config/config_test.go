@@ -170,6 +170,42 @@ func TestGetSetLocalConfigField(t *testing.T) {
 	}
 }
 
+func TestLoaderMergeInstructions(t *testing.T) {
+	dir := t.TempDir()
+
+	// User config: one instruction path.
+	userDir := filepath.Join(dir, "user")
+	os.MkdirAll(userDir, 0o755)
+	os.WriteFile(filepath.Join(userDir, "settings.json"),
+		[]byte(`{"instructions": ["~/global/AGENTS.md"]}`), 0o644)
+
+	// Project config: another instruction path — should concatenate, not replace.
+	projDir := filepath.Join(dir, "project")
+	os.MkdirAll(projDir, 0o755)
+	os.WriteFile(filepath.Join(projDir, "settings.json"),
+		[]byte(`{"instructions": ["docs/INSTRUCTIONS.md"]}`), 0o644)
+
+	// Use a separate localDir with no settings to avoid double-loading projDir.
+	localDir := filepath.Join(dir, "local")
+	os.MkdirAll(localDir, 0o755)
+
+	loader := NewLoader(userDir, projDir, localDir)
+	cfg, err := loader.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if len(cfg.Instructions) != 2 {
+		t.Fatalf("expected 2 instructions (concatenated), got %d: %v", len(cfg.Instructions), cfg.Instructions)
+	}
+	if cfg.Instructions[0] != "~/global/AGENTS.md" {
+		t.Errorf("first instruction: got %q", cfg.Instructions[0])
+	}
+	if cfg.Instructions[1] != "docs/INSTRUCTIONS.md" {
+		t.Errorf("second instruction: got %q", cfg.Instructions[1])
+	}
+}
+
 func TestLoaderMissingFiles(t *testing.T) {
 	loader := NewLoader("/nonexistent/user", "/nonexistent/project", "/nonexistent/local")
 	cfg, err := loader.Load()

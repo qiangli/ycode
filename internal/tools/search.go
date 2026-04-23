@@ -37,6 +37,7 @@ func RegisterSearchHandlers(r *Registry, v *vfs.VFS) {
 					return "", err
 				}
 				params.Path = absPath
+				r.NotifyFileAccess(absPath)
 			}
 			result, err := fileops.GlobSearch(params)
 			if err != nil {
@@ -63,6 +64,7 @@ func RegisterSearchHandlers(r *Registry, v *vfs.VFS) {
 					return "", err
 				}
 				params.Path = absPath
+				r.NotifyFileAccess(absPath)
 			}
 			result, err := fileops.GrepSearch(params)
 			if err != nil {

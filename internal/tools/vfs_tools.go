@@ -130,6 +130,9 @@ func RegisterVFSHandlers(r *Registry, v *vfs.VFS) {
 			if err := json.Unmarshal(input, &params); err != nil {
 				return "", fmt.Errorf("parse read_multiple_files input: %w", err)
 			}
+			for _, p := range params.Paths {
+				r.NotifyFileAccess(p)
+			}
 			return v.ReadMultipleFiles(ctx, params.Paths)
 		}
 	}

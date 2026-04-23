@@ -21,7 +21,7 @@ func memoryHandler(deps *RuntimeDeps) HandlerFunc {
 		var b strings.Builder
 
 		// Section 1: Discovered instruction files (CLAUDE.md ancestry).
-		files := prompt.DiscoverInstructionFiles(workDir)
+		files := prompt.DiscoverInstructionFiles(workDir, workDir)
 
 		fmt.Fprintf(&b, "Memory\n")
 		fmt.Fprintf(&b, "  Working directory  %s\n", workDir)

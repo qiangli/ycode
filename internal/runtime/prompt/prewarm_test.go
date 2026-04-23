@@ -14,7 +14,7 @@ func TestPrewarm_DiscoversFiles(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	result := Prewarm(ctx, dir, nil)
+	result := Prewarm(ctx, dir, dir, nil)
 
 	if len(result.Errors) > 0 {
 		t.Errorf("unexpected errors: %v", result.Errors)
@@ -28,7 +28,7 @@ func TestPrewarm_HandlesCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately.
 
-	result := Prewarm(ctx, "/nonexistent", nil)
+	result := Prewarm(ctx, "/nonexistent", "/nonexistent", nil)
 
 	// Should not panic, may or may not have errors depending on timing.
 	_ = result

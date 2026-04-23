@@ -46,6 +46,13 @@ type Config struct {
 	// Parallel tool execution settings
 	Parallel ParallelConfig `json:"parallel,omitempty"`
 
+	// Additional instruction file paths. Each entry can be:
+	//   - Absolute path: /path/to/instructions.md
+	//   - Relative path: docs/INSTRUCTIONS.md (resolved from project root)
+	//   - Home-relative: ~/custom/instructions.md
+	//   - URL: https://example.com/instructions.md
+	Instructions []string `json:"instructions,omitempty"`
+
 	// Allowed directories for VFS (in addition to temp dir and workspace root)
 	AllowedDirectories []string `json:"allowedDirectories,omitempty"`
 
@@ -267,6 +274,9 @@ func mergeFromFile(cfg *Config, path string) error {
 	}
 	if overlay.Parallel.MaxLLM != 0 {
 		cfg.Parallel.MaxLLM = overlay.Parallel.MaxLLM
+	}
+	if len(overlay.Instructions) > 0 {
+		cfg.Instructions = append(cfg.Instructions, overlay.Instructions...)
 	}
 	if len(overlay.AllowedDirectories) > 0 {
 		cfg.AllowedDirectories = append(cfg.AllowedDirectories, overlay.AllowedDirectories...)

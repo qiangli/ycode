@@ -23,6 +23,7 @@ func RegisterFileHandlers(r *Registry, v *vfs.VFS) {
 				return "", err
 			}
 			params.Path = absPath
+			r.NotifyFileAccess(absPath)
 
 			// Check for binary files.
 			binary, err := fileops.IsBinaryFile(absPath)

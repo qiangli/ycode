@@ -8,6 +8,7 @@ import (
 // Context holds git repository information.
 type Context struct {
 	IsRepo        bool
+	Root          string // absolute path to the git worktree root
 	Branch        string
 	MainBranch    string
 	User          string
@@ -26,6 +27,11 @@ func Discover(dir string) *Context {
 		return ctx
 	}
 	ctx.IsRepo = true
+
+	// Git worktree root (toplevel).
+	if out, err := runGitOutput(dir, "rev-parse", "--show-toplevel"); err == nil {
+		ctx.Root = strings.TrimSpace(out)
+	}
 
 	// Current branch.
 	if out, err := runGitOutput(dir, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {

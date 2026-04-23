@@ -34,7 +34,7 @@ func TestJITDiscovery_DiscoversSubdirectoryFiles(t *testing.T) {
 	}
 
 	// Simulate startup: discover root file, seed seen set.
-	startupFiles := DiscoverInstructionFiles(root)
+	startupFiles := DiscoverInstructionFiles(root, root)
 	seen := make(map[string]bool)
 	totalChars := 0
 	for _, f := range startupFiles {

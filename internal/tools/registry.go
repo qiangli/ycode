@@ -32,6 +32,10 @@ func IsPermissionApproved(ctx context.Context) bool {
 	return v
 }
 
+// FileAccessHook is called when a tool accesses a file path, enabling
+// JIT instruction discovery from subdirectories.
+type FileAccessHook func(path string)
+
 // Registry holds all registered tools and dispatches invocations.
 type Registry struct {
 	mu    sync.RWMutex
@@ -43,6 +47,9 @@ type Registry struct {
 
 	// Optional Bleve search index for semantic tool discovery.
 	searchIndex *ToolSearchIndex
+
+	// Optional hook called when tools access file paths.
+	fileAccessHook FileAccessHook
 }
 
 // NewRegistry creates a new empty tool registry.
@@ -64,6 +71,24 @@ func (r *Registry) SetPermissionPrompter(prompter PermissionPrompter) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.permPrompter = prompter
+}
+
+// SetFileAccessHook sets a callback invoked when tools access file paths.
+func (r *Registry) SetFileAccessHook(hook FileAccessHook) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.fileAccessHook = hook
+}
+
+// NotifyFileAccess calls the file access hook if set.
+// Tools should call this when they access a file path.
+func (r *Registry) NotifyFileAccess(path string) {
+	r.mu.RLock()
+	hook := r.fileAccessHook
+	r.mu.RUnlock()
+	if hook != nil {
+		hook(path)
+	}
 }
 
 // SetSearchIndex attaches a Bleve search index for semantic tool discovery.

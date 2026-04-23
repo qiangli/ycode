@@ -19,7 +19,7 @@ func contextHandler(deps *RuntimeDeps) HandlerFunc {
 		var b strings.Builder
 
 		// Instruction files.
-		files := prompt.DiscoverInstructionFiles(workDir)
+		files := prompt.DiscoverInstructionFiles(workDir, workDir)
 
 		// Token usage from session.
 		var totalInput, totalOutput, totalCacheCreate, totalCacheRead int

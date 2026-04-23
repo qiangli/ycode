@@ -61,6 +61,10 @@ type Runtime struct {
 	// Cache warmer — background pings to keep prompt cache alive.
 	cacheWarmer *api.CacheWarmer
 
+	// JIT instruction discovery — discovers AGENTS.md/CLAUDE.md in subdirs
+	// when tools access files, merges them before the next turn.
+	jitDiscovery *prompt.JITDiscovery
+
 	// Plan mode — when true, write tools are filtered out and plan-mode
 	// instructions are injected into the system prompt.
 	planMode bool
@@ -105,7 +109,22 @@ func NewRuntime(
 		completionCacheDir = filepath.Join(sess.Dir, "completion-cache")
 	}
 
-	return &Runtime{
+	// Initialize JIT instruction discovery.
+	seen := make(map[string]bool)
+	totalChars := 0
+	for _, cf := range promptCtx.ContextFiles {
+		if cf.Hash != "" {
+			seen[cf.Hash] = true
+		}
+		totalChars += len(cf.Content)
+	}
+	projectRoot := promptCtx.ProjectRoot
+	if projectRoot == "" {
+		projectRoot = promptCtx.WorkDir
+	}
+	jit := prompt.NewJITDiscovery(projectRoot, seen, totalChars)
+
+	r := &Runtime{
 		config:           cfg,
 		provider:         provider,
 		session:          sess,
@@ -119,7 +138,15 @@ func NewRuntime(
 		routingCache:     session.NewRoutingCache(),
 		activatedTools:   make(map[string]int),
 		completionCache:  api.NewCompletionCache(completionCacheDir, api.CompletionCacheTTL),
+		jitDiscovery:     jit,
 	}
+
+	// Wire file access hook so tools trigger JIT discovery.
+	registry.SetFileAccessHook(func(path string) {
+		jit.OnToolAccess(path)
+	})
+
+	return r
 }
 
 // SetLLMSummarizer enables LLM-based compaction summarization.
@@ -181,6 +208,14 @@ const activatedToolTTL = 3
 // Turn executes one turn of the conversation: send messages, get response, execute tools.
 func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult, error) {
 	r.turnCount++
+
+	// Merge any JIT-discovered instruction files into the prompt context.
+	if r.jitDiscovery != nil {
+		if newFiles := r.jitDiscovery.DrainPending(); len(newFiles) > 0 {
+			r.promptCtx.ContextFiles = append(r.promptCtx.ContextFiles, newFiles...)
+			r.logger.Info("JIT instruction discovery", "newFiles", len(newFiles), "total", len(r.promptCtx.ContextFiles))
+		}
+	}
 
 	// Build system prompt.
 	systemPrompt := prompt.BuildDefault(r.promptCtx, r.planMode, r.cachingSupported, r.contextBaseline)

@@ -16,7 +16,7 @@ type PrewarmResult struct {
 
 // Prewarm runs startup discovery tasks concurrently.
 // It discovers instruction files and loads memories in parallel.
-func Prewarm(ctx context.Context, workDir string, memManager *memory.Manager) *PrewarmResult {
+func Prewarm(ctx context.Context, workDir, projectRoot string, memManager *memory.Manager) *PrewarmResult {
 	result := &PrewarmResult{}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -25,7 +25,7 @@ func Prewarm(ctx context.Context, workDir string, memManager *memory.Manager) *P
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		files := DiscoverInstructionFiles(workDir)
+		files := DiscoverInstructionFiles(workDir, projectRoot)
 		mu.Lock()
 		result.ContextFiles = files
 		mu.Unlock()
