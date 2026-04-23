@@ -54,6 +54,11 @@ See [INSTRUCTIONS.md](./INSTRUCTIONS.md) for full details: skill dispatch, build
 
 **Commit conventions**: stage files by name (never `git add -A`), only stage your own changes, match the repo's prefix style from `git log` (`fix:`, `feat:`, `docs:`).
 
+## Directory Boundaries
+
+- **`priorart/`** -- **read-only reference code.** Never modify files under `priorart/`. These are upstream submodules kept for exploration, research, and design reference. Do not create, edit, or delete anything in this tree.
+- **`external/`** -- vendored dependencies used by the ycode build. If code from `priorart/` (or any external project) needs to be incorporated into ycode, vendor it into `external/` with appropriate attribution.
+
 ## Submodule Dependencies
 
 The project uses local `replace` directives for embedded observability components:
