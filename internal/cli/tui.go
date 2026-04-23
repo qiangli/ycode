@@ -57,10 +57,8 @@ type TUIModel struct {
 	workCancel   context.CancelFunc
 	turnMessages []api.Message // accumulated conversation for current agent loop
 
-	// Input history for up/down navigation.
-	history      []string // submitted inputs (oldest first)
-	historyIndex int      // -1 = not browsing history, 0+ = index in history
-	inputBuffer  string   // temp storage for current input when browsing history
+	// Persistent input history for up/down navigation (cross-session).
+	history *promptHistory
 
 	// Confirmation dialog state.
 	confirming    bool   // true when waiting for user confirmation
@@ -134,11 +132,16 @@ func NewTUIModel(app *App) *TUIModel {
 	// Customize textarea key bindings: Enter submits, no newlines in input.
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 
+	// Determine history storage directory from user config path.
+	var historyDir string
+	if app.userConfigPath != "" {
+		historyDir = filepath.Dir(app.userConfigPath)
+	}
+
 	m := &TUIModel{
 		app:           app,
 		textarea:      ta,
-		history:       make([]string, 0),
-		historyIndex:  -1,
+		history:       newPromptHistory(historyDir),
 		completionAll: buildCompletionItems(app.commands, app.workDir),
 	}
 
@@ -327,33 +330,22 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case msg.Type == tea.KeyUp:
-			if m.working || len(m.history) == 0 {
+			if m.working {
 				break
 			}
-			// Save current input if starting history navigation.
-			if m.historyIndex == -1 {
-				m.inputBuffer = m.textarea.Value()
-				m.historyIndex = len(m.history) - 1
-			} else if m.historyIndex > 0 {
-				m.historyIndex--
+			if val, ok := m.history.Up(m.textarea.Value()); ok {
+				m.textarea.SetValue(val)
+				m.textarea.CursorEnd()
 			}
-			m.textarea.SetValue(m.history[m.historyIndex])
-			m.textarea.CursorEnd()
 			return m, nil
 		case msg.Type == tea.KeyDown:
-			if m.working || m.historyIndex == -1 {
+			if m.working {
 				break
 			}
-			// Move forward in history or restore original input.
-			if m.historyIndex < len(m.history)-1 {
-				m.historyIndex++
-				m.textarea.SetValue(m.history[m.historyIndex])
-			} else {
-				// At end of history, restore original input.
-				m.textarea.SetValue(m.inputBuffer)
-				m.historyIndex = -1
+			if val, ok := m.history.Down(); ok {
+				m.textarea.SetValue(val)
+				m.textarea.CursorEnd()
 			}
-			m.textarea.CursorEnd()
 			return m, nil
 		case msg.Type == tea.KeyEnter:
 			if m.working {
@@ -364,10 +356,8 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			m.completion.dismiss()
-			// Add to history and reset history navigation.
-			m.history = append(m.history, text)
-			m.historyIndex = -1
-			m.inputBuffer = ""
+			// Add to persistent history and reset navigation.
+			m.history.Append(text)
 			m.textarea.Reset()
 			return m, m.handleInput(text)
 		}
