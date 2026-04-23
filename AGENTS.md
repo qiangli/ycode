@@ -1,11 +1,8 @@
-```markdown
 # AGENTS.md
 
 Instructions for AI coding agents working on this repository.
 
 ycode -- pure Go CLI agent harness for autonomous software development. Go 1.26+, permissive-license dependencies only. Single static binary with embedded observability stack.
-
-**Read [INSTRUCTIONS.md](./INSTRUCTIONS.md)** -- shared conventions: skill dispatch, build system layers, testing, commit rules.
 
 ## Build Commands
 
@@ -44,6 +41,19 @@ Key subsystems:
 
 Design: `RuntimeContext` (no global state), three-tier config merge, five-layer memory, three-layer build system (Makefile -> scripts/ -> Go).
 
+## Conventions
+
+See [INSTRUCTIONS.md](./INSTRUCTIONS.md) for full details: skill dispatch, build system layers, testing, commit rules.
+
+**Layered build system** -- strict three-layer separation:
+1. **Makefile** -- dependency graph only. No multi-line logic or embedded bash blocks.
+2. **scripts/** -- bash orchestration only. Sequencing, env setup, conditionals.
+3. **Go** -- all logic. Tests, utilities, and any non-trivial computation must be in Go.
+
+**No test logic in bash.** Scripts may invoke `go test` but must not contain assertions, HTTP calls for validation, or result parsing.
+
+**Commit conventions**: stage files by name (never `git add -A`), only stage your own changes, match the repo's prefix style from `git log` (`fix:`, `feat:`, `docs:`).
+
 ## Submodule Dependencies
 
 The project uses local `replace` directives for embedded observability components:
@@ -58,10 +68,23 @@ Run `make init` before first build to populate submodules.
 
 On disk: `build`, `claude`, `deploy`, `learn`, `setup`, `validate` (in `skills/`). Internal: `/init`, `/commit` (embedded in binary). See [INSTRUCTIONS.md](./INSTRUCTIONS.md) for dispatch rules.
 
+## Agent-Specific Configuration
+
+Each agent tool should store its private config under its own directory. The shared instructions live here in `AGENTS.md`; agent-specific overrides go in:
+
+| Agent | Config location |
+|-------|----------------|
+| Claude Code | `.claude/` |
+| ycode | `.agents/ycode/` |
+| Cursor | `.cursor/` |
+| Copilot | `.github/copilot-instructions.md` |
+| OpenCode | `.opencode/` |
+
+Agent-specific files should be minimal -- only settings, permissions, or behaviors that are unique to that agent. All project conventions belong in this file or in [INSTRUCTIONS.md](./INSTRUCTIONS.md).
+
 ## References
 
 Read on demand:
 - [INSTRUCTIONS.md](./INSTRUCTIONS.md) -- conventions, skill system, build/test/commit rules
 - [USAGE.md](./USAGE.md) -- CLI modes, config, tools, workflows
 - [docs/architecture.md](./docs/architecture.md) -- full architecture, design decisions, component details
-```
