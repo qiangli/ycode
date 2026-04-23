@@ -15,7 +15,7 @@ Work is organized into 2 phases. Phase 1 delivers immediate value by embedding M
 ## Phase 1: Embed Memos as Proxy Component — Core Integration
 
 ### 1.1 Add go.mod replace directive (S) — Gap S1, S3
-- Add `replace github.com/usememos/memos => ./priorart/memos` to go.mod
+- Add `replace github.com/usememos/memos => ./external/memos` to go.mod
 - Run `go mod tidy` to resolve dependency graph
 - Resolve any version conflicts between ycode and memos dependencies
 

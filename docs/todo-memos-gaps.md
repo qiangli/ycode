@@ -17,7 +17,7 @@ Tracking checklist. See gap-analysis-memos.md for full analysis.
   - [x] Implement Component interface (Name, Start, Stop, Healthy, HTTPHandler)
   - [x] Start memos server on ephemeral port with SQLite storage
   - [x] Expose Port() for reverse proxying
-  - [x] Create `priorart/memos/embed/embed.go` — public API wrapper for internal packages
+  - [x] Create `external/memos/embed/embed.go` — public API wrapper for internal packages
 
 - [x] **F1 — Register in stack manager** (S)
   - [x] Add `"memos"` to `componentPathMap` in stack.go

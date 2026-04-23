@@ -9,7 +9,7 @@ replace github.com/jaegertracing/jaeger => ./external/jaeger
 
 replace github.com/perses/perses => ./external/perses
 
-replace github.com/usememos/memos => ./priorart/memos
+replace github.com/usememos/memos => ./external/memos
 
 require (
 	github.com/VictoriaMetrics/VictoriaLogs v0.0.0-20260218111324-95b48d57d032

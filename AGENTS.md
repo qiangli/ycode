@@ -60,7 +60,7 @@ The project uses local `replace` directives for embedded observability component
 - `external/victorialogs/` -> `github.com/VictoriaMetrics/VictoriaLogs`
 - `external/jaeger/` -> `github.com/jaegertracing/jaeger`
 - `external/perses/` -> `github.com/perses/perses`
-- `priorart/memos/` -> `github.com/usememos/memos`
+- `external/memos/` -> `github.com/usememos/memos`
 
 Run `make init` before first build to populate submodules.
 
