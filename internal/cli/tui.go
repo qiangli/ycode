@@ -570,10 +570,26 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.completion.update(m.completionAll, m.textarea.Value())
 	}
 
-	// Only forward non-key messages to the viewport so that key presses
-	// (e.g. space, which the viewport maps to page-down) don't scroll the
-	// output while the user is typing in the textarea.
-	if _, isKey := msg.(tea.KeyMsg); !isKey {
+	// Forward messages to the viewport for scrolling support.
+	// Block most key presses so typing in the textarea doesn't trigger
+	// viewport shortcuts (e.g. space → page-down), but allow dedicated
+	// scroll keys (PageUp/PageDown) through so users can review output.
+	// When the agent is working the textarea is inactive, so all keys
+	// can safely reach the viewport.
+	forwardToViewport := true
+	if keyMsg, isKey := msg.(tea.KeyMsg); isKey {
+		if m.working {
+			forwardToViewport = true
+		} else {
+			switch keyMsg.Type {
+			case tea.KeyPgUp, tea.KeyPgDown:
+				forwardToViewport = true
+			default:
+				forwardToViewport = false
+			}
+		}
+	}
+	if forwardToViewport {
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		cmds = append(cmds, cmd)

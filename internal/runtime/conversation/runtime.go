@@ -65,9 +65,9 @@ type Runtime struct {
 	// when tools access files, merges them before the next turn.
 	jitDiscovery *prompt.JITDiscovery
 
-	// Plan mode — when true, write tools are filtered out and plan-mode
-	// instructions are injected into the system prompt.
-	planMode bool
+	// Agent mode — controls system prompt assembly and tool filtering.
+	// Values: "build" (default), "plan" (read-only), "explore" (subagent).
+	mode string
 
 	// Optional OTEL instrumentation.
 	otel *OTELConfig
@@ -161,9 +161,26 @@ func (r *Runtime) SetCacheWarmer(cw *api.CacheWarmer) {
 	r.cacheWarmer = cw
 }
 
+// SetMode sets the agent mode for this runtime ("build", "plan", or "explore").
+func (r *Runtime) SetMode(mode string) {
+	r.mode = mode
+}
+
+// Mode returns the current agent mode.
+func (r *Runtime) Mode() string {
+	if r.mode == "" {
+		return "build"
+	}
+	return r.mode
+}
+
 // SetPlanMode enables or disables plan mode for this runtime.
 func (r *Runtime) SetPlanMode(enabled bool) {
-	r.planMode = enabled
+	if enabled {
+		r.mode = "plan"
+	} else {
+		r.mode = "build"
+	}
 }
 
 // SetEventCallback sets a callback that receives streaming events as they
@@ -218,13 +235,14 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 	}
 
 	// Build system prompt.
-	systemPrompt := prompt.BuildDefault(r.promptCtx, r.planMode, r.cachingSupported, r.contextBaseline)
+	systemPrompt := prompt.BuildDefault(r.promptCtx, r.Mode(), r.cachingSupported, r.contextBaseline)
 
-	// Build tool definitions — in plan mode, exclude tools requiring write access.
+	// Build tool definitions — in plan/explore mode, exclude tools requiring write access.
 	var toolSpecs []*tools.ToolSpec
-	if r.planMode {
+	switch r.Mode() {
+	case "plan", "explore":
 		toolSpecs = r.registry.AlwaysAvailableForMode(permission.ReadOnly)
-	} else {
+	default:
 		toolSpecs = r.registry.AlwaysAvailable()
 	}
 

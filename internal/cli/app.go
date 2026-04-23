@@ -141,6 +141,19 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 	})
 	app.commands = cmdRegistry
 
+	// Wire the agent spawner so the Agent tool can create child runtimes.
+	if app.toolRegistry != nil && app.provider != nil {
+		caps := api.DetectCapabilities(app.provider.Kind(), cfg.Model)
+		spawner := conversation.NewAgentSpawner(&conversation.SpawnerConfig{
+			Model:            cfg.Model,
+			Provider:         app.provider,
+			Registry:         app.toolRegistry,
+			PromptCtx:        app.promptCtx,
+			CachingSupported: caps.CachingSupported,
+		})
+		tools.RegisterAgentHandler(app.toolRegistry, app.parentAgentMode, spawner)
+	}
+
 	return app, nil
 }
 
@@ -476,6 +489,15 @@ func (a *App) InPlanMode() bool {
 	return a.planMode.InPlanMode()
 }
 
+// parentAgentMode returns the current agent mode as a tools.AgentMode.
+// Used by the agent spawner to enforce plan-mode constraints on subagents.
+func (a *App) parentAgentMode() tools.AgentMode {
+	if a.InPlanMode() {
+		return tools.ModePlan
+	}
+	return tools.ModeBuild
+}
+
 // Commands returns the command registry.
 func (a *App) Commands() *commands.Registry { return a.commands }
 
@@ -585,7 +607,7 @@ func (a *App) RunInteractiveWithClient(ctx context.Context, cl agentClient) erro
 
 	m := NewTUIModel(a)
 	m.cl = cl
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	m.SetProgram(p)
 
 	if a.toolRegistry != nil {
@@ -609,7 +631,7 @@ func (a *App) RunInteractive(ctx context.Context) error {
 	suppressLogOutput()
 
 	m := NewTUIModel(a)
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	m.SetProgram(p)
 
 	// Wire TUI-based permission prompter into the tool registry so that

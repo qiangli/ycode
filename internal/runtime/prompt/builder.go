@@ -131,28 +131,38 @@ func (b *Builder) BuildDifferential(baseline *ContextBaseline) (string, map[stri
 }
 
 // BuildDefault builds a system prompt with default sections and project context.
-// When planMode is true, a plan-mode reminder section is appended.
+// The mode parameter controls which sections are included:
+//   - "build": full sections (default behavior)
+//   - "plan": full sections + plan-mode workflow instructions
+//   - "explore": stripped-down prompt for codebase search subagents
+//
 // When cachingSupported is false and a non-nil baseline is provided, uses
 // differential context injection to omit unchanged dynamic sections.
-func BuildDefault(ctx *ProjectContext, planMode bool, cachingSupported bool, baseline *ContextBaseline) string {
+func BuildDefault(ctx *ProjectContext, mode string, cachingSupported bool, baseline *ContextBaseline) string {
 	b := NewBuilder()
 
-	// Static sections (cacheable).
-	b.AddStaticSection(SectionIntro, IntroSection())
-	b.AddStaticSection(SectionSystem, SystemSection())
-	b.AddStaticSection(SectionTasks, TasksSection())
-	b.AddStaticSection(SectionActions, ActionsSection())
-	b.AddStaticSection(SectionBuiltinSkills, BuiltinSkillsSection())
+	if mode == "explore" {
+		// Explore subagents get a lean, focused prompt.
+		b.AddStaticSection(SectionExploreMode, ExploreSection())
+		b.AddDynamicSection(SectionFilesystem, FilesystemSection(ctx.AllowedDirs))
+		b.AddDynamicSection(SectionEnvironment, EnvironmentSection(ctx))
+	} else {
+		// Build and plan modes share the full section set.
+		b.AddStaticSection(SectionIntro, IntroSection())
+		b.AddStaticSection(SectionSystem, SystemSection())
+		b.AddStaticSection(SectionTasks, TasksSection())
+		b.AddStaticSection(SectionActions, ActionsSection())
+		b.AddStaticSection(SectionBuiltinSkills, BuiltinSkillsSection())
 
-	// Dynamic sections.
-	b.AddDynamicSection(SectionFilesystem, FilesystemSection(ctx.AllowedDirs))
-	b.AddDynamicSection(SectionEnvironment, EnvironmentSection(ctx))
-	b.AddDynamicSection(SectionProject, ProjectSection(ctx))
-	b.AddDynamicSection(SectionGit, GitSection(ctx))
-	b.AddDynamicSection(SectionInstructions, InstructionsSection(ctx.ContextFiles))
+		b.AddDynamicSection(SectionFilesystem, FilesystemSection(ctx.AllowedDirs))
+		b.AddDynamicSection(SectionEnvironment, EnvironmentSection(ctx))
+		b.AddDynamicSection(SectionProject, ProjectSection(ctx))
+		b.AddDynamicSection(SectionGit, GitSection(ctx))
+		b.AddDynamicSection(SectionInstructions, InstructionsSection(ctx.ContextFiles))
 
-	if planMode {
-		b.AddDynamicSection(SectionPlanMode, PlanModeSection())
+		if mode == "plan" {
+			b.AddDynamicSection(SectionPlanMode, PlanModeSection())
+		}
 	}
 
 	// When caching is available (Anthropic), always send full prompt —

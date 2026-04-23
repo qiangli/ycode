@@ -19,6 +19,50 @@ const (
 	AgentStatusLine     AgentType = "statusline-setup"
 )
 
+// AgentMode controls the runtime behavior: system prompt, tool access, and constraints.
+type AgentMode string
+
+const (
+	ModeBuild   AgentMode = "build"   // full tool access, default mode
+	ModePlan    AgentMode = "plan"    // read-only, structured planning workflow
+	ModeExplore AgentMode = "explore" // read-only subagent for codebase search
+)
+
+// AllowedToolsForMode returns the tool allowlist for a given agent mode.
+// Returns nil for build mode (all tools allowed).
+func AllowedToolsForMode(mode AgentMode) []string {
+	switch mode {
+	case ModeExplore:
+		return []string{
+			"bash", "read_file", "glob_search", "grep_search",
+			"WebFetch", "WebSearch", "ToolSearch",
+		}
+	case ModePlan:
+		return []string{
+			"bash", "read_file", "glob_search", "grep_search",
+			"WebFetch", "WebSearch", "ToolSearch", "Skill",
+			"Agent", "AskUserQuestion",
+			"EnterPlanMode", "ExitPlanMode",
+		}
+	case ModeBuild:
+		return nil // all tools
+	default:
+		return nil
+	}
+}
+
+// AgentTypeToMode maps a subagent type to its runtime mode.
+func AgentTypeToMode(t AgentType) AgentMode {
+	switch t {
+	case AgentExplore:
+		return ModeExplore
+	case AgentPlan:
+		return ModePlan
+	default:
+		return ModeBuild
+	}
+}
+
 // AllowedToolsForAgent returns the tool allowlist for each agent type.
 func AllowedToolsForAgent(agentType AgentType) []string {
 	readOnly := []string{"read_file", "glob_search", "grep_search", "WebFetch", "WebSearch", "ToolSearch", "Skill"}
@@ -55,7 +99,9 @@ type AgentManifest struct {
 }
 
 // RegisterAgentHandler registers the Agent tool handler.
-func RegisterAgentHandler(r *Registry, spawner func(ctx context.Context, manifest *AgentManifest) (string, error)) {
+// parentMode controls subagent constraints: when the parent is in plan mode,
+// all subagents are forced to explore type.
+func RegisterAgentHandler(r *Registry, parentMode func() AgentMode, spawner func(ctx context.Context, manifest *AgentManifest) (string, error)) {
 	spec, ok := r.Get("Agent")
 	if !ok {
 		return
@@ -73,6 +119,11 @@ func RegisterAgentHandler(r *Registry, spawner func(ctx context.Context, manifes
 		agentType := AgentGeneralPurpose
 		if params.SubagentType != "" {
 			agentType = AgentType(params.SubagentType)
+		}
+
+		// In plan mode, force all subagents to explore type.
+		if parentMode != nil && parentMode() == ModePlan {
+			agentType = AgentExplore
 		}
 
 		// Validate agent type.
