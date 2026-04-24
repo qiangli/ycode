@@ -411,6 +411,14 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.handleInput(text)
 		}
 
+		// Pass key events to viewport for scrolling support (PgUp, PgDown, etc.)
+		// but only when not typing in the textarea or when using scroll-specific keys.
+		vpModel, vpCmd := m.viewport.Update(msg)
+		m.viewport = vpModel
+		if vpCmd != nil {
+			cmds = append(cmds, vpCmd)
+		}
+
 	case permissionRequestMsg:
 		// If user previously chose "always allow", auto-approve.
 		if m.permAlwaysAllow {
