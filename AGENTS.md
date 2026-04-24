@@ -1,8 +1,8 @@
-# AGENTS.md
+# CLAUDE.md
 
-Instructions for AI coding agents working on this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-ycode -- pure Go CLI agent harness for autonomous software development. Go 1.26+, permissive-license dependencies only.
+ycode -- pure Go CLI agent harness for autonomous software development. Go 1.25+, permissive-license dependencies only.
 
 ## Build Commands
 
@@ -36,6 +36,23 @@ Key subsystems:
 - **Plugins** (`internal/plugins/`): hook lifecycle, runtime tool registration
 
 Design: `RuntimeContext` (no global state), three-tier config merge, five-layer memory.
+
+## Skills
+
+When the user's message starts with `/<name>` (e.g. `/build`, `/deploy`, `/learn`), read `skills/<name>/skill.md` and follow its instructions exactly. Everything after `/<name> ` is `ARGS` — pass it wherever the skill references `{{ARGS}}`. If no matching skill file exists, tell the user. Some skills (`/init`, `/commit`) are embedded in the ycode binary and dispatched via the `Skill` tool.
+
+## Development Cycle: Build -> Deploy -> Validate
+
+```bash
+make build                              # full quality gate (must pass before deploy)
+make deploy                             # localhost:58080 by default
+make validate                           # integration/acceptance/perf tests against running instance
+
+make deploy HOST=staging PORT=58080     # remote deploy (passwordless SSH required)
+make validate HOST=staging PORT=58080   # validate remote
+```
+
+Each step depends on the previous one succeeding. On failure: diagnose, fix source, re-run from `make build`. Allow up to 3 fix-and-retry cycles before escalating.
 
 ## Conventions
 

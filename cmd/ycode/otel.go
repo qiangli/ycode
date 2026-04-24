@@ -139,7 +139,9 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 
 	return &otelResult{
 		shutdown: func() {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			// Short timeout: file exports are fast; if gRPC can't flush in 2s
+			// (e.g. collector unreachable), waiting longer won't help.
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			if err := otelProvider.Shutdown(shutdownCtx); err != nil {
 				slog.Warn("otel: shutdown error", "error", err)

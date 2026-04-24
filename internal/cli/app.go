@@ -694,10 +694,8 @@ func (a *App) RunInteractive(ctx context.Context) error {
 	// Print session summary after TUI exits.
 	a.printSessionSummary()
 
-	// Close storage backends.
-	if a.storage != nil {
-		a.storage.Close()
-	}
+	// Storage and OTEL cleanup happen in Close() (called via defer)
+	// with appropriate timeouts, so we don't duplicate it here.
 	return nil
 }
 

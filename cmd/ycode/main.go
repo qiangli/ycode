@@ -410,11 +410,13 @@ func newApp() (*cli.App, error) {
 	// Register compact_context tool handler — needs the app for session access.
 	tools.RegisterCompactContextHandler(toolReg, app.CompactContext)
 
-	// Register cleanup: cancel background goroutines, then OTEL shutdown.
-	app.RegisterCleanup(rootCancel)
+	// Register cleanup (LIFO order — last registered runs first):
+	// 1. rootCancel: stop background goroutines so they stop producing telemetry
+	// 2. OTEL shutdown: flush remaining spans/metrics/logs
 	if otelRes != nil {
 		app.RegisterCleanup(otelRes.shutdown)
 	}
+	app.RegisterCleanup(rootCancel)
 
 	success = true
 	return app, nil
