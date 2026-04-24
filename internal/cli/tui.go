@@ -657,11 +657,11 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Forward messages to the viewport for scrolling support.
 	// Block most key presses so typing in the textarea doesn't trigger
 	// viewport shortcuts (e.g. space → page-down), but allow dedicated
-	// scroll keys (PageUp/PageDown) through so users can review output.
+	// scroll keys (PageUp/PageDown/Home/End) through so users can review output.
 	forwardToViewport := true
 	if keyMsg, isKey := msg.(tea.KeyMsg); isKey {
 		switch keyMsg.Type {
-		case tea.KeyPgUp, tea.KeyPgDown:
+		case tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
 			forwardToViewport = true
 		default:
 			forwardToViewport = false
