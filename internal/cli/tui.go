@@ -90,6 +90,15 @@ type TUIModel struct {
 	// Pending input queue — messages submitted while the agent is working.
 	pendingInputs []pendingInput
 
+	// Mid-turn communication — carries supplementary text to background goroutine.
+	// Created when a turn starts, nil'd when the turn ends or is paused.
+	midTurnCh chan string
+
+	// Paused state — agent stopped at boundary, context preserved.
+	paused         bool
+	pausedMessages []api.Message           // conversation state at time of pause
+	pausedCalls    []conversation.ToolCall // pending tool calls if paused mid-tool-dispatch
+
 	// Side query state.
 	sideQueryCount int // for numbering /btw output sections
 }
@@ -138,6 +147,13 @@ type streamDeltaMsg struct {
 // pendingInput is a message submitted while the agent is working.
 type pendingInput struct {
 	Text string
+}
+
+// pausedMsg is sent when the background goroutine detects a pause request
+// and saves its state for later resumption.
+type pausedMsg struct {
+	Messages []api.Message
+	Calls    []conversation.ToolCall // non-nil if pausing before tool execution
 }
 
 // sideQueryResultMsg is sent when a /btw side query completes.
@@ -359,7 +375,16 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.working = false
 				m.workCancel = nil
 				m.pendingInputs = nil
+				m.midTurnCh = nil
 				m.appendOutput("\n⏹ Cancelled.\n\n")
+				cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
+				break
+			}
+			if m.paused {
+				m.paused = false
+				m.pausedMessages = nil
+				m.pausedCalls = nil
+				m.appendOutput("\n⏹ Cancelled (paused session discarded).\n\n")
 				cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
 				break
 			}
@@ -396,7 +421,8 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 			if m.working {
-				// While agent is working: /btw runs a side query, anything else is queued.
+				// While agent is working: /btw runs a side query, /pause signals
+				// a soft stop, bare text is supplementary context for injection.
 				if strings.HasPrefix(text, "/btw ") {
 					query := strings.TrimSpace(text[5:])
 					if query != "" {
@@ -404,9 +430,56 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					break
 				}
-				m.pendingInputs = append(m.pendingInputs, pendingInput{Text: text})
-				m.appendOutput(fmt.Sprintf("⏳ Queued: %s\n", text))
+				if text == "/pause" {
+					// Signal the background goroutine to stop at next boundary.
+					if m.midTurnCh != nil {
+						close(m.midTurnCh)
+						m.midTurnCh = nil
+					}
+					m.appendOutput("\n⏸ Pausing at next safe point...\n")
+					break
+				}
+				// Bare text — supplementary context, send to background for injection.
+				m.appendOutput(fmt.Sprintf("📎 Noted: %s\n", text))
+				if m.midTurnCh != nil {
+					select {
+					case m.midTurnCh <- text:
+					default:
+						m.pendingInputs = append(m.pendingInputs, pendingInput{Text: text})
+					}
+				} else {
+					m.pendingInputs = append(m.pendingInputs, pendingInput{Text: text})
+				}
 				break
+			}
+			if m.paused {
+				if text == "/resume" {
+					m.appendOutput("\n▶ Resuming...\n")
+					return m, m.resumeAgentTurn()
+				}
+				// Accumulate context while paused — add to conversation.
+				_ = m.app.session.AddMessage(session.ConversationMessage{
+					Role: session.RoleUser,
+					Content: []session.ContentBlock{
+						{Type: session.ContentTypeText, Text: text},
+					},
+				})
+				m.pausedMessages = append(m.pausedMessages,
+					api.Message{
+						Role: api.RoleAssistant,
+						Content: []api.ContentBlock{
+							{Type: api.ContentTypeText, Text: "Noted, I'll take that into account."},
+						},
+					},
+					api.Message{
+						Role: api.RoleUser,
+						Content: []api.ContentBlock{
+							{Type: api.ContentTypeText, Text: text},
+						},
+					},
+				)
+				m.appendOutput(fmt.Sprintf("📎 Added to context: %s\n(type /resume to continue)\n", text))
+				return m, nil
 			}
 			return m, m.handleInput(text)
 		}
@@ -449,6 +522,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			m.working = false
 			m.workCancel = nil
+			m.midTurnCh = nil
 			m.pendingInputs = nil // clear queue on error
 			// Check if it was a cancellation.
 			if msg.Err.Error() == "turn 1: stream: context canceled" || strings.Contains(msg.Err.Error(), "context canceled") {
@@ -508,6 +582,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(result.ToolCalls) == 0 {
 			m.working = false
 			m.workCancel = nil
+			m.midTurnCh = nil
 			m.appendOutput("\n✓ Done.\n\n")
 			// Show session summary.
 			m.appendOutput(formatSessionSummary(m.app.usageTracker, m.app.sessionStart))
@@ -570,6 +645,16 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Execute tools and feed results back (in a Cmd to keep TUI responsive).
 		toolCalls := result.ToolCalls
 		return m, m.executeToolsCmd(toolCalls)
+
+	case pausedMsg:
+		m.working = false
+		m.workCancel = nil
+		m.paused = true
+		m.pausedMessages = msg.Messages
+		m.pausedCalls = msg.Calls
+		m.midTurnCh = nil
+		m.appendOutput("\n⏸ Paused. Type additional context, then /resume to continue.\n\n")
+		cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
 
 	case toolProgressMsg:
 		if int(msg.Index) < len(m.toolTasks) {
@@ -754,6 +839,10 @@ func (m *TUIModel) statusBar() string {
 		modeText = " WORKING "
 		modeStyle = modeStyle.Background(lipgloss.Color("#60a5fa")) // blue
 	}
+	if m.paused {
+		modeText = " PAUSED "
+		modeStyle = modeStyle.Background(lipgloss.Color("#fb923c")) // orange
+	}
 	if m.confirming {
 		modeText = " CONFIRM "
 		modeStyle = modeStyle.Background(lipgloss.Color("#f472b6")) // pink
@@ -815,6 +904,9 @@ func (m *TUIModel) statusBar() string {
 
 	// Hints.
 	hintText := " ctrl+k:commands | shift+tab:mode | /help "
+	if m.paused {
+		hintText = " /resume to continue | ctrl+c to cancel | type to add context "
+	}
 	if m.confirming {
 		hintText = " " + m.confirmPrompt + "  y=yes n=no a=always for session "
 	}
@@ -1068,6 +1160,8 @@ func (m *TUIModel) startAgentTurn(userPrompt string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.workCancel = cancel
 	m.working = true
+	m.paused = false
+	m.midTurnCh = make(chan string, 8)
 
 	m.appendOutput("⧗ Sending to LLM...\n")
 
@@ -1087,6 +1181,7 @@ func (m *TUIModel) startAgentTurn(userPrompt string) tea.Cmd {
 
 	msgs := m.turnMessages
 	prog := m.program
+	midTurnCh := m.midTurnCh // capture for closure
 	return func() tea.Msg {
 		onEvent := func(eventType string, data map[string]any) {
 			if prog == nil {
@@ -1108,6 +1203,48 @@ func (m *TUIModel) startAgentTurn(userPrompt string) tea.Cmd {
 			}
 		}
 		result, recovery, err := m.app.RunTurnWithRecoveryStreaming(ctx, msgs, onEvent)
+		if err != nil {
+			return turnResultMsg{Result: result, Recovery: recovery, Err: err, Streamed: true}
+		}
+
+		// Check if /pause was requested during LLM streaming.
+		// If the LLM returned tool calls, pause before executing them.
+		if midTurnCh != nil && result != nil && len(result.ToolCalls) > 0 {
+			select {
+			case _, ok := <-midTurnCh:
+				if !ok {
+					// Channel closed — /pause was requested.
+					pausedMsgs := make([]api.Message, len(msgs))
+					copy(pausedMsgs, msgs)
+					var assistantBlocks []api.ContentBlock
+					if result.ThinkingContent != "" {
+						assistantBlocks = append(assistantBlocks, api.ContentBlock{
+							Type: api.ContentTypeThinking, Text: result.ThinkingContent,
+						})
+					}
+					if result.TextContent != "" {
+						assistantBlocks = append(assistantBlocks, api.ContentBlock{
+							Type: api.ContentTypeText, Text: result.TextContent,
+						})
+					}
+					for _, tc := range result.ToolCalls {
+						assistantBlocks = append(assistantBlocks, api.ContentBlock{
+							Type: api.ContentTypeToolUse, ID: tc.ID, Name: tc.Name, Input: tc.Input,
+						})
+					}
+					pausedMsgs = append(pausedMsgs, api.Message{
+						Role: api.RoleAssistant, Content: assistantBlocks,
+					})
+					if prog != nil {
+						prog.Send(pausedMsg{Messages: pausedMsgs, Calls: result.ToolCalls})
+					}
+					return nil
+				}
+			default:
+				// Channel still open and empty — no pause requested.
+			}
+		}
+
 		return turnResultMsg{Result: result, Recovery: recovery, Err: err, Streamed: true}
 	}
 }
@@ -1147,6 +1284,54 @@ func (m *TUIModel) startAgentTurnViaClient(ctx context.Context, userPrompt strin
 	}
 }
 
+// resumeAgentTurn continues from a paused state. If there are pending tool calls
+// (paused before tool execution), it executes them. Otherwise it runs the next
+// LLM turn with the accumulated conversation context.
+func (m *TUIModel) resumeAgentTurn() tea.Cmd {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.workCancel = cancel
+	m.working = true
+	m.paused = false
+	m.midTurnCh = make(chan string, 8)
+	m.turnMessages = m.pausedMessages
+	m.pausedMessages = nil
+
+	if len(m.pausedCalls) > 0 {
+		// Paused before executing tool calls — execute them now.
+		calls := m.pausedCalls
+		m.pausedCalls = nil
+		return m.executeToolsCmd(calls)
+	}
+
+	// Paused after tool execution — run the next LLM turn.
+	m.appendOutput("⧗ Sending to LLM...\n")
+	msgs := m.turnMessages
+	prog := m.program
+	return func() tea.Msg {
+		onEvent := func(eventType string, data map[string]any) {
+			if prog == nil {
+				return
+			}
+			switch eventType {
+			case "text.delta":
+				if text, ok := data["text"].(string); ok {
+					prog.Send(streamDeltaMsg{EventType: eventType, Text: text})
+				}
+			case "thinking.delta":
+				if text, ok := data["text"].(string); ok {
+					prog.Send(streamDeltaMsg{EventType: eventType, Text: text})
+				}
+			case "tool_use.start":
+				if name, ok := data["tool"].(string); ok {
+					prog.Send(streamDeltaMsg{EventType: eventType, ToolName: name})
+				}
+			}
+		}
+		result, recovery, err := m.app.RunTurnWithRecoveryStreaming(ctx, msgs, onEvent)
+		return turnResultMsg{Result: result, Recovery: recovery, Err: err, Streamed: true}
+	}
+}
+
 // executeToolsCmd runs tool calls in a background Cmd and sends the next turn.
 func (m *TUIModel) executeToolsCmd(calls []conversation.ToolCall) tea.Cmd {
 	// Create a fresh cancellable context for tool execution + next turn.
@@ -1155,6 +1340,7 @@ func (m *TUIModel) executeToolsCmd(calls []conversation.ToolCall) tea.Cmd {
 
 	msgs := m.turnMessages
 	prog := m.program
+	midTurnCh := m.midTurnCh // capture for closure
 	return func() tea.Msg {
 		// Set up progress reporting: forward events to the TUI via program.Send.
 		var progressSend chan<- taskqueue.TaskEvent
@@ -1182,11 +1368,60 @@ func (m *TUIModel) executeToolsCmd(calls []conversation.ToolCall) tea.Cmd {
 			return turnResultMsg{Err: ctx.Err()}
 		}
 
+		// Drain supplementary messages and detect pause request from mid-turn channel.
+		var supplementary []string
+		pauseRequested := false
+		if midTurnCh != nil {
+			for {
+				select {
+				case text, ok := <-midTurnCh:
+					if !ok {
+						// Channel closed — /pause was requested.
+						pauseRequested = true
+						goto drained
+					}
+					supplementary = append(supplementary, text)
+				default:
+					goto drained
+				}
+			}
+		drained:
+		}
+
 		// Append tool results to conversation.
 		updatedMsgs := append(msgs, api.Message{
 			Role:    api.RoleUser,
 			Content: toolResults,
 		})
+
+		// Inject supplementary messages if any were sent during tool execution.
+		if len(supplementary) > 0 {
+			updatedMsgs = append(updatedMsgs, api.Message{
+				Role: api.RoleAssistant,
+				Content: []api.ContentBlock{
+					{Type: api.ContentTypeText, Text: "Understood, I'll take that into account."},
+				},
+			})
+			injectionText := "[User update during processing]\n" + strings.Join(supplementary, "\n")
+			updatedMsgs = append(updatedMsgs, api.Message{
+				Role: api.RoleUser,
+				Content: []api.ContentBlock{
+					{Type: api.ContentTypeText, Text: injectionText},
+				},
+			})
+			if prog != nil {
+				prog.Send(streamDeltaMsg{EventType: "text.delta",
+					Text: fmt.Sprintf("\n📎 Injected %d message(s) into context.\n", len(supplementary))})
+			}
+		}
+
+		// If pause was requested, save state and return without starting next turn.
+		if pauseRequested {
+			if prog != nil {
+				prog.Send(pausedMsg{Messages: updatedMsgs})
+			}
+			return nil
+		}
 
 		// Run the next turn with tool results (with streaming support).
 		onEvent := func(eventType string, data map[string]any) {
@@ -1451,6 +1686,7 @@ func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
 	case bus.EventTurnComplete:
 		m.working = false
 		m.workCancel = nil
+		m.midTurnCh = nil
 		m.appendOutput("\n✓ Done.\n\n")
 		m.appendOutput(formatSessionSummary(m.app.usageTracker, m.app.sessionStart))
 		m.appendOutput("\n")
@@ -1463,6 +1699,7 @@ func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
 	case bus.EventTurnError:
 		m.working = false
 		m.workCancel = nil
+		m.midTurnCh = nil
 		m.pendingInputs = nil // clear queue on error
 		errMsg := str("error")
 		if strings.Contains(errMsg, "context canceled") {
