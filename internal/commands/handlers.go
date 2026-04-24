@@ -52,6 +52,11 @@ type RuntimeDeps struct {
 	// LogProgress logs a progress message during command execution (optional).
 	// Called by commands to show status updates in the TUI.
 	LogProgress func(message string)
+
+	// LogDelta streams a text delta during command execution (optional).
+	// Unlike LogProgress, deltas are appended without trailing newlines,
+	// suitable for streaming LLM output character-by-character.
+	LogDelta func(text string)
 }
 
 // ConfigDirs holds the config directory paths for display.
@@ -639,7 +644,11 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 			initResult, genErr := gen.Generate(args)
 			if genErr == nil && initResult != nil {
 				progress("⧗ Generating AGENTS.md via LLM...")
-				llmResult, llmErr := chain.SingleShotWithUsage(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096)
+				llmResult, llmErr := chain.SingleShotStreaming(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096, func(text string) {
+					if deps.LogDelta != nil {
+						deps.LogDelta(text)
+					}
+				})
 				if llmErr == nil && llmResult != nil && llmResult.Text != "" {
 					agentsPath := filepath.Join(cwd, "AGENTS.md")
 					if err := os.WriteFile(agentsPath, []byte(llmResult.Text), 0o644); err == nil {

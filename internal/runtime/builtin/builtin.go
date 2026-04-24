@@ -68,6 +68,106 @@ func (mc *ModelChain) SingleShotWithUsage(ctx context.Context, systemPrompt, use
 	return nil, fmt.Errorf("all models failed (last: %w)", lastErr)
 }
 
+// SingleShotStreaming sends a single system+user message pair and calls onDelta
+// for each text delta as it arrives. Returns the full result with usage.
+func (mc *ModelChain) SingleShotStreaming(ctx context.Context, systemPrompt, userContent string, maxTokens int, onDelta func(text string)) (*SingleShotResult, error) {
+	var lastErr error
+	for _, ms := range mc.Models {
+		result, err := singleShotStreamingImpl(ctx, ms, systemPrompt, userContent, maxTokens, onDelta)
+		if err != nil {
+			slog.Info("single-shot streaming call failed, trying next model", "model", ms.Model, "error", err)
+			lastErr = err
+			continue
+		}
+		return result, nil
+	}
+	return nil, fmt.Errorf("all models failed (last: %w)", lastErr)
+}
+
+// singleShotStreamingImpl sends a streaming request and invokes onDelta per text chunk.
+func singleShotStreamingImpl(ctx context.Context, ms session.ModelSpec, systemPrompt, userContent string, maxTokens int, onDelta func(text string)) (*SingleShotResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, singleShotTimeout)
+	defer cancel()
+
+	req := &api.Request{
+		Model:     ms.Model,
+		MaxTokens: maxTokens,
+		System:    systemPrompt,
+		Messages: []api.Message{
+			{
+				Role: api.RoleUser,
+				Content: []api.ContentBlock{
+					{Type: api.ContentTypeText, Text: userContent},
+				},
+			},
+		},
+		Stream:          true,
+		ReasoningEffort: "none",
+	}
+
+	events, errc := ms.Provider.Send(ctx, req)
+
+	var textParts []string
+	var usage api.Usage
+
+	for ev := range events {
+		if ev.Type == "message_start" && ev.Message != nil {
+			usage.InputTokens += ev.Message.Usage.InputTokens + ev.Message.Usage.PromptTokens
+			usage.CacheCreationInput += ev.Message.Usage.CacheCreationInput
+			usage.CacheReadInput += ev.Message.Usage.CacheReadInput
+		}
+		if ev.Type == "message_delta" && ev.Usage != nil {
+			usage.OutputTokens += ev.Usage.OutputTokens + ev.Usage.CompletionTokens
+		}
+		if ev.Usage != nil {
+			if ev.Usage.InputTokens > 0 || ev.Usage.PromptTokens > 0 {
+				usage.InputTokens += ev.Usage.InputTokens + ev.Usage.PromptTokens
+			}
+			if ev.Usage.OutputTokens > 0 || ev.Usage.CompletionTokens > 0 {
+				usage.OutputTokens += ev.Usage.OutputTokens + ev.Usage.CompletionTokens
+			}
+			usage.CacheCreationInput += ev.Usage.CacheCreationInput
+			usage.CacheReadInput += ev.Usage.CacheReadInput
+		}
+
+		if ev.Delta != nil {
+			var delta struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal(ev.Delta, &delta); err == nil && delta.Text != "" {
+				textParts = append(textParts, delta.Text)
+				if onDelta != nil {
+					onDelta(delta.Text)
+				}
+			}
+		}
+		if ev.ContentBlock != nil && ev.ContentBlock.Text != "" {
+			textParts = append(textParts, ev.ContentBlock.Text)
+			if onDelta != nil {
+				onDelta(ev.ContentBlock.Text)
+			}
+		}
+	}
+
+	if err := <-errc; err != nil {
+		return nil, fmt.Errorf("single-shot streaming (%s): %w", ms.Model, err)
+	}
+
+	text := strings.TrimSpace(strings.Join(textParts, ""))
+	if text == "" {
+		return nil, fmt.Errorf("single-shot streaming (%s) returned empty response", ms.Model)
+	}
+
+	return &SingleShotResult{
+		Text:         text,
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		CacheCreate:  usage.CacheCreationInput,
+		CacheRead:    usage.CacheReadInput,
+	}, nil
+}
+
 // singleShotWith sends the request to a specific model.
 func singleShotWith(ctx context.Context, ms session.ModelSpec, systemPrompt, userContent string, maxTokens int) (string, error) {
 	result, err := singleShotWithUsage(ctx, ms, systemPrompt, userContent, maxTokens)

@@ -60,6 +60,8 @@ type App struct {
 
 	// Progress callback for command status updates (set by TUI).
 	progressFunc func(message string)
+	// Delta callback for streaming text during command execution (set by TUI).
+	deltaFunc func(text string)
 }
 
 // AppOptions holds optional configuration for App creation.
@@ -138,6 +140,9 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		LogProgress: func(message string) {
 			app.LogProgress(message)
 		},
+		LogDelta: func(text string) {
+			app.LogDelta(text)
+		},
 	})
 	app.commands = cmdRegistry
 
@@ -209,6 +214,11 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 			if a.progressFunc == nil {
 				a.progressFunc = func(message string) {
 					fmt.Fprintln(a.stdout, message)
+				}
+			}
+			if a.deltaFunc == nil {
+				a.deltaFunc = func(text string) {
+					fmt.Fprint(a.stdout, text)
 				}
 			}
 			output, err := a.commands.Execute(ctx, name, args)
@@ -614,6 +624,18 @@ func (a *App) SetProgressFunc(fn func(message string)) {
 func (a *App) LogProgress(message string) {
 	if a.progressFunc != nil {
 		a.progressFunc(message)
+	}
+}
+
+// SetDeltaFunc sets the delta callback function for streaming text (called by TUI).
+func (a *App) SetDeltaFunc(fn func(text string)) {
+	a.deltaFunc = fn
+}
+
+// LogDelta streams a text delta via the registered callback.
+func (a *App) LogDelta(text string) {
+	if a.deltaFunc != nil {
+		a.deltaFunc(text)
 	}
 }
 

@@ -184,11 +184,22 @@ func (m *TUIModel) SetProgram(p *tea.Program) {
 			m.program.Send(progressMsg{message: message})
 		}
 	})
+	m.app.SetDeltaFunc(func(text string) {
+		if m.program != nil {
+			m.program.Send(commandDeltaMsg{text: text})
+		}
+	})
 }
 
 // progressMsg is sent to show a progress update during command execution.
 type progressMsg struct {
 	message string
+}
+
+// commandDeltaMsg is sent to stream a text delta during command execution.
+// Unlike progressMsg, no trailing newline is appended.
+type commandDeltaMsg struct {
+	text string
 }
 
 func (m *TUIModel) Init() tea.Cmd {
@@ -202,6 +213,11 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case progressMsg:
 		// Show progress message during command execution.
 		m.appendOutput(msg.message + "\n")
+		return m, nil
+
+	case commandDeltaMsg:
+		// Stream text delta during command execution (no trailing newline).
+		m.appendOutput(msg.text)
 		return m, nil
 
 	case tea.WindowSizeMsg:
