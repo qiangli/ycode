@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -188,8 +189,15 @@ func newApp() (*cli.App, error) {
 	// Start background prompt cache eviction (waits for SQL to be ready).
 	go storageMgr.StartEviction(rootCtx)
 
-	// Memory directory for persistent memories.
-	memoryDir := filepath.Join(home, ".agents", "ycode", "projects", "memory")
+	// Memory — persistent cross-session agent memory.
+	// Global: ~/.agents/ycode/memory/ (shared across projects).
+	// Project: {cwd}/.agents/ycode/memory/ (project-specific).
+	globalMemDir := filepath.Join(home, ".agents", "ycode", "memory")
+	memoryDir := filepath.Join(cwd, ".agents", "ycode", "memory")
+	memManager, err := memory.NewManagerWithGlobal(globalMemDir, memoryDir)
+	if err != nil {
+		return nil, fmt.Errorf("create memory manager: %w", err)
+	}
 
 	// Plan mode manager.
 	ycodeDir := filepath.Join(cwd, ".agents", "ycode")
@@ -215,6 +223,8 @@ func newApp() (*cli.App, error) {
 	tools.RegisterToolSearchHandler(toolReg)
 	tools.RegisterSkillHandler(toolReg)
 	tools.RegisterMemosHandlers(toolReg)
+	tools.SetMemoryManager(memManager)
+	tools.RegisterMemoryHandlers(toolReg)
 	tools.RegisterRemoteHandler(toolReg)
 	tools.RegisterNotebookHandler(toolReg)
 	tools.RegisterModeHandlers(toolReg, planMode)
@@ -291,6 +301,11 @@ func newApp() (*cli.App, error) {
 		metrics := tools.NewMetricsRecorder(sqlStore, sess.ID)
 		metrics.ApplyToRegistry(toolReg)
 
+		// Wire agent-facing metrics query tool.
+		tools.SetMetricsStore(sqlStore)
+		tools.SetMetricsSessionID(sess.ID)
+		tools.RegisterQueryMetricsHandler(toolReg)
+
 		// Index any existing JSONL sessions not yet in SQLite.
 		indexer := session.NewIndexer(sqlStore, sessionDir)
 		if n, err := indexer.IndexAll(ctx); err != nil {
@@ -301,7 +316,7 @@ func newApp() (*cli.App, error) {
 	}()
 
 	// Build project context for system prompt.
-	promptCtx := buildPromptContext(cwd, cfg.Model, cfg.Instructions)
+	promptCtx := buildPromptContext(cwd, cfg.Model, cfg.Instructions, memManager)
 	promptCtx.AllowedDirs = v.AllowedDirs()
 
 	// Wire vector store and background embedder once vector backend is ready.
@@ -319,8 +334,10 @@ func newApp() (*cli.App, error) {
 		// Wire vector store into semantic search tool.
 		tools.SetVectorStore(vectorStore)
 
-		// Set up memory vector searcher.
-		_ = memory.NewVectorSearcher(vectorStore)
+		// Wire vector searcher into memory manager.
+		if memManager != nil {
+			memManager.SetVectorSearcher(memory.NewVectorSearcher(vectorStore))
+		}
 
 		// Start background code embedding and doc indexing.
 		embedder := embedding.New(embProvider, vectorStore, storageMgr.KV(), cwd)
@@ -350,6 +367,9 @@ func newApp() (*cli.App, error) {
 			}
 		}()
 	}()
+
+	// Start background memory consolidation (stale removal, dedup).
+	go memory.NewDreamer(memManager, true).Start(rootCtx)
 
 	// Wire OTEL observability (optional, non-blocking).
 	var otelRes *otelResult
@@ -401,7 +421,7 @@ func newApp() (*cli.App, error) {
 }
 
 // buildPromptContext gathers environment and project metadata for the system prompt.
-func buildPromptContext(workDir, model string, configInstructions []string) *prompt.ProjectContext {
+func buildPromptContext(workDir, model string, configInstructions []string, memManager *memory.Manager) *prompt.ProjectContext {
 	ctx := &prompt.ProjectContext{
 		WorkDir:     workDir,
 		CurrentDate: time.Now().Format("2006-01-02"),
@@ -430,8 +450,32 @@ func buildPromptContext(workDir, model string, configInstructions []string) *pro
 		ctx.ProjectRoot = workDir
 	}
 
-	// Instruction files (CLAUDE.md, .agents/ycode/instructions.md, etc.).
-	ctx.ContextFiles = discoverContextFiles(workDir, ctx.ProjectRoot)
+	// Discover instruction files and load memories concurrently.
+	var contextFiles []prompt.ContextFile
+	var memories []*memory.Memory
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		contextFiles = discoverContextFiles(workDir, ctx.ProjectRoot)
+	}()
+
+	if memManager != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if mems, err := memManager.All(); err != nil {
+				slog.Debug("memory load", "error", err)
+			} else {
+				memories = mems
+			}
+		}()
+	}
+
+	wg.Wait()
+	ctx.ContextFiles = contextFiles
+	ctx.Memories = memories
 
 	// Config-based instruction paths (relative, absolute, ~/home, URLs).
 	if len(configInstructions) > 0 {

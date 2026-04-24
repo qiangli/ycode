@@ -186,6 +186,9 @@ func (a *App) conversationRuntime() *conversation.Runtime {
 			rt.SetCacheWarmer(api.NewCacheWarmer(a.provider))
 		}
 	}
+	// Restore L1 working memory (active topic) from ghost snapshot
+	// if this is a resumed session with prior compaction.
+	rt.RestoreTopicFromGhost()
 	return rt
 }
 
@@ -409,6 +412,26 @@ func (a *App) RunTurnWithRecovery(ctx context.Context, messages []api.Message) (
 	return rt.InstrumentedTurnWithRecovery(ctx, messages, a.turnIndex)
 }
 
+// RunTurnWithRecoveryStreaming is like RunTurnWithRecovery but accepts an
+// event callback that receives streaming deltas (text.delta, thinking.delta,
+// tool_use.start) as they arrive from the LLM. This allows the caller to
+// render partial output in real time.
+func (a *App) RunTurnWithRecoveryStreaming(
+	ctx context.Context,
+	messages []api.Message,
+	onEvent func(eventType string, data map[string]any),
+) (*conversation.TurnResult, *conversation.RecoveryResult, error) {
+	if a.provider == nil {
+		return nil, nil, fmt.Errorf("no LLM provider configured; set ANTHROPIC_API_KEY, OPENAI_API_KEY, MOONSHOT_API_KEY, or KIMI_API_KEY")
+	}
+	rt := a.conversationRuntime()
+	if onEvent != nil {
+		rt.SetEventCallback(onEvent)
+	}
+	a.turnIndex++
+	return rt.InstrumentedTurnWithRecovery(ctx, messages, a.turnIndex)
+}
+
 // ExecuteTools runs tool calls and returns tool result content blocks.
 // Progress events are sent to the progress channel if non-nil.
 func (a *App) ExecuteTools(ctx context.Context, calls []conversation.ToolCall, progress chan<- taskqueue.TaskEvent) []api.ContentBlock {
@@ -607,7 +630,7 @@ func (a *App) RunInteractiveWithClient(ctx context.Context, cl agentClient) erro
 
 	m := NewTUIModel(a)
 	m.cl = cl
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	m.SetProgram(p)
 
 	if a.toolRegistry != nil {
@@ -631,7 +654,7 @@ func (a *App) RunInteractive(ctx context.Context) error {
 	suppressLogOutput()
 
 	m := NewTUIModel(a)
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	m.SetProgram(p)
 
 	// Wire TUI-based permission prompter into the tool registry so that

@@ -159,6 +159,12 @@ func BuildDefault(ctx *ProjectContext, mode string, cachingSupported bool, basel
 		b.AddDynamicSection(SectionProject, ProjectSection(ctx))
 		b.AddDynamicSection(SectionGit, GitSection(ctx))
 		b.AddDynamicSection(SectionInstructions, InstructionsSection(ctx.ContextFiles))
+		b.AddDynamicSection(SectionMemory, MemoriesSection(ctx.Memories))
+
+		// L1 working memory: inject active topic as a focus signal.
+		if ctx.ActiveTopic != "" {
+			b.AddDynamicSection(SectionActiveTopic, "[Active Topic: "+ctx.ActiveTopic+"]")
+		}
 
 		if mode == "plan" {
 			b.AddDynamicSection(SectionPlanMode, PlanModeSection())

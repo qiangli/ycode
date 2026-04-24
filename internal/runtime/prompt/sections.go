@@ -3,6 +3,8 @@ package prompt
 import (
 	"fmt"
 	"strings"
+
+	"github.com/qiangli/ycode/internal/runtime/memory"
 )
 
 // Section types for system prompt assembly.
@@ -19,6 +21,7 @@ const (
 	SectionConfig        = "config"
 	SectionFilesystem    = "filesystem"
 	SectionBuiltinSkills = "builtin-skills"
+	SectionActiveTopic   = "active-topic"
 )
 
 // FrontierModelName is the human-readable model family name for prompts.
@@ -55,7 +58,13 @@ func TasksSection() string {
 # Efficient tool usage
  - Use grep_search in files_with_matches mode first to locate relevant files, then read specific files.
  - For large files, use read_file with offset and limit instead of reading the entire file.
- - Use read_multiple_files to batch-read several small files in one call instead of sequential read_file calls.`
+ - Use read_multiple_files to batch-read several small files in one call instead of sequential read_file calls.
+
+# Additional tools
+Beyond the core tools, additional capabilities are available on demand via ToolSearch.
+Categories: file management, web access, git operations, persistent memory (save/recall/forget),
+metrics analysis (query_metrics), context management, code intelligence, task tracking, and agent delegation.
+Use ToolSearch to discover and load these tools when needed.`
 }
 
 // ActionsSection returns guidance for safe actions.
@@ -209,6 +218,43 @@ func InstructionsSection(files []ContextFile) string {
 		sections = append(sections, fmt.Sprintf("## %s", scope))
 		sections = append(sections, content)
 	}
+	return strings.Join(sections, "\n\n")
+}
+
+// MaxMemoryBudget caps the total size of the memories section.
+const MaxMemoryBudget = 2000
+
+// MemoriesSection formats persistent memories for the system prompt.
+func MemoriesSection(memories []*memory.Memory) string {
+	if len(memories) == 0 {
+		return ""
+	}
+
+	remaining := MaxMemoryBudget
+	var sections []string
+	sections = append(sections, "# Persistent memories")
+
+	for _, mem := range memories {
+		if remaining <= 0 {
+			sections = append(sections, "_Additional memories omitted after reaching budget._")
+			break
+		}
+
+		var entry strings.Builder
+		fmt.Fprintf(&entry, "## %s (%s)", mem.Name, mem.Type)
+		if mem.Description != "" {
+			fmt.Fprintf(&entry, "\n_%s_", mem.Description)
+		}
+		fmt.Fprintf(&entry, "\n\n%s", mem.Content)
+
+		text := entry.String()
+		if len(text) > remaining {
+			text = text[:remaining] + "\n\n[truncated]"
+		}
+		remaining -= len(text)
+		sections = append(sections, text)
+	}
+
 	return strings.Join(sections, "\n\n")
 }
 

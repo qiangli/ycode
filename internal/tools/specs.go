@@ -315,6 +315,38 @@ func builtinSpecs() []*ToolSpec {
 			Source:       SourceBuiltin,
 		},
 
+		// Memory — persistent cross-session agent memory
+		{
+			Name:         "memory_save",
+			Description:  "Save a memory to persistent storage. Memories persist across sessions and are loaded into the system prompt on startup. Types: user (role/preferences), feedback (corrections/confirmations), project (ongoing work context), reference (pointers to external resources).",
+			InputSchema:  mustJSON(memorySaveSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "memory_recall",
+			Description:  "Search persistent memories by query. Uses semantic, full-text, or keyword matching with temporal decay scoring.",
+			InputSchema:  mustJSON(memoryRecallSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "memory_forget",
+			Description:  "Remove a memory from persistent storage by name.",
+			InputSchema:  mustJSON(memoryForgetSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+
+		// Metrics — agent-facing tool execution metrics query
+		{
+			Name:         "query_metrics",
+			Description:  "Query tool execution metrics from the current or past sessions. Use for debugging performance issues, understanding tool usage patterns, or analyzing failures. Supports aggregated stats, failure analysis, session summaries, and slow-tool detection.",
+			InputSchema:  mustJSON(queryMetricsSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
 		// Memos — persistent long-term memory storage
 		{
 			Name:         "MemosStore",
@@ -731,5 +763,57 @@ var (
 			"memo_id": {"type": "string", "description": "The memo ID to delete"}
 		},
 		"required": ["memo_id"]
+	}`
+
+	memorySaveSchema = `{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string", "description": "Short name for the memory (used as filename and identifier)"},
+			"description": {"type": "string", "description": "One-line description used for relevance matching in future sessions"},
+			"content": {"type": "string", "description": "The memory content (markdown)"},
+			"type": {"type": "string", "enum": ["user", "feedback", "project", "reference"], "description": "Memory type (default: project)"}
+		},
+		"required": ["name", "content"]
+	}`
+
+	memoryRecallSchema = `{
+		"type": "object",
+		"properties": {
+			"query": {"type": "string", "description": "Search query to find relevant memories"},
+			"max_results": {"type": "integer", "description": "Maximum results to return (default: 5)"}
+		},
+		"required": ["query"]
+	}`
+
+	memoryForgetSchema = `{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string", "description": "Name of the memory to remove"}
+		},
+		"required": ["name"]
+	}`
+
+	queryMetricsSchema = `{
+		"type": "object",
+		"properties": {
+			"query_type": {
+				"type": "string",
+				"enum": ["tool_stats", "recent_failures", "session_summary", "slow_tools"],
+				"description": "Type of metrics query: tool_stats (per-tool aggregates), recent_failures (recent failed invocations), session_summary (token usage and tool counts), slow_tools (invocations exceeding a duration threshold)"
+			},
+			"session_id": {
+				"type": "string",
+				"description": "Filter by session ID. Omit or 'current' for the current session. 'all' for cross-session data."
+			},
+			"limit": {
+				"type": "integer",
+				"description": "Maximum rows to return (default: 20, max: 100)"
+			},
+			"threshold_ms": {
+				"type": "integer",
+				"description": "Duration threshold in milliseconds for slow_tools query (default: 5000)"
+			}
+		},
+		"required": ["query_type"]
 	}`
 )

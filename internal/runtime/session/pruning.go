@@ -245,6 +245,7 @@ var ExemptFromMasking = map[string]bool{
 	"EnterPlanMode":   true,
 	"ExitPlanMode":    true,
 	"Skill":           true,
+	"query_metrics":   true,
 }
 
 // MaskOldObservationsBudget is an enhanced masking approach that uses token budgets

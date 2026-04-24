@@ -86,6 +86,12 @@ type TUIModel struct {
 
 	// Toast notification stack.
 	toasts toastState
+
+	// Pending input queue — messages submitted while the agent is working.
+	pendingInputs []pendingInput
+
+	// Side query state.
+	sideQueryCount int // for numbering /btw output sections
 }
 
 // toolTaskProgress tracks a single tool's execution state.
@@ -110,6 +116,7 @@ type turnResultMsg struct {
 	Recovery    *conversation.RecoveryResult
 	Err         error
 	ToolResults []api.ContentBlock // tool results from preceding tool execution, if any
+	Streamed    bool               // true if text deltas were already sent to viewport
 }
 
 // toolProgressMsg reports a tool's status change during parallel execution.
@@ -120,6 +127,26 @@ type repaintMsg struct{}
 
 // busEventMsg wraps a bus.Event for delivery through bubbletea's message system.
 type busEventMsg struct{ bus.Event }
+
+// streamDeltaMsg delivers a streaming delta from the LLM in the direct path.
+type streamDeltaMsg struct {
+	EventType string // "text.delta", "thinking.delta", "tool_use.start"
+	Text      string // delta text for text/thinking events
+	ToolName  string // tool name for tool_use.start
+}
+
+// pendingInput is a message submitted while the agent is working.
+type pendingInput struct {
+	Text string
+}
+
+// sideQueryResultMsg is sent when a /btw side query completes.
+type sideQueryResultMsg struct {
+	Query  string
+	Result string
+	Err    error
+	ID     int
+}
 
 // NewTUIModel creates the composite TUI model.
 func NewTUIModel(app *App) *TUIModel {
@@ -315,6 +342,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.workCancel()
 				m.working = false
 				m.workCancel = nil
+				m.pendingInputs = nil
 				m.appendOutput("\n⏹ Cancelled.\n\n")
 				cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
 				break
@@ -325,40 +353,45 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.Type == tea.KeyShiftTab:
 			return m, m.toggleMode()
 		case msg.Type == tea.KeyCtrlK:
-			if !m.working {
-				m.cmdPalette.open(m.buildPaletteItems())
-				return m, nil
-			}
+			m.cmdPalette.open(m.buildPaletteItems())
+			return m, nil
 		case msg.Type == tea.KeyUp:
-			if m.working {
-				break
-			}
 			if val, ok := m.history.Up(m.textarea.Value()); ok {
 				m.textarea.SetValue(val)
 				m.textarea.CursorEnd()
 			}
 			return m, nil
 		case msg.Type == tea.KeyDown:
-			if m.working {
-				break
-			}
 			if val, ok := m.history.Down(); ok {
 				m.textarea.SetValue(val)
 				m.textarea.CursorEnd()
 			}
 			return m, nil
 		case msg.Type == tea.KeyEnter:
-			if m.working {
-				break
-			}
 			text := strings.TrimSpace(m.textarea.Value())
 			if text == "" {
 				break
 			}
 			m.completion.dismiss()
-			// Add to persistent history and reset navigation.
 			m.history.Append(text)
 			m.textarea.Reset()
+			// /quit and /exit always take effect immediately.
+			if text == "/quit" || text == "/exit" {
+				return m, tea.Quit
+			}
+			if m.working {
+				// While agent is working: /btw runs a side query, anything else is queued.
+				if strings.HasPrefix(text, "/btw ") {
+					query := strings.TrimSpace(text[5:])
+					if query != "" {
+						return m, m.startSideQuery(query)
+					}
+					break
+				}
+				m.pendingInputs = append(m.pendingInputs, pendingInput{Text: text})
+				m.appendOutput(fmt.Sprintf("⏳ Queued: %s\n", text))
+				break
+			}
 			return m, m.handleInput(text)
 		}
 
@@ -392,6 +425,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			m.working = false
 			m.workCancel = nil
+			m.pendingInputs = nil // clear queue on error
 			// Check if it was a cancellation.
 			if msg.Err.Error() == "turn 1: stream: context canceled" || strings.Contains(msg.Err.Error(), "context canceled") {
 				m.appendOutput("\n⏹ Cancelled.\n\n")
@@ -431,8 +465,11 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.appendOutput(formatLLMMetrics(result))
 
 		// Display text output from the model.
+		// When Streamed is true, text was already rendered via streamDeltaMsg.
 		if result.TextContent != "" {
-			m.appendOutput(result.TextContent)
+			if !msg.Streamed {
+				m.appendOutput(result.TextContent)
+			}
 
 			// Save assistant response to session.
 			_ = m.app.session.AddMessage(session.ConversationMessage{
@@ -451,8 +488,13 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Show session summary.
 			m.appendOutput(formatSessionSummary(m.app.usageTracker, m.app.sessionStart))
 			m.appendOutput("\n")
-			cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
-			cmds = append(cmds, alertDone())
+			// Drain pending input queue or go idle.
+			if cmd := m.drainPendingInput(); cmd != nil {
+				cmds = append(cmds, cmd)
+			} else {
+				cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
+				cmds = append(cmds, alertDone())
+			}
 			break
 		}
 
@@ -536,9 +578,36 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.startAgentTurn(msg.AgentPrompt))
 			} else {
 				m.working = false
-				cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
+				// Drain pending input queue or go idle.
+				if cmd := m.drainPendingInput(); cmd != nil {
+					cmds = append(cmds, cmd)
+				} else {
+					cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
+				}
 			}
 		}
+
+	case streamDeltaMsg:
+		switch msg.EventType {
+		case "text.delta", "thinking.delta":
+			m.appendOutput(msg.Text)
+		case "tool_use.start":
+			m.appendOutput(fmt.Sprintf("\n⚙ Tool(%s)\n", msg.ToolName))
+		}
+		return m, nil
+
+	case sideQueryResultMsg:
+		if msg.Err != nil {
+			m.appendOutput(fmt.Sprintf("└─ BTW #%d Error: %v\n\n", msg.ID, msg.Err))
+		} else {
+			// Render with left-border prefix for visual separation.
+			lines := strings.Split(strings.TrimRight(msg.Result, "\n"), "\n")
+			for _, line := range lines {
+				m.appendOutput(fmt.Sprintf("│  %s\n", line))
+			}
+			m.appendOutput(fmt.Sprintf("└─ BTW #%d done.\n\n", msg.ID))
+		}
+		return m, nil
 
 	case busEventMsg:
 		return m.handleBusEvent(msg.Event)
@@ -550,8 +619,9 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// No-op; triggers Update/View cycle.
 	}
 
-	// Update sub-components.
-	if !m.working {
+	// Update sub-components — textarea is always active so users can type
+	// while the agent is working.
+	{
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		cmds = append(cmds, cmd)
@@ -564,19 +634,13 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Block most key presses so typing in the textarea doesn't trigger
 	// viewport shortcuts (e.g. space → page-down), but allow dedicated
 	// scroll keys (PageUp/PageDown) through so users can review output.
-	// When the agent is working the textarea is inactive, so all keys
-	// can safely reach the viewport.
 	forwardToViewport := true
 	if keyMsg, isKey := msg.(tea.KeyMsg); isKey {
-		if m.working {
+		switch keyMsg.Type {
+		case tea.KeyPgUp, tea.KeyPgDown:
 			forwardToViewport = true
-		} else {
-			switch keyMsg.Type {
-			case tea.KeyPgUp, tea.KeyPgDown:
-				forwardToViewport = true
-			default:
-				forwardToViewport = false
-			}
+		default:
+			forwardToViewport = false
 		}
 	}
 	if forwardToViewport {
@@ -922,6 +986,15 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 		}
 	}
 
+	// Side query — works both while idle and while agent is working.
+	if strings.HasPrefix(text, "/btw ") {
+		query := strings.TrimSpace(text[5:])
+		if query != "" {
+			m.appendOutput(fmt.Sprintf("> %s\n", text))
+			return m.startSideQuery(query)
+		}
+	}
+
 	if strings.HasPrefix(text, "/") {
 		rest := text[1:]
 		name, args, _ := strings.Cut(rest, " ")
@@ -979,7 +1052,7 @@ func (m *TUIModel) startAgentTurn(userPrompt string) tea.Cmd {
 		return m.startAgentTurnViaClient(ctx, userPrompt)
 	}
 
-	// Direct path: call App methods directly (original behavior).
+	// Direct path: call App methods directly with streaming.
 	m.turnMessages = m.app.sessionMessages()
 	m.turnMessages = append(m.turnMessages, api.Message{
 		Role: api.RoleUser,
@@ -989,9 +1062,29 @@ func (m *TUIModel) startAgentTurn(userPrompt string) tea.Cmd {
 	})
 
 	msgs := m.turnMessages
+	prog := m.program
 	return func() tea.Msg {
-		result, recovery, err := m.app.RunTurnWithRecovery(ctx, msgs)
-		return turnResultMsg{Result: result, Recovery: recovery, Err: err}
+		onEvent := func(eventType string, data map[string]any) {
+			if prog == nil {
+				return
+			}
+			switch eventType {
+			case "text.delta":
+				if text, ok := data["text"].(string); ok {
+					prog.Send(streamDeltaMsg{EventType: eventType, Text: text})
+				}
+			case "thinking.delta":
+				if text, ok := data["text"].(string); ok {
+					prog.Send(streamDeltaMsg{EventType: eventType, Text: text})
+				}
+			case "tool_use.start":
+				if name, ok := data["tool"].(string); ok {
+					prog.Send(streamDeltaMsg{EventType: eventType, ToolName: name})
+				}
+			}
+		}
+		result, recovery, err := m.app.RunTurnWithRecoveryStreaming(ctx, msgs, onEvent)
+		return turnResultMsg{Result: result, Recovery: recovery, Err: err, Streamed: true}
 	}
 }
 
@@ -1071,10 +1164,65 @@ func (m *TUIModel) executeToolsCmd(calls []conversation.ToolCall) tea.Cmd {
 			Content: toolResults,
 		})
 
-		// Run the next turn with tool results (with recovery support).
-		result, recovery, err := m.app.RunTurnWithRecovery(ctx, updatedMsgs)
-		return turnResultMsg{Result: result, Recovery: recovery, Err: err, ToolResults: toolResults}
+		// Run the next turn with tool results (with streaming support).
+		onEvent := func(eventType string, data map[string]any) {
+			if prog == nil {
+				return
+			}
+			switch eventType {
+			case "text.delta":
+				if text, ok := data["text"].(string); ok {
+					prog.Send(streamDeltaMsg{EventType: eventType, Text: text})
+				}
+			case "thinking.delta":
+				if text, ok := data["text"].(string); ok {
+					prog.Send(streamDeltaMsg{EventType: eventType, Text: text})
+				}
+			case "tool_use.start":
+				if name, ok := data["tool"].(string); ok {
+					prog.Send(streamDeltaMsg{EventType: eventType, ToolName: name})
+				}
+			}
+		}
+		result, recovery, err := m.app.RunTurnWithRecoveryStreaming(ctx, updatedMsgs, onEvent)
+		return turnResultMsg{Result: result, Recovery: recovery, Err: err, ToolResults: toolResults, Streamed: true}
 	}
+}
+
+// startSideQuery runs a lightweight, tool-free LLM query in the background
+// without interfering with the main agentic turn. Output is visually boxed.
+func (m *TUIModel) startSideQuery(query string) tea.Cmd {
+	m.sideQueryCount++
+	id := m.sideQueryCount
+	m.appendOutput(fmt.Sprintf("\n┌─ BTW #%d: %s\n", id, query))
+
+	return func() tea.Msg {
+		msgs := []api.Message{{
+			Role: api.RoleUser,
+			Content: []api.ContentBlock{
+				{Type: api.ContentTypeText, Text: query},
+			},
+		}}
+		// Use a fresh runtime with no event callback — side queries render
+		// their result all at once (not streamed) to avoid interleaving.
+		result, _, err := m.app.RunTurnWithRecovery(context.Background(), msgs)
+		if err != nil {
+			return sideQueryResultMsg{Query: query, Err: err, ID: id}
+		}
+		return sideQueryResultMsg{Query: query, Result: result.TextContent, ID: id}
+	}
+}
+
+// drainPendingInput dequeues the next pending input and starts it as an
+// agentic turn. Returns nil if the queue is empty.
+func (m *TUIModel) drainPendingInput() tea.Cmd {
+	if len(m.pendingInputs) == 0 {
+		return nil
+	}
+	next := m.pendingInputs[0]
+	m.pendingInputs = m.pendingInputs[1:]
+	m.appendOutput(fmt.Sprintf("> %s (from queue)\n", next.Text))
+	return m.startAgentTurn(next.Text)
 }
 
 // toolDetail returns a descriptive label for a tool invocation,
@@ -1282,11 +1430,16 @@ func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
 		m.appendOutput("\n✓ Done.\n\n")
 		m.appendOutput(formatSessionSummary(m.app.usageTracker, m.app.sessionStart))
 		m.appendOutput("\n")
+		// Drain pending input queue or go idle.
+		if cmd := m.drainPendingInput(); cmd != nil {
+			return m, cmd
+		}
 		return m, tea.Batch(func() tea.Msg { return repaintMsg{} }, alertDone())
 
 	case bus.EventTurnError:
 		m.working = false
 		m.workCancel = nil
+		m.pendingInputs = nil // clear queue on error
 		errMsg := str("error")
 		if strings.Contains(errMsg, "context canceled") {
 			m.appendOutput("\n⏹ Cancelled.\n\n")

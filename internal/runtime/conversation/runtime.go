@@ -65,6 +65,10 @@ type Runtime struct {
 	// when tools access files, merges them before the next turn.
 	jitDiscovery *prompt.JITDiscovery
 
+	// L1 working memory — tracks the current high-level task focus
+	// extracted from user messages and injected into the system prompt.
+	topicTracker *prompt.TopicTracker
+
 	// Agent mode — controls system prompt assembly and tool filtering.
 	// Values: "build" (default), "plan" (read-only), "explore" (subagent).
 	mode string
@@ -139,6 +143,7 @@ func NewRuntime(
 		activatedTools:   make(map[string]int),
 		completionCache:  api.NewCompletionCache(completionCacheDir, api.CompletionCacheTTL),
 		jitDiscovery:     jit,
+		topicTracker:     prompt.NewTopicTracker(),
 	}
 
 	// Wire file access hook so tools trigger JIT discovery.
@@ -172,6 +177,28 @@ func (r *Runtime) Mode() string {
 		return "build"
 	}
 	return r.mode
+}
+
+// TopicTracker returns the L1 working memory topic tracker.
+func (r *Runtime) TopicTracker() *prompt.TopicTracker {
+	return r.topicTracker
+}
+
+// RestoreTopicFromGhost loads the active topic from the latest ghost snapshot.
+// Called on session resume to restore L1 working memory state.
+func (r *Runtime) RestoreTopicFromGhost() {
+	if r.topicTracker == nil || r.session == nil {
+		return
+	}
+	ghost, err := session.LoadLatestGhost(r.session.Dir)
+	if err != nil {
+		r.logger.Warn("failed to load ghost snapshot for topic restore", "error", err)
+		return
+	}
+	if ghost != nil && ghost.ActiveTopic != "" {
+		r.topicTracker.SetTopic(ghost.ActiveTopic)
+		r.logger.Info("restored active topic from ghost", "topic", ghost.ActiveTopic)
+	}
 }
 
 // SetPlanMode enables or disables plan mode for this runtime.
@@ -232,6 +259,14 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 			r.promptCtx.ContextFiles = append(r.promptCtx.ContextFiles, newFiles...)
 			r.logger.Info("JIT instruction discovery", "newFiles", len(newFiles), "total", len(r.promptCtx.ContextFiles))
 		}
+	}
+
+	// L1 working memory: extract active topic from the latest user message.
+	if r.topicTracker != nil {
+		if userMsg := lastUserText(messages); userMsg != "" {
+			r.topicTracker.Update(userMsg)
+		}
+		r.promptCtx.ActiveTopic = r.topicTracker.CurrentTopic()
 	}
 
 	// Build system prompt.
@@ -790,6 +825,19 @@ func (r *Runtime) proactiveCompactCtx(ctx context.Context, sessionMsgs []session
 	// Update session summary.
 	r.session.Summary = compactResult.Summary
 
+	// Save ghost snapshot with active topic before compaction completes.
+	if r.session != nil && r.topicTracker != nil {
+		snap := &session.GhostSnapshot{
+			Timestamp:    time.Now(),
+			MessageCount: len(sessionMsgs),
+			Summary:      compactResult.Summary,
+			ActiveTopic:  r.topicTracker.CurrentTopic(),
+		}
+		if err := session.SaveGhostSnapshot(r.session.Dir, snap); err != nil {
+			r.logger.Warn("failed to save ghost snapshot", "error", err)
+		}
+	}
+
 	// Index compacted messages in Bleve for search (best-effort).
 	if indexer := r.session.SearchIndexer(); indexer != nil {
 		keepFrom := len(sessionMsgs) - compactResult.PreservedCount
@@ -1007,4 +1055,19 @@ func truncateSummary(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// lastUserText returns the text content of the last user message, or "".
+func lastUserText(messages []api.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != api.RoleUser {
+			continue
+		}
+		for _, b := range messages[i].Content {
+			if b.Type == api.ContentTypeText && b.Text != "" {
+				return b.Text
+			}
+		}
+	}
+	return ""
 }

@@ -46,6 +46,7 @@ func buildCompletionItems(registry *commands.Registry, workDir string) []complet
 	items = append(items,
 		completionItem{Name: "quit", Description: "Exit ycode"},
 		completionItem{Name: "exit", Description: "Exit ycode"},
+		completionItem{Name: "btw", Description: "Ask a side question while the agent works"},
 	)
 
 	// Discover skills from skills/*/skill.md in the working directory.

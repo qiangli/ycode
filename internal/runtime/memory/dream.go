@@ -27,12 +27,18 @@ func NewDreamer(manager *Manager, enabled bool) *Dreamer {
 }
 
 // Start begins background memory consolidation.
+// Runs one consolidation pass immediately, then repeats on interval.
 func (d *Dreamer) Start(ctx context.Context) error {
 	if !d.enabled {
 		return nil
 	}
 
 	d.logger.Info("auto-dream started", "interval", d.interval)
+
+	// Run once immediately so short CLI sessions get at least one pass.
+	if err := d.consolidate(); err != nil {
+		d.logger.Error("dream consolidation failed", "error", err)
+	}
 
 	for {
 		select {
