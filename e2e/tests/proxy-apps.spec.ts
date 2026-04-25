@@ -86,7 +86,15 @@ test.describe("Perses Dashboards", () => {
   let consoleErrors: string[];
 
   test.beforeEach(async ({ page }) => {
-    consoleErrors = trackConsoleErrors(page);
+    consoleErrors = [];
+    page.on("console", (msg: ConsoleMessage) => {
+      if (msg.type() === "error") {
+        const text = msg.text();
+        // Perses emits expected errors for missing resources on fresh installs.
+        if (text.includes("Failed to load resource")) return;
+        consoleErrors.push(text);
+      }
+    });
   });
 
   test("Vue app mounts and loader disappears", async ({ page }) => {
