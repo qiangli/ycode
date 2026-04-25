@@ -41,7 +41,10 @@ test-integration: ## Run Go integration tests (requires running server)
 	go test -tags integration -v -count=1 ./internal/integration/...
 
 test-ui: ## Run Playwright browser tests (requires running server + npx)
-	cd e2e && npx playwright test
+	@cd e2e && npx playwright test; s=$$?; \
+		echo ""; \
+		echo "To open the HTML report: cd e2e && npx playwright show-report"; \
+		exit $$s
 
 test-all: test test-integration test-ui ## Run all tests: unit + integration + browser
 
@@ -107,6 +110,9 @@ validate: ## Run Go integration tests against running instance
 	@./scripts/validate.sh
 
 validate-ui: ## Run Playwright browser tests against running instance
-	cd e2e && npx playwright test
+	@cd e2e && npx playwright test; s=$$?; \
+		echo ""; \
+		echo "To open the HTML report: cd e2e && npx playwright show-report"; \
+		exit $$s
 
 validate-all: validate validate-ui ## Run all validation: integration + browser
