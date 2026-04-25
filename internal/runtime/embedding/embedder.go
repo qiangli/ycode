@@ -17,6 +17,10 @@ const (
 	memoryCollection  = "memory"
 	sessionCollection = "sessions"
 	docsCollection    = "docs"
+
+	// maxEmbedFilesPerPass limits the number of files embedded per code pass
+	// to prevent runaway API costs when using an API-based embedding provider.
+	maxEmbedFilesPerPass = 500
 )
 
 // Embedder runs background embedding tasks for code, memory, and sessions.
@@ -198,6 +202,10 @@ func (e *Embedder) RunCodeEmbedding(ctx context.Context) (int, error) {
 					return nil // already embedded and not changed
 				}
 			}
+		}
+
+		if indexed >= maxEmbedFilesPerPass {
+			return filepath.SkipAll // cap reached, stop walking
 		}
 
 		if err := e.EmbedCodeFile(ctx, relPath); err != nil {

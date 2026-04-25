@@ -95,19 +95,23 @@ func (p *APIProvider) Dimensions() int {
 	return p.dims
 }
 
-// DetectProvider attempts to create an embedding provider from environment variables.
-// Returns a SimpleHashProvider as fallback if no API provider is configured.
+// DetectProvider creates an embedding provider.
+// API-based embedding (OpenAI) is only used when explicitly enabled via
+// YCODE_EMBEDDING_API=true, to prevent unexpected API costs. The OPENAI_API_KEY
+// environment variable must also be set.
+// Returns a SimpleHashProvider as the default — fast, free, local-only.
 func DetectProvider() Provider {
-	// Try OpenAI-compatible embedding.
-	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-		return NewAPIProvider(APIConfig{
-			BaseURL: "https://api.openai.com/v1",
-			APIKey:  key,
-			Model:   "text-embedding-3-small",
-			Dims:    1536,
-		})
+	if os.Getenv("YCODE_EMBEDDING_API") == "true" {
+		if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+			return NewAPIProvider(APIConfig{
+				BaseURL: "https://api.openai.com/v1",
+				APIKey:  key,
+				Model:   "text-embedding-3-small",
+				Dims:    1536,
+			})
+		}
 	}
 
-	// Fallback to hash-based provider.
+	// Default: hash-based provider — no API calls, no cost.
 	return NewSimpleHashProvider(384)
 }
