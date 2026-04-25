@@ -193,7 +193,8 @@ test.describe("VictoriaLogs UI", () => {
 
   test("contains VictoriaMetrics branding", async ({ page }) => {
     await page.goto("/logs/");
-    await page.waitForLoadState("networkidle");
+    // Wait for the SPA to mount (not just the no-JS fallback).
+    await expect(page.locator("#root")).not.toBeEmpty({ timeout: 15_000 });
     const body = page.locator("body");
     const text = await body.textContent();
     // vmui shows "victoriametrics" branding in the footer.
