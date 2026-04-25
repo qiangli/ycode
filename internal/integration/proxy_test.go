@@ -47,10 +47,11 @@ func TestProxyApps(t *testing.T) {
 				}
 				resp.Body.Close()
 				switch resp.StatusCode {
-				case http.StatusOK, http.StatusMovedPermanently, http.StatusFound:
+				case http.StatusOK, http.StatusMovedPermanently, http.StatusFound,
+					http.StatusMethodNotAllowed: // MCP endpoints (e.g. /pulse/) are POST-only
 					// acceptable
 				default:
-					t.Errorf("GET %s returned %d, want 200/301/302", url, resp.StatusCode)
+					t.Errorf("GET %s returned %d, want 200/301/302/405", url, resp.StatusCode)
 				}
 			})
 		}
