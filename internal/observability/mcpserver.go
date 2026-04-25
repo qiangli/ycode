@@ -1,11 +1,14 @@
 package observability
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,15 +26,18 @@ type TelemetryHandler struct {
 	ProxyBaseURL string
 	// PersesDataDir is the Perses file database directory for dashboard creation.
 	PersesDataDir string
+	// AlertRulesDir is the directory containing Prometheus alert rule YAML files.
+	AlertRulesDir string
 	// StateFunc returns a real-time TUI state dump (optional).
 	StateFunc func() string
 }
 
 // NewTelemetryHandler creates a handler that serves the full observability stack via MCP.
-func NewTelemetryHandler(proxyBaseURL, persesDataDir string) *TelemetryHandler {
+func NewTelemetryHandler(proxyBaseURL, persesDataDir, alertRulesDir string) *TelemetryHandler {
 	return &TelemetryHandler{
 		ProxyBaseURL:  proxyBaseURL,
 		PersesDataDir: persesDataDir,
+		AlertRulesDir: alertRulesDir,
 	}
 }
 
@@ -182,10 +188,53 @@ func (h *TelemetryHandler) ListTools() []mcp.Tool {
 		},
 		{
 			Name:        "list_alert_rules",
-			Description: "List all configured Prometheus alert rules and their current state.",
+			Description: "List all configured Prometheus alert rules from YAML files.",
 			InputSchema: mustJSON(`{
 				"type": "object",
 				"properties": {}
+			}`),
+		},
+		{
+			Name:        "create_alert_rule",
+			Description: "Create a new Prometheus alert rule. The rule is written to a YAML file and becomes active on the next Prometheus evaluation cycle. Use PromQL for the expression.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"name": {"type": "string", "description": "Alert name in PascalCase (e.g. 'YcodeHighToolLatency')"},
+					"expr": {"type": "string", "description": "PromQL expression that fires when true (e.g. 'rate(ycode_tool_call_duration_sum[5m]) > 10000')"},
+					"for": {"type": "string", "description": "Duration the condition must hold before firing (e.g. '5m', '1m'). Default: '5m'"},
+					"severity": {"type": "string", "enum": ["info", "warning", "critical"], "description": "Alert severity. Default: 'warning'"},
+					"summary": {"type": "string", "description": "Short human-readable summary"},
+					"description": {"type": "string", "description": "Detailed description with optional template variables ({{ $value }}, {{ $labels }})"},
+					"group": {"type": "string", "description": "Rule group name. Default: 'ycode-dynamic'"}
+				},
+				"required": ["name", "expr", "summary"]
+			}`),
+		},
+		{
+			Name:        "delete_alert_rule",
+			Description: "Delete a Prometheus alert rule by name from the dynamic rules file.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"name": {"type": "string", "description": "Alert name to delete"}
+				},
+				"required": ["name"]
+			}`),
+		},
+		{
+			Name:        "push_alert",
+			Description: "Push an alert directly to Alertmanager. Use for immediate notifications without waiting for rule evaluation.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"name": {"type": "string", "description": "Alert name"},
+					"severity": {"type": "string", "enum": ["info", "warning", "critical"], "description": "Alert severity"},
+					"summary": {"type": "string", "description": "Alert summary"},
+					"description": {"type": "string", "description": "Alert description"},
+					"labels": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Additional labels"}
+				},
+				"required": ["name", "summary"]
 			}`),
 		},
 	}
@@ -224,6 +273,12 @@ func (h *TelemetryHandler) HandleToolCall(ctx context.Context, name string, inpu
 		return h.handleListAlerts()
 	case "list_alert_rules":
 		return h.handleListAlertRules()
+	case "create_alert_rule":
+		return h.handleCreateAlertRule(input)
+	case "delete_alert_rule":
+		return h.handleDeleteAlertRule(input)
+	case "push_alert":
+		return h.handlePushAlert(input)
 
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
@@ -370,7 +425,159 @@ func (h *TelemetryHandler) handleListAlerts() (string, error) {
 }
 
 func (h *TelemetryHandler) handleListAlertRules() (string, error) {
-	return h.proxyGet("/prometheus/api/v1/rules")
+	if h.AlertRulesDir == "" {
+		return h.proxyGet("/prometheus/api/v1/rules")
+	}
+	// Read all YAML files in the alerts directory.
+	entries, err := filepath.Glob(filepath.Join(h.AlertRulesDir, "*.yml"))
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	b.WriteString("Alert Rules:\n")
+	for _, path := range entries {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&b, "\n--- %s ---\n%s\n", filepath.Base(path), string(data))
+	}
+	if b.Len() == len("Alert Rules:\n") {
+		return "No alert rules configured.", nil
+	}
+	return b.String(), nil
+}
+
+func (h *TelemetryHandler) handleCreateAlertRule(input json.RawMessage) (string, error) {
+	if h.AlertRulesDir == "" {
+		return "", fmt.Errorf("alert rules directory not configured")
+	}
+	var params struct {
+		Name        string `json:"name"`
+		Expr        string `json:"expr"`
+		For         string `json:"for"`
+		Severity    string `json:"severity"`
+		Summary     string `json:"summary"`
+		Description string `json:"description"`
+		Group       string `json:"group"`
+	}
+	if err := json.Unmarshal(input, &params); err != nil {
+		return "", fmt.Errorf("parse create_alert_rule input: %w", err)
+	}
+	if params.For == "" {
+		params.For = "5m"
+	}
+	if params.Severity == "" {
+		params.Severity = "warning"
+	}
+	if params.Group == "" {
+		params.Group = "ycode-dynamic"
+	}
+	if params.Description == "" {
+		params.Description = params.Summary
+	}
+
+	// Build the rule YAML.
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "groups:\n")
+	fmt.Fprintf(&buf, "  - name: %s\n", params.Group)
+	fmt.Fprintf(&buf, "    rules:\n")
+	fmt.Fprintf(&buf, "      - alert: %s\n", params.Name)
+	fmt.Fprintf(&buf, "        expr: |\n")
+	for _, line := range strings.Split(params.Expr, "\n") {
+		fmt.Fprintf(&buf, "          %s\n", line)
+	}
+	fmt.Fprintf(&buf, "        for: %s\n", params.For)
+	fmt.Fprintf(&buf, "        labels:\n")
+	fmt.Fprintf(&buf, "          severity: %s\n", params.Severity)
+	fmt.Fprintf(&buf, "        annotations:\n")
+	fmt.Fprintf(&buf, "          summary: %q\n", params.Summary)
+	fmt.Fprintf(&buf, "          description: %q\n", params.Description)
+
+	// Write to a dedicated file for this rule.
+	if err := os.MkdirAll(h.AlertRulesDir, 0o755); err != nil {
+		return "", err
+	}
+	filename := strings.ToLower(params.Name) + ".yml"
+	path := filepath.Join(h.AlertRulesDir, filename)
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		return "", fmt.Errorf("write alert rule: %w", err)
+	}
+
+	return fmt.Sprintf("Alert rule %q created at %s\nSeverity: %s | For: %s\nExpr: %s", params.Name, path, params.Severity, params.For, params.Expr), nil
+}
+
+func (h *TelemetryHandler) handleDeleteAlertRule(input json.RawMessage) (string, error) {
+	if h.AlertRulesDir == "" {
+		return "", fmt.Errorf("alert rules directory not configured")
+	}
+	var params struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(input, &params); err != nil {
+		return "", fmt.Errorf("parse delete_alert_rule input: %w", err)
+	}
+	filename := strings.ToLower(params.Name) + ".yml"
+	path := filepath.Join(h.AlertRulesDir, filename)
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("alert rule %q not found", params.Name)
+		}
+		return "", err
+	}
+	return fmt.Sprintf("Alert rule %q deleted.", params.Name), nil
+}
+
+func (h *TelemetryHandler) handlePushAlert(input json.RawMessage) (string, error) {
+	var params struct {
+		Name        string            `json:"name"`
+		Severity    string            `json:"severity"`
+		Summary     string            `json:"summary"`
+		Description string            `json:"description"`
+		Labels      map[string]string `json:"labels"`
+	}
+	if err := json.Unmarshal(input, &params); err != nil {
+		return "", fmt.Errorf("parse push_alert input: %w", err)
+	}
+	if params.Severity == "" {
+		params.Severity = "warning"
+	}
+	if params.Description == "" {
+		params.Description = params.Summary
+	}
+
+	// Build Alertmanager API v2 alert payload.
+	labels := map[string]string{
+		"alertname": params.Name,
+		"severity":  params.Severity,
+	}
+	for k, v := range params.Labels {
+		labels[k] = v
+	}
+	alert := []map[string]any{
+		{
+			"labels": labels,
+			"annotations": map[string]string{
+				"summary":     params.Summary,
+				"description": params.Description,
+			},
+			"startsAt": time.Now().UTC().Format(time.RFC3339),
+		},
+	}
+
+	body, _ := json.Marshal(alert)
+	url := h.ProxyBaseURL + "/alerts/api/v2/alerts"
+	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("push alert: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("alertmanager returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return fmt.Sprintf("Alert %q pushed to Alertmanager (severity: %s)", params.Name, params.Severity), nil
 }
 
 // --- HTTP proxy helper ---

@@ -240,7 +240,8 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 			// Add MCP server — exposes the entire observability stack to external AI agents.
 			proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 			persesDBDir := filepath.Join(dataDir, "perses", "data")
-			mcpHandler := observability.NewTelemetryHandler(proxyURL, persesDBDir)
+			alertRulesDir := filepath.Join(home, ".agents", "ycode", "configs", "prometheus", "alerts")
+			mcpHandler := observability.NewTelemetryHandler(proxyURL, persesDBDir, alertRulesDir)
 			mcpHTTP := observability.NewMCPHTTPHandler(mcpHandler)
 			mcpComp := observability.NewMCPComponent(mcpHTTP)
 			if err := mgr.AddLateComponent(ctx, mcpComp); err != nil {
