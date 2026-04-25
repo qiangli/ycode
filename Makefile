@@ -11,7 +11,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL
 
-.PHONY: help init sync compile build test vet tidy clean all cross collector deploy deploy-local deploy-remote validate
+.PHONY: help init sync compile build test vet tidy clean all cross collector deploy deploy-local deploy-remote validate validate-ui
 
 .DEFAULT_GOAL := help
 
@@ -97,3 +97,6 @@ deploy-remote: ## Deploy to remote host (HOST=<remote> PORT=58080)
 
 validate: ## Validate running instance (HOST=localhost PORT=58080)
 	@./scripts/validate.sh
+
+validate-ui: ## Browser e2e tests (requires running server + npx)
+	cd e2e && npx playwright test

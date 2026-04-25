@@ -1,0 +1,12 @@
+{
+  "name": "ycode-e2e",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "codegen": "playwright codegen http://localhost:58080"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52"
+  }
+}
