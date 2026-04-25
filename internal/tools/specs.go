@@ -183,7 +183,7 @@ func builtinSpecs() []*ToolSpec {
 			InputSchema:  mustJSON(agentSchema),
 			RequiredMode: permission.DangerFullAccess,
 			Source:       SourceBuiltin,
-			Category:     CategoryLLM,
+			Category:     CategoryAgent,
 		},
 		{
 			Name:         "TaskCreate",

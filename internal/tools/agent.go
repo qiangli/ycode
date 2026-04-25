@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/qiangli/ycode/internal/runtime/task"
 )
 
 // AgentType identifies the subagent type.
@@ -91,26 +93,29 @@ func AllowedToolsForAgent(agentType AgentType) []string {
 
 // AgentManifest records a spawned agent and its configuration.
 type AgentManifest struct {
-	ID          string    `json:"id"`
-	Type        AgentType `json:"type"`
-	Description string    `json:"description"`
-	Prompt      string    `json:"prompt"`
-	Depth       int       `json:"depth"`
+	ID              string    `json:"id"`
+	Type            AgentType `json:"type"`
+	Description     string    `json:"description"`
+	Prompt          string    `json:"prompt"`
+	Depth           int       `json:"depth"`
+	RunInBackground bool      `json:"run_in_background,omitempty"`
 }
 
 // RegisterAgentHandler registers the Agent tool handler.
 // parentMode controls subagent constraints: when the parent is in plan mode,
 // all subagents are forced to explore type.
-func RegisterAgentHandler(r *Registry, parentMode func() AgentMode, spawner func(ctx context.Context, manifest *AgentManifest) (string, error)) {
+// taskRegistry is optional; when provided, background agents are tracked as tasks.
+func RegisterAgentHandler(r *Registry, parentMode func() AgentMode, spawner func(ctx context.Context, manifest *AgentManifest) (string, error), taskRegistry *task.Registry) {
 	spec, ok := r.Get("Agent")
 	if !ok {
 		return
 	}
 	spec.Handler = func(ctx context.Context, input json.RawMessage) (string, error) {
 		var params struct {
-			Description  string `json:"description"`
-			Prompt       string `json:"prompt"`
-			SubagentType string `json:"subagent_type,omitempty"`
+			Description     string `json:"description"`
+			Prompt          string `json:"prompt"`
+			SubagentType    string `json:"subagent_type,omitempty"`
+			RunInBackground bool   `json:"run_in_background,omitempty"`
 		}
 		if err := json.Unmarshal(input, &params); err != nil {
 			return "", fmt.Errorf("parse Agent input: %w", err)
@@ -141,16 +146,27 @@ func RegisterAgentHandler(r *Registry, parentMode func() AgentMode, spawner func
 		}
 
 		manifest := &AgentManifest{
-			Type:        agentType,
-			Description: params.Description,
-			Prompt:      params.Prompt,
+			Type:            agentType,
+			Description:     params.Description,
+			Prompt:          params.Prompt,
+			RunInBackground: params.RunInBackground,
 		}
 
-		if spawner != nil {
-			return spawner(ctx, manifest)
+		if spawner == nil {
+			return fmt.Sprintf("Agent spawned (type: %s, desc: %s)", agentType, params.Description), nil
 		}
 
-		return fmt.Sprintf("Agent spawned (type: %s, desc: %s)", agentType, params.Description), nil
+		// Background execution: launch as a tracked task and return immediately.
+		if manifest.RunInBackground && taskRegistry != nil {
+			t := taskRegistry.Create(fmt.Sprintf("agent:%s — %s", agentType, params.Description),
+				func(taskCtx context.Context) (string, error) {
+					return spawner(taskCtx, manifest)
+				},
+			)
+			return fmt.Sprintf("Agent started in background (task_id: %s, type: %s, desc: %s)", t.ID, agentType, params.Description), nil
+		}
+
+		return spawner(ctx, manifest)
 	}
 }
 

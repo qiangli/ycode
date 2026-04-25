@@ -155,6 +155,7 @@ type ParallelConfig struct {
 	Enabled     bool `json:"enabled"`     // master switch (default true)
 	MaxStandard int  `json:"maxStandard"` // max concurrent standard tools (default 8)
 	MaxLLM      int  `json:"maxLLM"`      // max concurrent LLM tools (default 2)
+	MaxAgent    int  `json:"maxAgent"`    // max concurrent agent spawns (default 4)
 }
 
 // DefaultConfig returns the default configuration.
@@ -168,6 +169,7 @@ func DefaultConfig() *Config {
 			Enabled:     true,
 			MaxStandard: 8,
 			MaxLLM:      2,
+			MaxAgent:    4,
 		},
 		Observability: &ObservabilityConfig{
 			Enabled:          false, // Only enabled explicitly via "ycode serve" or user config.
@@ -274,6 +276,9 @@ func mergeFromFile(cfg *Config, path string) error {
 	}
 	if overlay.Parallel.MaxLLM != 0 {
 		cfg.Parallel.MaxLLM = overlay.Parallel.MaxLLM
+	}
+	if overlay.Parallel.MaxAgent != 0 {
+		cfg.Parallel.MaxAgent = overlay.Parallel.MaxAgent
 	}
 	if len(overlay.Instructions) > 0 {
 		cfg.Instructions = append(cfg.Instructions, overlay.Instructions...)

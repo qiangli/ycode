@@ -9,7 +9,7 @@ import (
 )
 
 func TestExecutorOrdering(t *testing.T) {
-	exec := NewExecutor(4, 2)
+	exec := NewExecutor(4, 2, 4)
 	calls := make([]Call, 5)
 	for i := range calls {
 		calls[i] = Call{
@@ -42,7 +42,7 @@ func TestExecutorOrdering(t *testing.T) {
 }
 
 func TestExecutorParallelism(t *testing.T) {
-	exec := NewExecutor(4, 2)
+	exec := NewExecutor(4, 2, 4)
 
 	var concurrent atomic.Int32
 	var maxConcurrent atomic.Int32
@@ -82,7 +82,7 @@ func TestExecutorParallelism(t *testing.T) {
 }
 
 func TestExecutorLLMLimit(t *testing.T) {
-	exec := NewExecutor(8, 2)
+	exec := NewExecutor(8, 2, 4)
 
 	var concurrent atomic.Int32
 	var maxConcurrent atomic.Int32
@@ -119,7 +119,7 @@ func TestExecutorLLMLimit(t *testing.T) {
 }
 
 func TestExecutorCancellation(t *testing.T) {
-	exec := NewExecutor(2, 2)
+	exec := NewExecutor(2, 2, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	calls := make([]Call, 4)
@@ -158,7 +158,7 @@ func TestExecutorCancellation(t *testing.T) {
 }
 
 func TestExecutorProgressEvents(t *testing.T) {
-	exec := NewExecutor(4, 2)
+	exec := NewExecutor(4, 2, 4)
 
 	calls := []Call{
 		{Index: 0, Name: "read", Detail: "Read(a.go)", Invoke: func(ctx context.Context) (string, error) {
@@ -205,7 +205,7 @@ func TestExecutorProgressEvents(t *testing.T) {
 }
 
 func TestExecutorEmptyCalls(t *testing.T) {
-	exec := NewExecutor(4, 2)
+	exec := NewExecutor(4, 2, 4)
 	results := exec.Run(context.Background(), nil, nil)
 	if results != nil {
 		t.Errorf("expected nil results for empty calls, got %v", results)
@@ -213,7 +213,7 @@ func TestExecutorEmptyCalls(t *testing.T) {
 }
 
 func TestExecutorSingleCall(t *testing.T) {
-	exec := NewExecutor(4, 2)
+	exec := NewExecutor(4, 2, 4)
 	calls := []Call{{
 		Index: 0,
 		Name:  "read",
@@ -232,7 +232,7 @@ func TestExecutorSingleCall(t *testing.T) {
 }
 
 func TestExecutorMixedCategories(t *testing.T) {
-	exec := NewExecutor(4, 2)
+	exec := NewExecutor(4, 2, 4)
 
 	var stdConcurrent, llmConcurrent atomic.Int32
 	var maxStdConcurrent, maxLLMConcurrent atomic.Int32
@@ -300,7 +300,7 @@ func TestExecutorMixedCategories(t *testing.T) {
 }
 
 func TestExecutorInteractiveSerialization(t *testing.T) {
-	exec := NewExecutor(8, 2)
+	exec := NewExecutor(8, 2, 4)
 
 	var concurrent atomic.Int32
 	var maxConcurrent atomic.Int32
@@ -335,12 +335,55 @@ func TestExecutorInteractiveSerialization(t *testing.T) {
 }
 
 func TestNewExecutorDefaults(t *testing.T) {
-	exec := NewExecutor(0, -1)
+	exec := NewExecutor(0, -1, 0)
 	if exec.maxStandard != 8 {
 		t.Errorf("maxStandard = %d, want 8", exec.maxStandard)
 	}
 	if exec.maxLLM != 2 {
 		t.Errorf("maxLLM = %d, want 2", exec.maxLLM)
+	}
+	if exec.maxAgent != 4 {
+		t.Errorf("maxAgent = %d, want 4", exec.maxAgent)
+	}
+}
+
+func TestExecutorAgentLimit(t *testing.T) {
+	exec := NewExecutor(8, 2, 3)
+
+	var concurrent atomic.Int32
+	var maxConcurrent atomic.Int32
+
+	calls := make([]Call, 6)
+	for i := range calls {
+		calls[i] = Call{
+			Index:    i,
+			Name:     fmt.Sprintf("agent_%d", i),
+			Category: CatAgent,
+			Invoke: func(ctx context.Context) (string, error) {
+				cur := concurrent.Add(1)
+				for {
+					old := maxConcurrent.Load()
+					if cur <= old || maxConcurrent.CompareAndSwap(old, cur) {
+						break
+					}
+				}
+				time.Sleep(30 * time.Millisecond)
+				concurrent.Add(-1)
+				return "ok", nil
+			},
+		}
+	}
+
+	results := exec.Run(context.Background(), calls, nil)
+
+	if len(results) != 6 {
+		t.Fatalf("expected 6 results, got %d", len(results))
+	}
+	if mc := maxConcurrent.Load(); mc > 3 {
+		t.Errorf("max concurrent agents = %d, expected <= 3", mc)
+	}
+	if mc := maxConcurrent.Load(); mc < 2 {
+		t.Errorf("max concurrent agents = %d, expected >= 2 (agents should run in parallel)", mc)
 	}
 }
 

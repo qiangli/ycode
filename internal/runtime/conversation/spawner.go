@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/google/uuid"
+
 	"github.com/qiangli/ycode/internal/api"
+	"github.com/qiangli/ycode/internal/runtime/agentpool"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
+	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/tools"
 )
 
@@ -22,6 +26,15 @@ type SpawnerConfig struct {
 	PromptCtx        *prompt.ProjectContext
 	Logger           *slog.Logger
 	CachingSupported bool // whether the provider supports prompt caching
+
+	// Parallel tool execution within subagents.
+	ParallelEnabled bool // enable parallel tool execution (default false for backward compat)
+	MaxStandard     int  // max concurrent standard tools (default 8)
+	MaxLLM          int  // max concurrent LLM tools (default 2)
+	MaxAgent        int  // max concurrent nested agent spawns (default 4)
+
+	// Agent pool for progress tracking (optional).
+	AgentPool *agentpool.Pool
 }
 
 // NewAgentSpawner creates a spawner function that can be passed to
@@ -36,11 +49,29 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 			logger = slog.Default()
 		}
 
+		// Generate agent ID and register in pool if available.
+		agentID := uuid.New().String()
+		manifest.ID = agentID
+
 		logger.Info("spawning subagent",
+			"id", agentID,
 			"type", manifest.Type,
 			"mode", mode,
 			"description", manifest.Description,
 		)
+
+		pool := sc.AgentPool
+		if pool != nil {
+			pool.Register(agentID, string(manifest.Type), manifest.Description)
+			pool.SetRunning(agentID)
+		}
+
+		// completeAgent marks the agent as done in the pool.
+		completeAgent := func(failed bool) {
+			if pool != nil {
+				pool.Complete(agentID, failed)
+			}
+		}
 
 		// Build mode-specific system prompt.
 		systemPrompt := prompt.BuildDefault(sc.PromptCtx, string(mode), sc.CachingSupported, nil)
@@ -136,6 +167,7 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 			}
 
 			if err := <-errc; err != nil {
+				completeAgent(true)
 				return "", fmt.Errorf("subagent turn %d: %w", i+1, err)
 			}
 
@@ -144,6 +176,7 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 			// No tool calls — subagent is done.
 			if len(toolCalls) == 0 {
 				logger.Info("subagent completed", "turns", i+1)
+				completeAgent(false)
 				return textContent, nil
 			}
 
@@ -168,23 +201,14 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 				Content: assistantBlocks,
 			})
 
-			// Execute tools through the filtered registry.
-			var toolResults []api.ContentBlock
-			for _, tc := range toolCalls {
-				output, err := filtered.Invoke(ctx, tc.Name, tc.Input)
-				block := api.ContentBlock{
-					Type:      api.ContentTypeToolResult,
-					ToolUseID: tc.ID,
+			// Execute tools through the filtered registry (parallel when enabled).
+			// Track tool uses in the agent pool for progress reporting.
+			if pool != nil {
+				for _, tc := range toolCalls {
+					pool.RecordToolUse(agentID, tc.Name)
 				}
-				if err != nil {
-					block.Content = fmt.Sprintf("Error: %v", err)
-					block.IsError = true
-				} else {
-					block.Content = output
-				}
-				toolResults = append(toolResults, block)
-				logger.Info("subagent tool executed", "tool", tc.Name, "error", err != nil)
 			}
+			toolResults := executeSubagentTools(ctx, sc, filtered, toolCalls, logger)
 
 			messages = append(messages, api.Message{
 				Role:    api.RoleUser,
@@ -192,6 +216,84 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 			})
 		}
 
+		completeAgent(true)
 		return "", fmt.Errorf("subagent exceeded maximum iterations (%d)", maxSubagentIterations)
 	}
+}
+
+// executeSubagentTools runs tool calls for a subagent. When parallel execution
+// is enabled in the SpawnerConfig, tools run concurrently within per-category
+// limits (same bounded-parallelism model as the main runtime). Otherwise they
+// execute sequentially for backward compatibility.
+func executeSubagentTools(ctx context.Context, sc *SpawnerConfig, filtered *tools.FilteredRegistry, toolCalls []ToolCall, logger *slog.Logger) []api.ContentBlock {
+	if !sc.ParallelEnabled || len(toolCalls) <= 1 {
+		return executeSubagentToolsSequential(ctx, filtered, toolCalls, logger)
+	}
+
+	qCalls := make([]taskqueue.Call, len(toolCalls))
+	for i, tc := range toolCalls {
+		spec, _ := filtered.Get(tc.Name)
+		cat := taskqueue.CatStandard
+		if spec != nil {
+			switch spec.Category {
+			case tools.CategoryLLM:
+				cat = taskqueue.CatLLM
+			case tools.CategoryAgent:
+				cat = taskqueue.CatAgent
+			case tools.CategoryInteractive:
+				cat = taskqueue.CatInteractive
+			}
+		}
+		c := tc
+		qCalls[i] = taskqueue.Call{
+			Index:    i,
+			Name:     tc.Name,
+			Detail:   tc.Name,
+			Category: cat,
+			Invoke: func(ctx context.Context) (string, error) {
+				return filtered.Invoke(ctx, c.Name, c.Input)
+			},
+		}
+	}
+
+	exec := taskqueue.NewExecutor(sc.MaxStandard, sc.MaxLLM, sc.MaxAgent)
+	taskResults := exec.Run(ctx, qCalls, nil)
+
+	blocks := make([]api.ContentBlock, len(toolCalls))
+	for i, res := range taskResults {
+		block := api.ContentBlock{
+			Type:      api.ContentTypeToolResult,
+			ToolUseID: toolCalls[i].ID,
+		}
+		if res.Err != nil {
+			block.Content = fmt.Sprintf("Error: %v", res.Err)
+			block.IsError = true
+		} else {
+			block.Content = res.Output
+		}
+		blocks[i] = block
+		logger.Info("subagent tool executed", "tool", toolCalls[i].Name, "error", res.Err != nil)
+	}
+	return blocks
+}
+
+// executeSubagentToolsSequential runs tool calls one at a time.
+func executeSubagentToolsSequential(ctx context.Context, filtered *tools.FilteredRegistry, toolCalls []ToolCall, logger *slog.Logger) []api.ContentBlock {
+	results := make([]api.ContentBlock, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		output, err := filtered.Invoke(ctx, tc.Name, tc.Input)
+		block := api.ContentBlock{
+			Type:      api.ContentTypeToolResult,
+			ToolUseID: tc.ID,
+		}
+		if err != nil {
+			block.Content = fmt.Sprintf("Error: %v", err)
+			block.IsError = true
+		} else {
+			block.Content = output
+		}
+		results = append(results, block)
+		logger.Info("subagent tool executed", "tool", tc.Name, "error", err != nil)
+	}
+	return results
 }

@@ -569,6 +569,8 @@ func (r *Runtime) executeToolsParallel(ctx context.Context, calls []ToolCall, pr
 			switch spec.Category {
 			case tools.CategoryLLM:
 				cat = taskqueue.CatLLM
+			case tools.CategoryAgent:
+				cat = taskqueue.CatAgent
 			case tools.CategoryInteractive:
 				cat = taskqueue.CatInteractive
 			}
@@ -585,7 +587,7 @@ func (r *Runtime) executeToolsParallel(ctx context.Context, calls []ToolCall, pr
 		}
 	}
 
-	exec := taskqueue.NewExecutor(r.config.Parallel.MaxStandard, r.config.Parallel.MaxLLM)
+	exec := taskqueue.NewExecutor(r.config.Parallel.MaxStandard, r.config.Parallel.MaxLLM, r.config.Parallel.MaxAgent)
 	taskResults := exec.Run(ctx, qCalls, progress)
 
 	blocks := make([]api.ContentBlock, len(calls))

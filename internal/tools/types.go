@@ -21,7 +21,8 @@ type ToolCategory int
 
 const (
 	CategoryStandard    ToolCategory = iota // file ops, search, web — default
-	CategoryLLM                             // Agent, TaskCreate — uses LLM API
+	CategoryLLM                             // TaskCreate — uses LLM API
+	CategoryAgent                           // Agent — subagent spawning (separate pool)
 	CategoryInteractive                     // AskUserQuestion — blocks on user input
 )
 

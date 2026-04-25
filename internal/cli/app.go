@@ -18,8 +18,12 @@ import (
 	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/runtime/builtin"
 	"github.com/qiangli/ycode/internal/runtime/config"
+	"github.com/qiangli/ycode/internal/runtime/agentpool"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
+	"github.com/qiangli/ycode/internal/runtime/task"
+	"github.com/qiangli/ycode/internal/runtime/team"
+	"github.com/qiangli/ycode/internal/runtime/worker"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/runtime/usage"
@@ -46,6 +50,12 @@ type App struct {
 
 	// Storage manager for persistence layer.
 	storage *storage.Manager
+
+	// Task registry for background tasks (including background agents).
+	taskRegistry *task.Registry
+
+	// Agent pool for tracking active subagents and progress reporting.
+	agentPool *agentpool.Pool
 
 	// Session tracking for summary reporting.
 	usageTracker *usage.Tracker
@@ -114,6 +124,8 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		usageTracker:   usage.NewTracker(),
 		sessionStart:   time.Now(),
 		convOTEL:       o.ConvOTEL,
+		taskRegistry:   task.NewRegistry(),
+		agentPool:      agentpool.New(),
 	}
 
 	// Set up command registry.
@@ -146,6 +158,13 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 	})
 	app.commands = cmdRegistry
 
+	// Register task, worker, and team tool handlers.
+	if app.toolRegistry != nil {
+		tools.RegisterTaskHandlers(app.toolRegistry, app.taskRegistry)
+		tools.RegisterWorkerHandlers(app.toolRegistry, worker.NewRegistry())
+		tools.RegisterTeamHandlers(app.toolRegistry, team.NewRegistry(), team.NewCronRegistry())
+	}
+
 	// Wire the agent spawner so the Agent tool can create child runtimes.
 	if app.toolRegistry != nil && app.provider != nil {
 		caps := api.DetectCapabilities(app.provider.Kind(), cfg.Model)
@@ -155,8 +174,13 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 			Registry:         app.toolRegistry,
 			PromptCtx:        app.promptCtx,
 			CachingSupported: caps.CachingSupported,
+			ParallelEnabled:  cfg.Parallel.Enabled,
+			MaxStandard:      cfg.Parallel.MaxStandard,
+			MaxLLM:           cfg.Parallel.MaxLLM,
+			MaxAgent:         cfg.Parallel.MaxAgent,
+			AgentPool:        app.agentPool,
 		})
-		tools.RegisterAgentHandler(app.toolRegistry, app.parentAgentMode, spawner)
+		tools.RegisterAgentHandler(app.toolRegistry, app.parentAgentMode, spawner, app.taskRegistry)
 	}
 
 	return app, nil
@@ -614,6 +638,12 @@ func (a *App) RevertFiles() (string, error) {
 
 // UsageTracker returns the usage tracker.
 func (a *App) UsageTracker() *usage.Tracker { return a.usageTracker }
+
+// AgentPool returns the agent pool for progress tracking.
+func (a *App) AgentPool() *agentpool.Pool { return a.agentPool }
+
+// TaskRegistry returns the background task registry.
+func (a *App) TaskRegistry() *task.Registry { return a.taskRegistry }
 
 // SetProgressFunc sets the progress callback function (called by TUI).
 func (a *App) SetProgressFunc(fn func(message string)) {

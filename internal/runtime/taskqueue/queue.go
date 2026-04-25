@@ -58,7 +58,8 @@ type Category int
 
 const (
 	CatStandard    Category = iota // file ops, search, web
-	CatLLM                         // Agent, TaskCreate
+	CatLLM                         // TaskCreate and other LLM tools
+	CatAgent                       // Agent — subagent spawning (separate pool)
 	CatInteractive                 // AskUserQuestion
 )
 
@@ -75,20 +76,25 @@ type Call struct {
 type Executor struct {
 	maxStandard int
 	maxLLM      int
+	maxAgent    int
 }
 
 // NewExecutor creates an executor with the given concurrency limits.
-// If maxStandard or maxLLM are <= 0, they default to 8 and 2 respectively.
-func NewExecutor(maxStandard, maxLLM int) *Executor {
+// If maxStandard, maxLLM, or maxAgent are <= 0, they default to 8, 2, and 4 respectively.
+func NewExecutor(maxStandard, maxLLM, maxAgent int) *Executor {
 	if maxStandard <= 0 {
 		maxStandard = 8
 	}
 	if maxLLM <= 0 {
 		maxLLM = 2
 	}
+	if maxAgent <= 0 {
+		maxAgent = 4
+	}
 	return &Executor{
 		maxStandard: maxStandard,
 		maxLLM:      maxLLM,
+		maxAgent:    maxAgent,
 	}
 }
 
@@ -110,6 +116,7 @@ func (e *Executor) Run(ctx context.Context, calls []Call, progress chan<- TaskEv
 	results := make([]TaskResult, n)
 	stdSem := make(chan struct{}, e.maxStandard)
 	llmSem := make(chan struct{}, e.maxLLM)
+	agentSem := make(chan struct{}, e.maxAgent)
 
 	// Interactive tools serialize through a mutex (at most one user prompt at a time)
 	// while also consuming a standard semaphore slot.
@@ -145,8 +152,11 @@ func (e *Executor) Run(ctx context.Context, calls []Call, progress chan<- TaskEv
 
 			// Acquire the appropriate semaphore.
 			sem := stdSem
-			if call.Category == CatLLM {
+			switch call.Category {
+			case CatLLM:
 				sem = llmSem
+			case CatAgent:
+				sem = agentSem
 			}
 
 			select {

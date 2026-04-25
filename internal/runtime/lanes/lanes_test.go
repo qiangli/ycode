@@ -3,6 +3,7 @@ package lanes
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -137,6 +138,75 @@ func TestRoute(t *testing.T) {
 		if got := Route(tt.source); got != tt.want {
 			t.Errorf("Route(%q) = %s, want %s", tt.source, got, tt.want)
 		}
+	}
+}
+
+func TestScheduler_SubagentPoolConcurrency(t *testing.T) {
+	s := NewSchedulerWithLimits(3)
+
+	var concurrent atomic.Int32
+	var maxConcurrent atomic.Int32
+
+	var wg sync.WaitGroup
+	for i := range 6 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			release, err := s.Acquire(context.Background(), LaneSubagent, "agent work")
+			if err != nil {
+				t.Errorf("agent %d: acquire failed: %v", i, err)
+				return
+			}
+			cur := concurrent.Add(1)
+			for {
+				old := maxConcurrent.Load()
+				if cur <= old || maxConcurrent.CompareAndSwap(old, cur) {
+					break
+				}
+			}
+			time.Sleep(20 * time.Millisecond)
+			concurrent.Add(-1)
+			release()
+		}()
+	}
+	wg.Wait()
+
+	if mc := maxConcurrent.Load(); mc > 3 {
+		t.Errorf("max concurrent subagents = %d, expected <= 3", mc)
+	}
+	if mc := maxConcurrent.Load(); mc < 2 {
+		t.Errorf("max concurrent subagents = %d, expected >= 2 (should run in parallel)", mc)
+	}
+}
+
+func TestScheduler_SubagentTryAcquirePool(t *testing.T) {
+	s := NewSchedulerWithLimits(2)
+
+	// Acquire 2 slots — should succeed.
+	r1, ok := s.TryAcquire(LaneSubagent, "agent-1")
+	if !ok {
+		t.Fatal("expected first TryAcquire to succeed")
+	}
+	r2, ok := s.TryAcquire(LaneSubagent, "agent-2")
+	if !ok {
+		t.Fatal("expected second TryAcquire to succeed")
+	}
+
+	// Third should fail — pool full.
+	_, ok = s.TryAcquire(LaneSubagent, "agent-3")
+	if ok {
+		t.Error("expected TryAcquire to fail when pool is full")
+	}
+
+	if s.ActiveCount(LaneSubagent) != 2 {
+		t.Errorf("expected ActiveCount=2, got %d", s.ActiveCount(LaneSubagent))
+	}
+
+	r1()
+	r2()
+
+	if s.ActiveCount(LaneSubagent) != 0 {
+		t.Errorf("expected ActiveCount=0 after release, got %d", s.ActiveCount(LaneSubagent))
 	}
 }
 
