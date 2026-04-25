@@ -20,6 +20,11 @@ func SetOTELDataDir(dir string) {
 	otelDataDir = dir
 }
 
+// QueryTraces is the exported entry point for trace queries, usable by MCP server.
+func QueryTraces(ctx context.Context, input json.RawMessage) (string, error) {
+	return handleQueryTraces(ctx, input)
+}
+
 // RegisterQueryTracesHandler wires up the query_traces tool handler.
 func RegisterQueryTracesHandler(r *Registry) {
 	if spec, ok := r.Get("query_traces"); ok {

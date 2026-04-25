@@ -11,6 +11,11 @@ import (
 	"strings"
 )
 
+// QueryLogs is the exported entry point for log queries, usable by MCP server.
+func QueryLogs(ctx context.Context, input json.RawMessage) (string, error) {
+	return handleQueryLogs(ctx, input)
+}
+
 // RegisterQueryLogsHandler wires up the query_logs tool handler.
 func RegisterQueryLogsHandler(r *Registry) {
 	if spec, ok := r.Get("query_logs"); ok {

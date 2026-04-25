@@ -26,6 +26,11 @@ func SetMetricsSessionID(id string) {
 	metricsSessionID = id
 }
 
+// QueryMetrics is the exported entry point for metrics queries, usable by MCP server.
+func QueryMetrics(ctx context.Context, input json.RawMessage) (string, error) {
+	return handleQueryMetrics(ctx, input)
+}
+
 // RegisterQueryMetricsHandler wires up the query_metrics tool handler.
 func RegisterQueryMetricsHandler(r *Registry) {
 	if spec, ok := r.Get("query_metrics"); ok {

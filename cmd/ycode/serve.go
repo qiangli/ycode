@@ -237,6 +237,16 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 					fmt.Printf("Web UI at          http://127.0.0.1:%d/ycode/\n", port)
 				}
 			}
+			// Add MCP telemetry server for external agent access.
+			mcpHandler := observability.NewTelemetryHandler()
+			mcpHTTP := observability.NewMCPHTTPHandler(mcpHandler)
+			mcpComp := observability.NewMCPComponent(mcpHTTP)
+			if err := mgr.AddLateComponent(ctx, mcpComp); err != nil {
+				slog.Warn("MCP server not available", "error", err)
+			} else {
+				fmt.Printf("MCP server at      http://127.0.0.1:%d/mcp/\n", port)
+			}
+
 			if api.natsSrv != nil {
 				fmt.Printf("NATS server at     nats://127.0.0.1:%d\n", apiNATSPort)
 			}
