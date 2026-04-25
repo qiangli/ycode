@@ -84,6 +84,18 @@ func (pa *PortAllocator) ReleaseAll() {
 	os.Remove(pa.path)
 }
 
+// AllocatePort finds a free TCP port on 127.0.0.1 and returns it.
+// The port is released immediately so the caller can pass it to a component.
+func AllocatePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, fmt.Errorf("allocate port: %w", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port, nil
+}
+
 // IsPortAvailable returns true if the given TCP port on 127.0.0.1 is free.
 func IsPortAvailable(port int) bool {
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))

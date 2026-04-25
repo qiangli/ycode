@@ -11,7 +11,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL
 
-.PHONY: help init sync compile build test vet tidy clean all cross collector deploy deploy-local deploy-remote validate validate-ui
+.PHONY: help init sync compile build test test-integration test-ui test-all vet tidy clean all cross collector deploy deploy-local deploy-remote validate validate-ui validate-all
 
 .DEFAULT_GOAL := help
 
@@ -36,6 +36,14 @@ build: ## Build with full quality gate: tidy → fmt → vet → compile → tes
 
 test: ## Run unit tests with race detector (-short flag)
 	go test -short -race $(PACKAGES)
+
+test-integration: ## Run Go integration tests (requires running server)
+	go test -tags integration -v -count=1 ./internal/integration/...
+
+test-ui: ## Run Playwright browser tests (requires running server + npx)
+	cd e2e && npx playwright test
+
+test-all: test test-integration test-ui ## Run all tests: unit + integration + browser
 
 vet: ## Run static analysis
 	go vet $(PACKAGES)
@@ -95,8 +103,10 @@ deploy-remote: ## Deploy to remote host (HOST=<remote> PORT=58080)
 
 # ─── Validate ───────────────────────────────────────────────────────────────
 
-validate: ## Validate running instance (HOST=localhost PORT=58080)
+validate: ## Run Go integration tests against running instance
 	@./scripts/validate.sh
 
-validate-ui: ## Browser e2e tests (requires running server + npx)
+validate-ui: ## Run Playwright browser tests against running instance
 	cd e2e && npx playwright test
+
+validate-all: validate validate-ui ## Run all validation: integration + browser

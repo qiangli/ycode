@@ -61,8 +61,7 @@ func TestPerformance(t *testing.T) {
 
 	t.Run("TraceIngestionThroughput", func(t *testing.T) {
 		const numBatches = 100
-		host := otelHost(t)
-		url := fmt.Sprintf("http://%s:4318/v1/traces", host)
+		url := baseURL(t) + "/collector/v1/traces"
 		payload := `{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"perf-test"}}]},"scopeSpans":[{"spans":[{"traceId":"00000000000000000000000000000002","spanId":"0000000000000099","name":"perf-span","kind":1,"startTimeUnixNano":"1000000000","endTimeUnixNano":"2000000000"}]}]}]}`
 
 		start := time.Now()

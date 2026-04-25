@@ -15,15 +15,13 @@ import (
 
 func TestPipeline(t *testing.T) {
 	requireConnectivity(t)
+	base := baseURL(t)
 
 	// Use a unique service name per run to avoid collisions.
 	svc := fmt.Sprintf("pipeline-test-%d", rand.Int64())
 
 	t.Run("TraceToJaeger", func(t *testing.T) {
-		host := otelHost(t)
-		base := baseURL(t)
-
-		// Send a trace with a unique service name via OTEL HTTP.
+		// Send a trace with a unique service name via OTEL HTTP through the proxy.
 		tracePayload := fmt.Sprintf(`{
 			"resourceSpans": [{
 				"resource": {
@@ -42,8 +40,7 @@ func TestPipeline(t *testing.T) {
 			}]
 		}`, svc, time.Now().Add(-time.Second).UnixNano(), time.Now().UnixNano())
 
-		url := fmt.Sprintf("http://%s:4318/v1/traces", host)
-		status, _ := httpPost(t, url, "application/json", tracePayload)
+		status, _ := httpPost(t, base+"/collector/v1/traces", "application/json", tracePayload)
 		if status != http.StatusOK {
 			t.Fatalf("send trace returned %d, want 200", status)
 		}
@@ -65,9 +62,6 @@ func TestPipeline(t *testing.T) {
 	})
 
 	t.Run("MetricToPrometheus", func(t *testing.T) {
-		host := otelHost(t)
-		base := baseURL(t)
-
 		metricName := "pipeline_test_gauge"
 		metricPayload := fmt.Sprintf(`{
 			"resourceMetrics": [{
@@ -88,8 +82,7 @@ func TestPipeline(t *testing.T) {
 			}]
 		}`, svc, metricName, time.Now().UnixNano())
 
-		url := fmt.Sprintf("http://%s:4318/v1/metrics", host)
-		status, _ := httpPost(t, url, "application/json", metricPayload)
+		status, _ := httpPost(t, base+"/collector/v1/metrics", "application/json", metricPayload)
 		if status != http.StatusOK {
 			t.Fatalf("send metric returned %d, want 200", status)
 		}
@@ -123,9 +116,6 @@ func TestPipeline(t *testing.T) {
 	})
 
 	t.Run("LogToVictoriaLogs", func(t *testing.T) {
-		host := otelHost(t)
-		base := baseURL(t)
-
 		logMsg := fmt.Sprintf("pipeline-test-log-%s", svc)
 		logPayload := fmt.Sprintf(`{
 			"resourceLogs": [{
@@ -142,8 +132,7 @@ func TestPipeline(t *testing.T) {
 			}]
 		}`, svc, time.Now().UnixNano(), logMsg)
 
-		url := fmt.Sprintf("http://%s:4318/v1/logs", host)
-		status, _ := httpPost(t, url, "application/json", logPayload)
+		status, _ := httpPost(t, base+"/collector/v1/logs", "application/json", logPayload)
 		if status != http.StatusOK {
 			t.Fatalf("send log returned %d, want 200", status)
 		}

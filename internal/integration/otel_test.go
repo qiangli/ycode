@@ -3,7 +3,6 @@
 package integration
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -11,10 +10,10 @@ import (
 
 func TestOTEL(t *testing.T) {
 	requireConnectivity(t)
-	host := otelHost(t)
+	base := baseURL(t)
 
 	t.Run("CollectorTracesEndpoint", func(t *testing.T) {
-		url := fmt.Sprintf("http://%s:4318/v1/traces", host)
+		url := base + "/collector/v1/traces"
 		status, _ := httpPost(t, url, "application/json", `{"resourceSpans":[]}`)
 		if status != http.StatusOK {
 			t.Errorf("OTEL traces endpoint returned %d, want 200", status)
@@ -22,7 +21,7 @@ func TestOTEL(t *testing.T) {
 	})
 
 	t.Run("PrometheusMetrics", func(t *testing.T) {
-		url := fmt.Sprintf("http://%s:8889/metrics", host)
+		url := base + "/collector/metrics"
 		status, body := httpGet(t, url)
 		if status != http.StatusOK {
 			t.Fatalf("Prometheus metrics returned %d, want 200", status)
@@ -34,7 +33,7 @@ func TestOTEL(t *testing.T) {
 	})
 
 	t.Run("SendTestTrace", func(t *testing.T) {
-		url := fmt.Sprintf("http://%s:4318/v1/traces", host)
+		url := base + "/collector/v1/traces"
 		payload := `{
 			"resourceSpans": [{
 				"resource": {
@@ -59,7 +58,7 @@ func TestOTEL(t *testing.T) {
 	})
 
 	t.Run("SendTestMetrics", func(t *testing.T) {
-		url := fmt.Sprintf("http://%s:4318/v1/metrics", host)
+		url := base + "/collector/v1/metrics"
 		payload := `{
 			"resourceMetrics": [{
 				"resource": {
@@ -88,7 +87,7 @@ func TestOTEL(t *testing.T) {
 	})
 
 	t.Run("SendTestLog", func(t *testing.T) {
-		url := fmt.Sprintf("http://%s:4318/v1/logs", host)
+		url := base + "/collector/v1/logs"
 		payload := `{
 			"resourceLogs": [{
 				"resource": {

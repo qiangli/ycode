@@ -29,20 +29,11 @@ func baseURL(t *testing.T) string {
 	return fmt.Sprintf("http://%s:%s", host, port)
 }
 
-// otelHost returns the OTEL collector host (same as the server host).
-func otelHost(t *testing.T) string {
-	t.Helper()
-	if h := os.Getenv("HOST"); h != "" {
-		return h
-	}
-	return "localhost"
-}
-
 // isLocal returns true when testing against localhost.
 func isLocal(t *testing.T) bool {
 	t.Helper()
-	h := otelHost(t)
-	return h == "localhost" || h == "127.0.0.1"
+	h := os.Getenv("HOST")
+	return h == "" || h == "localhost" || h == "127.0.0.1"
 }
 
 // binaryPath returns the path to the ycode binary, or empty string if not found.

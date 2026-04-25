@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -140,9 +142,22 @@ func (c *EmbeddedCollector) Healthy() bool {
 	return c.healthy.Load()
 }
 
-// HTTPHandler returns a status page handler for the collector.
+// HTTPHandler returns a handler that serves the status page at the root
+// and reverse-proxies OTLP HTTP requests (/v1/traces, /v1/metrics, /v1/logs)
+// to the collector's OTLP receiver.
 func (c *EmbeddedCollector) HTTPHandler() http.Handler {
 	mux := http.NewServeMux()
+
+	// Reverse-proxy OTLP and metrics endpoints to the collector's HTTP receiver.
+	otlpTarget, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", c.cfg.HTTPPort))
+	otlpProxy := httputil.NewSingleHostReverseProxy(otlpTarget)
+	mux.Handle("/v1/", otlpProxy)
+
+	// Reverse-proxy the Prometheus exporter endpoint for metrics scraping.
+	promTarget, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", c.cfg.PrometheusPort))
+	promProxy := httputil.NewSingleHostReverseProxy(promTarget)
+	mux.Handle("/metrics", promProxy)
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 

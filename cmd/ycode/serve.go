@@ -89,7 +89,10 @@ var serveStatusCmd = &cobra.Command{
 			cfg.ProxyPort = servePort
 		}
 
-		stack := buildStackManager(cfg, dataDir)
+		stack, err := buildStackManager(cfg, dataDir)
+		if err != nil {
+			return err
+		}
 		port := cfg.ProxyPort
 		if port == 0 {
 			port = 58080
@@ -204,7 +207,10 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	}
 
 	// 1. Build and start observability stack first (no dependencies on API).
-	stack := buildStackManager(cfg, dataDir)
+	stack, err := buildStackManager(cfg, dataDir)
+	if err != nil {
+		return fmt.Errorf("build stack: %w", err)
+	}
 	mgr := stack.mgr
 	if err := mgr.Start(ctx); err != nil {
 		return fmt.Errorf("start observability stack: %w", err)
@@ -344,20 +350,45 @@ type stackComponents struct {
 }
 
 // buildStackManager creates and configures a StackManager with all embedded components.
-func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) *stackComponents {
+// All internal ports are allocated dynamically to avoid conflicts when running
+// multiple instances. Only the proxy port (--port) is user-specified.
+func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) (*stackComponents, error) {
 	mgr := observability.NewStackManager(cfg, dataDir)
 
-	vlogsPort := 9428
+	// Allocate ephemeral ports for all internal components.
+	allocate := observability.AllocatePort
+	vlogsPort, err := allocate()
+	if err != nil {
+		return nil, fmt.Errorf("victorialogs port: %w", err)
+	}
 	mgr.AddComponent(observability.NewVictoriaLogsComponent(vlogsPort, filepath.Join(dataDir, "vlogs")))
 
-	jaegerOTLPPort := 14317
-	jaegerQueryPort := 16686
+	jaegerOTLPPort, err := allocate()
+	if err != nil {
+		return nil, fmt.Errorf("jaeger otlp port: %w", err)
+	}
+	jaegerQueryPort, err := allocate()
+	if err != nil {
+		return nil, fmt.Errorf("jaeger query port: %w", err)
+	}
 	mgr.AddComponent(observability.NewJaegerComponent(jaegerOTLPPort, jaegerQueryPort, filepath.Join(dataDir, "jaeger")))
 
+	collGRPCPort, err := allocate()
+	if err != nil {
+		return nil, fmt.Errorf("collector grpc port: %w", err)
+	}
+	collHTTPPort, err := allocate()
+	if err != nil {
+		return nil, fmt.Errorf("collector http port: %w", err)
+	}
+	collPromPort, err := allocate()
+	if err != nil {
+		return nil, fmt.Errorf("collector prometheus port: %w", err)
+	}
 	collCfg := collector.Config{
-		GRPCPort:               4317,
-		HTTPPort:               4318,
-		PrometheusPort:         8889,
+		GRPCPort:               collGRPCPort,
+		HTTPPort:               collHTTPPort,
+		PrometheusPort:         collPromPort,
 		VictoriaLogsPort:       vlogsPort,
 		VictoriaLogsPathPrefix: "/logs",
 		JaegerOTLPPort:         jaegerOTLPPort,
@@ -371,7 +402,10 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) *stackCo
 
 	mgr.AddComponent(observability.NewAlertmanagerComponent())
 
-	persesPort := 18080
+	persesPort, err := allocate()
+	if err != nil {
+		return nil, fmt.Errorf("perses port: %w", err)
+	}
 	proxyPort := cfg.ProxyPort
 	if proxyPort == 0 {
 		proxyPort = 58080
@@ -386,7 +420,7 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) *stackCo
 	memosComp := observability.NewMemosComponent(filepath.Join(dataDir, "memos"))
 	mgr.AddComponent(memosComp)
 
-	return &stackComponents{mgr: mgr, memos: memosComp}
+	return &stackComponents{mgr: mgr, memos: memosComp}, nil
 }
 
 func loadServeConfig() (*config.ObservabilityConfig, string, error) {
