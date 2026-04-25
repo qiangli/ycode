@@ -21,7 +21,11 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   retries: 1,
   workers: 2,
-  reporter: [["list"], ["html", { open: "never" }]],
+  outputDir: "./test-results",
+  reporter: [
+    ["list"],
+    ["html", { open: "never", outputFolder: "./playwright-report" }],
+  ],
   use: {
     baseURL,
     headless: true,
