@@ -67,6 +67,15 @@ See [INSTRUCTIONS.md](./INSTRUCTIONS.md) for full details: skill dispatch, build
 
 **Commit conventions**: stage files by name (never `git add -A`), only stage your own changes, match the repo's prefix style from `git log` (`fix:`, `feat:`, `docs:`).
 
+**Pre-commit checks** -- ALWAYS run before committing:
+```bash
+go fmt ./...              # fix formatting
+go vet ./...              # catch issues
+go mod tidy               # sync dependencies
+make compile              # ensure it builds
+```
+All four must pass with no errors. Do NOT commit code with formatting issues, vet warnings, or stale go.mod/go.sum.
+
 ## Directory Boundaries
 
 - **`priorart/`** -- **read-only reference code.** Never modify files under `priorart/`. These are upstream submodules kept for exploration, research, and design reference. Do not create, edit, or delete anything in this tree.
