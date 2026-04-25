@@ -112,6 +112,6 @@ func DetectProvider() Provider {
 		}
 	}
 
-	// Default: hash-based provider — no API calls, no cost.
-	return NewSimpleHashProvider(384)
+	// Default: TF-IDF provider — local, fast, free, keyword-semantic similarity.
+	return NewTFIDFProvider(384)
 }

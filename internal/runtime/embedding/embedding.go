@@ -26,6 +26,13 @@ type Provider interface {
 	Dimensions() int
 }
 
+// Learner is optionally implemented by providers that build vocabulary
+// from documents (e.g. TF-IDF). Call Learn during indexing to improve
+// embedding quality before using Embed for queries.
+type Learner interface {
+	Learn(text string)
+}
+
 // SimpleHashProvider is a deterministic embedding provider that uses hashing.
 // It generates consistent embeddings without requiring an external API.
 // Useful for testing and as a fallback when no API-based provider is available.

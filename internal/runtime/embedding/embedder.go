@@ -93,6 +93,13 @@ func (e *Embedder) EmbedCodeFile(ctx context.Context, relPath string) error {
 	chunks := splitCodeChunks(string(content), 2048)
 	ext := strings.TrimPrefix(filepath.Ext(relPath), ".")
 
+	// If the provider supports learning (e.g. TF-IDF), build vocabulary first.
+	if learner, ok := e.provider.(Learner); ok {
+		for _, chunk := range chunks {
+			learner.Learn(chunk)
+		}
+	}
+
 	var docs []storage.VectorDocument
 	for i, chunk := range chunks {
 		emb, err := e.provider.Embed(ctx, chunk)
