@@ -237,8 +237,10 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 					fmt.Printf("Web UI at          http://127.0.0.1:%d/ycode/\n", port)
 				}
 			}
-			// Add MCP telemetry server for external agent access.
-			mcpHandler := observability.NewTelemetryHandler()
+			// Add MCP server — exposes the entire observability stack to external AI agents.
+			proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+			persesDBDir := filepath.Join(dataDir, "perses", "data")
+			mcpHandler := observability.NewTelemetryHandler(proxyURL, persesDBDir)
 			mcpHTTP := observability.NewMCPHTTPHandler(mcpHandler)
 			mcpComp := observability.NewMCPComponent(mcpHTTP)
 			if err := mgr.AddLateComponent(ctx, mcpComp); err != nil {

@@ -274,6 +274,58 @@ func slugify(s string) string {
 	return s
 }
 
+// CreateDashboard creates a single dashboard in the Perses file database.
+// project is the project slug, name is the display name, panels is the panel list.
+// The dashboard is written to dataDir/dashboards/{project}/{slug}.json.
+// If overwrite is true, existing dashboards are replaced.
+func CreateDashboard(dataDir, project, name string, panels []simplifiedPanel, overwrite bool) error {
+	now := time.Now().UTC()
+
+	// Ensure project exists.
+	projDir := filepath.Join(dataDir, "projects")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		return err
+	}
+	projPath := filepath.Join(projDir, project+".json")
+	if _, err := os.Stat(projPath); os.IsNotExist(err) {
+		proj := buildProject(project, project, now)
+		if err := writeJSON(projPath, proj); err != nil {
+			return fmt.Errorf("create project: %w", err)
+		}
+	}
+
+	// Create dashboard.
+	dbDir := filepath.Join(dataDir, "dashboards", project)
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		return err
+	}
+
+	d := simplifiedDashboard{Name: name, Panels: panels}
+	db := buildDashboard(project, d, now)
+	dbSlug := slugify(name)
+	dbPath := filepath.Join(dbDir, dbSlug+".json")
+
+	if !overwrite {
+		if _, err := os.Stat(dbPath); err == nil {
+			return fmt.Errorf("dashboard %q already exists in project %q", name, project)
+		}
+	}
+
+	return writeJSON(dbPath, db)
+}
+
+// SimplifiedPanel is the exported panel type for dynamic dashboard creation.
+type SimplifiedPanel = simplifiedPanel
+
+// writeJSON writes JSON to path, creating or overwriting.
+func writeJSON(path string, v any) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", filepath.Base(path), err)
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
 // writeJSONIfMissing writes JSON to path only if the file doesn't already exist.
 // This avoids overwriting user modifications.
 func writeJSONIfMissing(path string, v any) error {
