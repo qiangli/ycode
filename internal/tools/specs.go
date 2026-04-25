@@ -347,6 +347,24 @@ func builtinSpecs() []*ToolSpec {
 			Source:       SourceBuiltin,
 		},
 
+		// Traces — agent-facing OTEL trace query
+		{
+			Name:         "query_traces",
+			Description:  "Query OTEL trace spans from local telemetry files. Use for debugging slow operations, finding errors, or understanding execution flow. Supports recent spans, slow span detection, error spans, and summary views.",
+			InputSchema:  mustJSON(queryTracesSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
+		// Logs — agent-facing conversation log query
+		{
+			Name:         "query_logs",
+			Description:  "Query conversation logs from local telemetry files. Use for reviewing past turns, finding errors, searching response content, or analyzing token usage and cost. Supports recent turns, error analysis, text search, and cost summaries.",
+			InputSchema:  mustJSON(queryLogsSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
 		// Memos — persistent long-term memory storage
 		{
 			Name:         "MemosStore",
@@ -812,6 +830,54 @@ var (
 			"threshold_ms": {
 				"type": "integer",
 				"description": "Duration threshold in milliseconds for slow_tools query (default: 5000)"
+			}
+		},
+		"required": ["query_type"]
+	}`
+
+	queryTracesSchema = `{
+		"type": "object",
+		"properties": {
+			"query_type": {
+				"type": "string",
+				"enum": ["recent_spans", "slow_spans", "error_spans", "summary"],
+				"description": "Type of trace query: recent_spans (latest spans), slow_spans (spans exceeding threshold), error_spans (spans with errors), summary (aggregated span counts and durations)"
+			},
+			"limit": {
+				"type": "integer",
+				"description": "Maximum results to return (default: 20, max: 100)"
+			},
+			"threshold_ms": {
+				"type": "integer",
+				"description": "Duration threshold in milliseconds for slow_spans query (default: 5000)"
+			},
+			"session_id": {
+				"type": "string",
+				"description": "Filter by session ID. Omit for all sessions."
+			}
+		},
+		"required": ["query_type"]
+	}`
+
+	queryLogsSchema = `{
+		"type": "object",
+		"properties": {
+			"query_type": {
+				"type": "string",
+				"enum": ["recent_turns", "turn_errors", "search", "cost_summary"],
+				"description": "Type of log query: recent_turns (latest conversation turns), turn_errors (turns with errors), search (text search in responses), cost_summary (token usage and cost aggregation)"
+			},
+			"limit": {
+				"type": "integer",
+				"description": "Maximum results to return (default: 20, max: 100)"
+			},
+			"pattern": {
+				"type": "string",
+				"description": "Search pattern for 'search' query type. Case-insensitive text search in responses and tool calls."
+			},
+			"session_id": {
+				"type": "string",
+				"description": "Filter by session ID. Omit for all sessions."
 			}
 		},
 		"required": ["query_type"]

@@ -102,7 +102,21 @@ func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Reg
 	// Start retention cleanup.
 	yotel.StartRetentionCleanup(ctx, dataDir, 3*24*time.Hour)
 
-	slog.Debug("otel: file-only mode initialized", "dataDir", dataDir)
+	// Try connecting to a running collector for dual-export.
+	// This enables the workflow: start ycode solo, then start ycode serve,
+	// and ycode auto-publishes to the shared collector.
+	collectorAddr := "127.0.0.1:4317"
+	if cfg.Observability != nil && cfg.Observability.CollectorAddr != "" {
+		collectorAddr = cfg.Observability.CollectorAddr
+	}
+	if otelProvider.TryConnectCollector(ctx, collectorAddr) {
+		slog.Debug("otel: dual-export mode (file + collector)", "collector", collectorAddr)
+		if otelProvider.LoggerProvider != nil {
+			convCfg.ConvLogger = yotel.NewConversationLogger(otelProvider.LoggerProvider, instanceID)
+		}
+	} else {
+		slog.Debug("otel: file-only mode (no collector available)", "dataDir", dataDir)
+	}
 
 	return &otelResult{
 		shutdown: func() {

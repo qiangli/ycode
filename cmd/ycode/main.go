@@ -306,6 +306,11 @@ func newApp() (*cli.App, error) {
 		tools.SetMetricsSessionID(sess.ID)
 		tools.RegisterQueryMetricsHandler(toolReg)
 
+		// Wire agent-facing trace and log query tools.
+		tools.SetOTELDataDir(resolveOTELDataDir(cfg.Observability))
+		tools.RegisterQueryTracesHandler(toolReg)
+		tools.RegisterQueryLogsHandler(toolReg)
+
 		// Index any existing JSONL sessions not yet in SQLite.
 		indexer := session.NewIndexer(sqlStore, sessionDir)
 		if n, err := indexer.IndexAll(ctx); err != nil {

@@ -210,6 +210,77 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 	return p, nil
 }
 
+// TryConnectCollector attempts to add gRPC exporters to a running collector.
+// If the collector is unreachable, it logs a warning and returns false.
+// This enables graceful upgrade from file-only to dual-export mode.
+func (p *Provider) TryConnectCollector(ctx context.Context, addr string) bool {
+	if addr == "" {
+		return false
+	}
+
+	// Try trace exporter.
+	grpcCtx, grpcCancel := context.WithTimeout(ctx, grpcConnectTimeout)
+	traceExp, err := otlptracegrpc.New(grpcCtx,
+		otlptracegrpc.WithEndpoint(addr),
+		otlptracegrpc.WithInsecure(),
+	)
+	grpcCancel()
+	if err != nil {
+		slog.Debug("otel: collector not available for traces", "addr", addr, "error", err)
+		return false
+	}
+
+	// Try metric exporter.
+	grpcCtx2, grpcCancel2 := context.WithTimeout(ctx, grpcConnectTimeout)
+	metricExp, err := otlpmetricgrpc.New(grpcCtx2,
+		otlpmetricgrpc.WithEndpoint(addr),
+		otlpmetricgrpc.WithInsecure(),
+	)
+	grpcCancel2()
+	if err != nil {
+		slog.Debug("otel: collector not available for metrics", "addr", addr, "error", err)
+		_ = traceExp.Shutdown(ctx)
+		return false
+	}
+
+	// Try log exporter.
+	grpcCtx3, grpcCancel3 := context.WithTimeout(ctx, grpcConnectTimeout)
+	logExp, err := otlploggrpc.New(grpcCtx3,
+		otlploggrpc.WithEndpoint(addr),
+		otlploggrpc.WithInsecure(),
+	)
+	grpcCancel3()
+	if err != nil {
+		slog.Debug("otel: collector not available for logs", "addr", addr, "error", err)
+		_ = traceExp.Shutdown(ctx)
+		_ = metricExp.Shutdown(ctx)
+		return false
+	}
+
+	// Register gRPC exporters as additional batch processors.
+	p.TracerProvider.RegisterSpanProcessor(sdktrace.NewBatchSpanProcessor(traceExp))
+	p.shutdownFuncs = append(p.shutdownFuncs, traceExp.Shutdown)
+
+	// Note: MeterProvider doesn't support dynamic reader addition after creation.
+	// The metric exporter is registered but may not be picked up until restart.
+	p.shutdownFuncs = append(p.shutdownFuncs, metricExp.Shutdown)
+
+	// Set up log provider if not already set.
+	if p.LoggerProvider == nil {
+		res, _ := resource.New(ctx)
+		p.LoggerProvider = sdklog.NewLoggerProvider(
+			sdklog.WithResource(res),
+			sdklog.WithProcessor(sdklog.NewBatchProcessor(logExp)),
+		)
+		p.shutdownFuncs = append(p.shutdownFuncs, p.LoggerProvider.Shutdown)
+		otellog.SetLoggerProvider(p.LoggerProvider)
+	}
+	p.shutdownFuncs = append(p.shutdownFuncs, logExp.Shutdown)
+
+	slog.Info("otel: connected to collector", "addr", addr)
+	return true
+}
+
 // newRotatingTraceExporter creates a file-based trace exporter writing to dataDir/traces/.
 func newRotatingTraceExporter(dataDir string, opener FileOpener) (sdktrace.SpanExporter, func(context.Context) error, error) {
 	dir := filepath.Join(dataDir, "traces")
