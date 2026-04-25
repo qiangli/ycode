@@ -62,8 +62,8 @@ func TestProxyServer(t *testing.T) {
 		if resp.StatusCode != 200 {
 			t.Errorf("status = %d, want 200", resp.StatusCode)
 		}
-		if !strings.Contains(string(body), "ycode Observability") {
-			t.Errorf("body should contain 'ycode Observability', got %q", string(body))
+		if !strings.Contains(string(body), "ycode Pulse") {
+			t.Errorf("body should contain 'ycode Pulse', got %q", string(body))
 		}
 		if !strings.Contains(string(body), "/test/") {
 			t.Errorf("body should list /test/ route, got %q", string(body))

@@ -6,19 +6,21 @@ import (
 	"sync/atomic"
 )
 
-// MCPComponent wraps the MCP telemetry server as an observability stack
-// component, mountable on the reverse proxy at /mcp/.
+// MCPComponent wraps the Pulse MCP server as an observability stack
+// component, mountable on the reverse proxy at /pulse/.
+// Pulse is ycode's observability hub — traces, metrics, logs, dashboards,
+// alerts, all controllable via MCP protocol.
 type MCPComponent struct {
 	handler http.Handler
 	healthy atomic.Bool
 }
 
-// NewMCPComponent creates a component serving the MCP telemetry server.
+// NewMCPComponent creates a component serving the Pulse MCP server.
 func NewMCPComponent(handler http.Handler) *MCPComponent {
 	return &MCPComponent{handler: handler}
 }
 
-func (c *MCPComponent) Name() string { return "mcp" }
+func (c *MCPComponent) Name() string { return "pulse" }
 
 func (c *MCPComponent) Start(ctx context.Context) error {
 	c.healthy.Store(true)

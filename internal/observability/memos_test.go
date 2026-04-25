@@ -290,7 +290,7 @@ func TestMemosProxyIntegration(t *testing.T) {
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
-		if !strings.Contains(string(body), "ycode Observability") {
+		if !strings.Contains(string(body), "ycode Pulse") {
 			t.Error("landing page broken")
 		}
 	})

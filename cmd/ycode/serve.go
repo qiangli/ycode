@@ -245,9 +245,9 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 			mcpHTTP := observability.NewMCPHTTPHandler(mcpHandler)
 			mcpComp := observability.NewMCPComponent(mcpHTTP)
 			if err := mgr.AddLateComponent(ctx, mcpComp); err != nil {
-				slog.Warn("MCP server not available", "error", err)
+				slog.Warn("Pulse MCP not available", "error", err)
 			} else {
-				fmt.Printf("MCP server at      http://127.0.0.1:%d/mcp/\n", port)
+				fmt.Printf("Pulse MCP at       http://127.0.0.1:%d/pulse/\n", port)
 			}
 
 			if api.natsSrv != nil {
@@ -420,6 +420,29 @@ func loadFullServeConfig() (*config.Config, *config.ObservabilityConfig, string,
 	return cfg, obsCfg, dataDir, nil
 }
 
+// pulseCmd is the branded alias for serve — starts the ycode Pulse observability hub.
+var pulseCmd = &cobra.Command{
+	Use:   "pulse",
+	Short: "Start ycode Pulse — the observability and agent coordination hub",
+	Long: `Pulse is ycode's nervous system — traces, metrics, logs, dashboards, alerts,
+and MCP server for external agent access, all in one command.
+
+Services started:
+  Traces       Jaeger for distributed tracing
+  Metrics      Prometheus + Perses dashboards
+  Logs         VictoriaLogs for structured log search
+  Alerts       Alertmanager for alert routing
+  MCP          Model Context Protocol server at /pulse/
+  API          HTTP/WebSocket server + web UI
+  NATS         Message bus for multi-instance coordination
+
+Connect from Claude Code or any MCP client:
+  {"mcpServers": {"ycode-pulse": {"url": "http://localhost:58080/pulse/"}}}
+
+This is equivalent to 'ycode serve'.`,
+	RunE: serveCmd.RunE,
+}
+
 func init() {
 	serveCmd.PersistentFlags().IntVar(&servePort, "port", 58080, "Port for the observability server")
 	serveCmd.Flags().BoolVar(&serveDetach, "detach", false, "Run server in background")
@@ -431,4 +454,18 @@ func init() {
 
 	serveCmd.AddCommand(serveStopCmd, serveStatusCmd, serveDashboardCmd, serveResetCmd, serveAuditCmd)
 	rootCmd.AddCommand(serveCmd)
+
+	// Pulse is the branded alias — shares flags and subcommands with serve.
+	pulseCmd.PersistentFlags().IntVar(&servePort, "port", 58080, "Port for Pulse server")
+	pulseCmd.Flags().BoolVar(&serveDetach, "detach", false, "Run server in background")
+	pulseCmd.Flags().BoolVar(&serveNoAPI, "no-api", false, "Disable the API/WebSocket server")
+	pulseCmd.Flags().BoolVar(&serveNoNATS, "no-nats", false, "Disable the embedded NATS server")
+	pulseCmd.Flags().IntVar(&apiNATSPort, "nats-port", 4222, "Port for the embedded NATS server")
+	pulseCmd.AddCommand(
+		&cobra.Command{Use: "stop", Short: "Stop Pulse", RunE: serveStopCmd.RunE},
+		&cobra.Command{Use: "status", Short: "Show Pulse component health", RunE: serveStatusCmd.RunE},
+		&cobra.Command{Use: "dashboard", Short: "Open Pulse dashboard in browser", RunE: serveDashboardCmd.RunE},
+		&cobra.Command{Use: "reset", Short: "Remove all Pulse data", RunE: serveResetCmd.RunE},
+	)
+	rootCmd.AddCommand(pulseCmd)
 }
