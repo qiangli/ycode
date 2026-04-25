@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -34,8 +35,84 @@ type ExecResult struct {
 	ExitCode int    `json:"exit_code"`
 }
 
+// ErrNeedsTTY is returned when a command requires interactive terminal access.
+// The user should run these commands via "!! <command>" in the TUI.
+var ErrNeedsTTY = fmt.Errorf("command requires interactive terminal access")
+
+// NeedsTTY returns true if a command is likely to prompt for interactive
+// input (password, confirmation, etc.) and needs full terminal access.
+func NeedsTTY(command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return false
+	}
+	base := fields[0]
+
+	// Commands that commonly prompt for passwords or interactive input.
+	switch base {
+	case "ssh", "scp", "sftp":
+		return true
+	case "sudo", "su", "passwd":
+		return true
+	case "gcloud":
+		// gcloud auth login, gcloud init
+		if len(fields) > 1 && (fields[1] == "auth" || fields[1] == "init") {
+			return true
+		}
+	case "az":
+		// az login
+		if len(fields) > 1 && fields[1] == "login" {
+			return true
+		}
+	case "aws":
+		// aws sso login, aws configure
+		if len(fields) > 1 && (fields[1] == "sso" || fields[1] == "configure") {
+			return true
+		}
+	case "docker":
+		if len(fields) > 1 && fields[1] == "login" {
+			return true
+		}
+	case "gh":
+		if len(fields) > 1 && fields[1] == "auth" {
+			return true
+		}
+	case "npm":
+		if len(fields) > 1 && fields[1] == "login" {
+			return true
+		}
+	case "mysql", "psql", "mongo", "mongosh", "redis-cli":
+		return true
+	case "ftp", "telnet":
+		return true
+	}
+
+	// Pipe to interactive pager.
+	if strings.Contains(command, "| less") || strings.Contains(command, "| more") ||
+		strings.Contains(command, "| vi") || strings.Contains(command, "| vim") ||
+		strings.Contains(command, "| nano") || strings.Contains(command, "| emacs") {
+		return true
+	}
+
+	// Editors launched directly.
+	switch base {
+	case "vi", "vim", "nvim", "nano", "emacs", "pico", "less", "more":
+		return true
+	}
+
+	return false
+}
+
 // Execute runs a bash command and returns the result.
 func Execute(ctx context.Context, params ExecParams) (*ExecResult, error) {
+	// Reject commands that need interactive terminal access — they would
+	// hang waiting for stdin that can never arrive through piped execution.
+	if NeedsTTY(params.Command) {
+		return nil, fmt.Errorf("%w: %q requires user interaction (password, confirmation, etc.). "+
+			"The user should run this command directly in their terminal using: !! %s",
+			ErrNeedsTTY, params.Command, params.Command)
+	}
+
 	timeout := DefaultTimeout
 	if params.Timeout > 0 {
 		timeout = time.Duration(params.Timeout) * time.Millisecond
@@ -55,6 +132,9 @@ func Execute(ctx context.Context, params ExecParams) (*ExecResult, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	// Explicitly prevent stdin reads — commands that need interactive input
+	// are rejected above; this ensures any missed cases get EOF instead of hanging.
+	cmd.Stdin, _ = os.Open(os.DevNull)
 
 	err := cmd.Run()
 
