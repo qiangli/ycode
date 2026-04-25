@@ -10,6 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/permission"
@@ -490,6 +493,24 @@ func (r *Runtime) turnResultToContentBlocks(result *TurnResult) []api.ContentBlo
 // concurrently within per-category limits. Progress events are sent to the
 // progress channel if non-nil; the caller must close it after this returns.
 func (r *Runtime) ExecuteTools(ctx context.Context, calls []ToolCall, progress chan<- taskqueue.TaskEvent) []api.ContentBlock {
+	// Create parent span if OTEL is configured — child tool spans from
+	// middleware become children automatically via context propagation.
+	if r.otel != nil && r.otel.Tracer != nil {
+		toolNames := make([]string, len(calls))
+		for i, c := range calls {
+			toolNames[i] = c.Name
+		}
+		var span trace.Span
+		ctx, span = r.otel.Tracer.Start(ctx, "ycode.tools.execute",
+			trace.WithAttributes(
+				attribute.Int("tools.count", len(calls)),
+				attribute.Bool("tools.parallel", r.config.Parallel.Enabled && len(calls) > 1),
+				attribute.String("tools.names", strings.Join(toolNames, ",")),
+			),
+		)
+		defer span.End()
+	}
+
 	var results []api.ContentBlock
 	if !r.config.Parallel.Enabled || len(calls) <= 1 {
 		results = r.executeToolsSequential(ctx, calls, progress)

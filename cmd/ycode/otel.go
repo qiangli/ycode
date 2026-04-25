@@ -36,7 +36,87 @@ func resolveOTELDataDir(obs *config.ObservabilityConfig) string {
 	return filepath.Join(home, ".agents", "ycode", "otel")
 }
 
-// setupOTEL initializes OTEL instrumentation and returns the result.
+// setupFileOTEL initializes lightweight file-only OTEL instrumentation for CLI mode.
+// No collector, no gRPC — traces and metrics persist to local JSONL files.
+// This is always-on so every ycode session produces queryable telemetry.
+func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registry, provider api.Provider, opener yotel.FileOpener) *otelResult {
+	dataDir := resolveOTELDataDir(cfg.Observability)
+	instanceID := sess.ID
+	instanceDir := filepath.Join(dataDir, "instances", instanceID)
+
+	ctx := context.Background()
+	otelProvider, err := yotel.NewProvider(ctx, yotel.ProviderConfig{
+		// No CollectorAddr — file-only mode.
+		ServiceName:    "ycode",
+		ServiceVersion: version,
+		SessionID:      sess.ID,
+		InstanceID:     instanceID,
+		SampleRate:     1.0,
+		DataDir:        dataDir,
+		InstanceDir:    instanceDir,
+		PersistTraces:  true,
+		PersistMetrics: true,
+		Opener:         opener,
+	})
+	if err != nil {
+		slog.Warn("otel: file-only init failed, continuing without telemetry", "error", err)
+		return &otelResult{shutdown: func() {}}
+	}
+
+	// Apply tool middleware for per-tool spans.
+	tracer := otelProvider.Tracer("ycode.tools")
+	mw := yotel.ToolMiddleware(tracer, otelProvider.Instruments)
+	for _, name := range toolReg.Names() {
+		toolName := name
+		if err := toolReg.ApplyMiddleware(toolName, func(next tools.ToolFunc) tools.ToolFunc {
+			wrapped := mw(toolName, yotel.ToolFunc(next))
+			return tools.ToolFunc(wrapped)
+		}); err != nil {
+			slog.Debug("otel: apply tool middleware", "tool", toolName, "error", err)
+		}
+	}
+
+	providerKind := ""
+	if provider != nil {
+		providerKind = string(provider.Kind())
+	}
+
+	convCfg := &conversation.OTELConfig{
+		Tracer:   otelProvider.Tracer("ycode.conversation"),
+		Inst:     otelProvider.Instruments,
+		Provider: providerKind,
+	}
+
+	// Set up request logger for conversation audit (always enabled in file mode).
+	reqLogger, err := yotel.NewRequestLogger(instanceDir, yotel.RequestLoggerConfig{
+		RetentionDays:  3,
+		LogToolDetails: true,
+		Opener:         opener,
+	})
+	if err != nil {
+		slog.Debug("otel: request logger init failed", "error", err)
+	} else {
+		convCfg.ReqLogger = reqLogger
+	}
+
+	// Start retention cleanup.
+	yotel.StartRetentionCleanup(ctx, dataDir, 3*24*time.Hour)
+
+	slog.Debug("otel: file-only mode initialized", "dataDir", dataDir)
+
+	return &otelResult{
+		shutdown: func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := otelProvider.Shutdown(shutdownCtx); err != nil {
+				slog.Debug("otel: shutdown error", "error", err)
+			}
+		},
+		convOTEL: convCfg,
+	}
+}
+
+// setupOTEL initializes full OTEL instrumentation with gRPC export to collector.
 // It is non-blocking — if initialization fails, it logs a warning and returns a no-op.
 func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registry, provider api.Provider, opener yotel.FileOpener) *otelResult {
 	obs := cfg.Observability

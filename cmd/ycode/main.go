@@ -371,10 +371,14 @@ func newApp() (*cli.App, error) {
 	// Start background memory consolidation (stale removal, dedup).
 	go memory.NewDreamer(memManager, true).Start(rootCtx)
 
-	// Wire OTEL observability (optional, non-blocking).
+	// Wire OTEL observability.
+	// Always-on: file-only mode persists traces/metrics/logs locally.
+	// With Observability.Enabled: full mode adds gRPC export to collector.
 	var otelRes *otelResult
 	if cfg.Observability != nil && cfg.Observability.Enabled {
 		otelRes = setupOTEL(cfg, sess, toolReg, provider, v)
+	} else {
+		otelRes = setupFileOTEL(cfg, sess, toolReg, provider, v)
 	}
 	var convOTEL *conversation.OTELConfig
 	if otelRes != nil {

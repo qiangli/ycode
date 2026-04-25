@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -102,6 +103,67 @@ type TUIModel struct {
 
 	// Side query state.
 	sideQueryCount int // for numbering /btw output sections
+}
+
+// tuiLogger is a dedicated logger for TUI state transitions.
+// All entries include the component=tui attribute for filtering.
+var tuiLogger = slog.Default().With("component", "tui")
+
+// logState logs a TUI state transition with the current state snapshot.
+func (m *TUIModel) logState(event string, extra ...any) {
+	args := []any{
+		"event", event,
+		"working", m.working,
+		"paused", m.paused,
+		"confirming", m.confirming,
+		"pauseRequested", m.pauseRequested,
+	}
+	args = append(args, extra...)
+	tuiLogger.Debug("tui.state", args...)
+}
+
+// debugState returns a diagnostic snapshot of the TUI state machine.
+func (m *TUIModel) debugState() string {
+	var b strings.Builder
+	b.WriteString("=== ycode debug state ===\n")
+	fmt.Fprintf(&b, "working:        %v\n", m.working)
+	fmt.Fprintf(&b, "paused:         %v\n", m.paused)
+	fmt.Fprintf(&b, "confirming:     %v\n", m.confirming)
+	fmt.Fprintf(&b, "pauseRequested: %v\n", m.pauseRequested)
+
+	if m.midTurnCh != nil {
+		fmt.Fprintf(&b, "midTurnCh:      open (cap=%d)\n", cap(m.midTurnCh))
+	} else {
+		b.WriteString("midTurnCh:      nil\n")
+	}
+
+	if m.permChan != nil {
+		b.WriteString("permChan:       waiting\n")
+	} else {
+		b.WriteString("permChan:       nil\n")
+	}
+
+	fmt.Fprintf(&b, "pendingInputs:  %d\n", len(m.pendingInputs))
+
+	if m.workCancel != nil {
+		b.WriteString("workCancel:     set\n")
+	} else {
+		b.WriteString("workCancel:     nil\n")
+	}
+
+	fmt.Fprintf(&b, "permAlwaysAllow: %v\n", m.permAlwaysAllow)
+	fmt.Fprintf(&b, "turnMessages:   %d messages\n", len(m.turnMessages))
+	fmt.Fprintf(&b, "pausedMessages: %d messages\n", len(m.pausedMessages))
+	fmt.Fprintf(&b, "pausedCalls:    %d calls\n", len(m.pausedCalls))
+
+	if m.cl != nil {
+		b.WriteString("client:         connected\n")
+	} else {
+		b.WriteString("client:         direct (no service layer)\n")
+	}
+
+	b.WriteString("========================\n\n")
+	return b.String()
 }
 
 // toolTaskProgress tracks a single tool's execution state.
@@ -378,6 +440,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pauseRequested = false
 				m.pendingInputs = nil
 				m.midTurnCh = nil
+				m.logState("cancel", "trigger", "ctrl+c")
 				m.appendOutput("\n⏹ Cancelled.\n\n")
 				cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
 				break
@@ -439,6 +502,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						close(m.midTurnCh)
 						m.midTurnCh = nil
 					}
+					m.logState("pause_requested", "trigger", "/pause")
 					m.appendOutput("\n⏸ Pausing at next safe point...\n")
 					break
 				}
@@ -499,10 +563,12 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// If user previously chose "always allow", auto-approve.
 		if m.permAlwaysAllow {
 			msg.ReplyCh <- true
+			m.logState("permission_auto_approved", "tool", msg.ToolName)
 			return m, nil
 		}
 		// A tool is requesting elevated permission — show confirmation dialog.
 		m.confirming = true
+		m.logState("permission_prompt", "tool", msg.ToolName, "mode", msg.RequiredMode.String())
 		m.confirmPrompt = fmt.Sprintf("Allow tool %q (%s)? (y/n/a)", msg.ToolName, msg.RequiredMode)
 		m.permChan = msg.ReplyCh
 		m.confirmYes = func() tea.Cmd {
@@ -528,6 +594,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.midTurnCh = nil
 			m.pauseRequested = false
 			m.pendingInputs = nil // clear queue on error
+			m.logState("turn_error", "error", msg.Err.Error())
 			// Check if it was a cancellation.
 			if msg.Err.Error() == "turn 1: stream: context canceled" || strings.Contains(msg.Err.Error(), "context canceled") {
 				m.appendOutput("\n⏹ Cancelled.\n\n")
@@ -588,6 +655,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.workCancel = nil
 			m.midTurnCh = nil
 			m.pauseRequested = false
+			m.logState("turn_complete", "trigger", "no_tool_calls")
 			m.appendOutput("\n✓ Done.\n\n")
 			// Show session summary.
 			m.appendOutput(formatSessionSummary(m.app.usageTracker, m.app.sessionStart))
@@ -658,6 +726,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pausedMessages = m.turnMessages
 			m.pausedCalls = result.ToolCalls
 			m.midTurnCh = nil
+			m.logState("paused", "trigger", "pauseRequested", "pending_tools", len(result.ToolCalls))
 			m.appendOutput("\n⏸ Paused. Type additional context, then /resume to continue.\n\n")
 			return m, func() tea.Msg { return repaintMsg{} }
 		}
@@ -673,6 +742,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pausedMessages = msg.Messages
 		m.pausedCalls = msg.Calls
 		m.midTurnCh = nil
+		m.logState("paused", "trigger", "pausedMsg", "pending_tools", len(msg.Calls))
 		m.appendOutput("\n⏸ Paused. Type additional context, then /resume to continue.\n\n")
 		cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
 
@@ -1131,6 +1201,12 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 		}
 	}
 
+	if text == "/debug" {
+		m.appendOutput(fmt.Sprintf("> %s\n", text))
+		m.appendOutput(m.debugState())
+		return func() tea.Msg { return repaintMsg{} }
+	}
+
 	if strings.HasPrefix(text, "/") {
 		rest := text[1:]
 		name, args, _ := strings.Cut(rest, " ")
@@ -1183,6 +1259,7 @@ func (m *TUIModel) startAgentTurn(userPrompt string) tea.Cmd {
 	m.paused = false
 	m.pauseRequested = false
 	m.midTurnCh = make(chan string, 8)
+	m.logState("turn_start", "trigger", "user_input")
 
 	m.appendOutput("⧗ Sending to LLM...\n")
 
@@ -1315,6 +1392,7 @@ func (m *TUIModel) resumeAgentTurn() tea.Cmd {
 	m.paused = false
 	m.pauseRequested = false
 	m.midTurnCh = make(chan string, 8)
+	m.logState("resume", "pending_tools", len(m.pausedCalls))
 	m.turnMessages = m.pausedMessages
 	m.pausedMessages = nil
 

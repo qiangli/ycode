@@ -7,6 +7,10 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/agentpool"
@@ -59,6 +63,20 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 			"mode", mode,
 			"description", manifest.Description,
 		)
+
+		// Create OTEL span for the entire subagent lifecycle.
+		tracer := otel.Tracer("ycode.subagent")
+		ctx, span := tracer.Start(ctx, "ycode.subagent",
+			trace.WithAttributes(
+				attribute.String("agent.id", agentID),
+				attribute.String("agent.type", string(manifest.Type)),
+				attribute.String("agent.mode", string(mode)),
+				attribute.String("agent.description", manifest.Description),
+			),
+		)
+		defer func() {
+			span.End()
+		}()
 
 		pool := sc.AgentPool
 		if pool != nil {
@@ -168,6 +186,8 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 
 			if err := <-errc; err != nil {
 				completeAgent(true)
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
 				return "", fmt.Errorf("subagent turn %d: %w", i+1, err)
 			}
 
@@ -177,6 +197,7 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 			if len(toolCalls) == 0 {
 				logger.Info("subagent completed", "turns", i+1)
 				completeAgent(false)
+				span.SetAttributes(attribute.Int("agent.turns", i+1))
 				return textContent, nil
 			}
 
@@ -217,7 +238,10 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 		}
 
 		completeAgent(true)
-		return "", fmt.Errorf("subagent exceeded maximum iterations (%d)", maxSubagentIterations)
+		err := fmt.Errorf("subagent exceeded maximum iterations (%d)", maxSubagentIterations)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return "", err
 	}
 }
 
