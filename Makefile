@@ -23,8 +23,8 @@ help: ## Show this help
 init: ## Initialize and update git submodules recursively
 	git submodule init && git submodule update --recursive
 
-sync: ## Pull latest changes for all submodules
-	git submodule foreach --recursive 'git pull --rebase origin $$(git rev-parse --abbrev-ref HEAD)'
+sync: ## Pull latest changes for all submodules (skips on conflict)
+	@./scripts/sync-submodules.sh
 
 # ─── Build ──────────────────────────────────────────────────────────────────
 
