@@ -518,6 +518,25 @@ func (r *Runtime) ExecuteTools(ctx context.Context, calls []ToolCall, progress c
 		results = r.executeToolsParallel(ctx, calls, progress)
 	}
 
+	// Record batch results on parent span if OTEL is configured.
+	if r.otel != nil && r.otel.Tracer != nil {
+		succeeded, failed, totalSize := 0, 0, 0
+		for _, res := range results {
+			if res.IsError {
+				failed++
+			} else {
+				succeeded++
+			}
+			totalSize += len(res.Content)
+		}
+		span := trace.SpanFromContext(ctx)
+		span.SetAttributes(
+			attribute.Int("tools.succeeded", succeeded),
+			attribute.Int("tools.failed", failed),
+			attribute.Int("tools.output_size", totalSize),
+		)
+	}
+
 	// Activate deferred tools discovered via ToolSearch so they are included
 	// in subsequent API requests (providers reject tool_use for unknown tools).
 	for i, call := range calls {

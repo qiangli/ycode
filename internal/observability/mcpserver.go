@@ -315,8 +315,8 @@ func (h *TelemetryHandler) handleCreateDashboard(input json.RawMessage) (string,
 		return "", fmt.Errorf("Perses data directory not configured")
 	}
 	var params struct {
-		Project string                      `json:"project"`
-		Name    string                      `json:"name"`
+		Project string                       `json:"project"`
+		Name    string                       `json:"name"`
 		Panels  []dashboards.SimplifiedPanel `json:"panels"`
 	}
 	if err := json.Unmarshal(input, &params); err != nil {

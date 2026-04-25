@@ -189,6 +189,7 @@ type turnResultMsg struct {
 	Err         error
 	ToolResults []api.ContentBlock // tool results from preceding tool execution, if any
 	Streamed    bool               // true if text deltas were already sent to viewport
+	TraceCtx    context.Context    // trace context for span continuity across turn boundaries
 }
 
 // toolProgressMsg reports a tool's status change during parallel execution.
@@ -732,8 +733,9 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Execute tools and feed results back (in a Cmd to keep TUI responsive).
+		// Pass the trace context so tool spans are children of the turn span.
 		toolCalls := result.ToolCalls
-		return m, m.executeToolsCmd(toolCalls)
+		return m, m.executeToolsCmd(toolCalls, msg.TraceCtx)
 
 	case pausedMsg:
 		m.working = false
@@ -1302,7 +1304,7 @@ func (m *TUIModel) startAgentTurn(userPrompt string) tea.Cmd {
 		}
 		result, recovery, err := m.app.RunTurnWithRecoveryStreaming(ctx, msgs, onEvent)
 		if err != nil {
-			return turnResultMsg{Result: result, Recovery: recovery, Err: err, Streamed: true}
+			return turnResultMsg{Result: result, Recovery: recovery, Err: err, Streamed: true, TraceCtx: ctx}
 		}
 
 		// Check if /pause was requested during LLM streaming.
@@ -1343,7 +1345,7 @@ func (m *TUIModel) startAgentTurn(userPrompt string) tea.Cmd {
 			}
 		}
 
-		return turnResultMsg{Result: result, Recovery: recovery, Err: err, Streamed: true}
+		return turnResultMsg{Result: result, Recovery: recovery, Err: err, Streamed: true, TraceCtx: ctx}
 	}
 }
 
@@ -1400,7 +1402,7 @@ func (m *TUIModel) resumeAgentTurn() tea.Cmd {
 		// Paused before executing tool calls — execute them now.
 		calls := m.pausedCalls
 		m.pausedCalls = nil
-		return m.executeToolsCmd(calls)
+		return m.executeToolsCmd(calls, nil) // no trace context from pause
 	}
 
 	// Paused after tool execution — run the next LLM turn.
@@ -1428,14 +1430,21 @@ func (m *TUIModel) resumeAgentTurn() tea.Cmd {
 			}
 		}
 		result, recovery, err := m.app.RunTurnWithRecoveryStreaming(ctx, msgs, onEvent)
-		return turnResultMsg{Result: result, Recovery: recovery, Err: err, Streamed: true}
+		return turnResultMsg{Result: result, Recovery: recovery, Err: err, Streamed: true, TraceCtx: ctx}
 	}
 }
 
 // executeToolsCmd runs tool calls in a background Cmd and sends the next turn.
-func (m *TUIModel) executeToolsCmd(calls []conversation.ToolCall) tea.Cmd {
-	// Create a fresh cancellable context for tool execution + next turn.
-	ctx, cancel := context.WithCancel(context.Background())
+// traceCtx carries the trace context from the preceding LLM turn so tool spans
+// are children of the turn span in Jaeger. If nil, a fresh context is used.
+func (m *TUIModel) executeToolsCmd(calls []conversation.ToolCall, traceCtx context.Context) tea.Cmd {
+	// Create a cancellable context derived from the trace context to maintain
+	// span parent-child relationships across the turn→tools→turn chain.
+	parent := traceCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
 	m.workCancel = cancel
 
 	msgs := m.turnMessages

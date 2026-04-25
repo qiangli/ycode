@@ -49,6 +49,7 @@ type Provider struct {
 	LoggerProvider *sdklog.LoggerProvider
 	Instruments    *Instruments
 	resource       *resource.Resource // preserved for dynamic exporter addition
+	metricReaders  []sdkmetric.Reader // preserved for MeterProvider rebuild
 	shutdownFuncs  []func(context.Context) error
 }
 
@@ -171,6 +172,8 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 		p.shutdownFuncs = append(p.shutdownFuncs, shutdown)
 	}
 
+	p.metricReaders = metricReaders // preserve for MeterProvider rebuild in TryConnectCollector
+
 	var meterOpts []sdkmetric.Option
 	meterOpts = append(meterOpts, sdkmetric.WithResource(res))
 	for _, r := range metricReaders {
@@ -262,15 +265,16 @@ func (p *Provider) TryConnectCollector(ctx context.Context, addr string) bool {
 	p.TracerProvider.RegisterSpanProcessor(sdktrace.NewBatchSpanProcessor(traceExp))
 	p.shutdownFuncs = append(p.shutdownFuncs, traceExp.Shutdown)
 
-	// Rebuild MeterProvider with the gRPC exporter added.
-	// The SDK doesn't support dynamic reader addition, so we create a new
-	// provider that includes both the existing file reader(s) and the gRPC reader.
-	// Existing instruments continue to work because we update the global provider.
+	// Rebuild MeterProvider with the gRPC exporter added alongside existing file reader(s).
+	// The SDK doesn't support dynamic reader addition, so we create a new provider.
 	grpcReader := sdkmetric.NewPeriodicReader(metricExp, sdkmetric.WithInterval(15*time.Second))
-	newMeter := sdkmetric.NewMeterProvider(
-		sdkmetric.WithResource(p.resource),
-		sdkmetric.WithReader(grpcReader),
-	)
+	meterOpts := []sdkmetric.Option{sdkmetric.WithResource(p.resource)}
+	for _, r := range p.metricReaders {
+		meterOpts = append(meterOpts, sdkmetric.WithReader(r))
+	}
+	meterOpts = append(meterOpts, sdkmetric.WithReader(grpcReader))
+	p.metricReaders = append(p.metricReaders, grpcReader)
+	newMeter := sdkmetric.NewMeterProvider(meterOpts...)
 	p.shutdownFuncs = append(p.shutdownFuncs, metricExp.Shutdown)
 	p.shutdownFuncs = append(p.shutdownFuncs, newMeter.Shutdown)
 	otel.SetMeterProvider(newMeter)
