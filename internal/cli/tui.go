@@ -241,7 +241,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		vpHeight := max(m.height-statusBarHeight-textareaHeight-1, 1)
+		vpHeight := max(m.height-statusBarHeight-textareaHeight, 1)
 
 		if !m.ready {
 			m.viewport = viewport.New(m.width, vpHeight)
