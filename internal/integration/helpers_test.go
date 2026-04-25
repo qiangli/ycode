@@ -104,6 +104,19 @@ func readBody(resp *http.Response) (string, error) {
 	return string(body), nil
 }
 
+// pollUntil polls check at the given interval until it returns true or timeout expires.
+func pollUntil(t *testing.T, timeout, interval time.Duration, check func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if check() {
+			return
+		}
+		time.Sleep(interval)
+	}
+	t.Fatal("timed out waiting for condition")
+}
+
 // requireConnectivity skips the test if the server is unreachable.
 func requireConnectivity(t *testing.T) {
 	t.Helper()
