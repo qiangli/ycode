@@ -151,6 +151,9 @@ exporters:
     trace_storage: memstore
 
 service:
+  telemetry:
+    logs:
+      level: error
   extensions: [jaeger_storage, jaeger_query]
   pipelines:
     traces:

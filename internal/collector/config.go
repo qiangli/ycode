@@ -87,6 +87,8 @@ func GenerateYAML(cfg Config) string {
 	// Pipelines.
 	b.WriteString("\nservice:\n")
 	b.WriteString("  telemetry:\n")
+	b.WriteString("    logs:\n")
+	b.WriteString("      level: error\n")
 	b.WriteString("    metrics:\n")
 	b.WriteString("      level: none\n")
 	b.WriteString("  pipelines:\n")
