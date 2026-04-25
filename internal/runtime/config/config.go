@@ -174,6 +174,9 @@ func DefaultConfig() *Config {
 		Observability: &ObservabilityConfig{
 			Enabled:          false, // Only enabled explicitly via "ycode serve" or user config.
 			LogConversations: true,
+			LogToolDetails:   true,
+			PersistTraces:    true,
+			PersistMetrics:   true,
 		},
 	}
 }

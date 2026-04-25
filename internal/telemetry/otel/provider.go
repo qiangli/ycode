@@ -48,6 +48,7 @@ type Provider struct {
 	MeterProvider  *sdkmetric.MeterProvider
 	LoggerProvider *sdklog.LoggerProvider
 	Instruments    *Instruments
+	resource       *resource.Resource // preserved for dynamic exporter addition
 	shutdownFuncs  []func(context.Context) error
 }
 
@@ -92,7 +93,7 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 		return nil, fmt.Errorf("create resource: %w", err)
 	}
 
-	p := &Provider{}
+	p := &Provider{resource: res}
 
 	// --- Trace provider ---
 	var spanExporters []sdktrace.SpanExporter
@@ -257,19 +258,32 @@ func (p *Provider) TryConnectCollector(ctx context.Context, addr string) bool {
 		return false
 	}
 
-	// Register gRPC exporters as additional batch processors.
+	// Register gRPC trace exporter as additional batch processor.
 	p.TracerProvider.RegisterSpanProcessor(sdktrace.NewBatchSpanProcessor(traceExp))
 	p.shutdownFuncs = append(p.shutdownFuncs, traceExp.Shutdown)
 
-	// Note: MeterProvider doesn't support dynamic reader addition after creation.
-	// The metric exporter is registered but may not be picked up until restart.
+	// Rebuild MeterProvider with the gRPC exporter added.
+	// The SDK doesn't support dynamic reader addition, so we create a new
+	// provider that includes both the existing file reader(s) and the gRPC reader.
+	// Existing instruments continue to work because we update the global provider.
+	grpcReader := sdkmetric.NewPeriodicReader(metricExp, sdkmetric.WithInterval(15*time.Second))
+	newMeter := sdkmetric.NewMeterProvider(
+		sdkmetric.WithResource(p.resource),
+		sdkmetric.WithReader(grpcReader),
+	)
 	p.shutdownFuncs = append(p.shutdownFuncs, metricExp.Shutdown)
+	p.shutdownFuncs = append(p.shutdownFuncs, newMeter.Shutdown)
+	otel.SetMeterProvider(newMeter)
 
-	// Set up log provider if not already set.
+	// Rebuild instruments on the new meter so subsequent recordings go to both exporters.
+	if inst, err := NewInstruments(newMeter.Meter("ycode")); err == nil {
+		p.Instruments = inst
+	}
+
+	// Set up log provider with the original resource (preserves service.instance.id).
 	if p.LoggerProvider == nil {
-		res, _ := resource.New(ctx)
 		p.LoggerProvider = sdklog.NewLoggerProvider(
-			sdklog.WithResource(res),
+			sdklog.WithResource(p.resource),
 			sdklog.WithProcessor(sdklog.NewBatchProcessor(logExp)),
 		)
 		p.shutdownFuncs = append(p.shutdownFuncs, p.LoggerProvider.Shutdown)

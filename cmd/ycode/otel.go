@@ -110,13 +110,29 @@ func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Reg
 		collectorAddr = cfg.Observability.CollectorAddr
 	}
 	if otelProvider.TryConnectCollector(ctx, collectorAddr) {
-		slog.Debug("otel: dual-export mode (file + collector)", "collector", collectorAddr)
 		if otelProvider.LoggerProvider != nil {
 			convCfg.ConvLogger = yotel.NewConversationLogger(otelProvider.LoggerProvider, instanceID)
 		}
-	} else {
-		slog.Debug("otel: file-only mode (no collector available)", "dataDir", dataDir)
+		// Update instruments after TryConnectCollector rebuilds the meter.
+		convCfg.Inst = otelProvider.Instruments
 	}
+
+	// Bridge slog to OTEL so application logs (including TUI state transitions)
+	// flow through the OTEL pipeline — to files always, and to VictoriaLogs
+	// when a collector is connected.
+	if otelProvider.LoggerProvider != nil {
+		otelHandler := otelslog.NewHandler("ycode")
+		stderrHandler := slog.NewTextHandler(os.Stderr, nil)
+		teeHandler := &teeLogHandler{primary: stderrHandler, secondary: otelHandler}
+		slog.SetDefault(slog.New(teeHandler))
+	}
+
+	slog.Debug("otel: initialized", "mode", func() string {
+		if otelProvider.LoggerProvider != nil {
+			return "dual-export (file + collector)"
+		}
+		return "file-only"
+	}(), "dataDir", dataDir)
 
 	return &otelResult{
 		shutdown: func() {
