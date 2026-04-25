@@ -366,7 +366,9 @@ func newApp() (*cli.App, error) {
 		// Embed code files.
 		go func() {
 			if n, err := embedder.RunCodeEmbedding(rootCtx); err != nil {
-				slog.Debug("embedder: code pass", "error", err)
+				if rootCtx.Err() == nil { // only log if not a shutdown cancellation
+					slog.Debug("embedder: code pass", "error", err)
+				}
 			} else if n > 0 {
 				slog.Debug("embedder: code pass", "embedded", n)
 			}

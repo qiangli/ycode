@@ -93,6 +93,9 @@ func (e *Embedder) EmbedCodeFile(ctx context.Context, relPath string) error {
 	for i, chunk := range chunks {
 		emb, err := e.provider.Embed(ctx, chunk)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err() // context cancelled — stop silently
+			}
 			slog.Debug("embedder: embed chunk", "path", relPath, "chunk", i, "error", err)
 			continue
 		}
