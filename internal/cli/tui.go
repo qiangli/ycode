@@ -96,6 +96,7 @@ type TUIModel struct {
 
 	// Paused state — agent stopped at boundary, context preserved.
 	paused         bool
+	pauseRequested bool                    // set by /pause, checked at turnResultMsg boundary
 	pausedMessages []api.Message           // conversation state at time of pause
 	pausedCalls    []conversation.ToolCall // pending tool calls if paused mid-tool-dispatch
 
@@ -374,6 +375,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.workCancel()
 				m.working = false
 				m.workCancel = nil
+				m.pauseRequested = false
 				m.pendingInputs = nil
 				m.midTurnCh = nil
 				m.appendOutput("\n⏹ Cancelled.\n\n")
@@ -431,6 +433,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 				if text == "/pause" {
+					m.pauseRequested = true
 					// Signal the background goroutine to stop at next boundary.
 					if m.midTurnCh != nil {
 						close(m.midTurnCh)
@@ -523,6 +526,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.working = false
 			m.workCancel = nil
 			m.midTurnCh = nil
+			m.pauseRequested = false
 			m.pendingInputs = nil // clear queue on error
 			// Check if it was a cancellation.
 			if msg.Err.Error() == "turn 1: stream: context canceled" || strings.Contains(msg.Err.Error(), "context canceled") {
@@ -583,6 +587,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.working = false
 			m.workCancel = nil
 			m.midTurnCh = nil
+			m.pauseRequested = false
 			m.appendOutput("\n✓ Done.\n\n")
 			// Show session summary.
 			m.appendOutput(formatSessionSummary(m.app.usageTracker, m.app.sessionStart))
@@ -641,6 +646,21 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Content: assistantBlocks,
 		})
 		m.appendOutput("⧗ Sending tool results to LLM...\n")
+
+		// Check if /pause was requested — this is the authoritative catch-all.
+		// At this point m.turnMessages has the full history including the
+		// assistant tool_use blocks, so we can save and resume cleanly.
+		if m.pauseRequested {
+			m.pauseRequested = false
+			m.working = false
+			m.workCancel = nil
+			m.paused = true
+			m.pausedMessages = m.turnMessages
+			m.pausedCalls = result.ToolCalls
+			m.midTurnCh = nil
+			m.appendOutput("\n⏸ Paused. Type additional context, then /resume to continue.\n\n")
+			return m, func() tea.Msg { return repaintMsg{} }
+		}
 
 		// Execute tools and feed results back (in a Cmd to keep TUI responsive).
 		toolCalls := result.ToolCalls
@@ -1161,6 +1181,7 @@ func (m *TUIModel) startAgentTurn(userPrompt string) tea.Cmd {
 	m.workCancel = cancel
 	m.working = true
 	m.paused = false
+	m.pauseRequested = false
 	m.midTurnCh = make(chan string, 8)
 
 	m.appendOutput("⧗ Sending to LLM...\n")
@@ -1292,6 +1313,7 @@ func (m *TUIModel) resumeAgentTurn() tea.Cmd {
 	m.workCancel = cancel
 	m.working = true
 	m.paused = false
+	m.pauseRequested = false
 	m.midTurnCh = make(chan string, 8)
 	m.turnMessages = m.pausedMessages
 	m.pausedMessages = nil

@@ -387,6 +387,49 @@ func TestExecutorAgentLimit(t *testing.T) {
 	}
 }
 
+// TestExecutorAgentParallelismWallClock proves agents truly run in parallel
+// by measuring wall-clock time. 4 agents each sleep 100ms. With maxAgent=4,
+// they should all run concurrently, finishing in ~100ms total (not 400ms).
+func TestExecutorAgentParallelismWallClock(t *testing.T) {
+	const (
+		agentCount = 4
+		sleepTime  = 100 * time.Millisecond
+	)
+	exec := NewExecutor(8, 2, agentCount)
+
+	calls := make([]Call, agentCount)
+	for i := range calls {
+		calls[i] = Call{
+			Index:    i,
+			Name:     fmt.Sprintf("agent_%d", i),
+			Category: CatAgent,
+			Invoke: func(ctx context.Context) (string, error) {
+				time.Sleep(sleepTime)
+				return "done", nil
+			},
+		}
+	}
+
+	start := time.Now()
+	results := exec.Run(context.Background(), calls, nil)
+	elapsed := time.Since(start)
+
+	// All should succeed.
+	for i, r := range results {
+		if r.Err != nil {
+			t.Errorf("agent %d failed: %v", i, r.Err)
+		}
+	}
+
+	// If parallel: ~100ms. If sequential: ~400ms.
+	// Use 250ms as the threshold — well above parallel, well below sequential.
+	maxExpected := sleepTime * time.Duration(agentCount) / 2
+	if elapsed > maxExpected {
+		t.Errorf("wall-clock = %v, expected < %v (agents should run in parallel, not sequentially)", elapsed, maxExpected)
+	}
+	t.Logf("wall-clock: %v (parallel threshold: %v, sequential would be: %v)", elapsed, maxExpected, sleepTime*time.Duration(agentCount))
+}
+
 func TestTaskStatusString(t *testing.T) {
 	tests := []struct {
 		s    TaskStatus

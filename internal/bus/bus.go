@@ -26,8 +26,8 @@ const (
 	EventMessageSend      EventType = "message.send"
 	EventTurnCancel       EventType = "turn.cancel"
 	EventAgentStart       EventType = "agent.start"    // subagent spawned
-	EventAgentProgress    EventType = "agent.progress"  // subagent tool/turn update
-	EventAgentComplete    EventType = "agent.complete"   // subagent finished
+	EventAgentProgress    EventType = "agent.progress" // subagent tool/turn update
+	EventAgentComplete    EventType = "agent.complete" // subagent finished
 )
 
 // Event is a single message flowing through the bus.

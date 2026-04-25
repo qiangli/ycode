@@ -34,7 +34,7 @@ type Scheduler struct {
 
 type laneState struct {
 	mu      sync.Mutex    // used for serialized lanes
-	sem     chan struct{}  // used for pooled lanes (nil = use mutex)
+	sem     chan struct{} // used for pooled lanes (nil = use mutex)
 	active  int32         // number of active work items
 	current string        // description of current work item (last acquired)
 }
