@@ -64,7 +64,7 @@ test-tui-fuzz: ## Run TUI fuzz tests for 30s each
 	go test -run='^$$' -fuzz=FuzzToolDetail -fuzztime=30s ./internal/cli/
 	go test -run='^$$' -fuzz=FuzzTUIUpdate -fuzztime=30s ./internal/cli/
 
-test-all: test test-container test-gitserver test-integration test-ui ## Run all tests: unit + container + gitserver + integration + browser
+test-all: test test-container test-gitserver test-tui test-tui-e2e test-integration test-ui ## Run all tests: unit + container + gitserver + TUI + integration + browser
 
 vet: ## Run static analysis
 	go vet $(PACKAGES)
