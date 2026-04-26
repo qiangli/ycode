@@ -66,10 +66,18 @@ for p in "${PLUGINS[@]}"; do
     mkdir -p "$extract_tmp" "$trimmed_tmp"
     tar xzf "$archive" -C "$extract_tmp"
 
-    # Runtime-required: __mf/ (JS bundles), package.json, mf-manifest.json
+    # Runtime-required: __mf/ (JS bundles), package.json, mf-manifest.json,
+    # schemas/ (CUE schemas — required by Perses plugin validation for
+    # Panel, Datasource, Variable, and Query kinds).
     cp "$extract_tmp/package.json" "$trimmed_tmp/"
     cp "$extract_tmp/mf-manifest.json" "$trimmed_tmp/"
     cp -r "$extract_tmp/__mf" "$trimmed_tmp/"
+    if [ -d "$extract_tmp/schemas" ]; then
+        cp -r "$extract_tmp/schemas" "$trimmed_tmp/"
+    fi
+    if [ -d "$extract_tmp/cue.mod" ]; then
+        cp -r "$extract_tmp/cue.mod" "$trimmed_tmp/"
+    fi
 
     tar czf "$EMBED_DIR/${p}.tar.gz" -C "$trimmed_tmp" .
 
