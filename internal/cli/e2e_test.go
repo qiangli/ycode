@@ -198,6 +198,56 @@ func TestE2E_PTY_StartAndCtrlD(t *testing.T) {
 	}
 }
 
+func TestE2E_ModelListCommand(t *testing.T) {
+	if _, err := os.Stat(e2eBinaryPath); os.IsNotExist(err) {
+		t.Skipf("binary not found at %s; run 'make compile' first", e2eBinaryPath)
+	}
+
+	// "model list" should run without an API key. If Ollama is not running,
+	// it prints an error or empty list — either way it should exit cleanly.
+	cmd := exec.Command(e2eBinaryPath, "model", "list")
+	cmd.Env = append(os.Environ(),
+		"ANTHROPIC_API_KEY=",
+		"OPENAI_API_KEY=",
+	)
+	out, err := cmd.CombinedOutput()
+	output := string(out)
+
+	// The command might fail if Ollama is not reachable, which is fine.
+	// We just want to verify the binary handles it gracefully (non-panic).
+	t.Logf("model list output (%d bytes): %s", len(out), output)
+
+	if err != nil {
+		// Graceful error about Ollama not running is acceptable.
+		if strings.Contains(output, "panic") || strings.Contains(output, "SIGSEGV") {
+			t.Fatalf("model list panicked: %s", output)
+		}
+		t.Logf("model list exited with error (expected if no Ollama): %v", err)
+	}
+}
+
+func TestE2E_ModelListCommand_OutputFormat(t *testing.T) {
+	if _, err := os.Stat(e2eBinaryPath); os.IsNotExist(err) {
+		t.Skipf("binary not found at %s; run 'make compile' first", e2eBinaryPath)
+	}
+
+	// If Ollama IS running, model list should produce a table with headers.
+	cmd := exec.Command(e2eBinaryPath, "model", "list")
+	out, err := cmd.CombinedOutput()
+	output := string(out)
+
+	if err != nil {
+		t.Skipf("model list failed (Ollama likely not running): %v", err)
+	}
+
+	// When successful, output should contain table-like content.
+	if len(output) == 0 {
+		t.Error("expected non-empty output when model list succeeds")
+	}
+
+	t.Logf("model list output: %s", output)
+}
+
 func TestE2E_DoctorCommand(t *testing.T) {
 	// The doctor command runs health checks without needing an API key.
 	cmd := exec.Command(e2eBinaryPath, "doctor")

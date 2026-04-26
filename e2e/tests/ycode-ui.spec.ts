@@ -52,11 +52,11 @@ test.describe("ycode Web UI", () => {
     await expect(badge).toHaveClass(/connected/, { timeout: 10_000 });
   });
 
-  test("model label shows model name", async ({ page }) => {
+  test("model button shows model name", async ({ page }) => {
     await page.goto("/ycode/");
-    const modelLabel = page.locator("#model-label");
+    const modelBtn = page.locator("#model-btn");
     // Wait for status fetch to populate model name.
-    await expect(modelLabel).not.toBeEmpty({ timeout: 10_000 });
+    await expect(modelBtn).not.toBeEmpty({ timeout: 10_000 });
   });
 
   test("typing in input updates textarea value", async ({ page }) => {
@@ -70,6 +70,134 @@ test.describe("ycode Web UI", () => {
     await page.goto("/ycode/");
     const tokenCount = page.locator("#token-count");
     await expect(tokenCount).toBeAttached();
+  });
+
+  test("model dropdown opens on click", async ({ page }) => {
+    await page.goto("/ycode/");
+    const modelBtn = page.locator("#model-btn");
+    await expect(modelBtn).not.toBeEmpty({ timeout: 10_000 });
+
+    // Dropdown should be hidden initially.
+    const dropdown = page.locator("#model-dropdown");
+    await expect(dropdown).toBeHidden();
+
+    // Click the model button to open dropdown.
+    await modelBtn.click();
+    await expect(dropdown).toBeVisible({ timeout: 5_000 });
+
+    // Filter input should be visible and focused.
+    const filterInput = page.locator("#model-filter");
+    await expect(filterInput).toBeVisible();
+  });
+
+  test("model dropdown lists available models", async ({ page }) => {
+    await page.goto("/ycode/");
+    const modelBtn = page.locator("#model-btn");
+    await expect(modelBtn).not.toBeEmpty({ timeout: 10_000 });
+
+    await modelBtn.click();
+    const dropdown = page.locator("#model-dropdown");
+    await expect(dropdown).toBeVisible({ timeout: 5_000 });
+
+    // Should have at least one model item (builtin aliases at minimum).
+    const items = page.locator("#model-list li");
+    await expect(items.first()).toBeVisible({ timeout: 5_000 });
+    const count = await items.count();
+    expect(count).toBeGreaterThan(0);
+  });
+
+  test("model dropdown filters on typing", async ({ page }) => {
+    await page.goto("/ycode/");
+    const modelBtn = page.locator("#model-btn");
+    await expect(modelBtn).not.toBeEmpty({ timeout: 10_000 });
+
+    await modelBtn.click();
+    const dropdown = page.locator("#model-dropdown");
+    await expect(dropdown).toBeVisible({ timeout: 5_000 });
+
+    const items = page.locator("#model-list li");
+    const initialCount = await items.count();
+
+    // Type a filter string that should narrow results.
+    const filterInput = page.locator("#model-filter");
+    await filterInput.fill("claude");
+    await page.waitForTimeout(200);
+
+    const filteredCount = await items.count();
+    // Filtered count should be less than or equal to initial (unless all match).
+    expect(filteredCount).toBeLessThanOrEqual(initialCount);
+    expect(filteredCount).toBeGreaterThan(0);
+  });
+
+  test("model dropdown closes on escape", async ({ page }) => {
+    await page.goto("/ycode/");
+    const modelBtn = page.locator("#model-btn");
+    await expect(modelBtn).not.toBeEmpty({ timeout: 10_000 });
+
+    await modelBtn.click();
+    const dropdown = page.locator("#model-dropdown");
+    await expect(dropdown).toBeVisible({ timeout: 5_000 });
+
+    // Press Escape to close.
+    await page.locator("#model-filter").press("Escape");
+    await expect(dropdown).toBeHidden();
+  });
+
+  test("model dropdown closes on outside click", async ({ page }) => {
+    await page.goto("/ycode/");
+    const modelBtn = page.locator("#model-btn");
+    await expect(modelBtn).not.toBeEmpty({ timeout: 10_000 });
+
+    await modelBtn.click();
+    const dropdown = page.locator("#model-dropdown");
+    await expect(dropdown).toBeVisible({ timeout: 5_000 });
+
+    // Click outside the dropdown.
+    await page.locator("#messages").click();
+    await expect(dropdown).toBeHidden();
+  });
+
+  test("selecting a model updates the button label", async ({ page }) => {
+    await page.goto("/ycode/");
+    const modelBtn = page.locator("#model-btn");
+    await expect(modelBtn).not.toBeEmpty({ timeout: 10_000 });
+
+    const originalModel = await modelBtn.textContent();
+
+    await modelBtn.click();
+    const dropdown = page.locator("#model-dropdown");
+    await expect(dropdown).toBeVisible({ timeout: 5_000 });
+
+    // Click the first model item that is NOT the current one.
+    const items = page.locator("#model-list li:not(.active)");
+    const firstNonActive = items.first();
+    if ((await items.count()) > 0) {
+      const modelName = await firstNonActive.getAttribute("data-model");
+      await firstNonActive.click();
+
+      // Dropdown should close.
+      await expect(dropdown).toBeHidden();
+
+      // Button label should update.
+      if (modelName && modelName !== originalModel) {
+        await expect(modelBtn).toHaveText(modelName, { timeout: 5_000 });
+      }
+    }
+  });
+
+  test("models API returns valid JSON", async ({ page }) => {
+    await page.goto("/ycode/");
+    const response = await page.request.get("/ycode/api/models");
+    expect(response.status()).toBe(200);
+    const models = await response.json();
+    expect(Array.isArray(models)).toBe(true);
+    expect(models.length).toBeGreaterThan(0);
+
+    // Verify structure of first model.
+    const first = models[0];
+    expect(first).toHaveProperty("id");
+    expect(first).toHaveProperty("provider");
+    expect(first).toHaveProperty("source");
   });
 
   test("no console errors on load", async ({ page }) => {

@@ -523,6 +523,87 @@
     dashboardBtn.addEventListener("click", openDashboard);
     dashCloseBtn.addEventListener("click", closeDashboard);
 
+    // --- Model picker ---
+
+    const chatModelBtn = document.getElementById("chat-model-btn");
+    const chatModelDropdown = document.getElementById("chat-model-dropdown");
+    const chatModelFilter = document.getElementById("chat-model-filter");
+    const chatModelList = document.getElementById("chat-model-list");
+    let chatModels = [];
+    let chatCurrentModel = "";
+
+    async function fetchChatModels() {
+        try {
+            chatModels = await fetchJSON(apiBase + "/models");
+            if (!Array.isArray(chatModels)) chatModels = [];
+        } catch (e) {
+            chatModels = [];
+        }
+    }
+
+    function renderChatModelList(filter) {
+        chatModelList.innerHTML = "";
+        var lower = (filter || "").toLowerCase();
+        var filtered = chatModels.filter(function (m) {
+            if (!lower) return true;
+            return (m.id || "").toLowerCase().indexOf(lower) !== -1 ||
+                (m.alias || "").toLowerCase().indexOf(lower) !== -1 ||
+                (m.provider || "").toLowerCase().indexOf(lower) !== -1;
+        });
+
+        for (var i = 0; i < filtered.length; i++) {
+            var m = filtered[i];
+            var li = document.createElement("li");
+            if (m.id === chatCurrentModel || m.alias === chatCurrentModel) {
+                li.classList.add("active");
+            }
+            var html = "";
+            if (m.alias) html += '<span class="m-alias">' + escapeHtml(m.alias) + "</span> ";
+            html += '<span class="m-id">' + escapeHtml(m.id) + "</span>";
+            var meta = m.provider || "";
+            if (m.size) meta += " " + m.size;
+            if (meta) html += ' <span class="m-meta">' + escapeHtml(meta) + "</span>";
+            li.innerHTML = html;
+            li.dataset.model = m.alias || m.id;
+            li.addEventListener("click", function (e) {
+                chatCurrentModel = e.currentTarget.dataset.model;
+                chatModelBtn.textContent = chatCurrentModel;
+                chatModelDropdown.classList.add("hidden");
+            });
+            chatModelList.appendChild(li);
+        }
+    }
+
+    if (chatModelBtn) {
+        chatModelBtn.addEventListener("click", function (e) {
+            e.stopPropagation();
+            if (chatModelDropdown.classList.contains("hidden")) {
+                fetchChatModels().then(function () {
+                    renderChatModelList("");
+                    chatModelDropdown.classList.remove("hidden");
+                    chatModelFilter.value = "";
+                    chatModelFilter.focus();
+                });
+            } else {
+                chatModelDropdown.classList.add("hidden");
+            }
+        });
+
+        chatModelFilter.addEventListener("input", function () {
+            renderChatModelList(chatModelFilter.value);
+        });
+
+        chatModelFilter.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") chatModelDropdown.classList.add("hidden");
+        });
+
+        document.addEventListener("click", function (e) {
+            if (!chatModelDropdown.contains(e.target) && e.target !== chatModelBtn) {
+                chatModelDropdown.classList.add("hidden");
+            }
+        });
+    }
+
     // --- Init ---
 
     loadRooms();

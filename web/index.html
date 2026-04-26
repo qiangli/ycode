@@ -14,7 +14,13 @@
         <span id="status-badge" class="badge">connecting...</span>
       </div>
       <div class="header-right">
-        <span id="model-label" class="model-label"></span>
+        <div class="model-selector">
+          <button id="model-btn" class="model-label" title="Switch model"></button>
+          <div id="model-dropdown" class="model-dropdown hidden">
+            <input id="model-filter" type="text" placeholder="Filter models..." autocomplete="off">
+            <ul id="model-list"></ul>
+          </div>
+        </div>
         <span id="token-count" class="token-count"></span>
       </div>
     </header>

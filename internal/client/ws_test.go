@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/server"
@@ -48,6 +49,9 @@ func (m *mockService) GetConfig(ctx context.Context) (*config.Config, error) {
 func (m *mockService) SwitchModel(ctx context.Context, model string) error { return nil }
 func (m *mockService) GetStatus(ctx context.Context) (*service.StatusInfo, error) {
 	return &service.StatusInfo{Model: "test-model", SessionID: "test-session"}, nil
+}
+func (m *mockService) ListModels(ctx context.Context) ([]api.ModelInfo, error) {
+	return nil, nil
 }
 func (m *mockService) ExecuteCommand(ctx context.Context, name, args string) (string, error) {
 	return "ok", nil

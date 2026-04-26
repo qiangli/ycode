@@ -26,7 +26,10 @@
   const formEl = document.getElementById('input-form');
   const sendBtn = document.getElementById('send-btn');
   const statusBadge = document.getElementById('status-badge');
-  const modelLabel = document.getElementById('model-label');
+  const modelBtn = document.getElementById('model-btn');
+  const modelDropdown = document.getElementById('model-dropdown');
+  const modelFilter = document.getElementById('model-filter');
+  const modelListEl = document.getElementById('model-list');
   const tokenCount = document.getElementById('token-count');
   const toolProgressEl = document.getElementById('tool-progress');
 
@@ -66,7 +69,8 @@
     try {
       // Get server status.
       const status = await apiGet('/api/status');
-      modelLabel.textContent = status.model || '';
+      currentModel = status.model || '';
+      modelBtn.textContent = currentModel || 'select model';
       sessionID = status.session_id;
 
       if (!sessionID) {
@@ -385,6 +389,129 @@
       data: { text: text },
     }));
   }
+
+  // --- Model picker ---
+  let allModels = [];
+  let currentModel = '';
+
+  async function fetchModels() {
+    try {
+      allModels = await apiGet('/api/models');
+      if (!Array.isArray(allModels)) allModels = [];
+    } catch (e) {
+      console.error('Failed to fetch models:', e);
+      allModels = [];
+    }
+  }
+
+  function renderModelList(filter) {
+    modelListEl.innerHTML = '';
+    var lower = (filter || '').toLowerCase();
+    var filtered = allModels.filter(function (m) {
+      if (!lower) return true;
+      return (m.id || '').toLowerCase().indexOf(lower) !== -1 ||
+        (m.alias || '').toLowerCase().indexOf(lower) !== -1 ||
+        (m.provider || '').toLowerCase().indexOf(lower) !== -1 ||
+        (m.source || '').toLowerCase().indexOf(lower) !== -1;
+    });
+
+    if (filtered.length === 0) {
+      var empty = document.createElement('li');
+      empty.textContent = 'No models found';
+      empty.style.color = 'var(--text-muted)';
+      empty.style.cursor = 'default';
+      modelListEl.appendChild(empty);
+      return;
+    }
+
+    for (var i = 0; i < filtered.length; i++) {
+      var m = filtered[i];
+      var li = document.createElement('li');
+      if (m.id === currentModel || m.alias === currentModel) {
+        li.classList.add('active');
+      }
+
+      var html = '';
+      if (m.alias) {
+        html += '<span class="model-alias">' + escapeHtml(m.alias) + '</span> ';
+      }
+      html += '<span class="model-id">' + escapeHtml(m.id) + '</span>';
+
+      var meta = m.provider || '';
+      if (m.size) meta += ' ' + m.size;
+      if (m.source && m.source !== 'builtin') {
+        html += ' <span class="source-label">' + escapeHtml(m.source) + '</span>';
+      }
+      if (meta) {
+        html += ' <span class="model-meta">' + escapeHtml(meta) + '</span>';
+      }
+
+      li.innerHTML = html;
+      li.dataset.model = m.alias || m.id;
+      li.addEventListener('click', onModelSelect);
+      modelListEl.appendChild(li);
+    }
+  }
+
+  function onModelSelect(e) {
+    var model = e.currentTarget.dataset.model;
+    if (!model) return;
+    switchModel(model);
+    closeModelDropdown();
+  }
+
+  async function switchModel(model) {
+    try {
+      await fetch(API_BASE + '/api/config/model', {
+        method: 'PUT',
+        headers: apiHeaders(),
+        body: JSON.stringify({ model: model }),
+      });
+      currentModel = model;
+      modelBtn.textContent = model;
+    } catch (e) {
+      console.error('Failed to switch model:', e);
+    }
+  }
+
+  function openModelDropdown() {
+    fetchModels().then(function () {
+      renderModelList('');
+      modelDropdown.classList.remove('hidden');
+      modelFilter.value = '';
+      modelFilter.focus();
+    });
+  }
+
+  function closeModelDropdown() {
+    modelDropdown.classList.add('hidden');
+  }
+
+  modelBtn.addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (modelDropdown.classList.contains('hidden')) {
+      openModelDropdown();
+    } else {
+      closeModelDropdown();
+    }
+  });
+
+  modelFilter.addEventListener('input', function () {
+    renderModelList(modelFilter.value);
+  });
+
+  modelFilter.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      closeModelDropdown();
+    }
+  });
+
+  // Close dropdown on outside click.
+  document.addEventListener('click', function (e) {
+    if (!modelDropdown.contains(e.target) && e.target !== modelBtn) {
+      closeModelDropdown();
+    }
+  });
 
   // --- Start ---
   init();

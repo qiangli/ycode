@@ -23,6 +23,9 @@ type LocalService struct {
 	app AppBackend
 	b   bus.Bus
 
+	// OllamaLister queries locally available Ollama models (optional).
+	ollamaLister api.OllamaLister
+
 	// Per-session turn cancellation.
 	cancelMu sync.Mutex
 	cancels  map[string]context.CancelFunc
@@ -323,6 +326,16 @@ func (s *LocalService) GetStatus(ctx context.Context) (*StatusInfo, error) {
 		PlanMode:     s.app.InPlanMode(),
 		Version:      s.app.Version(),
 	}, nil
+}
+
+func (s *LocalService) ListModels(ctx context.Context) ([]api.ModelInfo, error) {
+	aliases := s.app.Config().Aliases
+	return api.DiscoverModels(ctx, aliases, s.ollamaLister), nil
+}
+
+// SetOllamaLister sets the callback for discovering local Ollama models.
+func (s *LocalService) SetOllamaLister(lister api.OllamaLister) {
+	s.ollamaLister = lister
 }
 
 func (s *LocalService) ExecuteCommand(ctx context.Context, name string, args string) (string, error) {

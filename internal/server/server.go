@@ -133,6 +133,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/sessions/{id}", s.authMiddleware(s.handleGetSession))
 	s.mux.HandleFunc("GET /api/sessions/{id}/messages", s.authMiddleware(s.handleGetMessages))
 	s.mux.HandleFunc("POST /api/commands/{name}", s.authMiddleware(s.handleCommand))
+	s.mux.HandleFunc("GET /api/models", s.authMiddleware(s.handleListModels))
 	s.mux.HandleFunc("GET /api/status", s.authMiddleware(s.handleGetStatus))
 
 	// WebSocket endpoint.
@@ -255,6 +256,15 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"result": result})
+}
+
+func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
+	models, err := s.service.ListModels(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, models)
 }
 
 func (s *Server) handleGetStatus(w http.ResponseWriter, r *http.Request) {

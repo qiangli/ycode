@@ -111,12 +111,93 @@ main#chat-area {
     padding: 16px 20px;
     border-bottom: 1px solid #0f3460;
     background: #16213e;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
 #chat-header h3 {
     font-size: 16px;
     font-weight: 500;
 }
+
+.chat-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.model-selector { position: relative; }
+
+.chat-model-label {
+    font-family: monospace;
+    font-size: 11px;
+    background: none;
+    border: 1px solid transparent;
+    color: #8b8b9e;
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: 6px;
+    transition: border-color 0.15s, color 0.15s;
+}
+
+.chat-model-label:hover {
+    border-color: #0f3460;
+    color: #e0e0e0;
+}
+
+.chat-model-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    width: 320px;
+    max-height: 360px;
+    background: #16213e;
+    border: 1px solid #0f3460;
+    border-radius: 6px;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+
+.chat-model-dropdown.hidden { display: none; }
+
+.chat-model-dropdown input {
+    padding: 8px 12px;
+    border: none;
+    border-bottom: 1px solid #0f3460;
+    background: transparent;
+    color: #e0e0e0;
+    font-family: monospace;
+    font-size: 11px;
+    outline: none;
+}
+
+.chat-model-dropdown ul {
+    list-style: none;
+    overflow-y: auto;
+    max-height: 300px;
+    padding: 4px 0;
+}
+
+.chat-model-dropdown li {
+    padding: 6px 12px;
+    cursor: pointer;
+    font-family: monospace;
+    font-size: 11px;
+    color: #8b8b9e;
+    transition: background 0.1s;
+}
+
+.chat-model-dropdown li:hover { background: #1a1a2e; }
+.chat-model-dropdown li.active { color: #4ecca3; }
+
+.chat-model-dropdown .m-alias { color: #e94560; font-weight: 600; }
+.chat-model-dropdown .m-id { color: #8b8b9e; }
+.chat-model-dropdown .m-meta { color: #555; font-size: 9px; }
 
 #messages {
     flex: 1;

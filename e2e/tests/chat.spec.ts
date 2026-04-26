@@ -150,6 +150,68 @@ test.describe("Chat Hub UI", () => {
     await expect(dashboard).toBeHidden();
   });
 
+  test("model selector is visible in chat header", async ({ page }) => {
+    await page.goto("/chat/");
+    const modelBtn = page.locator("#chat-model-btn");
+    await expect(modelBtn).toBeAttached();
+  });
+
+  test("chat model dropdown opens on click", async ({ page }) => {
+    await page.goto("/chat/");
+
+    const modelBtn = page.locator("#chat-model-btn");
+    await expect(modelBtn).toBeAttached();
+
+    // Dropdown should be hidden initially.
+    const dropdown = page.locator("#chat-model-dropdown");
+    await expect(dropdown).toBeHidden();
+
+    // Click the model button to open dropdown.
+    await modelBtn.click();
+    await expect(dropdown).toBeVisible({ timeout: 5_000 });
+
+    // Filter input should be visible.
+    const filterInput = page.locator("#chat-model-filter");
+    await expect(filterInput).toBeVisible();
+  });
+
+  test("chat model dropdown lists models from API", async ({ page }) => {
+    await page.goto("/chat/");
+
+    const modelBtn = page.locator("#chat-model-btn");
+    await modelBtn.click();
+
+    const dropdown = page.locator("#chat-model-dropdown");
+    await expect(dropdown).toBeVisible({ timeout: 5_000 });
+
+    // Should have model items (at least builtins).
+    const items = page.locator("#chat-model-list li");
+    await expect(items.first()).toBeVisible({ timeout: 5_000 });
+    const count = await items.count();
+    expect(count).toBeGreaterThan(0);
+  });
+
+  test("chat model dropdown closes on escape", async ({ page }) => {
+    await page.goto("/chat/");
+
+    const modelBtn = page.locator("#chat-model-btn");
+    await modelBtn.click();
+
+    const dropdown = page.locator("#chat-model-dropdown");
+    await expect(dropdown).toBeVisible({ timeout: 5_000 });
+
+    await page.locator("#chat-model-filter").press("Escape");
+    await expect(dropdown).toBeHidden();
+  });
+
+  test("chat models API returns valid JSON", async ({ page }) => {
+    await page.goto("/chat/");
+    const response = await page.request.get("/chat/api/models");
+    expect(response.status()).toBe(200);
+    const models = await response.json();
+    expect(Array.isArray(models)).toBe(true);
+  });
+
   test("no console errors", async ({ page }) => {
     await page.goto("/chat/");
     await page.waitForLoadState("networkidle");

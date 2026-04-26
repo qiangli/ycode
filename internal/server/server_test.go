@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/service"
@@ -63,6 +64,13 @@ func (m *mockService) GetConfig(ctx context.Context) (*config.Config, error) {
 func (m *mockService) SwitchModel(ctx context.Context, model string) error { return nil }
 func (m *mockService) GetStatus(ctx context.Context) (*service.StatusInfo, error) {
 	return &service.StatusInfo{Model: "test-model", Version: "test"}, nil
+}
+func (m *mockService) ListModels(ctx context.Context) ([]api.ModelInfo, error) {
+	return []api.ModelInfo{
+		{ID: "claude-sonnet-4-6-20250514", Alias: "sonnet", Provider: "anthropic", Source: "builtin"},
+		{ID: "gpt-4.1", Provider: "openai", Source: "env"},
+		{ID: "llama3.2:3b", Provider: "ollama", Source: "ollama", Size: "2.0 GB"},
+	}, nil
 }
 func (m *mockService) ExecuteCommand(ctx context.Context, name string, args string) (string, error) {
 	return "ok", nil
@@ -212,4 +220,109 @@ func TestGetStatus(t *testing.T) {
 	if status.Model != "test-model" {
 		t.Errorf("got model %q, want %q", status.Model, "test-model")
 	}
+}
+
+func TestListModels(t *testing.T) {
+	_, ts := newTestServer(t)
+
+	t.Run("ReturnsJSONArray", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/models")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("got status %d, want %d", resp.StatusCode, http.StatusOK)
+		}
+		if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+			t.Errorf("got Content-Type %q, want application/json", ct)
+		}
+
+		var models []api.ModelInfo
+		if err := json.NewDecoder(resp.Body).Decode(&models); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if len(models) != 3 {
+			t.Fatalf("got %d models, want 3", len(models))
+		}
+	})
+
+	t.Run("ContainsExpectedFields", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/models")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		var models []api.ModelInfo
+		json.NewDecoder(resp.Body).Decode(&models)
+
+		for _, m := range models {
+			if m.ID == "" {
+				t.Error("model.id must not be empty")
+			}
+			if m.Provider == "" {
+				t.Error("model.provider must not be empty")
+			}
+			if m.Source == "" {
+				t.Error("model.source must not be empty")
+			}
+		}
+	})
+
+	t.Run("IncludesAllSources", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/models")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		var models []api.ModelInfo
+		json.NewDecoder(resp.Body).Decode(&models)
+
+		sources := make(map[string]bool)
+		for _, m := range models {
+			sources[m.Source] = true
+		}
+		for _, want := range []string{"builtin", "env", "ollama"} {
+			if !sources[want] {
+				t.Errorf("expected source %q in response, got sources: %v", want, sources)
+			}
+		}
+	})
+
+	t.Run("OllamaModelHasSize", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/models")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		var models []api.ModelInfo
+		json.NewDecoder(resp.Body).Decode(&models)
+
+		for _, m := range models {
+			if m.Source == "ollama" && m.Size == "" {
+				t.Errorf("ollama model %q should have a size", m.ID)
+			}
+		}
+	})
+
+	t.Run("BuiltinModelHasAlias", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/models")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		var models []api.ModelInfo
+		json.NewDecoder(resp.Body).Decode(&models)
+
+		for _, m := range models {
+			if m.Source == "builtin" && m.Alias == "" {
+				t.Errorf("builtin model %q should have an alias", m.ID)
+			}
+		}
+	})
 }

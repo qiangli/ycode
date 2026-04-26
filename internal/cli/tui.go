@@ -392,7 +392,8 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Handle built-in actions.
 					switch name {
 					case "Switch Model":
-						m.modelPicker.open(m.app.Model())
+						models := api.DiscoverModels(context.Background(), m.app.config.Aliases, m.app.ollamaLister)
+						m.modelPicker.open(m.app.Model(), models)
 					case "Toggle Mode":
 						return m, m.toggleMode()
 					}

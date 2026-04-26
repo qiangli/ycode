@@ -61,6 +61,9 @@ type App struct {
 	usageTracker *usage.Tracker
 	sessionStart time.Time
 
+	// Ollama model lister for model discovery (optional).
+	ollamaLister api.OllamaLister
+
 	// OTEL conversation instrumentation (optional).
 	convOTEL  *conversation.OTELConfig
 	turnIndex int // monotonically increasing turn counter for OTEL
@@ -87,6 +90,7 @@ type AppOptions struct {
 	UserConfigPath string
 	Storage        *storage.Manager
 	ConvOTEL       *conversation.OTELConfig
+	OllamaLister   api.OllamaLister
 }
 
 // NewApp creates a new app instance.
@@ -124,6 +128,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		usageTracker:   usage.NewTracker(),
 		sessionStart:   time.Now(),
 		convOTEL:       o.ConvOTEL,
+		ollamaLister:   o.OllamaLister,
 		taskRegistry:   task.NewRegistry(),
 		agentPool:      agentpool.New(),
 	}

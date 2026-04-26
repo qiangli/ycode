@@ -17,6 +17,8 @@ type modelPickerItem struct {
 	ID       string // full model ID or alias
 	Alias    string // short alias if any
 	Provider string // provider kind
+	Source   string // "builtin", "config", "env", "ollama"
+	Size     string // human-readable size (ollama only)
 	Current  bool   // true if this is the active model
 }
 
@@ -30,47 +32,24 @@ type modelPickerState struct {
 	visible  bool
 }
 
-// buildModelPickerItems creates the list of available models.
-func buildModelPickerItems(currentModel string) []modelPickerItem {
+// buildModelPickerItems creates the list from discovered models.
+func buildModelPickerItems(currentModel string, models []api.ModelInfo) []modelPickerItem {
 	var items []modelPickerItem
-
-	// Add aliased models first (most commonly used).
-	for alias, fullID := range api.ModelAliases {
-		provider := detectProviderFromModel(fullID)
+	for _, m := range models {
 		items = append(items, modelPickerItem{
-			ID:       fullID,
-			Alias:    alias,
-			Provider: provider,
-			Current:  fullID == currentModel || alias == currentModel,
+			ID:       m.ID,
+			Alias:    m.Alias,
+			Provider: m.Provider,
+			Source:   m.Source,
+			Size:     m.Size,
+			Current:  m.ID == currentModel || m.Alias == currentModel,
 		})
 	}
-
 	return items
 }
 
-// detectProviderFromModel guesses provider from model name.
-func detectProviderFromModel(model string) string {
-	lower := strings.ToLower(model)
-	switch {
-	case strings.HasPrefix(lower, "claude-"):
-		return "anthropic"
-	case strings.HasPrefix(lower, "gpt-") || strings.HasPrefix(lower, "o1-") || strings.HasPrefix(lower, "o3-"):
-		return "openai"
-	case strings.HasPrefix(lower, "gemini-"):
-		return "gemini"
-	case strings.HasPrefix(lower, "grok"):
-		return "xai"
-	case strings.HasPrefix(lower, "qwen"):
-		return "dashscope"
-	case strings.HasPrefix(lower, "kimi") || strings.HasPrefix(lower, "moonshot"):
-		return "moonshot"
-	default:
-		return "unknown"
-	}
-}
-
-func (mp *modelPickerState) open(currentModel string) {
-	mp.items = buildModelPickerItems(currentModel)
+func (mp *modelPickerState) open(currentModel string, models []api.ModelInfo) {
+	mp.items = buildModelPickerItems(currentModel, models)
 	mp.filter = ""
 	mp.applyFilter()
 	mp.visible = true
@@ -101,7 +80,8 @@ func (mp *modelPickerState) applyFilter() {
 		for _, item := range mp.items {
 			if strings.Contains(strings.ToLower(item.ID), lower) ||
 				strings.Contains(strings.ToLower(item.Alias), lower) ||
-				strings.Contains(strings.ToLower(item.Provider), lower) {
+				strings.Contains(strings.ToLower(item.Provider), lower) ||
+				strings.Contains(strings.ToLower(item.Source), lower) {
 				mp.filtered = append(mp.filtered, item)
 			}
 		}
@@ -180,6 +160,7 @@ func renderModelPicker(mp *modelPickerState, width, height int) string {
 	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#e2e8f0"))
 	aliasStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#a78bfa")).Bold(true)
 	providerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#737373"))
+	sourceStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#525252"))
 	currentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#34d399"))
 	selBg := lipgloss.NewStyle().Background(lipgloss.Color("#3b3b5c"))
 
@@ -215,7 +196,15 @@ func renderModelPicker(mp *modelPickerState, width, height int) string {
 		name := nameStyle.Render(item.ID)
 		prov := providerStyle.Render(fmt.Sprintf(" (%s)", item.Provider))
 
-		line := fmt.Sprintf("  %s%s%s%s", marker, alias, name, prov)
+		// Show size for ollama models, source tag for others.
+		extra := ""
+		if item.Size != "" {
+			extra = sourceStyle.Render(fmt.Sprintf(" [%s]", item.Size))
+		} else if item.Source != "builtin" {
+			extra = sourceStyle.Render(fmt.Sprintf(" [%s]", item.Source))
+		}
+
+		line := fmt.Sprintf("  %s%s%s%s%s", marker, alias, name, prov, extra)
 
 		if idx == mp.selected {
 			line = selBg.Render(line)

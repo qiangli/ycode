@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+
 	"github.com/nats-io/nats.go"
 
 	"github.com/qiangli/ycode/internal/chat"
@@ -59,6 +62,16 @@ func buildChatHub(conn *nats.Conn, cfg *config.ChatConfig, dataDir string, svc s
 	// reach WebSocket clients in real time.
 	if svc != nil {
 		hub.RegisterChannel(adapters.NewAgentChannel(svc, hub))
+
+		// Wire model listing through the service so the chat UI can
+		// show all available models.
+		hub.SetModelLister(func(ctx context.Context) ([]byte, error) {
+			models, err := svc.ListModels(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(models)
+		})
 	}
 
 	return hub

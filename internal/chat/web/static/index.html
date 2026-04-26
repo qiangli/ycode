@@ -25,6 +25,15 @@
         <main id="chat-area">
             <div id="chat-header">
                 <h3 id="room-name">Select a room</h3>
+                <div class="chat-header-right">
+                    <div class="model-selector">
+                        <button id="chat-model-btn" class="chat-model-label" title="Switch model"></button>
+                        <div id="chat-model-dropdown" class="chat-model-dropdown hidden">
+                            <input id="chat-model-filter" type="text" placeholder="Filter models..." autocomplete="off">
+                            <ul id="chat-model-list"></ul>
+                        </div>
+                    </div>
+                </div>
                 <div id="typing-indicator" class="hidden"></div>
             </div>
             <div id="messages"></div>

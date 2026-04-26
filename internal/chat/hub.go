@@ -54,6 +54,9 @@ type Hub struct {
 
 	// WebSocket clients for the web channel.
 	wsClients *wsHub
+
+	// ModelLister returns available models (optional, injected by the host).
+	modelLister func(ctx context.Context) ([]byte, error)
 }
 
 // NewHub creates a new chat hub.
@@ -142,6 +145,11 @@ func (h *Hub) BroadcastStatus(roomID, statusType, text string) {
 		RoomID: roomID,
 		Text:   text,
 	})
+}
+
+// SetModelLister sets the callback for listing available models.
+func (h *Hub) SetModelLister(fn func(ctx context.Context) ([]byte, error)) {
+	h.modelLister = fn
 }
 
 // RegisterChannel adds a channel adapter to the hub.
@@ -286,6 +294,7 @@ func (h *Hub) buildHTTPHandler() http.Handler {
 	mux.HandleFunc("POST /api/rooms/{id}/bindings", h.handleAddBinding)
 	mux.HandleFunc("DELETE /api/bindings/{id}", h.handleRemoveBinding)
 	mux.HandleFunc("GET /api/channels", h.handleListChannels)
+	mux.HandleFunc("GET /api/models", h.handleListModels)
 	mux.HandleFunc("GET /api/dashboard", h.handleDashboard)
 
 	// Static web UI — serve embedded files, SPA fallback.
@@ -516,6 +525,21 @@ type DashboardChannel struct {
 	ID           channel.ChannelID    `json:"id"`
 	Healthy      bool                 `json:"healthy"`
 	Capabilities channel.Capabilities `json:"capabilities"`
+}
+
+func (h *Hub) handleListModels(w http.ResponseWriter, r *http.Request) {
+	if h.modelLister == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[]"))
+		return
+	}
+	data, err := h.modelLister(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
 }
 
 func (h *Hub) handleDashboard(w http.ResponseWriter, r *http.Request) {

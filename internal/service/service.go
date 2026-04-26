@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/runtime/config"
 )
@@ -49,6 +50,7 @@ type Service interface {
 	GetConfig(ctx context.Context) (*config.Config, error)
 	SwitchModel(ctx context.Context, model string) error
 	GetStatus(ctx context.Context) (*StatusInfo, error)
+	ListModels(ctx context.Context) ([]api.ModelInfo, error)
 
 	// Slash commands.
 	ExecuteCommand(ctx context.Context, name string, args string) (string, error)

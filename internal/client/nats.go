@@ -10,6 +10,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 
+	"github.com/qiangli/ycode/internal/api"
 	natsBus "github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/service"
@@ -129,6 +130,14 @@ func (c *NATSClient) GetStatus(ctx context.Context) (*service.StatusInfo, error)
 		return nil, err
 	}
 	return &status, nil
+}
+
+func (c *NATSClient) ListModels(ctx context.Context) ([]api.ModelInfo, error) {
+	var models []api.ModelInfo
+	if err := c.rpcRequest("models", nil, &models); err != nil {
+		return nil, err
+	}
+	return models, nil
 }
 
 func (c *NATSClient) ExecuteCommand(ctx context.Context, name string, args string) (string, error) {

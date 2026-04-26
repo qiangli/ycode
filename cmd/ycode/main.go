@@ -20,6 +20,7 @@ import (
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/cli"
 	"github.com/qiangli/ycode/internal/commands"
+	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/embedding"
@@ -413,6 +414,7 @@ func newApp() (*cli.App, error) {
 		UserConfigPath: filepath.Join(userDir, "settings.json"),
 		Storage:        storageMgr,
 		ConvOTEL:       convOTEL,
+		OllamaLister:   inference.NewOllamaLister(),
 	})
 	if err != nil {
 		return nil, err

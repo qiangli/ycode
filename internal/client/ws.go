@@ -13,6 +13,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/service"
@@ -254,6 +255,11 @@ func (c *WSClient) SwitchModel(ctx context.Context, model string) error {
 func (c *WSClient) GetStatus(ctx context.Context) (*service.StatusInfo, error) {
 	var status service.StatusInfo
 	return &status, c.restGet("/api/status", &status)
+}
+
+func (c *WSClient) ListModels(ctx context.Context) ([]api.ModelInfo, error) {
+	var models []api.ModelInfo
+	return models, c.restGet("/api/models", &models)
 }
 
 func (c *WSClient) ExecuteCommand(ctx context.Context, name string, args string) (string, error) {

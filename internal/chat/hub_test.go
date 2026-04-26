@@ -200,6 +200,56 @@ func TestHub_Health(t *testing.T) {
 	}
 }
 
+func TestHub_ListModels_NoLister(t *testing.T) {
+	hub, _ := newTestHub(t)
+
+	// Without a model lister, should return empty array.
+	req := httptest.NewRequest("GET", "/api/models", nil)
+	w := httptest.NewRecorder()
+	hub.HTTPHandler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("models: got %d, want 200", w.Code)
+	}
+	if body := w.Body.String(); body != "[]" {
+		t.Fatalf("expected empty array, got %q", body)
+	}
+}
+
+func TestHub_ListModels_WithLister(t *testing.T) {
+	hub, _ := newTestHub(t)
+
+	// Set a model lister that returns test data.
+	hub.SetModelLister(func(ctx context.Context) ([]byte, error) {
+		return json.Marshal([]map[string]string{
+			{"id": "llama3.2:3b", "provider": "ollama", "source": "ollama", "size": "2.0 GB"},
+			{"id": "claude-sonnet-4-6-20250514", "provider": "anthropic", "source": "builtin", "alias": "sonnet"},
+		})
+	})
+
+	req := httptest.NewRequest("GET", "/api/models", nil)
+	w := httptest.NewRecorder()
+	hub.HTTPHandler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("models: got %d, want 200", w.Code)
+	}
+
+	var models []map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &models); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("got %d models, want 2", len(models))
+	}
+	if models[0]["id"] != "llama3.2:3b" {
+		t.Errorf("first model id: got %q, want llama3.2:3b", models[0]["id"])
+	}
+	if models[1]["alias"] != "sonnet" {
+		t.Errorf("second model alias: got %q, want sonnet", models[1]["alias"])
+	}
+}
+
 func TestHub_ChannelList(t *testing.T) {
 	hub, _ := newTestHub(t)
 

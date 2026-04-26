@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/service"
@@ -59,6 +60,10 @@ func (c *InProcessClient) SwitchModel(ctx context.Context, model string) error {
 
 func (c *InProcessClient) GetStatus(ctx context.Context) (*service.StatusInfo, error) {
 	return c.svc.GetStatus(ctx)
+}
+
+func (c *InProcessClient) ListModels(ctx context.Context) ([]api.ModelInfo, error) {
+	return c.svc.ListModels(ctx)
 }
 
 func (c *InProcessClient) ExecuteCommand(ctx context.Context, name string, args string) (string, error) {

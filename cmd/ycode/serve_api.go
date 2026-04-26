@@ -10,6 +10,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/cli"
+	"github.com/qiangli/ycode/internal/inference"
 	internalserver "github.com/qiangli/ycode/internal/server"
 	"github.com/qiangli/ycode/internal/service"
 )
@@ -41,6 +42,7 @@ func buildAPIStack(noNATS bool) (*apiStack, error) {
 
 	memBus := bus.NewMemoryBus()
 	svc := service.NewLocalService(app, memBus)
+	svc.SetOllamaLister(inference.NewOllamaLister())
 
 	token, err := generateToken()
 	if err != nil {
