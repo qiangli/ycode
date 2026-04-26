@@ -374,6 +374,7 @@ async function unloadModel(name) {
 let pullAbort = null;
 
 // Pull model with streaming + cancellation
+// Ollama resumes automatically — pulling the same model again picks up where it left off.
 async function pullModel(name) {
   if (!name) name = document.getElementById('pullInput').value.trim();
   if (!name) return;
@@ -416,19 +417,24 @@ async function pullModel(name) {
     }
     toast('Pulled '+name);
     document.getElementById('pullInput').value = '';
+    prog.style.display = 'none';
+    document.getElementById('pullBar').style.width = '0';
     loadModels();
   } catch(e) {
     if (e.name === 'AbortError') {
-      toast('Pull cancelled', 'error');
+      // Keep model name in input so user can hit Pull again to resume.
+      document.getElementById('pullInput').value = name;
+      document.getElementById('pullStatus').textContent = 'Cancelled — pull again to resume';
+      toast('Cancelled — pull again to resume', 'error');
     } else {
       toast('Pull failed: '+e.message, 'error');
+      prog.style.display = 'none';
+      document.getElementById('pullBar').style.width = '0';
     }
   } finally {
     pullAbort = null;
     btn.disabled = false;
     cancelBtn.style.display = 'none';
-    prog.style.display = 'none';
-    document.getElementById('pullBar').style.width = '0';
   }
 }
 
