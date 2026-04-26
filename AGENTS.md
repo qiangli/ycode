@@ -6,10 +6,16 @@ CLAUDE.md is a symlink to this file.
 
 ycode -- pure Go CLI agent harness for autonomous software development. Go 1.26+, permissive-license dependencies only.
 
+## First-Time Setup
+
+```bash
+make init                              # REQUIRED: initialize git submodules + fetch Perses plugins
+export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY for OpenAI-compatible providers
+```
+
 ## Build Commands
 
 ```bash
-make init           # REQUIRED first: initialize git submodules + fetch Perses plugins
 make build          # full quality gate: tidy -> fmt -> vet -> compile -> test -> verify
 make compile        # quick compile only (bin/ycode)
 make install        # build + install to ~/bin/ycode (re-signs on macOS)
@@ -70,6 +76,8 @@ Key subsystems:
 - **Memos** (`internal/memos/`): memos integration for note-taking
 - **Event bus** (`internal/bus/`): internal event routing between subsystems
 
+Public embedding API: `pkg/ycode/` exposes `NewAgent`, `Run`, and functional options for embedding ycode as a library in other Go programs.
+
 Design: `RuntimeContext` (no global state), three-tier config merge, five-layer memory.
 
 ## Skills
@@ -125,8 +133,6 @@ The project uses local `replace` directives for embedded observability component
 - `external/jaeger/` -> `github.com/jaegertracing/jaeger`
 - `external/perses/` -> `github.com/perses/perses`
 - `external/memos/` -> `github.com/usememos/memos`
-
-Run `make init` before first build to populate submodules and fetch Perses plugin archives.
 
 ## Build Notes
 
