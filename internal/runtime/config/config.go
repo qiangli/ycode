@@ -71,6 +71,12 @@ type Config struct {
 	// Chat hub settings
 	Chat *ChatConfig `json:"chat,omitempty"`
 
+	// Container isolation settings (Podman-based)
+	Container *ContainerConfig `json:"container,omitempty"`
+
+	// Embedded git server settings (Gitea-based)
+	GitServer *GitServerConfig `json:"gitServer,omitempty"`
+
 	// Custom settings (arbitrary key-value pairs from plugins/MCP)
 	Custom map[string]any `json:"custom,omitempty"`
 }
@@ -136,6 +142,28 @@ type InferenceConfig struct {
 	ModelsDir    string `json:"modelsDir,omitempty"`    // model storage directory
 	GPULayers    int    `json:"gpuLayers,omitempty"`    // GPU offload layers (-1 = auto)
 	MaxVRAMMB    int    `json:"maxVramMB,omitempty"`    // limit GPU memory usage
+}
+
+// ContainerConfig controls the embedded Podman-based container isolation engine.
+type ContainerConfig struct {
+	Enabled      bool   `json:"enabled"`                // enable container isolation for agents
+	BinaryPath   string `json:"binaryPath,omitempty"`   // explicit podman binary path
+	SocketPath   string `json:"socketPath,omitempty"`   // explicit podman socket path
+	Image        string `json:"image,omitempty"`        // default sandbox image (default: ycode-sandbox:latest)
+	Network      string `json:"network,omitempty"`      // network mode: "bridge" (default), "host", "none"
+	ReadOnlyRoot bool   `json:"readOnlyRoot,omitempty"` // read-only root filesystem (default true)
+	PoolSize     int    `json:"poolSize,omitempty"`     // warm pool size (0 = no pool)
+	CPUs         string `json:"cpus,omitempty"`         // per-container CPU limit (e.g., "2.0")
+	Memory       string `json:"memory,omitempty"`       // per-container memory limit (e.g., "4g")
+}
+
+// GitServerConfig controls the embedded Gitea-based git server for agent swarm coordination.
+type GitServerConfig struct {
+	Enabled  bool   `json:"enabled"`            // enable embedded git server
+	DataDir  string `json:"dataDir,omitempty"`  // data directory (default: ~/.agents/ycode/gitea)
+	AppName  string `json:"appName,omitempty"`  // display name (default: "ycode Git")
+	HTTPOnly bool   `json:"httpOnly,omitempty"` // disable SSH access (default true)
+	Token    string `json:"token,omitempty"`    // admin API token (auto-generated if empty)
 }
 
 // RemoteWriteTarget configures a Prometheus remote-write endpoint.
@@ -361,6 +389,60 @@ func mergeFromFile(cfg *Config, path string) error {
 	}
 	if overlay.Chat != nil {
 		cfg.Chat = overlay.Chat
+	}
+	if overlay.Container != nil {
+		if cfg.Container == nil {
+			cfg.Container = &ContainerConfig{}
+		}
+		co := overlay.Container
+		if co.Enabled {
+			cfg.Container.Enabled = true
+		}
+		if co.BinaryPath != "" {
+			cfg.Container.BinaryPath = co.BinaryPath
+		}
+		if co.SocketPath != "" {
+			cfg.Container.SocketPath = co.SocketPath
+		}
+		if co.Image != "" {
+			cfg.Container.Image = co.Image
+		}
+		if co.Network != "" {
+			cfg.Container.Network = co.Network
+		}
+		if co.ReadOnlyRoot {
+			cfg.Container.ReadOnlyRoot = true
+		}
+		if co.PoolSize != 0 {
+			cfg.Container.PoolSize = co.PoolSize
+		}
+		if co.CPUs != "" {
+			cfg.Container.CPUs = co.CPUs
+		}
+		if co.Memory != "" {
+			cfg.Container.Memory = co.Memory
+		}
+	}
+	if overlay.GitServer != nil {
+		if cfg.GitServer == nil {
+			cfg.GitServer = &GitServerConfig{}
+		}
+		gs := overlay.GitServer
+		if gs.Enabled {
+			cfg.GitServer.Enabled = true
+		}
+		if gs.DataDir != "" {
+			cfg.GitServer.DataDir = gs.DataDir
+		}
+		if gs.AppName != "" {
+			cfg.GitServer.AppName = gs.AppName
+		}
+		if gs.HTTPOnly {
+			cfg.GitServer.HTTPOnly = true
+		}
+		if gs.Token != "" {
+			cfg.GitServer.Token = gs.Token
+		}
 	}
 	if overlay.Custom != nil {
 		if cfg.Custom == nil {

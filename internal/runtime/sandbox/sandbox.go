@@ -2,15 +2,18 @@ package sandbox
 
 import (
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 )
 
-// Detection identifies the execution environment.
+// Detection identifies the execution environment and available container runtimes.
 type Detection struct {
-	InContainer bool
-	InDocker    bool
-	Platform    string
+	InContainer     bool
+	InDocker        bool
+	Platform        string
+	PodmanAvailable bool   // podman binary found in PATH
+	PodmanPath      string // path to podman binary
 }
 
 // Detect checks the current execution environment.
@@ -31,6 +34,12 @@ func Detect() *Detection {
 		if strings.Contains(content, "docker") || strings.Contains(content, "containerd") {
 			d.InContainer = true
 		}
+	}
+
+	// Check for podman runtime availability.
+	if path, err := exec.LookPath("podman"); err == nil {
+		d.PodmanAvailable = true
+		d.PodmanPath = path
 	}
 
 	return d

@@ -43,3 +43,9 @@
 [submodule "external/ollama"]
 	path = external/ollama
 	url = https://github.com/ollama/ollama.git
+[submodule "external/podman"]
+	path = external/podman
+	url = https://github.com/qiangli/podman.git
+[submodule "external/gitea"]
+	path = external/gitea
+	url = https://github.com/qiangli/gitea.git

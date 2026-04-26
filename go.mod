@@ -13,6 +13,10 @@ replace github.com/usememos/memos => ./external/memos
 
 replace github.com/ollama/ollama => ./external/ollama
 
+replace go.podman.io/podman/v6 => ./external/podman
+
+replace code.gitea.io/gitea => ./external/gitea
+
 require (
 	github.com/VictoriaMetrics/VictoriaLogs v0.0.0-20260218111324-95b48d57d032
 	github.com/VictoriaMetrics/VictoriaMetrics v1.140.1-0.20260414051809-8a20ccf21db7

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/collector"
+	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/memos"
 	"github.com/qiangli/ycode/internal/observability"
@@ -91,7 +92,7 @@ var serveStatusCmd = &cobra.Command{
 			cfg.ProxyPort = servePort
 		}
 
-		stack, err := buildStackManager(cfg, dataDir, nil)
+		stack, err := buildStackManager(cfg, dataDir, nil, nil, nil)
 		if err != nil {
 			return err
 		}
@@ -224,7 +225,7 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	}
 
 	// 1. Build and start observability stack first (no dependencies on API).
-	stack, err := buildStackManager(cfg, dataDir, fullCfg.Inference)
+	stack, err := buildStackManager(cfg, dataDir, fullCfg.Inference, fullCfg.Container, fullCfg.GitServer)
 	if err != nil {
 		return fmt.Errorf("build stack: %w", err)
 	}
@@ -381,13 +382,14 @@ type stackComponents struct {
 	mgr           *observability.StackManager
 	memos         *observability.MemosComponent
 	ollama        *inference.OllamaComponent
+	containers    *container.ContainerComponent
 	collectorAddr string // actual gRPC address of the embedded collector (e.g. "127.0.0.1:54321")
 }
 
 // buildStackManager creates and configures a StackManager with all embedded components.
 // All internal ports are allocated dynamically to avoid conflicts when running
 // multiple instances. Only the proxy port (--port) is user-specified.
-func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg *config.InferenceConfig) (*stackComponents, error) {
+func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg *config.InferenceConfig, containerCfg *config.ContainerConfig, gitServerCfg *config.GitServerConfig) (*stackComponents, error) {
 	mgr := observability.NewStackManager(cfg, dataDir)
 
 	// Allocate ephemeral ports for all internal components.
@@ -466,7 +468,39 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 		mgr.AddComponent(inference.NewOllamaUIComponent())
 	}
 
-	return &stackComponents{mgr: mgr, memos: memosComp, ollama: ollamaComp, collectorAddr: coll.GRPCAddr()}, nil
+	// Container isolation — Podman-based agent sandboxing (optional).
+	var containerComp *container.ContainerComponent
+	if containerCfg != nil && containerCfg.Enabled {
+		containerComp = container.NewContainerComponent(
+			&container.ComponentConfig{
+				Enabled:      containerCfg.Enabled,
+				BinaryPath:   containerCfg.BinaryPath,
+				SocketPath:   containerCfg.SocketPath,
+				Image:        containerCfg.Image,
+				Network:      containerCfg.Network,
+				ReadOnlyRoot: containerCfg.ReadOnlyRoot,
+				PoolSize:     containerCfg.PoolSize,
+				CPUs:         containerCfg.CPUs,
+				Memory:       containerCfg.Memory,
+			},
+			filepath.Join(dataDir, "container"),
+		)
+		// Wire service ports for container environment injection.
+		ollamaPort := 0
+		if ollamaComp != nil {
+			ollamaPort = ollamaComp.Port()
+		}
+		containerComp.SetServicePorts(ollamaPort, collGRPCPort, proxyPort)
+		mgr.AddComponent(containerComp)
+	}
+
+	return &stackComponents{
+		mgr:           mgr,
+		memos:         memosComp,
+		ollama:        ollamaComp,
+		containers:    containerComp,
+		collectorAddr: coll.GRPCAddr(),
+	}, nil
 }
 
 func loadServeConfig() (*config.ObservabilityConfig, string, error) {
