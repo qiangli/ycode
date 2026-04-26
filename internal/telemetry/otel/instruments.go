@@ -39,6 +39,15 @@ type Instruments struct {
 	// Compaction metrics.
 	CompactionTotal       metric.Int64Counter
 	CompactionTokensSaved metric.Int64Counter
+
+	// Inference engine metrics.
+	InferenceCallDuration  metric.Float64Histogram
+	InferenceCallTotal     metric.Int64Counter
+	InferenceTokensInput   metric.Int64Counter
+	InferenceTokensOutput  metric.Int64Counter
+	InferenceModelLoadTime metric.Float64Histogram
+	InferenceRunnerStarts  metric.Int64Counter
+	InferenceRunnerCrashes metric.Int64Counter
 }
 
 // NewInstruments creates all OTEL metric instruments from the given meter.
@@ -146,6 +155,40 @@ func NewInstruments(m metric.Meter) (*Instruments, error) {
 	if inst.CompactionTokensSaved, err = m.Int64Counter("ycode.compaction.tokens_saved",
 		metric.WithUnit("tokens"),
 		metric.WithDescription("Tokens reclaimed by compaction")); err != nil {
+		return nil, err
+	}
+
+	// Inference engine instruments.
+	if inst.InferenceCallDuration, err = m.Float64Histogram("ycode.inference.call.duration",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Local inference call latency")); err != nil {
+		return nil, err
+	}
+	if inst.InferenceCallTotal, err = m.Int64Counter("ycode.inference.call.total",
+		metric.WithDescription("Total local inference calls")); err != nil {
+		return nil, err
+	}
+	if inst.InferenceTokensInput, err = m.Int64Counter("ycode.inference.tokens.input",
+		metric.WithUnit("tokens"),
+		metric.WithDescription("Local inference input tokens")); err != nil {
+		return nil, err
+	}
+	if inst.InferenceTokensOutput, err = m.Int64Counter("ycode.inference.tokens.output",
+		metric.WithUnit("tokens"),
+		metric.WithDescription("Local inference output tokens")); err != nil {
+		return nil, err
+	}
+	if inst.InferenceModelLoadTime, err = m.Float64Histogram("ycode.inference.model.load_time",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Model load time")); err != nil {
+		return nil, err
+	}
+	if inst.InferenceRunnerStarts, err = m.Int64Counter("ycode.inference.runner.starts",
+		metric.WithDescription("Runner process start count")); err != nil {
+		return nil, err
+	}
+	if inst.InferenceRunnerCrashes, err = m.Int64Counter("ycode.inference.runner.crashes",
+		metric.WithDescription("Runner process crash count")); err != nil {
 		return nil, err
 	}
 

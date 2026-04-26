@@ -19,6 +19,7 @@ type OllamaComponent struct {
 	dataDir string
 	runner  *RunnerManager
 	healthy atomic.Bool
+	otel    *otelState // nil if OTEL not configured
 }
 
 // NewOllamaComponent creates a component that manages the Ollama inference engine.
@@ -50,17 +51,30 @@ func (o *OllamaComponent) Start(ctx context.Context) error {
 	}
 	o.runner = runner
 
+	// Wire OTEL callbacks for crash/restart tracing.
+	runner.OnCrash = func(crashErr error) {
+		o.traceRunnerCrash(ctx, crashErr)
+		o.updateOTELGauges()
+	}
+	runner.OnRestart = func() {
+		o.traceRunnerStart(ctx)
+		o.updateOTELGauges()
+	}
+
 	if err := runner.Start(ctx); err != nil {
 		return fmt.Errorf("ollama: start runner: %w", err)
 	}
 
 	o.healthy.Store(true)
+	o.traceRunnerStart(ctx)
+	o.updateOTELGauges()
 	slog.Info("ollama: component started", "port", runner.Port(), "data", o.dataDir)
 	return nil
 }
 
 func (o *OllamaComponent) Stop(ctx context.Context) error {
 	o.healthy.Store(false)
+	o.updateOTELGauges()
 	if o.runner != nil {
 		return o.runner.Stop(ctx)
 	}

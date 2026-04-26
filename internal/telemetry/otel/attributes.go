@@ -53,6 +53,15 @@ var (
 	AttrTokensBefore = attribute.Key("tokens.before")
 	AttrTokensAfter  = attribute.Key("tokens.after")
 
+	// Inference engine attributes.
+	AttrInferenceProvider  = attribute.Key("inference.provider")
+	AttrInferenceModel     = attribute.Key("inference.model")
+	AttrInferenceRunnerPID = attribute.Key("inference.runner.pid")
+	AttrInferencePort      = attribute.Key("inference.port")
+	AttrInferenceHealthy   = attribute.Key("inference.healthy")
+	AttrInferenceRestarts  = attribute.Key("inference.restarts")
+	AttrInferenceError     = attribute.Key("inference.error")
+
 	// Instance tracking.
 	AttrInstanceID = attribute.Key("ycode.instance.id")
 )

@@ -28,6 +28,12 @@ type RunnerManager struct {
 
 	maxRestarts int
 	healthURL   string
+
+	// OnCrash is called when the runner exits unexpectedly.
+	// Set by the owning component for OTEL tracing.
+	OnCrash func(err error)
+	// OnRestart is called after a successful restart.
+	OnRestart func()
 }
 
 // NewRunnerManager creates a runner manager. The runner binary is discovered
@@ -147,6 +153,9 @@ func (r *RunnerManager) monitor(ctx context.Context) {
 	}
 
 	slog.Warn("inference: runner exited unexpectedly", "error", err, "restarts", r.restarts.Load())
+	if r.OnCrash != nil {
+		r.OnCrash(err)
+	}
 
 	// Attempt restart with exponential backoff.
 	for {
@@ -168,6 +177,9 @@ func (r *RunnerManager) monitor(ctx context.Context) {
 		if err != nil {
 			slog.Error("inference: runner restart failed", "error", err, "attempt", restartCount)
 			continue
+		}
+		if r.OnRestart != nil {
+			r.OnRestart()
 		}
 		return
 	}
