@@ -11,7 +11,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL
 
-.PHONY: help init sync compile build test test-integration test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-check collector deploy deploy-local deploy-remote validate validate-ui validate-all
+.PHONY: help init sync compile build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-check collector deploy deploy-local deploy-remote validate validate-ui validate-all
 
 .DEFAULT_GOAL := help
 
@@ -42,6 +42,12 @@ test: ## Run unit tests with race detector (-short flag)
 test-integration: ## Run Go integration tests (requires running server)
 	go test -tags integration -v -count=1 ./internal/integration/...
 
+test-container: ## Run container integration tests (requires podman)
+	go test -tags integration -race -count=1 -timeout 180s -v ./internal/container/...
+
+test-gitserver: ## Run git server workspace integration tests
+	go test -tags integration -race -count=1 -timeout 60s -v ./internal/gitserver/...
+
 test-ui: ## Run Playwright browser tests (requires running server + npx)
 	@cd e2e && npx playwright test; s=$$?; \
 		echo ""; \
@@ -58,7 +64,7 @@ test-tui-fuzz: ## Run TUI fuzz tests for 30s each
 	go test -run='^$$' -fuzz=FuzzToolDetail -fuzztime=30s ./internal/cli/
 	go test -run='^$$' -fuzz=FuzzTUIUpdate -fuzztime=30s ./internal/cli/
 
-test-all: test test-integration test-ui ## Run all tests: unit + integration + browser
+test-all: test test-container test-gitserver test-integration test-ui ## Run all tests: unit + container + gitserver + integration + browser
 
 vet: ## Run static analysis
 	go vet $(PACKAGES)
