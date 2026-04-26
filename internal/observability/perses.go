@@ -66,14 +66,15 @@ func (p *PersesComponent) Start(ctx context.Context) error {
 	// StatChart, PrometheusTimeSeriesQuery, etc.) from archive files.
 	pluginDir := filepath.Join(p.dataDir, "plugins")
 	archiveDir := filepath.Join(p.dataDir, "plugins-archive")
+
+	// Always re-provision from embedded archives to ensure runtime plugins
+	// match the binary. Stale plugins from previous builds cause version
+	// mismatch warnings and load errors.
+	_ = os.RemoveAll(pluginDir)
+	_ = os.RemoveAll(archiveDir)
 	_ = os.MkdirAll(pluginDir, 0o755)
 	_ = os.MkdirAll(archiveDir, 0o755)
-
-	// Auto-provision plugin archives if the archive dir is empty.
-	// Priority: embedded archives (self-contained binary) > filesystem fallback.
-	if empty, _ := isDirEmpty(archiveDir); empty {
-		provisionPluginArchives(archiveDir)
-	}
+	provisionPluginArchives(archiveDir)
 
 	conf := config.Config{
 		APIPrefix: p.pathPrefix,
@@ -122,15 +123,6 @@ func (p *PersesComponent) HTTPHandler() http.Handler { return nil }
 
 // Port returns the Perses HTTP port.
 func (p *PersesComponent) Port() int { return p.port }
-
-// isDirEmpty returns true if the directory exists but contains no files.
-func isDirEmpty(dir string) (bool, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return true, err
-	}
-	return len(entries) == 0, nil
-}
 
 // provisionPluginArchives extracts embedded plugin archives to destDir.
 // Falls back to copying from known filesystem locations if no archives
