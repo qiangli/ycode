@@ -13,6 +13,12 @@ const (
 	EventDiagQueueLane    EventType = "diagnostic.queue.lane"
 	EventDiagHeartbeat    EventType = "diagnostic.heartbeat"
 	EventDiagSessionStuck EventType = "diagnostic.session.stuck"
+
+	// Inference engine events.
+	EventDiagInferenceRunnerStart EventType = "diagnostic.inference.runner_start"
+	EventDiagInferenceRunnerCrash EventType = "diagnostic.inference.runner_crash"
+	EventDiagInferenceModelLoad   EventType = "diagnostic.inference.model_load"
+	EventDiagInferenceHealth      EventType = "diagnostic.inference.health"
 )
 
 // DiagnosticEvent is a structured diagnostic payload.

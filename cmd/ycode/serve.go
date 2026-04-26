@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/collector"
+	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/memos"
 	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -89,7 +90,7 @@ var serveStatusCmd = &cobra.Command{
 			cfg.ProxyPort = servePort
 		}
 
-		stack, err := buildStackManager(cfg, dataDir)
+		stack, err := buildStackManager(cfg, dataDir, nil)
 		if err != nil {
 			return err
 		}
@@ -207,7 +208,7 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	}
 
 	// 1. Build and start observability stack first (no dependencies on API).
-	stack, err := buildStackManager(cfg, dataDir)
+	stack, err := buildStackManager(cfg, dataDir, fullCfg.Inference)
 	if err != nil {
 		return fmt.Errorf("build stack: %w", err)
 	}
@@ -345,14 +346,15 @@ func detachServer(cfg *config.ObservabilityConfig, dataDir string) error {
 
 // stackComponents holds references to key components for post-start wiring.
 type stackComponents struct {
-	mgr   *observability.StackManager
-	memos *observability.MemosComponent
+	mgr    *observability.StackManager
+	memos  *observability.MemosComponent
+	ollama *inference.OllamaComponent
 }
 
 // buildStackManager creates and configures a StackManager with all embedded components.
 // All internal ports are allocated dynamically to avoid conflicts when running
 // multiple instances. Only the proxy port (--port) is user-specified.
-func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) (*stackComponents, error) {
+func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg *config.InferenceConfig) (*stackComponents, error) {
 	mgr := observability.NewStackManager(cfg, dataDir)
 
 	// Allocate ephemeral ports for all internal components.
@@ -420,7 +422,14 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string) (*stackC
 	memosComp := observability.NewMemosComponent(filepath.Join(dataDir, "memos"))
 	mgr.AddComponent(memosComp)
 
-	return &stackComponents{mgr: mgr, memos: memosComp}, nil
+	// Ollama — local inference engine (optional).
+	var ollamaComp *inference.OllamaComponent
+	if inferCfg != nil && inferCfg.Enabled {
+		ollamaComp = inference.NewOllamaComponent(inferCfg, filepath.Join(dataDir, "inference"))
+		mgr.AddComponent(ollamaComp)
+	}
+
+	return &stackComponents{mgr: mgr, memos: memosComp, ollama: ollamaComp}, nil
 }
 
 func loadServeConfig() (*config.ObservabilityConfig, string, error) {

@@ -62,6 +62,9 @@ type Config struct {
 	// Observability settings (OTEL + Prometheus stack)
 	Observability *ObservabilityConfig `json:"observability,omitempty"`
 
+	// Local inference engine settings (Ollama-based)
+	Inference *InferenceConfig `json:"inference,omitempty"`
+
 	// NATS server settings
 	NATS *NATSConfig `json:"nats,omitempty"`
 
@@ -122,6 +125,17 @@ type ObservabilityConfig struct {
 	LogToolDetails   bool   `json:"logToolDetails"`   // log full tool input/output, default true
 	PersistTraces    bool   `json:"persistTraces"`    // write traces to disk, default true when enabled
 	PersistMetrics   bool   `json:"persistMetrics"`   // write metrics to disk, default true when enabled
+}
+
+// InferenceConfig controls the embedded Ollama-based inference engine.
+type InferenceConfig struct {
+	Enabled      bool   `json:"enabled"`                // start local inference engine
+	RunnerPath   string `json:"runnerPath,omitempty"`   // explicit path to ollama binary
+	AutoDownload bool   `json:"autoDownload"`           // download runner on first use
+	DefaultModel string `json:"defaultModel,omitempty"` // pre-load model on startup
+	ModelsDir    string `json:"modelsDir,omitempty"`    // model storage directory
+	GPULayers    int    `json:"gpuLayers,omitempty"`    // GPU offload layers (-1 = auto)
+	MaxVRAMMB    int    `json:"maxVramMB,omitempty"`    // limit GPU memory usage
 }
 
 // RemoteWriteTarget configures a Prometheus remote-write endpoint.

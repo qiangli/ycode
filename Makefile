@@ -11,12 +11,12 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL
 
-.PHONY: help init sync compile build test test-integration test-ui test-all vet tidy clean all cross collector deploy deploy-local deploy-remote validate validate-ui validate-all
+.PHONY: help init sync compile build test test-integration test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-check collector deploy deploy-local deploy-remote validate validate-ui validate-all
 
 .DEFAULT_GOAL := help
 
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
 # ─── Source Management ──────────────────────────────────────────────────────
 
@@ -45,6 +45,16 @@ test-ui: ## Run Playwright browser tests (requires running server + npx)
 		echo ""; \
 		echo "To open the HTML report: cd e2e && npx playwright show-report"; \
 		exit $$s
+
+test-tui: ## Run TUI integration tests (direct Update + teatest lifecycle)
+	go test -tags integration -count=1 -timeout 60s ./internal/cli/...
+
+test-tui-e2e: compile ## Run TUI E2E tests in a PTY (requires compiled binary)
+	go test -tags e2e -count=1 -timeout 120s ./internal/cli/...
+
+test-tui-fuzz: ## Run TUI fuzz tests for 30s each
+	go test -run='^$$' -fuzz=FuzzToolDetail -fuzztime=30s ./internal/cli/
+	go test -run='^$$' -fuzz=FuzzTUIUpdate -fuzztime=30s ./internal/cli/
 
 test-all: test test-integration test-ui ## Run all tests: unit + integration + browser
 
@@ -83,6 +93,17 @@ dist/ycode-darwin-arm64:
 
 dist/ycode-windows-amd64.exe:
 	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $@ ./cmd/ycode/
+
+# ─── Inference Runner ──────────────────────────────────────────────────────
+
+runner-download: ## Download pre-built Ollama runner for current platform
+	@./scripts/download-runner.sh
+
+runner-build: ## Build Ollama runner from source (requires C++ toolchain)
+	@./scripts/build-runner.sh
+
+runner-check: ## Verify runner binary exists and responds to health check
+	@./scripts/check-runner.sh
 
 # ─── Collector ──────────────────────────────────────────────────────────────
 

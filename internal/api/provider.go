@@ -183,6 +183,9 @@ func NewProvider(cfg *ProviderConfig) Provider {
 		return NewAnthropicClient(cfg.APIKey, opts...)
 	case ProviderGemini:
 		return NewOpenAICompatClient(cfg.APIKey, cfg.BaseURL)
+	case ProviderLocal:
+		// Local Ollama-compatible provider — no API key needed.
+		return NewOpenAICompatClient("", cfg.BaseURL)
 	default:
 		return NewOpenAICompatClient(cfg.APIKey, cfg.BaseURL)
 	}

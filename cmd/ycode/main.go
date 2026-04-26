@@ -983,4 +983,7 @@ func init() {
 	// Self-heal commands
 	healCmd.AddCommand(healStatusCmd, healTestCmd)
 	rootCmd.AddCommand(healCmd)
+
+	// Model management commands
+	rootCmd.AddCommand(newModelCmd())
 }

@@ -35,6 +35,8 @@ const (
 	FailureTypeAPI FailureType = "api"
 	// FailureTypeTool indicates a tool execution error.
 	FailureTypeTool FailureType = "tool"
+	// FailureTypeInference indicates a local inference engine error.
+	FailureTypeInference FailureType = "inference"
 	// FailureTypeUnknown indicates an uncategorized error.
 	FailureTypeUnknown FailureType = "unknown"
 )
