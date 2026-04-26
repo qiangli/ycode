@@ -129,6 +129,75 @@ func TestPodmanPullArgsValidation(t *testing.T) {
 	}
 }
 
+func TestPodmanExecArgsValidation(t *testing.T) {
+	cmd := newPodmanCmd()
+
+	// exec requires at least 2 args (container + command).
+	cmd.SetArgs([]string{"exec", "mycontainer"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err == nil {
+		t.Error("exec with only 1 arg should fail")
+	}
+}
+
+func TestPodmanStopArgsValidation(t *testing.T) {
+	cmd := newPodmanCmd()
+
+	// stop requires at least 1 arg.
+	cmd.SetArgs([]string{"stop"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err == nil {
+		t.Error("stop without args should fail")
+	}
+}
+
+func TestPodmanRmArgsValidation(t *testing.T) {
+	cmd := newPodmanCmd()
+
+	// rm requires at least 1 arg.
+	cmd.SetArgs([]string{"rm"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err == nil {
+		t.Error("rm without args should fail")
+	}
+}
+
+func TestPodmanInspectArgsValidation(t *testing.T) {
+	cmd := newPodmanCmd()
+
+	// inspect requires exactly 1 arg.
+	cmd.SetArgs([]string{"inspect"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err == nil {
+		t.Error("inspect without args should fail")
+	}
+}
+
+func TestPodmanRunArgsValidation(t *testing.T) {
+	cmd := newPodmanCmd()
+
+	// run requires at least 1 arg (image).
+	cmd.SetArgs([]string{"run"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err == nil {
+		t.Error("run without args should fail")
+	}
+}
+
+func TestPodmanSubcommandShortDescriptions(t *testing.T) {
+	cmd := newPodmanCmd()
+	for _, sub := range cmd.Commands() {
+		if sub.Short == "" {
+			t.Errorf("subcommand %q has no short description", sub.Name())
+		}
+	}
+}
+
 func TestHelpers(t *testing.T) {
 	if got := truncStr("abcdefghijklmnop", 12); got != "abcdefghijkl" {
 		t.Errorf("truncStr: got %q", got)

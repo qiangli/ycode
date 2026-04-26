@@ -170,7 +170,7 @@ func (c *Container) Exec(ctx context.Context, command string, workDir string) (*
 		args = append(args, "-w", workDir)
 	}
 
-	args = append(args, c.ID, "bash", "-c", command)
+	args = append(args, c.ID, "sh", "-c", command)
 
 	out, err := c.engine.Run(ctx, args...)
 	result := &ExecResult{

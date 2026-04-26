@@ -206,6 +206,90 @@ func TestLoaderMergeInstructions(t *testing.T) {
 	}
 }
 
+func TestLoaderMergeContainerConfig(t *testing.T) {
+	dir := t.TempDir()
+
+	userDir := filepath.Join(dir, "user")
+	os.MkdirAll(userDir, 0o755)
+	os.WriteFile(filepath.Join(userDir, "settings.json"),
+		[]byte(`{"container": {"enabled": true, "image": "ycode-sandbox:latest", "cpus": "2.0"}}`), 0o644)
+
+	projDir := filepath.Join(dir, "project")
+	os.MkdirAll(projDir, 0o755)
+	os.WriteFile(filepath.Join(projDir, "settings.json"),
+		[]byte(`{"container": {"memory": "4g", "poolSize": 3, "readOnlyRoot": true}}`), 0o644)
+
+	localDir := filepath.Join(dir, "local")
+	os.MkdirAll(localDir, 0o755)
+
+	loader := NewLoader(userDir, projDir, localDir)
+	cfg, err := loader.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.Container == nil {
+		t.Fatal("expected non-nil Container config")
+	}
+	if !cfg.Container.Enabled {
+		t.Error("expected container enabled from user config")
+	}
+	if cfg.Container.Image != "ycode-sandbox:latest" {
+		t.Errorf("unexpected image: %s", cfg.Container.Image)
+	}
+	if cfg.Container.CPUs != "2.0" {
+		t.Errorf("unexpected cpus: %s", cfg.Container.CPUs)
+	}
+	if cfg.Container.Memory != "4g" {
+		t.Errorf("unexpected memory from project: %s", cfg.Container.Memory)
+	}
+	if cfg.Container.PoolSize != 3 {
+		t.Errorf("unexpected pool size: %d", cfg.Container.PoolSize)
+	}
+	if !cfg.Container.ReadOnlyRoot {
+		t.Error("expected read-only root from project config")
+	}
+}
+
+func TestLoaderMergeGitServerConfig(t *testing.T) {
+	dir := t.TempDir()
+
+	userDir := filepath.Join(dir, "user")
+	os.MkdirAll(userDir, 0o755)
+	os.WriteFile(filepath.Join(userDir, "settings.json"),
+		[]byte(`{"gitServer": {"enabled": true, "appName": "My Git"}}`), 0o644)
+
+	projDir := filepath.Join(dir, "project")
+	os.MkdirAll(projDir, 0o755)
+	os.WriteFile(filepath.Join(projDir, "settings.json"),
+		[]byte(`{"gitServer": {"httpOnly": true, "dataDir": "/data/gitea"}}`), 0o644)
+
+	localDir := filepath.Join(dir, "local")
+	os.MkdirAll(localDir, 0o755)
+
+	loader := NewLoader(userDir, projDir, localDir)
+	cfg, err := loader.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.GitServer == nil {
+		t.Fatal("expected non-nil GitServer config")
+	}
+	if !cfg.GitServer.Enabled {
+		t.Error("expected gitServer enabled")
+	}
+	if cfg.GitServer.AppName != "My Git" {
+		t.Errorf("unexpected app name: %s", cfg.GitServer.AppName)
+	}
+	if !cfg.GitServer.HTTPOnly {
+		t.Error("expected httpOnly from project config")
+	}
+	if cfg.GitServer.DataDir != "/data/gitea" {
+		t.Errorf("unexpected data dir: %s", cfg.GitServer.DataDir)
+	}
+}
+
 func TestLoaderMissingFiles(t *testing.T) {
 	loader := NewLoader("/nonexistent/user", "/nonexistent/project", "/nonexistent/local")
 	cfg, err := loader.Load()

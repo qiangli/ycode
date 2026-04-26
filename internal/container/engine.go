@@ -146,7 +146,7 @@ func (e *Engine) startService(ctx context.Context, cfg *EngineConfig) error {
 	e.cancel = cancel
 
 	cmd := exec.CommandContext(sctx, e.binaryPath, "system", "service",
-		"--time=0", // no timeout, run until killed
+		"--timeout=0", // no timeout, run until killed
 		"unix://"+socketPath,
 	)
 	cmd.Stdout = os.Stderr // log podman output to stderr
@@ -218,20 +218,52 @@ func discoverBinary(explicit string) (string, error) {
 }
 
 // defaultSocketPath returns the default Podman user socket path.
+// It checks multiple known locations across macOS and Linux.
 func defaultSocketPath() string {
-	// macOS: podman machine socket
+	candidates := []string{}
+
+	// macOS: podman machine socket (most common on macOS with podman machine).
+	tmpDir := os.TempDir()
+	candidates = append(candidates,
+		filepath.Join(tmpDir, "podman", "podman-machine-default-api.sock"),
+	)
+
+	// macOS: older podman socket layout.
 	if uid := os.Getuid(); uid > 0 {
-		socketPath := filepath.Join(os.TempDir(), fmt.Sprintf("podman-run-%d", uid), "podman", "podman.sock")
-		if _, err := os.Stat(socketPath); err == nil {
-			return socketPath
+		candidates = append(candidates,
+			filepath.Join(tmpDir, fmt.Sprintf("podman-run-%d", uid), "podman", "podman.sock"),
+		)
+	}
+
+	// Linux: XDG runtime dir.
+	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
+		candidates = append(candidates,
+			filepath.Join(xdg, "podman", "podman.sock"),
+		)
+	}
+
+	// Try CONTAINER_HOST env var.
+	if host := os.Getenv("CONTAINER_HOST"); host != "" {
+		if strings.HasPrefix(host, "unix://") {
+			path := strings.TrimPrefix(host, "unix://")
+			candidates = append([]string{path}, candidates...)
 		}
 	}
 
-	// Linux: XDG runtime dir
-	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
-		socketPath := filepath.Join(xdg, "podman", "podman.sock")
-		if _, err := os.Stat(socketPath); err == nil {
-			return socketPath
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+
+	// Last resort: ask podman itself.
+	if out, err := exec.Command("podman", "info", "--format", "{{.Host.RemoteSocket.Path}}").Output(); err == nil {
+		path := strings.TrimSpace(string(out))
+		path = strings.TrimPrefix(path, "unix://")
+		if path != "" {
+			if _, err := os.Stat(path); err == nil {
+				return path
+			}
 		}
 	}
 
