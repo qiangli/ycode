@@ -39,6 +39,7 @@ func ollamaURL(ctx context.Context) string {
 
 func newModelPullCmd() *cobra.Command {
 	var name string
+	var cleanup bool
 	cmd := &cobra.Command{
 		Use:   "pull <model>",
 		Short: "Pull a model (e.g. llama3.2:3b or hf://bartowski/Llama-3-8B-GGUF/file.gguf)",
@@ -48,13 +49,14 @@ func newModelPullCmd() *cobra.Command {
 			ctx := context.Background()
 
 			if strings.HasPrefix(model, "hf://") {
-				return pullFromHuggingFace(ctx, model, name)
+				return pullFromHuggingFace(ctx, model, name, cleanup)
 			}
 
 			return pullFromOllamaRegistry(ctx, model)
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Override the model name in Ollama (for HF imports)")
+	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "Remove the raw GGUF file after successful import into Ollama")
 	return cmd
 }
 
@@ -78,7 +80,7 @@ func pullFromOllamaRegistry(ctx context.Context, model string) error {
 	})
 }
 
-func pullFromHuggingFace(ctx context.Context, ref, nameOverride string) error {
+func pullFromHuggingFace(ctx context.Context, ref, nameOverride string, cleanup bool) error {
 	repo, filename, err := inference.ParseHFRef(ref)
 	if err != nil {
 		return err
@@ -127,6 +129,14 @@ func pullFromHuggingFace(ctx context.Context, ref, nameOverride string) error {
 	}
 
 	fmt.Printf("\nModel %q is ready to use.\n", modelName)
+
+	if cleanup {
+		if err := os.Remove(localPath); err != nil {
+			fmt.Printf("Warning: failed to remove raw GGUF: %v\n", err)
+		} else {
+			fmt.Printf("Cleaned up raw GGUF: %s\n", localPath)
+		}
+	}
 	return nil
 }
 
