@@ -610,6 +610,182 @@ func TestTUI_AddContext_WhilePaused(t *testing.T) {
 	}
 }
 
+func TestTUI_AddContext_WhilePausedWithPendingCalls(t *testing.T) {
+	m := newTestTUIModel(t)
+	m.paused = true
+	m.pausedMessages = []api.Message{
+		{Role: api.RoleUser, Content: []api.ContentBlock{{Type: api.ContentTypeText, Text: "do something"}}},
+		{Role: api.RoleAssistant, Content: []api.ContentBlock{
+			{Type: api.ContentTypeText, Text: "I'll run a command"},
+			{Type: api.ContentTypeToolUse, ID: "tool1", Name: "bash", Input: json.RawMessage(`{"command":"ls"}`)},
+		}},
+	}
+	m.pausedCalls = []conversation.ToolCall{
+		{ID: "tool1", Name: "bash", Input: json.RawMessage(`{"command":"ls"}`)},
+	}
+
+	m.textarea.SetValue("focus on docker services")
+	updated, _ := m.Update(keyMsg(tea.KeyEnter))
+	m = updated.(*TUIModel)
+
+	assertOutputContains(t, m, "Added to context")
+
+	// With pending tool calls, context should be deferred — not injected into pausedMessages.
+	if len(m.pausedMessages) != 2 {
+		t.Errorf("expected pausedMessages unchanged at 2, got %d", len(m.pausedMessages))
+	}
+	if len(m.pausedContext) != 1 {
+		t.Errorf("expected 1 deferred context entry, got %d", len(m.pausedContext))
+	}
+	if m.pausedContext[0] != "focus on docker services" {
+		t.Errorf("deferred context = %q, want %q", m.pausedContext[0], "focus on docker services")
+	}
+}
+
+func TestTUI_AddContext_WhilePausedWithoutPendingCalls(t *testing.T) {
+	m := newTestTUIModel(t)
+	m.paused = true
+	m.pausedMessages = []api.Message{{Role: api.RoleUser}}
+	// No pausedCalls — context should be injected directly.
+
+	m.textarea.SetValue("additional context")
+	updated, _ := m.Update(keyMsg(tea.KeyEnter))
+	m = updated.(*TUIModel)
+
+	assertOutputContains(t, m, "Added to context")
+	// pausedMessages should grow (2 new messages: assistant ack + user input).
+	if len(m.pausedMessages) != 3 {
+		t.Errorf("expected 3 pausedMessages, got %d", len(m.pausedMessages))
+	}
+	if len(m.pausedContext) != 0 {
+		t.Errorf("expected 0 deferred context, got %d", len(m.pausedContext))
+	}
+}
+
+func TestTUI_AddMultipleContext_WhilePausedWithPendingCalls(t *testing.T) {
+	m := newTestTUIModel(t)
+	m.paused = true
+	m.pausedMessages = []api.Message{
+		{Role: api.RoleAssistant, Content: []api.ContentBlock{
+			{Type: api.ContentTypeToolUse, ID: "t1", Name: "bash", Input: json.RawMessage(`{}`)},
+		}},
+	}
+	m.pausedCalls = []conversation.ToolCall{
+		{ID: "t1", Name: "bash", Input: json.RawMessage(`{}`)},
+	}
+
+	// Add two context messages while paused.
+	m.textarea.SetValue("first context")
+	updated, _ := m.Update(keyMsg(tea.KeyEnter))
+	m = updated.(*TUIModel)
+
+	m.textarea.SetValue("second context")
+	updated, _ = m.Update(keyMsg(tea.KeyEnter))
+	m = updated.(*TUIModel)
+
+	if len(m.pausedContext) != 2 {
+		t.Errorf("expected 2 deferred context entries, got %d", len(m.pausedContext))
+	}
+	// pausedMessages must stay untouched.
+	if len(m.pausedMessages) != 1 {
+		t.Errorf("expected pausedMessages unchanged at 1, got %d", len(m.pausedMessages))
+	}
+}
+
+func TestTUI_Resume_PreloadsDeferredContext(t *testing.T) {
+	m := newTestTUIModel(t)
+	m.paused = true
+	m.pausedAt = time.Now().Add(-2 * time.Second)
+	m.pausedMessages = []api.Message{
+		{Role: api.RoleAssistant, Content: []api.ContentBlock{
+			{Type: api.ContentTypeToolUse, ID: "t1", Name: "bash", Input: json.RawMessage(`{}`)},
+		}},
+	}
+	m.pausedCalls = []conversation.ToolCall{
+		{ID: "t1", Name: "bash", Input: json.RawMessage(`{}`)},
+	}
+	m.pausedContext = []string{"deferred msg 1", "deferred msg 2"}
+
+	// Submit /resume.
+	m.textarea.SetValue("/resume")
+	updated, cmd := m.Update(keyMsg(tea.KeyEnter))
+	m = updated.(*TUIModel)
+
+	assertState(t, m, true, false, false)
+	assertOutputContains(t, m, "Resuming")
+
+	// pausedContext should be cleared (pre-loaded into midTurnCh).
+	if len(m.pausedContext) != 0 {
+		t.Errorf("expected pausedContext cleared, got %d", len(m.pausedContext))
+	}
+	// midTurnCh should contain the deferred messages.
+	if m.midTurnCh == nil {
+		t.Fatal("expected midTurnCh to be set")
+	}
+	if len(m.midTurnCh) != 2 {
+		t.Errorf("expected 2 messages in midTurnCh, got %d", len(m.midTurnCh))
+	}
+
+	// pausedCalls should be cleared (handed off to executeToolsCmd).
+	if len(m.pausedCalls) != 0 {
+		t.Errorf("expected pausedCalls cleared, got %d", len(m.pausedCalls))
+	}
+
+	if cmd == nil {
+		t.Error("expected non-nil cmd from resume")
+	}
+}
+
+func TestTUI_CancelWhilePaused_ClearsDeferredContext(t *testing.T) {
+	m := newTestTUIModel(t)
+	m.paused = true
+	m.pausedMessages = []api.Message{{Role: api.RoleUser}}
+	m.pausedCalls = []conversation.ToolCall{
+		{ID: "t1", Name: "bash", Input: json.RawMessage(`{}`)},
+	}
+	m.pausedContext = []string{"should be cleared"}
+
+	// Ctrl+C while paused.
+	updated, _ := m.Update(keyMsg(tea.KeyCtrlC))
+	m = updated.(*TUIModel)
+
+	assertState(t, m, false, false, false)
+	assertOutputContains(t, m, "Cancelled")
+	if m.pausedContext != nil {
+		t.Errorf("expected pausedContext nil after cancel, got %v", m.pausedContext)
+	}
+	if m.pausedCalls != nil {
+		t.Errorf("expected pausedCalls nil after cancel, got %v", m.pausedCalls)
+	}
+}
+
+func TestTUI_Pause_SetsPausedAt(t *testing.T) {
+	m := newTestTUIModel(t)
+	m.working = true
+	m.workCancel = func() {}
+	m.pauseRequested = true
+	m.midTurnCh = make(chan string)
+
+	before := time.Now()
+	updated, _ := m.Update(turnResultMsg{
+		Result: &conversation.TurnResult{
+			TextContent: "checking...",
+			ToolCalls: []conversation.ToolCall{
+				{ID: "1", Name: "bash", Input: json.RawMessage(`{"command":"ls"}`)},
+			},
+			Usage:    api.Usage{InputTokens: 100, OutputTokens: 50},
+			Duration: 500 * time.Millisecond,
+		},
+	})
+	m = updated.(*TUIModel)
+	after := time.Now()
+
+	assertState(t, m, false, true, false)
+	if m.pausedAt.Before(before) || m.pausedAt.After(after) {
+		t.Errorf("pausedAt %v not between %v and %v", m.pausedAt, before, after)
+	}
+}
+
 // --- Command output ---
 
 func TestTUI_CommandOutput_Success(t *testing.T) {

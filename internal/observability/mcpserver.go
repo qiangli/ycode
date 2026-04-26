@@ -87,6 +87,54 @@ func (h *TelemetryHandler) ListTools() []mcp.Tool {
 			}`),
 		},
 
+		// --- Diagnostic tools ---
+		{
+			Name:        "diagnose_errors",
+			Description: "General error diagnosis across all ycode components. Queries error metrics, structured error logs, and firing alerts. Start here for any error — covers conversation, tool execution, session I/O, subagent, and command errors. Filter by component to narrow scope.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"component": {"type": "string", "enum": ["all", "conversation", "tool", "session", "tui", "subagent", "command"], "description": "Filter by component (default: all)"},
+					"limit": {"type": "integer", "description": "Max results (default: 20)"},
+					"session_id": {"type": "string", "description": "Filter by session ID"}
+				}
+			}`),
+		},
+		{
+			Name:        "diagnose_api_errors",
+			Description: "Diagnose recent API errors with full context: message structure, orphan tool_call_ids, pause/resume correlation, and role sequence. Start here when investigating API 400 errors or 'tool_call_ids did not have response messages' errors.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"error_type": {"type": "string", "enum": ["all", "orphan_tool_call", "invalid_request", "rate_limit", "overloaded", "auth"], "description": "Filter by error type (default: all)"},
+					"limit": {"type": "integer", "description": "Max results (default: 20)"},
+					"session_id": {"type": "string", "description": "Filter by session ID"}
+				}
+			}`),
+		},
+		{
+			Name:        "diagnose_pause_resume",
+			Description: "Analyze pause/resume events and their correlation with API errors. Shows pause duration, deferred context count, pending tool calls, and any errors that occurred after resume.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"limit": {"type": "integer", "description": "Max results (default: 20)"},
+					"session_id": {"type": "string", "description": "Filter by session ID"}
+				}
+			}`),
+		},
+		{
+			Name:        "diagnose_message_structure",
+			Description: "Query message structure validation warnings: orphan tool_use/tool_result IDs, role sequence violations. Use this to find the root cause of API 400 errors related to tool_call_id mismatches.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"limit": {"type": "integer", "description": "Max results (default: 20)"},
+					"session_id": {"type": "string", "description": "Filter by session ID"}
+				}
+			}`),
+		},
+
 		// --- Perses dashboard tools ---
 		{
 			Name:        "create_dashboard",
@@ -249,6 +297,16 @@ func (h *TelemetryHandler) HandleToolCall(ctx context.Context, name string, inpu
 		return tools.QueryLogs(ctx, input)
 	case "query_metrics":
 		return tools.QueryMetrics(ctx, input)
+
+	// Diagnostic queries.
+	case "diagnose_errors":
+		return h.handleDiagnoseErrors(input)
+	case "diagnose_api_errors":
+		return h.handleDiagnoseAPIErrors(input)
+	case "diagnose_pause_resume":
+		return h.handleDiagnosePauseResume(input)
+	case "diagnose_message_structure":
+		return h.handleDiagnoseMessageStructure(input)
 
 	// Perses dashboards.
 	case "create_dashboard":
@@ -578,6 +636,290 @@ func (h *TelemetryHandler) handlePushAlert(input json.RawMessage) (string, error
 	}
 
 	return fmt.Sprintf("Alert %q pushed to Alertmanager (severity: %s)", params.Name, params.Severity), nil
+}
+
+// --- Diagnostic handlers ---
+
+func (h *TelemetryHandler) handleDiagnoseErrors(input json.RawMessage) (string, error) {
+	var params struct {
+		Component string `json:"component"`
+		Limit     int    `json:"limit"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(input, &params); err != nil {
+		return "", fmt.Errorf("parse diagnose_errors input: %w", err)
+	}
+	if params.Limit <= 0 {
+		params.Limit = 20
+	}
+	if params.Component == "" {
+		params.Component = "all"
+	}
+
+	var results strings.Builder
+	results.WriteString("=== Error Diagnosis ===\n\n")
+
+	// 1. General error metrics by component.
+	results.WriteString("## Error Counts by Component\n")
+	queries := []struct {
+		label string
+		query string
+	}{
+		{"Errors by Component", "sum(ycode_error_total) by (component, error_type)"},
+		{"Error Rate (5m)", "sum(rate(ycode_error_total[5m])) by (component)"},
+		{"API Errors", "sum(ycode_api_error_total) by (error_type, status_code)"},
+		{"Message Warnings", "sum(ycode_message_structure_warnings) by (warning_type)"},
+	}
+	for _, q := range queries {
+		resp, err := h.proxyGet(fmt.Sprintf("/prometheus/api/v1/query?query=%s", q.query))
+		if err == nil {
+			fmt.Fprintf(&results, "\n### %s\n%s\n", q.label, resp)
+		}
+	}
+
+	// 2. Error logs from VictoriaLogs.
+	results.WriteString("\n## Recent Error Logs\n")
+	logQuery := "log.type:error OR log.type:api_error"
+	if params.Component != "all" {
+		logQuery = fmt.Sprintf("error.component:%s", params.Component)
+	}
+	if params.SessionID != "" {
+		logQuery += fmt.Sprintf(" AND session.id:%s", params.SessionID)
+	}
+	logResp, err := h.proxyGet(fmt.Sprintf("/logs/select/logsql/query?query=%s&limit=%d", logQuery, params.Limit))
+	if err == nil {
+		results.WriteString(logResp)
+	} else {
+		fmt.Fprintf(&results, "(VictoriaLogs query failed: %v)\n", err)
+	}
+
+	// 3. Firing alerts.
+	results.WriteString("\n\n## Firing Alerts\n")
+	alertResp, err := h.proxyGet("/alerts/api/v2/alerts")
+	if err == nil {
+		results.WriteString(alertResp)
+	}
+
+	// 4. TUI state (if available).
+	if h.StateFunc != nil {
+		results.WriteString("\n\n## TUI State\n")
+		results.WriteString(h.StateFunc())
+	}
+
+	// 5. Guidance.
+	results.WriteString("\n\n## Next Steps\n")
+	results.WriteString("- For API 400 errors: use diagnose_api_errors with error_type filter\n")
+	results.WriteString("- For pause/resume issues: use diagnose_pause_resume\n")
+	results.WriteString("- For message structure: use diagnose_message_structure\n")
+	results.WriteString("- For tool failures: filter by component=tool in this tool\n")
+	results.WriteString("- Ad-hoc PromQL: use promql_query\n")
+	results.WriteString("- Search logs: use search_victorialogs\n")
+
+	return results.String(), nil
+}
+
+func (h *TelemetryHandler) handleDiagnoseAPIErrors(input json.RawMessage) (string, error) {
+	var params struct {
+		ErrorType string `json:"error_type"`
+		Limit     int    `json:"limit"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(input, &params); err != nil {
+		return "", fmt.Errorf("parse diagnose_api_errors input: %w", err)
+	}
+	if params.Limit <= 0 {
+		params.Limit = 20
+	}
+	if params.ErrorType == "" {
+		params.ErrorType = "all"
+	}
+
+	var results strings.Builder
+	results.WriteString("=== API Error Diagnosis ===\n\n")
+
+	// 1. Query error metrics from Prometheus.
+	results.WriteString("## Error Metrics (current)\n")
+	metricQueries := []struct {
+		label string
+		query string
+	}{
+		{"Total API Errors", "sum(ycode_api_error_total) by (error_type, status_code)"},
+		{"Error Rate (5m)", "sum(rate(ycode_api_error_total[5m])) by (error_type)"},
+		{"Message Structure Warnings", "sum(ycode_message_structure_warnings) by (warning_type)"},
+		{"Orphan Tool Call Warnings", "sum(ycode_message_structure_warnings{warning_type=\"orphan_tool_use\"})"},
+	}
+	for _, q := range metricQueries {
+		resp, err := h.proxyGet(fmt.Sprintf("/prometheus/api/v1/query?query=%s", q.query))
+		if err == nil {
+			fmt.Fprintf(&results, "\n### %s\n%s\n", q.label, resp)
+		}
+	}
+
+	// 2. Query error logs from VictoriaLogs.
+	results.WriteString("\n## Recent API Error Logs\n")
+	logQuery := "log.type:api_error"
+	if params.ErrorType != "all" {
+		logQuery += fmt.Sprintf(" AND error.type:%s", params.ErrorType)
+	}
+	if params.SessionID != "" {
+		logQuery += fmt.Sprintf(" AND session.id:%s", params.SessionID)
+	}
+	logResp, err := h.proxyGet(fmt.Sprintf("/logs/select/logsql/query?query=%s&limit=%d", logQuery, params.Limit))
+	if err == nil {
+		results.WriteString(logResp)
+	} else {
+		fmt.Fprintf(&results, "(VictoriaLogs query failed: %v)\n", err)
+	}
+
+	// 3. Query pause/resume correlation.
+	results.WriteString("\n\n## Pause/Resume Correlation\n")
+	pauseMetrics := []struct {
+		label string
+		query string
+	}{
+		{"Pause Events", "sum(ycode_pause_total)"},
+		{"Resume Events", "sum(ycode_resume_total)"},
+		{"Avg Pause Duration (ms)", "histogram_quantile(0.5, rate(ycode_pause_duration_bucket[1h]))"},
+	}
+	for _, q := range pauseMetrics {
+		resp, err := h.proxyGet(fmt.Sprintf("/prometheus/api/v1/query?query=%s", q.query))
+		if err == nil {
+			fmt.Fprintf(&results, "\n### %s\n%s\n", q.label, resp)
+		}
+	}
+
+	// 4. Firing alerts.
+	results.WriteString("\n## Firing Alerts\n")
+	alertResp, err := h.proxyGet("/alerts/api/v2/alerts")
+	if err == nil {
+		results.WriteString(alertResp)
+	}
+
+	return results.String(), nil
+}
+
+func (h *TelemetryHandler) handleDiagnosePauseResume(input json.RawMessage) (string, error) {
+	var params struct {
+		Limit     int    `json:"limit"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(input, &params); err != nil {
+		return "", fmt.Errorf("parse diagnose_pause_resume input: %w", err)
+	}
+	if params.Limit <= 0 {
+		params.Limit = 20
+	}
+
+	var results strings.Builder
+	results.WriteString("=== Pause/Resume Diagnosis ===\n\n")
+
+	// 1. Pause/resume metrics.
+	results.WriteString("## Metrics\n")
+	queries := []struct {
+		label string
+		query string
+	}{
+		{"Total Pauses", "sum(ycode_pause_total)"},
+		{"Total Resumes", "sum(ycode_resume_total)"},
+		{"Pause Duration p50 (ms)", "histogram_quantile(0.5, rate(ycode_pause_duration_bucket[1h]))"},
+		{"Pause Duration p95 (ms)", "histogram_quantile(0.95, rate(ycode_pause_duration_bucket[1h]))"},
+		{"Pause Rate (5m)", "rate(ycode_pause_total[5m])"},
+		{"API Errors After Pause (correlation)", "sum(rate(ycode_api_error_total[5m]))"},
+	}
+	for _, q := range queries {
+		resp, err := h.proxyGet(fmt.Sprintf("/prometheus/api/v1/query?query=%s", q.query))
+		if err == nil {
+			fmt.Fprintf(&results, "\n### %s\n%s\n", q.label, resp)
+		}
+	}
+
+	// 2. Pause/resume logs from VictoriaLogs.
+	results.WriteString("\n## Recent Pause/Resume Logs\n")
+	logQuery := "tui.pause OR tui.resume"
+	if params.SessionID != "" {
+		logQuery += fmt.Sprintf(" AND session:%s", params.SessionID)
+	}
+	logResp, err := h.proxyGet(fmt.Sprintf("/logs/select/logsql/query?query=%s&limit=%d", logQuery, params.Limit))
+	if err == nil {
+		results.WriteString(logResp)
+	} else {
+		fmt.Fprintf(&results, "(VictoriaLogs query failed: %v)\n", err)
+	}
+
+	// 3. Any API errors correlated with pauses.
+	results.WriteString("\n\n## API Errors (for correlation with pauses)\n")
+	errorQuery := "log.type:api_error"
+	if params.SessionID != "" {
+		errorQuery += fmt.Sprintf(" AND session.id:%s", params.SessionID)
+	}
+	errorResp, err := h.proxyGet(fmt.Sprintf("/logs/select/logsql/query?query=%s&limit=%d", errorQuery, params.Limit))
+	if err == nil {
+		results.WriteString(errorResp)
+	}
+
+	return results.String(), nil
+}
+
+func (h *TelemetryHandler) handleDiagnoseMessageStructure(input json.RawMessage) (string, error) {
+	var params struct {
+		Limit     int    `json:"limit"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(input, &params); err != nil {
+		return "", fmt.Errorf("parse diagnose_message_structure input: %w", err)
+	}
+	if params.Limit <= 0 {
+		params.Limit = 20
+	}
+
+	var results strings.Builder
+	results.WriteString("=== Message Structure Diagnosis ===\n\n")
+
+	// 1. Warning metrics.
+	results.WriteString("## Structure Warning Metrics\n")
+	queries := []struct {
+		label string
+		query string
+	}{
+		{"Total Warnings", "sum(ycode_message_structure_warnings) by (warning_type)"},
+		{"Warning Rate (5m)", "sum(rate(ycode_message_structure_warnings[5m])) by (warning_type)"},
+		{"Orphan Tool Use Count", "sum(ycode_message_structure_warnings{warning_type=\"orphan_tool_use\"})"},
+	}
+	for _, q := range queries {
+		resp, err := h.proxyGet(fmt.Sprintf("/prometheus/api/v1/query?query=%s", q.query))
+		if err == nil {
+			fmt.Fprintf(&results, "\n### %s\n%s\n", q.label, resp)
+		}
+	}
+
+	// 2. API error logs with message structure details.
+	results.WriteString("\n## API Error Logs with Message Structure\n")
+	logQuery := "log.type:api_error AND error.type:orphan_tool_call"
+	if params.SessionID != "" {
+		logQuery += fmt.Sprintf(" AND session.id:%s", params.SessionID)
+	}
+	logResp, err := h.proxyGet(fmt.Sprintf("/logs/select/logsql/query?query=%s&limit=%d", logQuery, params.Limit))
+	if err == nil {
+		results.WriteString(logResp)
+	} else {
+		fmt.Fprintf(&results, "(VictoriaLogs query failed: %v)\n", err)
+	}
+
+	// 3. Error traces with message structure attributes.
+	results.WriteString("\n\n## Error Traces (from Jaeger)\n")
+	results.WriteString("Query Jaeger for spans with: error.type=orphan_tool_call\n")
+	results.WriteString("Look for attributes: message.orphan_tool_use_count > 0, message.role_sequence\n")
+
+	// 4. Resolution guidance.
+	results.WriteString("\n\n## Resolution Guide\n")
+	results.WriteString("If orphan_tool_call errors are present:\n")
+	results.WriteString("1. Check if pause/resume occurred with pending tool calls\n")
+	results.WriteString("2. Look at message.role_sequence — tool_use blocks must be immediately followed by tool_result\n")
+	results.WriteString("3. Context added during pause with pending tools must be deferred (pausedContext) not injected into pausedMessages\n")
+	results.WriteString("4. Key code path: internal/cli/tui.go — search for 'pausedContext' and 'pausedCalls'\n")
+	results.WriteString("5. The fix: when pausedCalls > 0, store context in pausedContext slice, pre-load into midTurnCh on resume\n")
+
+	return results.String(), nil
 }
 
 // --- HTTP proxy helper ---

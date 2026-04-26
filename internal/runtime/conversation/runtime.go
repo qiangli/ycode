@@ -587,6 +587,7 @@ func (r *Runtime) executeToolsSequential(ctx context.Context, calls []ToolCall, 
 			if progress != nil {
 				progress <- taskqueue.TaskEvent{Index: i, Name: call.Name, Status: taskqueue.StatusFailed, Total: n}
 			}
+			r.recordError(ctx, "tool", "execution_failure", call.Name, err)
 		} else {
 			block.Content = output
 			if progress != nil {
@@ -639,6 +640,7 @@ func (r *Runtime) executeToolsParallel(ctx context.Context, calls []ToolCall, pr
 		if res.Err != nil {
 			block.Content = fmt.Sprintf("Error: %v", res.Err)
 			block.IsError = true
+			r.recordError(ctx, "tool", "execution_failure", calls[i].Name, res.Err)
 		} else {
 			block.Content = res.Output
 		}

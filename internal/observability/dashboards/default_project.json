@@ -68,6 +68,44 @@
           {"title": "Runner Starts", "query": "sum(ycode_inference_runner_starts)", "type": "stat"},
           {"title": "Runner Crashes", "query": "sum(ycode_inference_runner_crashes)", "type": "stat"}
         ]
+      },
+      {
+        "name": "API Health",
+        "panels": [
+          {"title": "API Errors Total", "query": "sum(ycode_api_error_total)", "type": "stat"},
+          {"title": "API Error Rate", "query": "sum(rate(ycode_api_error_total[5m])) by (error_type)", "type": "timeseries"},
+          {"title": "API Errors by Status Code", "query": "sum(rate(ycode_api_error_total[5m])) by (status_code)", "type": "timeseries"},
+          {"title": "API Errors by Type", "query": "sum(ycode_api_error_total) by (error_type)", "type": "table"},
+          {"title": "Message Structure Warnings", "query": "sum(rate(ycode_message_structure_warnings[5m])) by (warning_type)", "type": "timeseries"},
+          {"title": "Orphan Tool Call Warnings", "query": "sum(ycode_message_structure_warnings{warning_type=\"orphan_tool_use\"})", "type": "stat"},
+          {"title": "LLM Call Success Rate", "query": "1 - (sum(rate(ycode_api_error_total[5m])) / sum(rate(ycode_llm_call_total[5m])))", "type": "timeseries"},
+          {"title": "Error vs Call Rate", "query": "sum(rate(ycode_api_error_total[5m]))", "type": "timeseries"}
+        ]
+      },
+      {
+        "name": "Pause & Resume",
+        "panels": [
+          {"title": "Pause Events", "query": "sum(ycode_pause_total)", "type": "stat"},
+          {"title": "Resume Events", "query": "sum(ycode_resume_total)", "type": "stat"},
+          {"title": "Pause Rate", "query": "rate(ycode_pause_total[5m])", "type": "timeseries"},
+          {"title": "Pause Duration (p50)", "query": "histogram_quantile(0.5, rate(ycode_pause_duration_bucket[5m]))", "type": "timeseries"},
+          {"title": "Pause Duration (p95)", "query": "histogram_quantile(0.95, rate(ycode_pause_duration_bucket[5m]))", "type": "timeseries"},
+          {"title": "Pause vs API Errors", "query": "sum(rate(ycode_pause_total[5m])) or sum(rate(ycode_api_error_total[5m]))", "type": "timeseries"},
+          {"title": "Avg Pause Duration (ms)", "query": "histogram_quantile(0.5, rate(ycode_pause_duration_bucket[5m]))", "type": "stat"}
+        ]
+      },
+      {
+        "name": "Error Overview",
+        "panels": [
+          {"title": "Total Errors", "query": "sum(ycode_error_total)", "type": "stat"},
+          {"title": "Error Rate by Component", "query": "sum(rate(ycode_error_total[5m])) by (component)", "type": "timeseries"},
+          {"title": "Error Rate by Type", "query": "sum(rate(ycode_error_total[5m])) by (error_type)", "type": "timeseries"},
+          {"title": "Errors by Component", "query": "sum(ycode_error_total) by (component)", "type": "table"},
+          {"title": "Errors by Type", "query": "sum(ycode_error_total) by (component, error_type)", "type": "table"},
+          {"title": "Tool Errors", "query": "sum(rate(ycode_error_total{component=\"tool\"}[5m])) by (error_type)", "type": "timeseries"},
+          {"title": "Conversation Errors", "query": "sum(rate(ycode_error_total{component=\"conversation\"}[5m])) by (error_type)", "type": "timeseries"},
+          {"title": "All Error Signals", "query": "sum(rate(ycode_error_total[5m])) or sum(rate(ycode_api_error_total[5m])) or sum(rate(ycode_message_structure_warnings[5m]))", "type": "timeseries"}
+        ]
       }
     ]
   },

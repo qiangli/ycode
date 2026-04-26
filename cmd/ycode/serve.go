@@ -18,6 +18,7 @@ import (
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/memos"
 	"github.com/qiangli/ycode/internal/observability"
+	"github.com/qiangli/ycode/internal/observability/dashboards"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/tools"
 )
@@ -276,6 +277,9 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 			proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 			persesDBDir := filepath.Join(dataDir, "perses", "data")
 			alertRulesDir := filepath.Join(home, ".agents", "ycode", "configs", "prometheus", "alerts")
+			if err := dashboards.ProvisionAlertRules(alertRulesDir); err != nil {
+				slog.Warn("failed to provision default alert rules", "error", err)
+			}
 			mcpHandler := observability.NewTelemetryHandler(proxyURL, persesDBDir, alertRulesDir)
 			mcpHTTP := observability.NewMCPHTTPHandler(mcpHandler)
 			mcpComp := observability.NewMCPComponent(mcpHTTP)

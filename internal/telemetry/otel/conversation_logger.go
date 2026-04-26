@@ -3,6 +3,7 @@ package otel
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/log"
@@ -110,6 +111,60 @@ func (cl *ConversationLogger) LogToolCall(sessionID string, turnIndex int, tc To
 	if tc.Output != "" {
 		rec.AddAttributes(log.String("tool.output", tc.Output))
 	}
+
+	cl.logger.Emit(context.Background(), rec)
+}
+
+// LogAPIError emits an API error as a structured OTEL log record with full
+// message structure context for debugging tool_use/tool_result adjacency issues.
+func (cl *ConversationLogger) LogAPIError(sessionID string, turnIndex int,
+	errorType, statusCode, detail, roleSequence string,
+	toolUseCount, toolResultCount int, orphanUseIDs []string) {
+
+	var rec log.Record
+	rec.SetTimestamp(time.Now())
+	rec.SetSeverityText("ERROR")
+	rec.SetSeverity(log.SeverityError)
+	rec.SetBody(log.StringValue(detail))
+	rec.AddAttributes(
+		log.String("log.type", "api_error"),
+		log.String("session.id", sessionID),
+		log.String("instance.id", cl.instanceID),
+		log.Int("turn.index", turnIndex),
+		log.String("error.type", errorType),
+		log.String("error.status_code", statusCode),
+		log.String("error.detail", detail),
+		log.String("message.role_sequence", roleSequence),
+		log.Int("message.tool_use_count", toolUseCount),
+		log.Int("message.tool_result_count", toolResultCount),
+	)
+	if len(orphanUseIDs) > 0 {
+		rec.AddAttributes(log.String("message.orphan_tool_use_ids", strings.Join(orphanUseIDs, ",")))
+	}
+
+	cl.logger.Emit(context.Background(), rec)
+}
+
+// LogError emits a general error as a structured OTEL log record.
+// Use this for any error surface — tool execution, session I/O, commands,
+// subagent failures, TUI errors. The component field identifies the origin.
+func (cl *ConversationLogger) LogError(component, errorType, detail, sessionID string, extra ...log.KeyValue) {
+	var rec log.Record
+	rec.SetTimestamp(time.Now())
+	rec.SetSeverityText("ERROR")
+	rec.SetSeverity(log.SeverityError)
+	rec.SetBody(log.StringValue(detail))
+	rec.AddAttributes(
+		log.String("log.type", "error"),
+		log.String("error.component", component),
+		log.String("error.type", errorType),
+		log.String("error.detail", detail),
+		log.String("instance.id", cl.instanceID),
+	)
+	if sessionID != "" {
+		rec.AddAttributes(log.String("session.id", sessionID))
+	}
+	rec.AddAttributes(extra...)
 
 	cl.logger.Emit(context.Background(), rec)
 }

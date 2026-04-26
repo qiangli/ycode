@@ -40,6 +40,20 @@ type Instruments struct {
 	CompactionTotal       metric.Int64Counter
 	CompactionTokensSaved metric.Int64Counter
 
+	// Pause/resume metrics.
+	PauseTotal    metric.Int64Counter
+	PauseDuration metric.Float64Histogram
+	ResumeTotal   metric.Int64Counter
+
+	// API error metrics.
+	APIErrorTotal            metric.Int64Counter
+	MessageStructureWarnings metric.Int64Counter
+
+	// General error metric — unified counter for all error surfaces.
+	// Labels: component (conversation, tool, session, tui, subagent, command),
+	//         error_type (specific classification), severity (error, warning).
+	ErrorTotal metric.Int64Counter
+
 	// Inference engine metrics.
 	InferenceCallDuration  metric.Float64Histogram
 	InferenceCallTotal     metric.Int64Counter
@@ -155,6 +169,37 @@ func NewInstruments(m metric.Meter) (*Instruments, error) {
 	if inst.CompactionTokensSaved, err = m.Int64Counter("ycode.compaction.tokens_saved",
 		metric.WithUnit("tokens"),
 		metric.WithDescription("Tokens reclaimed by compaction")); err != nil {
+		return nil, err
+	}
+
+	// Pause/resume instruments.
+	if inst.PauseTotal, err = m.Int64Counter("ycode.pause.total",
+		metric.WithDescription("Total pause events")); err != nil {
+		return nil, err
+	}
+	if inst.PauseDuration, err = m.Float64Histogram("ycode.pause.duration",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Time spent paused")); err != nil {
+		return nil, err
+	}
+	if inst.ResumeTotal, err = m.Int64Counter("ycode.resume.total",
+		metric.WithDescription("Total resume events")); err != nil {
+		return nil, err
+	}
+
+	// API error instruments.
+	if inst.APIErrorTotal, err = m.Int64Counter("ycode.api.error.total",
+		metric.WithDescription("API errors by type and status code")); err != nil {
+		return nil, err
+	}
+	if inst.MessageStructureWarnings, err = m.Int64Counter("ycode.message.structure.warnings",
+		metric.WithDescription("Message structure validation warnings (orphan tool_call_ids, role adjacency violations)")); err != nil {
+		return nil, err
+	}
+
+	// General error instrument.
+	if inst.ErrorTotal, err = m.Int64Counter("ycode.error.total",
+		metric.WithDescription("Errors by component, type, and severity")); err != nil {
 		return nil, err
 	}
 

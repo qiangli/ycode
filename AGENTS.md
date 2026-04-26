@@ -7,7 +7,7 @@ ycode -- pure Go CLI agent harness for autonomous software development. Go 1.25+
 ## Build Commands
 
 ```bash
-make init           # REQUIRED first: initialize git submodules (observability stack)
+make init           # REQUIRED first: initialize git submodules + fetch Perses plugins
 make build          # full quality gate: tidy -> fmt -> vet -> compile -> test -> verify
 make compile        # quick compile only (bin/ycode)
 make test           # unit tests only (-short -race)
@@ -32,14 +32,16 @@ Key subsystems:
 - **Prompt** (`internal/runtime/prompt/`): section-based assembly with static/dynamic cache boundary
 - **Session** (`internal/runtime/session/`): JSONL persistence, auto-compaction at 100K tokens
 - **Storage** (`internal/storage/`): KV, SQLite, vector DB, full-text search
-- **Observability** (`internal/collector/`, `internal/observability/`): embedded OTEL stack; submodules in `external/`
+- **Observability** (`internal/collector/`, `internal/observability/`): embedded OTEL stack; Perses plugins embedded via `go:embed`; submodules in `external/`
 - **Plugins** (`internal/plugins/`): hook lifecycle, runtime tool registration
 
 Design: `RuntimeContext` (no global state), three-tier config merge, five-layer memory.
 
 ## Skills
 
-When the user's message starts with `/<name>` (e.g. `/build`, `/deploy`, `/learn`), read `skills/<name>/skill.md` and follow its instructions exactly. Everything after `/<name> ` is `ARGS` — pass it wherever the skill references `{{ARGS}}`. If no matching skill file exists, tell the user. Some skills (`/init`, `/commit`) are embedded in the ycode binary and dispatched via the `Skill` tool.
+When the user's message starts with `/<name>` (e.g. `/build`, `/deploy`, `/learn`), read `skills/<name>/skill.md` and follow its instructions exactly. Everything after `/<name> ` is `ARGS` — pass it wherever the skill references `{{ARGS}}`. If no matching skill file exists, tell the user.
+
+Project skills in `skills/`: `/build`, `/claude`, `/deploy`, `/learn`, `/setup`, `/validate`. Some skills (`/init`, `/commit`) are embedded in the ycode binary and dispatched via the `Skill` tool.
 
 ## Development Cycle: Build -> Deploy -> Validate
 
@@ -89,7 +91,11 @@ The project uses local `replace` directives for embedded observability component
 - `external/perses/` -> `github.com/perses/perses`
 - `external/memos/` -> `github.com/usememos/memos`
 
-Run `make init` before first build to populate submodules.
+Run `make init` before first build to populate submodules and fetch Perses plugin archives.
+
+## Build Notes
+
+macOS arm64: binaries are ad-hoc codesigned after compile (`codesign -f -s -`). Copying the binary (e.g. `cp`) invalidates the signature — re-sign after install. The `make install` target handles this automatically.
 
 ## References
 

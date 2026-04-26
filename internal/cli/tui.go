@@ -25,6 +25,10 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/runtime/usage"
+	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 // Layout constants.
@@ -100,7 +104,8 @@ type TUIModel struct {
 	pauseRequested bool                    // set by /pause, checked at turnResultMsg boundary
 	pausedMessages []api.Message           // conversation state at time of pause
 	pausedCalls    []conversation.ToolCall // pending tool calls if paused mid-tool-dispatch
-	pausedContext  []string               // context added while paused with pending tool calls
+	pausedContext  []string                // context added while paused with pending tool calls
+	pausedAt       time.Time               // when the pause started (for duration metrics)
 
 	// Side query state.
 	sideQueryCount int // for numbering /btw output sections
@@ -109,6 +114,14 @@ type TUIModel struct {
 // tuiLogger is a dedicated logger for TUI state transitions.
 // All entries include the component=tui attribute for filtering.
 var tuiLogger = slog.Default().With("component", "tui")
+
+// otelInst returns the OTEL instruments if available, nil otherwise.
+func (m *TUIModel) otelInst() *yotel.Instruments {
+	if m.app.convOTEL != nil {
+		return m.app.convOTEL.Inst
+	}
+	return nil
+}
 
 // logState logs a TUI state transition with the current state snapshot.
 func (m *TUIModel) logState(event string, extra ...any) {
@@ -538,6 +551,10 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.pausedCalls) > 0 {
 					// Pending tool calls: defer context injection until after
 					// tool results to preserve tool_use → tool_result adjacency.
+					tuiLogger.Debug("tui.pause.context_deferred",
+						"pending_tools", len(m.pausedCalls),
+						"deferred_count", len(m.pausedContext)+1,
+					)
 					m.pausedContext = append(m.pausedContext, text)
 				} else {
 					m.pausedMessages = append(m.pausedMessages,
@@ -610,6 +627,18 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.appendOutput("\n⏹ Cancelled.\n\n")
 			} else {
 				m.appendOutput(fmt.Sprintf("\n✗ Error: %v\n\n", msg.Err))
+				// Record error metric and structured log for non-cancellation errors.
+				if inst := m.otelInst(); inst != nil {
+					inst.ErrorTotal.Add(context.Background(), 1,
+						metric.WithAttributes(
+							attribute.String("component", "conversation"),
+							attribute.String("error_type", "turn_failure"),
+						))
+				}
+				tuiLogger.Error("tui.turn_error",
+					"error", msg.Err.Error(),
+					"session", m.app.session.ID,
+				)
 			}
 			cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
 			break
@@ -733,9 +762,18 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.working = false
 			m.workCancel = nil
 			m.paused = true
+			m.pausedAt = time.Now()
 			m.pausedMessages = m.turnMessages
 			m.pausedCalls = result.ToolCalls
 			m.midTurnCh = nil
+			tuiLogger.Info("tui.pause",
+				"trigger", "turn_boundary",
+				"pending_tools", len(result.ToolCalls),
+				"session", m.app.session.ID,
+			)
+			if inst := m.otelInst(); inst != nil {
+				inst.PauseTotal.Add(context.Background(), 1)
+			}
 			m.logState("paused", "trigger", "pauseRequested", "pending_tools", len(result.ToolCalls))
 			m.appendOutput("\n⏸ Paused. Type additional context, then /resume to continue.\n\n")
 			return m, func() tea.Msg { return repaintMsg{} }
@@ -750,9 +788,18 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.working = false
 		m.workCancel = nil
 		m.paused = true
+		m.pausedAt = time.Now()
 		m.pausedMessages = msg.Messages
 		m.pausedCalls = msg.Calls
 		m.midTurnCh = nil
+		tuiLogger.Info("tui.pause",
+			"trigger", "mid_tool_execution",
+			"pending_tools", len(msg.Calls),
+			"session", m.app.session.ID,
+		)
+		if inst := m.otelInst(); inst != nil {
+			inst.PauseTotal.Add(context.Background(), 1)
+		}
 		m.logState("paused", "trigger", "pausedMsg", "pending_tools", len(msg.Calls))
 		m.appendOutput("\n⏸ Paused. Type additional context, then /resume to continue.\n\n")
 		cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
@@ -1397,12 +1444,23 @@ func (m *TUIModel) startAgentTurnViaClient(ctx context.Context, userPrompt strin
 // (paused before tool execution), it executes them. Otherwise it runs the next
 // LLM turn with the accumulated conversation context.
 func (m *TUIModel) resumeAgentTurn() tea.Cmd {
+	pauseDur := time.Since(m.pausedAt)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.workCancel = cancel
 	m.working = true
 	m.paused = false
 	m.pauseRequested = false
 	m.midTurnCh = make(chan string, 8)
+	tuiLogger.Info("tui.resume",
+		"pause_duration_ms", pauseDur.Milliseconds(),
+		"pending_tools", len(m.pausedCalls),
+		"deferred_context", len(m.pausedContext),
+		"session", m.app.session.ID,
+	)
+	if inst := m.otelInst(); inst != nil {
+		inst.ResumeTotal.Add(context.Background(), 1)
+		inst.PauseDuration.Record(context.Background(), float64(pauseDur.Milliseconds()))
+	}
 	m.logState("resume", "pending_tools", len(m.pausedCalls))
 	m.turnMessages = m.pausedMessages
 	m.pausedMessages = nil
