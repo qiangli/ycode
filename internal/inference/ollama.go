@@ -8,7 +8,10 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strings"
 	"sync/atomic"
+
+	ollamaweb "github.com/qiangli/ycode/internal/inference/web"
 )
 
 // OllamaComponent implements the observability.Component interface for
@@ -85,14 +88,26 @@ func (o *OllamaComponent) Healthy() bool {
 	return o.healthy.Load() && o.runner != nil && o.runner.Healthy()
 }
 
-// HTTPHandler returns a reverse proxy to the Ollama runner's HTTP API.
-// Mounted at /ollama/ on the proxy landing page.
+// HTTPHandler returns a composite handler: API requests are reverse-proxied
+// to the Ollama runner, everything else is served from the embedded
+// management SPA. Mounted at /ollama/ on the proxy landing page.
 func (o *OllamaComponent) HTTPHandler() http.Handler {
 	if o.runner == nil || o.runner.Port() == 0 {
 		return nil
 	}
 	target, _ := url.Parse(o.runner.BaseURL())
-	return httputil.NewSingleHostReverseProxy(target)
+	apiProxy := httputil.NewSingleHostReverseProxy(target)
+	staticHandler := ollamaweb.Handler()
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Proxy Ollama API paths to the runner.
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			apiProxy.ServeHTTP(w, r)
+			return
+		}
+		// Everything else: management SPA.
+		staticHandler.ServeHTTP(w, r)
+	})
 }
 
 // Port returns the Ollama runner's HTTP port for reverse proxying.
