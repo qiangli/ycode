@@ -122,15 +122,18 @@ func (c *EmbeddedCollector) Start(ctx context.Context) error {
 }
 
 // Stop gracefully shuts down the collector.
+// Shutdown() is called first to let exporters drain their queues before the
+// context is cancelled — this avoids "connection refused" errors when
+// downstream backends (VictoriaLogs, Jaeger) are still running.
 func (c *EmbeddedCollector) Stop(_ context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.cancel != nil {
-		c.cancel()
-	}
 	if c.svc != nil {
 		c.svc.Shutdown()
+	}
+	if c.cancel != nil {
+		c.cancel()
 	}
 	c.healthy.Store(false)
 	slog.Info("collector: stopped")
