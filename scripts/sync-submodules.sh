@@ -7,7 +7,7 @@ failed=()
 
 for sub in $(git submodule --quiet foreach --recursive 'echo $sm_path'); do
     echo "--- Syncing $sub ---"
-    if git submodule update --remote --rebase -- "$sub" 2>&1; then
+    if git -c advice.skippedCherryPicks=false submodule update --remote --rebase -- "$sub" 2>&1; then
         echo "    OK"
     else
         # Abort any in-progress rebase and report.
