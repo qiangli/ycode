@@ -68,6 +68,11 @@ tr:hover td{background:rgba(99,102,241,0.05)}
 .detail-grid{display:grid;grid-template-columns:120px 1fr;gap:8px;font-size:14px}
 .detail-grid dt{color:var(--muted)}.detail-grid dd{word-break:break-all}
 
+.chips{display:flex;flex-wrap:wrap;gap:6px;padding:4px 0}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:5px 12px;border-radius:16px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;font-size:13px;transition:all .15s}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+.chip .chip-size{color:var(--muted);font-size:11px}
+
 @media(max-width:600px){.pull-form{flex-direction:column}table{font-size:13px}th,td{padding:6px 8px}}
 </style>
 </head>
@@ -118,6 +123,8 @@ tr:hover td{background:rgba(99,102,241,0.05)}
         <div style="font-size:13px;color:var(--muted)" id="pullStatus">Pulling...</div>
         <div class="progress"><div class="progress-bar" id="pullBar" style="width:0"></div></div>
       </div>
+      <h2 style="margin-top:20px">Popular Models</h2>
+      <div id="popularModels"><div class="empty" style="padding:12px">Loading...</div></div>
       <h2 style="margin-top:20px">Hugging Face (GGUF)</h2>
       <div class="pull-form">
         <input class="input" id="hfInput" placeholder="Search GGUF models on Hugging Face..." onkeydown="if(event.key==='Enter')searchHF()">
@@ -435,11 +442,46 @@ async function searchHF() {
   }
 }
 
+// Load popular models from Ollama registry
+async function loadPopularModels() {
+  const el = document.getElementById('popularModels');
+  try {
+    const r = await fetch('https://ollama.com/api/tags', {signal: AbortSignal.timeout(5000)});
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    const d = await r.json();
+    const models = d.models || [];
+    if (models.length === 0) {
+      el.innerHTML = '<div class="empty" style="padding:12px">No models available.</div>';
+      return;
+    }
+    let html = '<div class="chips">';
+    for (const m of models) {
+      const name = m.name || m.model || '';
+      const size = m.size ? formatBytes(m.size) : '';
+      html += `<span class="chip" onclick="selectPopularModel('${name}')" title="Click to pull ${name}">${name}`;
+      if (size) html += ` <span class="chip-size">${size}</span>`;
+      html += '</span>';
+    }
+    html += '</div>';
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = '<div class="empty" style="padding:12px">Browse models at <a href="https://ollama.com/search" target="_blank">ollama.com/search</a></div>';
+  }
+}
+
+function selectPopularModel(name) {
+  document.getElementById('pullInput').value = name;
+  document.getElementById('pullInput').focus();
+  // Scroll to pull input.
+  document.getElementById('pullInput').scrollIntoView({behavior:'smooth', block:'center'});
+}
+
 // Init
 (async function() {
   await detectAPI();
   checkStatus();
   loadModels();
+  loadPopularModels();
   setInterval(checkStatus, 30000);
 })();
 </script>
