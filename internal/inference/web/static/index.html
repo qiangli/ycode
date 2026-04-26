@@ -118,6 +118,7 @@ tr:hover td{background:rgba(99,102,241,0.05)}
       <div class="pull-form">
         <input class="input" id="pullInput" placeholder="Model name (e.g. llama3.2:3b, qwen2.5:7b)" onkeydown="if(event.key==='Enter')pullModel()">
         <button class="btn primary" onclick="pullModel()" id="pullBtn">Pull</button>
+        <button class="btn danger" onclick="cancelPull()" id="pullCancelBtn" style="display:none">Cancel</button>
       </div>
       <div id="pullProgress" style="display:none">
         <div style="font-size:13px;color:var(--muted)" id="pullStatus">Pulling...</div>
@@ -369,20 +370,28 @@ async function unloadModel(name) {
   }
 }
 
-// Pull model with streaming
-async function pullModel() {
-  const name = document.getElementById('pullInput').value.trim();
+// Pull state
+let pullAbort = null;
+
+// Pull model with streaming + cancellation
+async function pullModel(name) {
+  if (!name) name = document.getElementById('pullInput').value.trim();
   if (!name) return;
   const btn = document.getElementById('pullBtn');
+  const cancelBtn = document.getElementById('pullCancelBtn');
   const prog = document.getElementById('pullProgress');
   btn.disabled = true;
+  cancelBtn.style.display = 'inline-flex';
   prog.style.display = 'block';
+
+  pullAbort = new AbortController();
 
   try {
     const r = await fetch(OLLAMA_API + '/api/pull', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({model: name, stream: true})
+      body: JSON.stringify({model: name, stream: true}),
+      signal: pullAbort.signal
     });
     const reader = r.body.getReader();
     const decoder = new TextDecoder();
@@ -409,11 +418,49 @@ async function pullModel() {
     document.getElementById('pullInput').value = '';
     loadModels();
   } catch(e) {
-    toast('Pull failed: '+e.message, 'error');
+    if (e.name === 'AbortError') {
+      toast('Pull cancelled', 'error');
+    } else {
+      toast('Pull failed: '+e.message, 'error');
+    }
   } finally {
+    pullAbort = null;
     btn.disabled = false;
+    cancelBtn.style.display = 'none';
     prog.style.display = 'none';
     document.getElementById('pullBar').style.width = '0';
+  }
+}
+
+function cancelPull() {
+  if (pullAbort) pullAbort.abort();
+}
+
+// HF pull state
+let hfPullAbort = null;
+
+// Pull a HF model by fetching GGUF file list, then pulling via Ollama create
+async function pullHFModel(repo, btn) {
+  // HF models need a GGUF file — for now, pull the repo name directly
+  // since Ollama supports pulling from HF via the model name
+  const modelName = repo.toLowerCase().replace(/\//g, '-');
+  btn.disabled = true;
+  btn.textContent = 'Pulling...';
+  hfPullAbort = new AbortController();
+
+  // Show a cancel button next to the pull button
+  const cancelBtn = btn.nextElementSibling;
+  if (cancelBtn) cancelBtn.style.display = 'inline-flex';
+
+  try {
+    // Use the pull input + progress UI for the HF pull
+    document.getElementById('pullInput').value = repo;
+    await pullModel(repo);
+  } finally {
+    hfPullAbort = null;
+    btn.disabled = false;
+    btn.textContent = 'Pull';
+    if (cancelBtn) cancelBtn.style.display = 'none';
   }
 }
 
@@ -427,12 +474,16 @@ async function searchHF() {
     const r = await fetch('https://huggingface.co/api/models?filter=gguf&search='+encodeURIComponent(q)+'&sort=downloads&direction=-1&limit=15');
     const models = await r.json();
     if (!models.length) { el.innerHTML = '<div class="empty">No GGUF models found.</div>'; return; }
-    let html = '<table><thead><tr><th>Repository</th><th>Downloads</th><th>Likes</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>Repository</th><th>Downloads</th><th>Likes</th><th></th></tr></thead><tbody>';
     for (const m of models) {
+      const safeId = escapeHtml(m.id);
       html += `<tr>
-        <td><a href="https://huggingface.co/${m.id}" target="_blank">${m.id}</a></td>
+        <td><a href="https://huggingface.co/${safeId}" target="_blank">${safeId}</a></td>
         <td>${m.downloads?.toLocaleString() || 0}</td>
         <td>${m.likes || 0}</td>
+        <td>
+          <button class="btn" onclick="pullHFModel('${safeId}', this)">Pull</button>
+        </td>
       </tr>`;
     }
     html += '</tbody></table>';
