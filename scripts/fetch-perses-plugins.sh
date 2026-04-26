@@ -13,7 +13,6 @@ EMBED_DIR="${SCRIPT_DIR}/../internal/observability/plugins/archive"
 
 # Check if archives already exist in embed dir.
 if [ -d "$EMBED_DIR" ] && ls "$EMBED_DIR"/*.tar.gz &>/dev/null; then
-    echo "Perses plugins already present at $EMBED_DIR"
     exit 0
 fi
 

@@ -21,8 +21,9 @@ help: ## Show this help
 # ─── Source Management ──────────────────────────────────────────────────────
 
 init: ## Initialize submodules and fetch Perses plugins for embedding
-	git submodule init && git submodule update --recursive
-	./scripts/fetch-perses-plugins.sh
+	@git submodule init 2>&1 | grep -v 'already registered' || true
+	@git submodule update --recursive 2>&1 | grep -v '^From \|^Submodule path\| \* branch' || true
+	@./scripts/fetch-perses-plugins.sh
 
 sync: ## Pull latest changes for all submodules (skips on conflict)
 	@./scripts/sync-submodules.sh
