@@ -499,16 +499,19 @@ async function searchHF() {
   }
 }
 
-// Load popular models from Ollama registry
+// Load popular models from Ollama registry via server-side proxy.
+// Avoids CORS issues from direct browser-to-ollama.com requests.
 async function loadPopularModels() {
   const el = document.getElementById('popularModels');
   try {
-    const r = await fetch('https://ollama.com/api/tags', {signal: AbortSignal.timeout(5000)});
+    // Proxy through our own origin to avoid CORS.
+    const proxyBase = window.location.origin + window.location.pathname.replace(/\/+$/, '');
+    const r = await fetch(proxyBase + '/api/registry/tags', {signal: AbortSignal.timeout(5000)});
     if (!r.ok) throw new Error('HTTP '+r.status);
     const d = await r.json();
     const models = d.models || [];
     if (models.length === 0) {
-      el.innerHTML = '<div class="empty" style="padding:12px">No models available.</div>';
+      el.innerHTML = '<div class="empty" style="padding:12px">No internet access. Browse models at <a href="https://ollama.com/search" target="_blank">ollama.com/search</a> or pull by name above.</div>';
       return;
     }
     let html = '<div class="chips">';

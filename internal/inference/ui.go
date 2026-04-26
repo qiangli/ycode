@@ -3,12 +3,14 @@ package inference
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	ollamaweb "github.com/qiangli/ycode/internal/inference/web"
 )
@@ -67,6 +69,11 @@ func (u *OllamaUIComponent) HTTPHandler() http.Handler {
 	staticHandler := ollamaweb.Handler()
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/registry/tags" {
+			// Proxy to Ollama registry (ollama.com) server-side to avoid CORS.
+			proxyRegistryTags(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			// Proxy to Ollama server.
 			target, err := url.Parse(u.ollamaURL)
@@ -80,4 +87,32 @@ func (u *OllamaUIComponent) HTTPHandler() http.Handler {
 		}
 		staticHandler.ServeHTTP(w, r)
 	})
+}
+
+const ollamaRegistryURL = "https://ollama.com/api/tags"
+
+// proxyRegistryTags fetches the Ollama model registry server-side,
+// avoiding CORS issues from direct browser-to-ollama.com requests.
+func proxyRegistryTags(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ollamaRegistryURL, nil)
+	if err != nil {
+		http.Error(w, "failed to create request", http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		// Network error (air-gapped, timeout, etc.) — return empty list.
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"models":[]}`))
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }

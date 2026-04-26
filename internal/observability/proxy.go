@@ -229,13 +229,20 @@ color:rgba(255,255,255,0.4);font-size:14px}
 		"#af52de", "#5ac8fa", "#ff2d55", "#00c7be",
 	}
 
+	// Endpoints that are not browsable (POST-only APIs, etc.) are hidden from the landing page.
+	hiddenTiles := map[string]bool{"/pulse/": true}
+
 	p.mu.RLock()
 	allPrefixes := make([]string, 0, len(p.routes)+len(p.handlers))
 	for prefix := range p.routes {
-		allPrefixes = append(allPrefixes, prefix)
+		if !hiddenTiles[prefix] {
+			allPrefixes = append(allPrefixes, prefix)
+		}
 	}
 	for prefix := range p.handlers {
-		allPrefixes = append(allPrefixes, prefix)
+		if !hiddenTiles[prefix] {
+			allPrefixes = append(allPrefixes, prefix)
+		}
 	}
 	p.mu.RUnlock()
 	sort.Strings(allPrefixes)
