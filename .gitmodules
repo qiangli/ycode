@@ -1,30 +1,3 @@
-[submodule "priorart/clawcode"]
-	path = priorart/clawcode
-	url = https://github.com/ultraworkers/claw-code.git
-[submodule "priorart/geminicli"]
-	path = priorart/geminicli
-	url = https://github.com/google-gemini/gemini-cli.git
-[submodule "priorart/openhands"]
-	path = priorart/openhands
-	url = https://github.com/OpenHands/OpenHands
-[submodule "priorart/aider"]
-	path = priorart/aider
-	url = https://github.com/aider-ai/aider
-[submodule "priorart/cline"]
-	path = priorart/cline
-	url = https://github.com/cline/cline.git
-[submodule "priorart/codex"]
-	path = priorart/codex
-	url = https://github.com/openai/codex.git
-[submodule "priorart/continue"]
-	path = priorart/continue
-	url = https://github.com/continuedev/continue
-[submodule "priorart/openclaw"]
-	path = priorart/openclaw
-	url = https://github.com/openclaw/openclaw.git
-[submodule "priorart/opencode"]
-	path = priorart/opencode
-	url = https://github.com/anomalyco/opencode.git
 [submodule "external/victorialogs"]
 	path = external/victorialogs
 	url = https://github.com/VictoriaMetrics/VictoriaLogs.git
@@ -34,9 +7,6 @@
 [submodule "external/perses"]
 	path = external/perses
 	url = https://github.com/perses/perses.git
-[submodule "priorart/kimicli"]
-	path = priorart/kimicli
-	url = https://github.com/MoonshotAI/kimi-cli.git
 [submodule "external/ollama"]
 	path = external/ollama
 	url = https://github.com/ollama/ollama.git
