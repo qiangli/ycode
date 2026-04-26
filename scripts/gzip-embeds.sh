@@ -11,7 +11,6 @@ ROOT="${SCRIPT_DIR}/.."
 
 # Directories containing embeddable web assets.
 DIRS=(
-    "${ROOT}/internal/observability/memosweb/dist"
     "${ROOT}/internal/observability/static/prometheus"
 )
 

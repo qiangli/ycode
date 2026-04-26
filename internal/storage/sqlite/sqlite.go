@@ -282,5 +282,55 @@ func defaultMigrations() []Migration {
 				`CREATE INDEX IF NOT EXISTS idx_prompt_cache_expires ON prompt_cache(expires_at)`,
 			}, ";\n"),
 		},
+		{
+			Version: 2,
+			Name:    "memos",
+			SQL: strings.Join([]string{
+				// Memos table.
+				`CREATE TABLE IF NOT EXISTS memos (
+					id         TEXT PRIMARY KEY,
+					content    TEXT NOT NULL DEFAULT '',
+					visibility TEXT NOT NULL DEFAULT 'PRIVATE',
+					state      TEXT NOT NULL DEFAULT 'NORMAL',
+					pinned     INTEGER NOT NULL DEFAULT 0,
+					created_at TEXT NOT NULL DEFAULT (datetime('now')),
+					updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+				)`,
+
+				`CREATE INDEX IF NOT EXISTS idx_memos_created ON memos(created_at DESC)`,
+				`CREATE INDEX IF NOT EXISTS idx_memos_state ON memos(state)`,
+
+				// Tags table (extracted from content).
+				`CREATE TABLE IF NOT EXISTS memo_tags (
+					memo_id TEXT NOT NULL REFERENCES memos(id) ON DELETE CASCADE,
+					tag     TEXT NOT NULL,
+					PRIMARY KEY (memo_id, tag)
+				)`,
+
+				`CREATE INDEX IF NOT EXISTS idx_memo_tags_tag ON memo_tags(tag)`,
+
+				// Full-text search index.
+				`CREATE VIRTUAL TABLE IF NOT EXISTS memos_fts USING fts5(
+					content,
+					content='memos',
+					content_rowid='rowid',
+					tokenize='unicode61'
+				)`,
+
+				// FTS sync triggers.
+				`CREATE TRIGGER IF NOT EXISTS memos_fts_insert AFTER INSERT ON memos BEGIN
+					INSERT INTO memos_fts(rowid, content) VALUES (new.rowid, new.content);
+				END`,
+
+				`CREATE TRIGGER IF NOT EXISTS memos_fts_delete AFTER DELETE ON memos BEGIN
+					INSERT INTO memos_fts(memos_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+				END`,
+
+				`CREATE TRIGGER IF NOT EXISTS memos_fts_update AFTER UPDATE OF content ON memos BEGIN
+					INSERT INTO memos_fts(memos_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+					INSERT INTO memos_fts(rowid, content) VALUES (new.rowid, new.content);
+				END`,
+			}, ";\n"),
+		},
 	}
 }

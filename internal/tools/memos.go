@@ -9,13 +9,13 @@ import (
 	"github.com/qiangli/ycode/internal/memos"
 )
 
-// memosClient is the module-level Memos client, set via SetMemosClient.
+// memosStore is the module-level memo store, set via SetMemosStore.
 // Nil when Memos is not available (e.g. serve mode not running).
-var memosClient *memos.Client
+var memosStore memos.Store
 
-// SetMemosClient injects the Memos REST API client for the memo tools.
-func SetMemosClient(c *memos.Client) {
-	memosClient = c
+// SetMemosStore injects the memo store for the memo tools.
+func SetMemosStore(s memos.Store) {
+	memosStore = s
 }
 
 // RegisterMemosHandlers wires up the MemosStore, MemosSearch, MemosList,
@@ -35,15 +35,15 @@ func RegisterMemosHandlers(r *Registry) {
 	}
 }
 
-func checkMemosClient() error {
-	if memosClient == nil {
+func checkMemosStore() error {
+	if memosStore == nil {
 		return fmt.Errorf("Memos is not available. Start the server with `ycode serve` first.")
 	}
 	return nil
 }
 
 func handleMemosStore(ctx context.Context, input json.RawMessage) (string, error) {
-	if err := checkMemosClient(); err != nil {
+	if err := checkMemosStore(); err != nil {
 		return "", err
 	}
 
@@ -58,15 +58,18 @@ func handleMemosStore(ctx context.Context, input json.RawMessage) (string, error
 		return "", fmt.Errorf("content is required")
 	}
 
-	memo, err := memosClient.CreateMemo(ctx, params.Content, params.Visibility)
-	if err != nil {
+	memo := &memos.Memo{
+		Content:    params.Content,
+		Visibility: params.Visibility,
+	}
+	if err := memosStore.Create(ctx, memo); err != nil {
 		return "", err
 	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Memo saved successfully.\n")
-	fmt.Fprintf(&b, "- ID: %s\n", memo.ID())
-	fmt.Fprintf(&b, "- Created: %s\n", memo.CreateTime)
+	fmt.Fprintf(&b, "- ID: %s\n", memo.ID)
+	fmt.Fprintf(&b, "- Created: %s\n", memo.CreatedAt.Format("2006-01-02T15:04:05Z"))
 	if len(memo.Tags) > 0 {
 		fmt.Fprintf(&b, "- Tags: %s\n", strings.Join(memo.Tags, ", "))
 	}
@@ -74,7 +77,7 @@ func handleMemosStore(ctx context.Context, input json.RawMessage) (string, error
 }
 
 func handleMemosSearch(ctx context.Context, input json.RawMessage) (string, error) {
-	if err := checkMemosClient(); err != nil {
+	if err := checkMemosStore(); err != nil {
 		return "", err
 	}
 
@@ -91,16 +94,16 @@ func handleMemosSearch(ctx context.Context, input json.RawMessage) (string, erro
 		params.MaxResults = 20
 	}
 
-	var results []memos.Memo
+	var results []*memos.Memo
 	var err error
 
 	if params.Tag != "" {
-		results, err = memosClient.SearchMemosByTag(ctx, params.Tag, params.MaxResults)
+		results, err = memosStore.SearchByTag(ctx, params.Tag, params.MaxResults)
 	} else if params.Query != "" {
-		results, err = memosClient.SearchMemos(ctx, params.Query, params.MaxResults)
+		results, err = memosStore.Search(ctx, params.Query, params.MaxResults)
 	} else {
 		// No filter — list recent.
-		resp, listErr := memosClient.ListMemos(ctx, params.MaxResults, "", "")
+		resp, listErr := memosStore.List(ctx, memos.ListOptions{PageSize: params.MaxResults})
 		if listErr != nil {
 			return "", listErr
 		}
@@ -118,7 +121,7 @@ func handleMemosSearch(ctx context.Context, input json.RawMessage) (string, erro
 	fmt.Fprintf(&b, "Found %d memo(s):\n\n", len(results))
 	for _, m := range results {
 		fmt.Fprintf(&b, "---\n")
-		fmt.Fprintf(&b, "**ID**: %s | **Created**: %s", m.ID(), m.CreateTime)
+		fmt.Fprintf(&b, "**ID**: %s | **Created**: %s", m.ID, m.CreatedAt.Format("2006-01-02T15:04:05Z"))
 		if len(m.Tags) > 0 {
 			fmt.Fprintf(&b, " | **Tags**: %s", strings.Join(m.Tags, ", "))
 		}
@@ -128,7 +131,7 @@ func handleMemosSearch(ctx context.Context, input json.RawMessage) (string, erro
 }
 
 func handleMemosList(ctx context.Context, input json.RawMessage) (string, error) {
-	if err := checkMemosClient(); err != nil {
+	if err := checkMemosStore(); err != nil {
 		return "", err
 	}
 
@@ -147,7 +150,10 @@ func handleMemosList(ctx context.Context, input json.RawMessage) (string, error)
 		params.PageSize = 100
 	}
 
-	resp, err := memosClient.ListMemos(ctx, params.PageSize, "", params.PageToken)
+	resp, err := memosStore.List(ctx, memos.ListOptions{
+		PageSize:  params.PageSize,
+		PageToken: params.PageToken,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -160,7 +166,7 @@ func handleMemosList(ctx context.Context, input json.RawMessage) (string, error)
 	fmt.Fprintf(&b, "Showing %d memo(s):\n\n", len(resp.Memos))
 	for _, m := range resp.Memos {
 		fmt.Fprintf(&b, "---\n")
-		fmt.Fprintf(&b, "**ID**: %s | **Created**: %s", m.ID(), m.CreateTime)
+		fmt.Fprintf(&b, "**ID**: %s | **Created**: %s", m.ID, m.CreatedAt.Format("2006-01-02T15:04:05Z"))
 		if len(m.Tags) > 0 {
 			fmt.Fprintf(&b, " | **Tags**: %s", strings.Join(m.Tags, ", "))
 		}
@@ -173,7 +179,7 @@ func handleMemosList(ctx context.Context, input json.RawMessage) (string, error)
 }
 
 func handleMemosDelete(ctx context.Context, input json.RawMessage) (string, error) {
-	if err := checkMemosClient(); err != nil {
+	if err := checkMemosStore(); err != nil {
 		return "", err
 	}
 
@@ -187,7 +193,7 @@ func handleMemosDelete(ctx context.Context, input json.RawMessage) (string, erro
 		return "", fmt.Errorf("memo_id is required")
 	}
 
-	if err := memosClient.DeleteMemo(ctx, params.MemoID); err != nil {
+	if err := memosStore.Delete(ctx, params.MemoID); err != nil {
 		return "", err
 	}
 

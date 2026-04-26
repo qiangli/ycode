@@ -17,7 +17,6 @@ import (
 	"github.com/qiangli/ycode/internal/collector"
 	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/inference"
-	"github.com/qiangli/ycode/internal/memos"
 	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/observability/dashboards"
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -248,10 +247,9 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		defer os.Remove(addrPath)
 	}
 
-	// Wire Memos client for agent tools (if memos started successfully).
+	// Wire Memos store for agent tools (if memos started successfully).
 	if stack.memos != nil && stack.memos.Healthy() {
-		mc := memos.NewClient(fmt.Sprintf("http://%s", stack.memos.MemosAddr()))
-		tools.SetMemosClient(mc)
+		tools.SetMemosStore(stack.memos.Store())
 		fmt.Printf("Memos at           http://127.0.0.1:%d/memos/\n", port)
 	}
 

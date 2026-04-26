@@ -37,9 +37,6 @@
 [submodule "priorart/kimicli"]
 	path = priorart/kimicli
 	url = https://github.com/MoonshotAI/kimi-cli.git
-[submodule "external/memos"]
-	path = external/memos
-	url = https://github.com/usememos/memos.git
 [submodule "external/ollama"]
 	path = external/ollama
 	url = https://github.com/ollama/ollama.git
