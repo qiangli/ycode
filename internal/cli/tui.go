@@ -100,6 +100,7 @@ type TUIModel struct {
 	pauseRequested bool                    // set by /pause, checked at turnResultMsg boundary
 	pausedMessages []api.Message           // conversation state at time of pause
 	pausedCalls    []conversation.ToolCall // pending tool calls if paused mid-tool-dispatch
+	pausedContext  []string               // context added while paused with pending tool calls
 
 	// Side query state.
 	sideQueryCount int // for numbering /btw output sections
@@ -155,6 +156,7 @@ func (m *TUIModel) debugState() string {
 	fmt.Fprintf(&b, "turnMessages:   %d messages\n", len(m.turnMessages))
 	fmt.Fprintf(&b, "pausedMessages: %d messages\n", len(m.pausedMessages))
 	fmt.Fprintf(&b, "pausedCalls:    %d calls\n", len(m.pausedCalls))
+	fmt.Fprintf(&b, "pausedContext:  %d entries\n", len(m.pausedContext))
 
 	if m.cl != nil {
 		b.WriteString("client:         connected\n")
@@ -450,6 +452,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.paused = false
 				m.pausedMessages = nil
 				m.pausedCalls = nil
+				m.pausedContext = nil
 				m.appendOutput("\n⏹ Cancelled (paused session discarded).\n\n")
 				cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
 				break
@@ -532,20 +535,26 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						{Type: session.ContentTypeText, Text: text},
 					},
 				})
-				m.pausedMessages = append(m.pausedMessages,
-					api.Message{
-						Role: api.RoleAssistant,
-						Content: []api.ContentBlock{
-							{Type: api.ContentTypeText, Text: "Noted, I'll take that into account."},
+				if len(m.pausedCalls) > 0 {
+					// Pending tool calls: defer context injection until after
+					// tool results to preserve tool_use → tool_result adjacency.
+					m.pausedContext = append(m.pausedContext, text)
+				} else {
+					m.pausedMessages = append(m.pausedMessages,
+						api.Message{
+							Role: api.RoleAssistant,
+							Content: []api.ContentBlock{
+								{Type: api.ContentTypeText, Text: "Noted, I'll take that into account."},
+							},
 						},
-					},
-					api.Message{
-						Role: api.RoleUser,
-						Content: []api.ContentBlock{
-							{Type: api.ContentTypeText, Text: text},
+						api.Message{
+							Role: api.RoleUser,
+							Content: []api.ContentBlock{
+								{Type: api.ContentTypeText, Text: text},
+							},
 						},
-					},
-				)
+					)
+				}
 				m.appendOutput(fmt.Sprintf("📎 Added to context: %s\n(type /resume to continue)\n", text))
 				return m, nil
 			}
@@ -1400,6 +1409,13 @@ func (m *TUIModel) resumeAgentTurn() tea.Cmd {
 
 	if len(m.pausedCalls) > 0 {
 		// Paused before executing tool calls — execute them now.
+		// Pre-load any context added while paused into the mid-turn channel
+		// so it gets injected after tool results (preserving tool_use →
+		// tool_result adjacency required by the API).
+		for _, text := range m.pausedContext {
+			m.midTurnCh <- text
+		}
+		m.pausedContext = nil
 		calls := m.pausedCalls
 		m.pausedCalls = nil
 		return m.executeToolsCmd(calls, nil) // no trace context from pause
