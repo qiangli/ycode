@@ -11,7 +11,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL
 
-.PHONY: help init sync compile compile-debug build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-check collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-contract eval-smoke eval-all-evals
+.PHONY: help init sync compile compile-debug build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-check collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-contract eval-smoke eval-behavioral eval-e2e eval-all-evals
 
 .DEFAULT_GOAL := help
 
@@ -79,7 +79,13 @@ eval-contract: ## Run contract-tier evals (no LLM, deterministic, fast)
 eval-smoke: ## Run smoke-tier evals (real LLM, pass@k, requires provider)
 	go test -tags eval -count=1 -timeout 5m ./internal/eval/smoke/...
 
-eval-all-evals: eval-contract eval-smoke ## Run all eval tiers
+eval-behavioral: ## Run behavioral evals (trajectory analysis, requires provider)
+	go test -tags eval_behavioral -count=1 -timeout 30m ./internal/eval/behavioral/...
+
+eval-e2e: ## Run E2E evals (full coding tasks, requires provider)
+	go test -tags eval_e2e -count=1 -timeout 45m ./internal/eval/e2e/...
+
+eval-all-evals: eval-contract eval-smoke eval-behavioral eval-e2e ## Run all eval tiers
 
 vet: ## Run static analysis
 	go vet $(PACKAGES)

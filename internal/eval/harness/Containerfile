@@ -1,0 +1,19 @@
+# Optional containerized eval environment for sandboxed E2E tasks.
+# Build: podman build -t ycode-eval -f Containerfile .
+# Run:   podman run --rm -v $(pwd):/workspace ycode-eval python run_swebench.py
+
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    golang-go \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /eval
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY *.py .
+
+ENTRYPOINT ["python"]

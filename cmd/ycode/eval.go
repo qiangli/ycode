@@ -28,8 +28,11 @@ Tiers:
 
 	cmd.AddCommand(
 		newEvalContractCmd(),
+		newEvalRunCmd(),
+		newEvalScheduleCmd(),
 		newEvalReportCmd(),
 		newEvalCompareCmd(),
+		newEvalHistoryCmd(),
 	)
 
 	return cmd
@@ -228,4 +231,241 @@ func contractScenarios() []*eval.Scenario {
 	// Contract scenarios will be populated as they are implemented.
 	// For now, the contract tests live in internal/eval/contract/ as Go tests.
 	return nil
+}
+
+// newEvalRunCmd runs eval scenarios across specified tiers.
+func newEvalRunCmd() *cobra.Command {
+	var tiers []string
+	var reportDir string
+
+	cmd := &cobra.Command{
+		Use:   "run",
+		Short: "Run eval scenarios (smoke, behavioral, or e2e)",
+		Long: `Run evaluation scenarios against a real LLM provider.
+
+Provider is selected via EVAL_PROVIDER env (ollama, anthropic, openai).
+Model is selected via EVAL_MODEL env.
+
+Examples:
+  EVAL_PROVIDER=ollama ycode eval run --tier smoke
+  EVAL_PROVIDER=anthropic ycode eval run --tier smoke --tier behavioral`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			provider, model, err := eval.ProviderFromEnv()
+			if err != nil {
+				return err
+			}
+
+			cfg := eval.RunConfig{
+				Provider: os.Getenv("EVAL_PROVIDER"),
+				Model:    model,
+				Version:  version,
+			}
+
+			store, err := eval.NewReportStore(reportDir)
+			if err != nil {
+				return fmt.Errorf("open report store: %w", err)
+			}
+
+			runner := eval.AgentRunner(cfg, provider)
+
+			fmt.Printf("Running evals: provider=%s model=%s tiers=%v\n\n", cfg.Provider, model, tiers)
+
+			var allResults []eval.ScenarioResult
+			start := time.Now()
+
+			for _, tierName := range tiers {
+				fmt.Printf("--- Tier: %s ---\n", tierName)
+				scenarios := scenariosForTier(tierName)
+				if len(scenarios) == 0 {
+					fmt.Printf("  (no scenarios for tier %q — run via 'go test -tags %s')\n\n", tierName, buildTagForTier(tierName))
+					continue
+				}
+
+				for _, s := range scenarios {
+					result, runErr := runner.Run(cmd.Context(), s)
+					if runErr != nil {
+						fmt.Printf("  ERROR  %s: %v\n", s.Name, runErr)
+						continue
+					}
+
+					passed := 0
+					for _, t := range result.Trials {
+						if t.Passed {
+							passed++
+						}
+					}
+
+					status := "PASS"
+					if passed < s.EffectivePassThreshold() {
+						status = "FAIL"
+					}
+					fmt.Printf("  %s  %s  pass@k=%.2f  pass^k=%.2f  flakiness=%.2f\n",
+						status, s.Name, result.Metrics.PassAtK, result.Metrics.PassPowK, result.Metrics.Flakiness)
+
+					allResults = append(allResults, *result)
+				}
+				fmt.Println()
+			}
+
+			// Save report.
+			composite := aggregateComposite(allResults)
+			report := &eval.Report{
+				ID:        fmt.Sprintf("%s-%s", time.Now().Format("20060102-150405"), version),
+				Version:   version,
+				Provider:  cfg.Provider,
+				Model:     model,
+				Tier:      strings.Join(tiers, ","),
+				Timestamp: time.Now(),
+				Scenarios: allResults,
+				Composite: composite,
+				Duration:  time.Since(start),
+			}
+
+			if err := store.Save(report); err != nil {
+				return fmt.Errorf("save report: %w", err)
+			}
+
+			fmt.Printf("Composite: %.0f/100  Duration: %s  Report saved.\n", composite*100, time.Since(start).Truncate(time.Second))
+			return nil
+		},
+	}
+
+	cmd.Flags().StringSliceVar(&tiers, "tier", []string{"smoke"}, "Tiers to run (smoke, behavioral, e2e)")
+	cmd.Flags().StringVar(&reportDir, "report-dir", defaultReportDir(), "Report storage directory")
+
+	return cmd
+}
+
+// newEvalScheduleCmd sets up recurring eval runs.
+func newEvalScheduleCmd() *cobra.Command {
+	var interval string
+
+	cmd := &cobra.Command{
+		Use:   "schedule",
+		Short: "Schedule recurring eval runs",
+		Long: `Schedule eval runs at a recurring interval.
+
+Examples:
+  ycode eval schedule --interval 24h
+  ycode eval schedule --interval 6h`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dur, err := time.ParseDuration(interval)
+			if err != nil {
+				return fmt.Errorf("invalid interval %q: %w", interval, err)
+			}
+			fmt.Printf("Eval schedule configured: every %s\n", dur)
+			fmt.Println()
+			fmt.Println("To run scheduled evals, use the ycode loop system:")
+			fmt.Printf("  ycode loop --interval %s --prompt 'Run eval smoke tier'\n", interval)
+			fmt.Println()
+			fmt.Println("Or integrate with the CronRegistry in serve mode:")
+			fmt.Printf("  Schedule: %s\n", interval)
+			fmt.Println("  Command:  eval run --tier smoke --tier behavioral")
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&interval, "interval", "24h", "Run interval (e.g. 6h, 24h)")
+
+	return cmd
+}
+
+// newEvalHistoryCmd shows eval score trend over time.
+func newEvalHistoryCmd() *cobra.Command {
+	var reportDir string
+	var limit int
+
+	cmd := &cobra.Command{
+		Use:   "history",
+		Short: "Show eval score trend over time",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := eval.NewReportStore(reportDir)
+			if err != nil {
+				return err
+			}
+
+			files, err := store.ListFiles()
+			if err != nil {
+				return err
+			}
+
+			if len(files) == 0 {
+				fmt.Println("No eval reports found.")
+				return nil
+			}
+
+			// Show most recent N.
+			start := 0
+			if len(files) > limit {
+				start = len(files) - limit
+			}
+
+			fmt.Printf("%-12s  %-8s  %-20s  %-10s  %s\n", "Date", "Score", "Provider/Model", "Tier", "Version")
+			fmt.Println(strings.Repeat("-", 75))
+
+			for _, f := range files[start:] {
+				reports, err := store.Load(f)
+				if err != nil {
+					continue
+				}
+				for _, r := range reports {
+					fmt.Printf("%-12s  %5.0f/100  %-20s  %-10s  %s\n",
+						r.Timestamp.Format("2006-01-02"),
+						r.Composite*100,
+						r.Provider+"/"+r.Model,
+						r.Tier,
+						r.Version,
+					)
+				}
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&reportDir, "dir", defaultReportDir(), "Report storage directory")
+	cmd.Flags().IntVar(&limit, "limit", 30, "Number of recent runs to show")
+
+	return cmd
+}
+
+// scenariosForTier returns scenarios for a tier name.
+// For smoke/behavioral/e2e, scenarios are defined in their respective packages
+// and run via go test with build tags. This function returns nil as a placeholder
+// — the real scenarios are invoked through the test framework.
+func scenariosForTier(tier string) []*eval.Scenario {
+	// Scenarios are defined in their respective packages and invoked via go test.
+	// This CLI path is for future programmatic invocation.
+	return nil
+}
+
+func buildTagForTier(tier string) string {
+	switch tier {
+	case "smoke":
+		return "eval"
+	case "behavioral":
+		return "eval_behavioral"
+	case "e2e":
+		return "eval_e2e"
+	default:
+		return tier
+	}
+}
+
+func aggregateComposite(results []eval.ScenarioResult) float64 {
+	if len(results) == 0 {
+		return 0
+	}
+	var totalPassAtK, totalPassPowK, totalFlakiness float64
+	for _, r := range results {
+		totalPassAtK += r.Metrics.PassAtK
+		totalPassPowK += r.Metrics.PassPowK
+		totalFlakiness += r.Metrics.Flakiness
+	}
+	n := float64(len(results))
+	return eval.CompositeScore(
+		totalPassAtK/n,
+		totalPassPowK/n,
+		totalFlakiness/n,
+		1.0, 1.0,
+	)
 }

@@ -1,0 +1,14 @@
+# Eval framework dependencies (all permissive licenses)
+# Install: pip install -r requirements.txt
+
+# Inspect AI — general agent eval framework (MIT)
+inspect-ai>=0.3
+
+# SWE-bench — real GitHub issue resolution benchmark (MIT)
+swebench>=2.0
+
+# DeepEval — LLM-as-judge and tool correctness metrics (Apache-2.0)
+deepeval>=1.0
+
+# Aider — polyglot code editing benchmark (Apache-2.0)
+aider-chat>=0.50
