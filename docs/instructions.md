@@ -11,7 +11,7 @@ This repository uses a **skill system** — reusable, agent-agnostic slash comma
 
 **Dispatch rule**: When the user's message starts with `/<name>` (e.g. `/build`, `/deploy`, `/learn`), read `skills/<name>/skill.md` and follow its instructions exactly. Everything after `/<name> ` (the rest of the message) is `ARGS` — pass it to the skill wherever the skill references `{{ARGS}}`. If the skill does not use `{{ARGS}}` and `ARGS` is non-empty, ignore it. If no matching skill exists, tell the user. To list available skills, run: `ls skills/*/skill.md`.
 
-See [skills/README.md](./skills/README.md) for the full convention and available commands.
+See [skills/README.md](../skills/README.md) for the full convention and available commands.
 
 ### Internal Skills (embedded in the ycode binary)
 
@@ -57,16 +57,37 @@ The build system follows a strict three-layer separation:
 ### Quick Reference
 
 ```bash
-make build       # full quality gate: tidy → fmt → vet → compile → test → verify
-make deploy      # deploy to localhost:58080 (HOST=<remote> PORT=<port>)
-make validate    # integration tests against running instance
-make compile     # quick compile only
-make test        # unit tests only (-short -race)
+make build          # full quality gate: tidy → fmt → vet → compile → test → verify
+make compile        # quick compile only
+make install        # build + install to ~/bin/ycode (re-signs on macOS)
+make test           # unit tests only (-short -race)
+make deploy         # deploy to localhost:58080 (HOST=<remote> PORT=<port>)
+make validate       # integration tests against running instance
 ```
 
 Single test: `go test -short -race -run TestName ./internal/path/to/package/`
 
 Integration tests: `go test -tags integration -v -count=1 ./internal/integration/...`
+
+Additional test targets:
+```bash
+make test-container   # container integration tests (requires podman)
+make test-gitserver   # git server workspace tests
+make test-tui         # TUI integration tests (direct Update + teatest)
+make test-tui-e2e     # TUI E2E tests in a PTY (requires compiled binary)
+make test-tui-fuzz    # TUI fuzz tests (30s each)
+make test-ui          # Playwright browser tests (e2e/ dir, requires running server + npx)
+make test-all         # all of the above combined
+make validate-ui      # Playwright browser tests against running server
+make validate-all     # both validate + validate-ui
+```
+
+Inference runner (local Ollama):
+```bash
+make runner-download  # download pre-built Ollama runner for current platform
+make runner-build     # build runner from source (requires C++ toolchain)
+make runner-check     # verify runner binary + health check
+```
 
 ### Testing
 
