@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 # Fetch Perses plugin archives from the GitHub release matching the vendored version.
-# Plugins are stored in ~/.ycode/observability/perses/plugins-archive/.
+# Downloads to the repo-local embed directory (for go:embed) and the runtime cache.
 # Idempotent — skips download if already present.
 
 set -euo pipefail
 
 PERSES_VERSION="0.53.1"
-DEST_DIR="${1:-$HOME/.ycode/observability/perses/plugins-archive}"
 
-if [ -d "$DEST_DIR" ] && [ "$(ls -A "$DEST_DIR" 2>/dev/null)" ]; then
-    echo "Perses plugins already present at $DEST_DIR"
+# Repo-local embed directory (for go:embed into the binary).
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+EMBED_DIR="${SCRIPT_DIR}/../internal/observability/plugins/archive"
+
+# Check if archives already exist in embed dir.
+if [ -d "$EMBED_DIR" ] && ls "$EMBED_DIR"/*.tar.gz &>/dev/null; then
+    echo "Perses plugins already present at $EMBED_DIR"
     exit 0
 fi
 
@@ -31,7 +35,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 curl -sfL "$URL" -o "$TMPDIR/perses.tar.gz"
 tar xzf "$TMPDIR/perses.tar.gz" -C "$TMPDIR" plugins-archive/
 
-mkdir -p "$DEST_DIR"
-cp "$TMPDIR/plugins-archive/"*.tar.gz "$DEST_DIR/"
+mkdir -p "$EMBED_DIR"
+cp "$TMPDIR/plugins-archive/"*.tar.gz "$EMBED_DIR/"
 
-echo "Perses plugins installed to $DEST_DIR ($(ls "$DEST_DIR" | wc -l | tr -d ' ') archives)"
+echo "Perses plugins installed to $EMBED_DIR ($(ls "$EMBED_DIR"/*.tar.gz | wc -l | tr -d ' ') archives)"

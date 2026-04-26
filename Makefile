@@ -20,8 +20,9 @@ help: ## Show this help
 
 # ─── Source Management ──────────────────────────────────────────────────────
 
-init: ## Initialize and update git submodules recursively
+init: ## Initialize submodules and fetch Perses plugins for embedding
 	git submodule init && git submodule update --recursive
+	./scripts/fetch-perses-plugins.sh
 
 sync: ## Pull latest changes for all submodules (skips on conflict)
 	@./scripts/sync-submodules.sh

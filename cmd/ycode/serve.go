@@ -233,6 +233,19 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	}
 	fmt.Printf("Observability at http://127.0.0.1:%d/\n", port)
 
+	// Propagate the dynamically-allocated collector gRPC address so that
+	// setupOTEL/setupFileOTEL (called inside newApp via buildAPIStack) connects
+	// to the actual embedded collector instead of the default 127.0.0.1:4317.
+	if stack.collectorAddr != "" {
+		// Set package-level override for newApp → setupOTEL/setupFileOTEL.
+		overrideCollectorAddr = stack.collectorAddr
+
+		// Write a discovery file so standalone CLI processes can find the collector.
+		addrPath := filepath.Join(home, ".agents", "ycode", "collector.addr")
+		_ = os.WriteFile(addrPath, []byte(stack.collectorAddr), 0o644)
+		defer os.Remove(addrPath)
+	}
+
 	// Wire Memos client for agent tools (if memos started successfully).
 	if stack.memos != nil && stack.memos.Healthy() {
 		mc := memos.NewClient(fmt.Sprintf("http://%s", stack.memos.MemosAddr()))
@@ -361,9 +374,10 @@ func detachServer(cfg *config.ObservabilityConfig, dataDir string) error {
 
 // stackComponents holds references to key components for post-start wiring.
 type stackComponents struct {
-	mgr    *observability.StackManager
-	memos  *observability.MemosComponent
-	ollama *inference.OllamaComponent
+	mgr           *observability.StackManager
+	memos         *observability.MemosComponent
+	ollama        *inference.OllamaComponent
+	collectorAddr string // actual gRPC address of the embedded collector (e.g. "127.0.0.1:54321")
 }
 
 // buildStackManager creates and configures a StackManager with all embedded components.
@@ -410,7 +424,8 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 		VictoriaLogsPathPrefix: "/logs",
 		JaegerOTLPPort:         jaegerOTLPPort,
 	}
-	mgr.AddComponent(collector.NewEmbeddedCollector(collCfg, filepath.Join(dataDir, "collector")))
+	coll := collector.NewEmbeddedCollector(collCfg, filepath.Join(dataDir, "collector"))
+	mgr.AddComponent(coll)
 
 	mgr.AddComponent(observability.NewPrometheusComponent(
 		filepath.Join(dataDir, "prometheus"),
@@ -447,7 +462,7 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 		mgr.AddComponent(inference.NewOllamaUIComponent())
 	}
 
-	return &stackComponents{mgr: mgr, memos: memosComp, ollama: ollamaComp}, nil
+	return &stackComponents{mgr: mgr, memos: memosComp, ollama: ollamaComp, collectorAddr: coll.GRPCAddr()}, nil
 }
 
 func loadServeConfig() (*config.ObservabilityConfig, string, error) {

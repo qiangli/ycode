@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 
 	"github.com/qiangli/ycode/internal/observability/dashboards"
+	"github.com/qiangli/ycode/internal/observability/plugins"
 
 	persesembed "github.com/perses/perses/embed"
 	"github.com/perses/perses/pkg/model/api/config"
@@ -62,11 +64,16 @@ func (p *PersesComponent) Start(ctx context.Context) error {
 
 	// Configure plugin paths. Perses loads UI plugins (TimeSeriesChart,
 	// StatChart, PrometheusTimeSeriesQuery, etc.) from archive files.
-	// Run scripts/fetch-perses-plugins.sh to download them.
 	pluginDir := filepath.Join(p.dataDir, "plugins")
 	archiveDir := filepath.Join(p.dataDir, "plugins-archive")
 	_ = os.MkdirAll(pluginDir, 0o755)
 	_ = os.MkdirAll(archiveDir, 0o755)
+
+	// Auto-provision plugin archives if the archive dir is empty.
+	// Priority: embedded archives (self-contained binary) > filesystem fallback.
+	if empty, _ := isDirEmpty(archiveDir); empty {
+		provisionPluginArchives(archiveDir)
+	}
 
 	conf := config.Config{
 		APIPrefix: p.pathPrefix,
@@ -115,3 +122,84 @@ func (p *PersesComponent) HTTPHandler() http.Handler { return nil }
 
 // Port returns the Perses HTTP port.
 func (p *PersesComponent) Port() int { return p.port }
+
+// isDirEmpty returns true if the directory exists but contains no files.
+func isDirEmpty(dir string) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return true, err
+	}
+	return len(entries) == 0, nil
+}
+
+// provisionPluginArchives extracts embedded plugin archives to destDir.
+// Falls back to copying from known filesystem locations if no archives
+// were embedded at build time.
+func provisionPluginArchives(destDir string) {
+	// 1. Try embedded archives (self-contained binary).
+	if n := extractEmbeddedPlugins(destDir); n > 0 {
+		slog.Info("perses: extracted embedded plugin archives", "count", n)
+		return
+	}
+
+	// 2. Fallback: copy from filesystem (legacy path or manual fetch).
+	home, _ := os.UserHomeDir()
+	candidates := []string{
+		filepath.Join(home, ".ycode", "observability", "perses", "plugins-archive"),
+	}
+	for _, src := range candidates {
+		if n := copyPluginArchives(src, destDir); n > 0 {
+			slog.Info("perses: provisioned plugin archives", "source", src, "count", n)
+			return
+		}
+	}
+
+	slog.Warn("perses: no plugin archives found — dashboards will lack chart rendering. " +
+		"Run: make init && make compile")
+}
+
+// extractEmbeddedPlugins writes embedded .tar.gz archives to destDir.
+// Returns the number of archives extracted.
+func extractEmbeddedPlugins(destDir string) int {
+	entries, err := plugins.ArchiveFS.ReadDir("archive")
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tar.gz") {
+			continue
+		}
+		data, err := plugins.ArchiveFS.ReadFile("archive/" + e.Name())
+		if err != nil {
+			continue
+		}
+		if os.WriteFile(filepath.Join(destDir, e.Name()), data, 0o644) == nil {
+			n++
+		}
+	}
+	return n
+}
+
+// copyPluginArchives copies .tar.gz files from srcDir to destDir.
+// Returns the number of files copied.
+func copyPluginArchives(srcDir, destDir string) int {
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tar.gz") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(srcDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		if os.WriteFile(filepath.Join(destDir, e.Name()), data, 0o644) == nil {
+			n++
+		}
+	}
+	return n
+}

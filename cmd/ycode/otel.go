@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -17,10 +18,37 @@ import (
 	"github.com/qiangli/ycode/internal/tools"
 )
 
+// overrideCollectorAddr is set by runAllServices to communicate the
+// dynamically-allocated collector gRPC address to setupOTEL/setupFileOTEL
+// (which run inside newApp, where config is loaded independently from disk).
+var overrideCollectorAddr string
+
 // otelResult holds the outputs of setupOTEL for wiring into other components.
 type otelResult struct {
 	shutdown func()
 	convOTEL *conversation.OTELConfig
+}
+
+// resolveCollectorAddr returns the OTEL collector gRPC address using the priority:
+// overrideCollectorAddr (set by serve) > config CollectorAddr > discovery file > default.
+func resolveCollectorAddr(cfg *config.Config) string {
+	// 1. Package-level override set by runAllServices (in-process serve mode).
+	if overrideCollectorAddr != "" {
+		return overrideCollectorAddr
+	}
+	// 2. Explicit config.
+	if cfg.Observability != nil && cfg.Observability.CollectorAddr != "" {
+		return cfg.Observability.CollectorAddr
+	}
+	// 3. Discovery file written by a running ycode serve.
+	home, _ := os.UserHomeDir()
+	if data, err := os.ReadFile(filepath.Join(home, ".agents", "ycode", "collector.addr")); err == nil {
+		if addr := strings.TrimSpace(string(data)); addr != "" {
+			return addr
+		}
+	}
+	// 4. Default.
+	return "127.0.0.1:4317"
 }
 
 // resolveOTELDataDir returns the OTEL storage path using the priority:
@@ -105,10 +133,7 @@ func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Reg
 	// Try connecting to a running collector for dual-export.
 	// This enables the workflow: start ycode solo, then start ycode serve,
 	// and ycode auto-publishes to the shared collector.
-	collectorAddr := "127.0.0.1:4317"
-	if cfg.Observability != nil && cfg.Observability.CollectorAddr != "" {
-		collectorAddr = cfg.Observability.CollectorAddr
-	}
+	collectorAddr := resolveCollectorAddr(cfg)
 	if otelProvider.TryConnectCollector(ctx, collectorAddr) {
 		if otelProvider.LoggerProvider != nil {
 			convCfg.ConvLogger = yotel.NewConversationLogger(otelProvider.LoggerProvider, instanceID)
@@ -153,11 +178,7 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 
 	dataDir := resolveOTELDataDir(obs)
 
-	collectorAddr := obs.CollectorAddr
-	if collectorAddr == "" {
-		// Use the embedded collector's gRPC port (4317 by default).
-		collectorAddr = "127.0.0.1:4317"
-	}
+	collectorAddr := resolveCollectorAddr(cfg)
 
 	sampleRate := obs.SampleRate
 	if sampleRate == 0 {
