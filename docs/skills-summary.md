@@ -9,15 +9,15 @@
 
 | Project | Language | Focus | Skills |
 |---------|----------|-------|--------|
-| [Aider](skills/aider.md) | Python | Terminal pair programming | 40+ cmds |
-| [Claw Code](skills/clawcode.md) | Rust | CLI agent harness (reference) | 70+ cmds |
-| [Cline](skills/cline.md) | TypeScript | VS Code extension | 6+ cmds |
-| [Codex CLI](skills/codex.md) | Rust/TS | OpenAI agent | Skills crate |
-| [Continue](skills/continue.md) | TypeScript | IDE extension | Rules system |
-| [Gemini CLI](skills/geminicli.md) | TypeScript | Google agent | 11 built-in |
-| [OpenClaw](skills/openclaw.md) | TypeScript | Multi-channel gateway | 75 bundled |
-| [OpenCode](skills/opencode.md) | TypeScript | AI coding CLI | SKILL.md |
-| [OpenHands](skills/openhands.md) | Python | Dev agent platform | 26 microagents |
+| [Aider](research/skills/aider.md) | Python | Terminal pair programming | 40+ cmds |
+| [Claw Code](research/skills/clawcode.md) | Rust | CLI agent harness (reference) | 70+ cmds |
+| [Cline](research/skills/cline.md) | TypeScript | VS Code extension | 6+ cmds |
+| [Codex CLI](research/skills/codex.md) | Rust/TS | OpenAI agent | Skills crate |
+| [Continue](research/skills/continue.md) | TypeScript | IDE extension | Rules system |
+| [Gemini CLI](research/skills/geminicli.md) | TypeScript | Google agent | 11 built-in |
+| [OpenClaw](research/skills/openclaw.md) | TypeScript | Multi-channel gateway | 75 bundled |
+| [OpenCode](research/skills/opencode.md) | TypeScript | AI coding CLI | SKILL.md |
+| [OpenHands](research/skills/openhands.md) | Python | Dev agent platform | 26 microagents |
 
 ---
 
@@ -75,7 +75,7 @@
 
 ## Implementation Plan
 
-See [skills/plan.md](skills/plan.md) for the detailed skills implementation plan.
+See [research/skills/plan.md](research/skills/plan.md) for the detailed skills implementation plan.
 
 ---
 
@@ -83,12 +83,12 @@ See [skills/plan.md](skills/plan.md) for the detailed skills implementation plan
 
 | Project | Document |
 |---------|----------|
-| Aider | [aider.md](skills/aider.md) |
-| Claw Code | [clawcode.md](skills/clawcode.md) |
-| Cline | [cline.md](skills/cline.md) |
-| Codex CLI | [codex.md](skills/codex.md) |
-| Continue | [continue.md](skills/continue.md) |
-| Gemini CLI | [geminicli.md](skills/geminicli.md) |
-| OpenClaw | [openclaw.md](skills/openclaw.md) |
-| OpenCode | [opencode.md](skills/opencode.md) |
-| OpenHands | [openhands.md](skills/openhands.md) |
+| Aider | [aider.md](research/skills/aider.md) |
+| Claw Code | [clawcode.md](research/skills/clawcode.md) |
+| Cline | [cline.md](research/skills/cline.md) |
+| Codex CLI | [codex.md](research/skills/codex.md) |
+| Continue | [continue.md](research/skills/continue.md) |
+| Gemini CLI | [geminicli.md](research/skills/geminicli.md) |
+| OpenClaw | [openclaw.md](research/skills/openclaw.md) |
+| OpenCode | [opencode.md](research/skills/opencode.md) |
+| OpenHands | [openhands.md](research/skills/openhands.md) |

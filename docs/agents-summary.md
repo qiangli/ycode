@@ -9,15 +9,15 @@
 
 | Project | Language | Focus | Agents |
 |---------|----------|-------|--------|
-| [Aider](agents/aider.md) | Python | Terminal pair programming | 11 modes |
-| [Claw Code](agents/clawcode.md) | Rust | CLI agent harness (reference) | Workers/Teams |
-| [Cline](agents/cline.md) | TypeScript | VS Code extension | Parallel subagents |
-| [Codex CLI](agents/codex.md) | Rust/TS | OpenAI agent | V2 task trees |
-| [Continue](agents/continue.md) | TypeScript | IDE extension | Model-capability |
-| [Gemini CLI](agents/geminicli.md) | TypeScript | Google agent | 5 local + A2A |
-| [OpenClaw](agents/openclaw.md) | TypeScript | Multi-channel gateway | ACP + sub-agents |
-| [OpenCode](agents/opencode.md) | TypeScript | AI coding CLI | 4 agents |
-| [OpenHands](agents/openhands.md) | Python | Dev agent platform | 6 agents |
+| [Aider](research/agents/aider.md) | Python | Terminal pair programming | 11 modes |
+| [Claw Code](research/agents/clawcode.md) | Rust | CLI agent harness (reference) | Workers/Teams |
+| [Cline](research/agents/cline.md) | TypeScript | VS Code extension | Parallel subagents |
+| [Codex CLI](research/agents/codex.md) | Rust/TS | OpenAI agent | V2 task trees |
+| [Continue](research/agents/continue.md) | TypeScript | IDE extension | Model-capability |
+| [Gemini CLI](research/agents/geminicli.md) | TypeScript | Google agent | 5 local + A2A |
+| [OpenClaw](research/agents/openclaw.md) | TypeScript | Multi-channel gateway | ACP + sub-agents |
+| [OpenCode](research/agents/opencode.md) | TypeScript | AI coding CLI | 4 agents |
+| [OpenHands](research/agents/openhands.md) | Python | Dev agent platform | 6 agents |
 
 ---
 
@@ -69,7 +69,7 @@
 
 ## Implementation Plan
 
-See [agents/plan.md](agents/plan.md) for the detailed agents implementation plan.
+See [research/agents/plan.md](research/agents/plan.md) for the detailed agents implementation plan.
 
 ---
 
@@ -77,12 +77,12 @@ See [agents/plan.md](agents/plan.md) for the detailed agents implementation plan
 
 | Project | Document |
 |---------|----------|
-| Aider | [aider.md](agents/aider.md) |
-| Claw Code | [clawcode.md](agents/clawcode.md) |
-| Cline | [cline.md](agents/cline.md) |
-| Codex CLI | [codex.md](agents/codex.md) |
-| Continue | [continue.md](agents/continue.md) |
-| Gemini CLI | [geminicli.md](agents/geminicli.md) |
-| OpenClaw | [openclaw.md](agents/openclaw.md) |
-| OpenCode | [opencode.md](agents/opencode.md) |
-| OpenHands | [openhands.md](agents/openhands.md) |
+| Aider | [aider.md](research/agents/aider.md) |
+| Claw Code | [clawcode.md](research/agents/clawcode.md) |
+| Cline | [cline.md](research/agents/cline.md) |
+| Codex CLI | [codex.md](research/agents/codex.md) |
+| Continue | [continue.md](research/agents/continue.md) |
+| Gemini CLI | [geminicli.md](research/agents/geminicli.md) |
+| OpenClaw | [openclaw.md](research/agents/openclaw.md) |
+| OpenCode | [opencode.md](research/agents/opencode.md) |
+| OpenHands | [openhands.md](research/agents/openhands.md) |
