@@ -11,7 +11,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL
 
-.PHONY: help init sync compile compile-debug build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-check collector deploy deploy-local deploy-remote validate validate-ui validate-all
+.PHONY: help init sync compile compile-debug build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-check collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-contract eval-smoke eval-all-evals
 
 .DEFAULT_GOAL := help
 
@@ -70,6 +70,16 @@ test-tui-fuzz: ## Run TUI fuzz tests for 30s each
 	go test -run='^$$' -fuzz=FuzzTUIUpdate -fuzztime=30s ./internal/cli/
 
 test-all: test test-container test-gitserver test-tui test-tui-e2e test-integration test-ui ## Run all tests: unit + container + gitserver + TUI + integration + browser
+
+# ─── Evaluation ────────────────────────────────────────────────────────────
+
+eval-contract: ## Run contract-tier evals (no LLM, deterministic, fast)
+	go test -short -race ./internal/eval/...
+
+eval-smoke: ## Run smoke-tier evals (real LLM, pass@k, requires provider)
+	go test -tags eval -count=1 -timeout 5m ./internal/eval/smoke/...
+
+eval-all-evals: eval-contract eval-smoke ## Run all eval tiers
 
 vet: ## Run static analysis
 	go vet $(PACKAGES)

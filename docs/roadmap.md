@@ -13,6 +13,7 @@
 | **Bash AST safety analysis** | [tools-summary](tools-summary.md) | Tree-sitter AST parsing (OpenCode) or intent classification. Current ycode has basic validation only. |
 | **Guardian/LLM approval review** | [tools-summary](tools-summary.md) | Dedicated LLM reviewer for tool approvals (Codex pattern). Complements static permission rules. |
 | **Sensitive data redaction in OTEL** | [gap-analysis-openclaw](gap-analysis-openclaw.md) | Pattern-based redaction for API keys, tokens, PII in trace/log attributes. |
+| **Evaluation framework** | [evaluation](evaluation.md) | 4-tier eval pyramid (contract/smoke/behavioral/E2E), pass@k scoring, regression detection, self-contained scheduling. Foundation for self-improving agent loop. |
 
 ---
 

@@ -991,4 +991,7 @@ func init() {
 
 	// Container management commands (podman/docker)
 	rootCmd.AddCommand(newPodmanCmd())
+
+	// Evaluation framework
+	registerEvalCmd(rootCmd)
 }
