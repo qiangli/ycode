@@ -207,6 +207,21 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		port = 58080
 	}
 
+	// Check for an already-running instance.
+	pidPath := filepath.Join(home, ".agents", "ycode", "serve.pid")
+	if data, err := os.ReadFile(pidPath); err == nil {
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+			if proc, err := os.FindProcess(pid); err == nil {
+				// Signal 0 checks if process exists without actually signaling it.
+				if proc.Signal(syscall.Signal(0)) == nil {
+					return fmt.Errorf("another ycode server is already running (PID %d). Stop it with 'ycode serve stop' or 'ycode pulse stop'", pid)
+				}
+			}
+		}
+		// Stale PID file — clean it up.
+		os.Remove(pidPath)
+	}
+
 	// 1. Build and start observability stack first (no dependencies on API).
 	stack, err := buildStackManager(cfg, dataDir, fullCfg.Inference)
 	if err != nil {
@@ -280,7 +295,7 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	fmt.Println("\nPress Ctrl+C to stop.")
 
 	// Write PID file.
-	pidPath := filepath.Join(home, ".agents", "ycode", "serve.pid")
+	pidPath = filepath.Join(home, ".agents", "ycode", "serve.pid")
 	_ = os.MkdirAll(filepath.Dir(pidPath), 0o755)
 	_ = os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644)
 	defer os.Remove(pidPath)
