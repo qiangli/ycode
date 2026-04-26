@@ -437,11 +437,14 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 	memosComp := observability.NewMemosComponent(filepath.Join(dataDir, "memos"))
 	mgr.AddComponent(memosComp)
 
-	// Ollama — local inference engine (optional).
+	// Ollama — local inference engine (optional managed runner).
 	var ollamaComp *inference.OllamaComponent
 	if inferCfg != nil && inferCfg.Enabled {
 		ollamaComp = inference.NewOllamaComponent(inferCfg, filepath.Join(dataDir, "inference"))
 		mgr.AddComponent(ollamaComp)
+	} else {
+		// Always register the Ollama management UI — auto-detects standalone Ollama.
+		mgr.AddComponent(inference.NewOllamaUIComponent())
 	}
 
 	return &stackComponents{mgr: mgr, memos: memosComp, ollama: ollamaComp}, nil
