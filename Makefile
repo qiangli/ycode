@@ -11,7 +11,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL
 
-.PHONY: help init sync compile compile-debug build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-check collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-contract eval-smoke eval-behavioral eval-e2e eval-all-evals
+.PHONY: help init sync priorart-list priorart-sync compile compile-debug build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-check collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-contract eval-smoke eval-behavioral eval-e2e eval-all-evals
 
 .DEFAULT_GOAL := help
 
@@ -28,6 +28,12 @@ init: ## Initialize submodules, fetch plugins, and prepare embedded assets
 
 sync: ## Pull latest changes for all submodules (skips on conflict)
 	@./scripts/sync-submodules.sh
+
+priorart-list: ## List all priorart repos with branch and latest commit
+	@./scripts/sync-priorart.sh list
+
+priorart-sync: ## Pull latest changes for all priorart repos
+	@./scripts/sync-priorart.sh sync
 
 # ─── Build ──────────────────────────────────────────────────────────────────
 
