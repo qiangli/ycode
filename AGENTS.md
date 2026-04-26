@@ -52,8 +52,6 @@ make runner-build     # build runner from source (requires C++ toolchain)
 make runner-check     # verify runner binary + health check
 ```
 
-`PACKAGES` in the Makefile excludes `priorart/` from all Go commands.
-
 ## Architecture
 
 Entry: `cmd/ycode/main.go` -> cobra CLI -> REPL (`internal/cli/app.go`) or one-shot mode.
@@ -119,11 +117,11 @@ go vet ./...              # catch issues
 go mod tidy               # sync dependencies
 make compile              # ensure it builds
 ```
-All four must pass with no errors. Do NOT commit code with formatting issues, vet warnings, or stale go.mod/go.sum.
+All four must pass with no errors. Do NOT commit code with formatting issues, vet warnings, or stale go.mod/go.sum. Alternatively, `make build` runs all of these (plus tests) as a single quality gate.
 
 ## Directory Boundaries
 
-- **`priorart/`** -- **read-only reference code.** Never modify files under `priorart/`. These are upstream submodules kept for exploration, research, and design reference. Do not create, edit, or delete anything in this tree.
+- **`priorart/`** -- **read-only reference code.** Never modify files under `priorart/`. These are upstream submodules kept for exploration, research, and design reference. Do not create, edit, or delete anything in this tree. The `PACKAGES` variable in the Makefile excludes `priorart/` from all Go commands.
 - **`external/`** -- vendored dependencies used by the ycode build. If code from `priorart/` (or any external project) needs to be incorporated into ycode, vendor it into `external/` with appropriate attribution.
 
 ## Submodule Dependencies
