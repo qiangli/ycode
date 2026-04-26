@@ -320,7 +320,7 @@ Encodes AI memory as video frames using H.264/H.265 codecs; single-file `.mv2` f
 
 ### Auto Dream Pattern
 
-Background memory consolidation pioneered by Claude Code (late March 2026). Converts relative dates to absolute, deletes contradicted facts, merges overlapping entries. Triggers after 24h + 5 new records. ycode's Dreamer (`memory/dream.go`) implements a similar pattern with 30-minute cycles.
+Background memory consolidation, a pattern emerging in modern agentic tools (late March 2026). Converts relative dates to absolute, deletes contradicted facts, merges overlapping entries. Triggers after idle period + threshold of new records. ycode's Dreamer (`memory/dream.go`) implements this pattern with 30-minute cycles.
 
 ### Anthropic Memory Tool API (Beta)
 
