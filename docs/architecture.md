@@ -1,6 +1,6 @@
 # ycode Architecture
 
-ycode is a pure Go CLI agent harness for autonomous software development. It provides 50+ tools, MCP/LSP integration, a plugin system, permission enforcement, multi-layered memory, and session management. Single static binary, no external process dependencies.
+ycode is a pure Go CLI agent harness for autonomous software development. It provides 50 tools, MCP/LSP integration, a plugin system, permission enforcement, multi-layered memory, and session management. Single static binary, no external process dependencies.
 
 ---
 
@@ -13,9 +13,19 @@ ycode/
     api/               Provider abstraction (Anthropic, OpenAI-compat), SSE, prompt cache
     cli/               Interactive REPL (bubbletea), markdown rendering (glamour + chroma)
     collector/         Embedded OpenTelemetry Collector (in-process)
-    commands/          30+ slash commands (/help, /config, /review, /skills, ...)
+    commands/          26 slash commands (/help, /config, /review, /skills, ...)
+    bus/               Event bus (local + NATS bridging)
+    chat/              Chat hub, multi-channel messaging bridges
+    client/            Client library for remote connections
+    container/         Podman container management, sandbox, pooling
+    gitserver/         Embedded Gitea git server for workspace isolation
+    inference/         Local LLM inference (Ollama runner, HuggingFace GGUF)
+    memos/             Long-term persistent memory via embedded Memos
     observability/     Embedded observability stack (Prometheus, Jaeger, VictoriaLogs, Perses)
     plugins/           Plugin manager, lifecycle hooks, discovery
+    server/            HTTP/WebSocket API server + embedded NATS
+    service/           Service layer for conversations and agents
+    web/               Embedded web UI (static assets)
     runtime/
       bash/            Shell execution with timeout, background, sandbox
       config/          3-tier config merge (user > project > local)
@@ -48,12 +58,13 @@ ycode/
     storage/           Persistence layer (KV, SQLite, vector, full-text search)
     telemetry/         Session tracing, metrics events
     testutil/          Mock API server, test helpers
-    tools/             50+ tool specs, registry, dispatch, handlers
+    tools/             50 tool specs, registry, dispatch, handlers
   pkg/ycode/           Public embedding API (NewAgent, Run, functional options)
-  external/            Git submodules (VictoriaLogs, Jaeger, Perses)
+  external/            Git submodules (VictoriaLogs, Jaeger, Perses, Memos)
   configs/             Config templates, proxy landing page
-  skills/              Skill definitions (build, deploy, validate)
-  docs/                Architecture and feature documentation
+  skills/              Skill definitions (build, deploy, validate, learn, setup, claude)
+  docs/                Feature documentation, research, roadmap
+  e2e/                 Playwright browser tests
 ```
 
 ---
@@ -303,6 +314,28 @@ Config is cached in bbolt for cross-process access with stale detection.
 4. Configurable: max attempts, protected paths, escalation policy
 
 Disabled via `YCODE_SELF_HEAL=0`.
+
+---
+
+## Improvements over priorart/clawcode
+
+ycode is a ground-up rewrite of Claw Code in Go:
+
+- **Pure Go** with permissive-only dependencies (MIT, Apache-2.0, BSD)
+- **Embeddable library API** via `pkg/ycode/`
+- **No global state** — all registries on `RuntimeContext` structs
+- **Runtime tool registration** — plugins/MCP add tools without recompilation
+- **Full memory subsystem** — multi-layered with auto-dream consolidation
+- **Embedded observability** — Prometheus, Jaeger, VictoriaLogs, Perses in single binary
+- **Local inference** — embedded Ollama runner for on-device model execution
+- **Container management** — embedded Podman for sandbox isolation
+- **Git server** — embedded Gitea for agent workspace operations
+- **Serve mode** — HTTP/WebSocket/NATS server for multi-client access
+- **Chat hub** — multi-channel messaging bridges
+- **Self-healing** — error classification and auto-recovery
+- **Continuous loop** — `/loop` command with background scheduler
+- **Recursive agent delegation** — agents spawn child agents up to configurable depth
+- **Executable skills** — scripts and resources alongside markdown instructions
 
 ---
 
