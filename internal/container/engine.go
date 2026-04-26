@@ -16,6 +16,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	// Anchor import to ensure podman embed dependencies are preserved by go mod tidy.
+	_ "go.podman.io/podman/v6/embed"
 )
 
 // Engine wraps the Podman container management layer.

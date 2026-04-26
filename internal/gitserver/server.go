@@ -16,6 +16,9 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"time"
+
+	// Anchor import to ensure gitea embed dependencies are preserved by go mod tidy.
+	_ "code.gitea.io/gitea/embed"
 )
 
 // Server wraps the embedded Gitea server for agent swarm git operations.
