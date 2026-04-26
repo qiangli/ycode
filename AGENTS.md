@@ -1,8 +1,10 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding assistants working on this repository.
+It is tool-agnostic — it applies to Claude Code, OpenCode, Codex, ycode, and any other AI agent.
+CLAUDE.md is a symlink to this file.
 
-ycode -- pure Go CLI agent harness for autonomous software development. Go 1.25+, permissive-license dependencies only.
+ycode -- pure Go CLI agent harness for autonomous software development. Go 1.26+, permissive-license dependencies only.
 
 ## Build Commands
 
@@ -60,8 +62,8 @@ Key subsystems:
 - **Storage** (`internal/storage/`): KV, SQLite, vector DB, full-text search
 - **Observability** (`internal/collector/`, `internal/observability/`): embedded OTEL stack; Perses plugins embedded via `go:embed`; submodules in `external/`
 - **Plugins** (`internal/plugins/`): hook lifecycle, runtime tool registration
-- **Server** (`internal/server/`, `internal/service/`): HTTP serve mode (`ycode serve`) with dashboard
-- **Web** (`internal/web/`): web UI/dashboard frontend
+- **Server** (`internal/server/`, `internal/service/`): HTTP/WebSocket/NATS serve mode (`ycode serve`)
+- **Web** (`internal/web/`): embedded web UI (minimal)
 - **Inference** (`internal/inference/`): local model inference via embedded Ollama runner
 - **Container** (`internal/container/`): container management (Podman)
 - **Git server** (`internal/gitserver/`): git server workspace operations
