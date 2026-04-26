@@ -296,3 +296,97 @@ func TestHFClient_AuthHeader(t *testing.T) {
 		t.Errorf("Authorization = %q, want %q", gotAuth, "Bearer hf_secret_token")
 	}
 }
+
+func TestDeriveModelName(t *testing.T) {
+	tests := []struct {
+		repo     string
+		filename string
+		want     string
+	}{
+		{"bartowski/Llama-3-8B-GGUF", "Llama-3-8B-Q4_K_M.gguf", "llama-3-8b-q4-k-m"},
+		{"Qwen/Qwen2.5-7B-GGUF", "qwen2.5-7b-q8-0.gguf", "qwen2.5-7b-q8-0"},
+		{"TheBloke/Mistral-7B-GGUF", "mistral-7b.Q4_K_M.gguf", "mistral-7b.q4-k-m"},
+		{"owner/repo", "MODEL.GGUF", "model"},
+		{"owner/repo", ".gguf", "repo"}, // Empty name falls back to repo.
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.filename, func(t *testing.T) {
+			got := DeriveModelName(tt.repo, tt.filename)
+			if got != tt.want {
+				t.Errorf("DeriveModelName(%q, %q) = %q, want %q", tt.repo, tt.filename, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDefaultOllamaURL(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "")
+	if got := DefaultOllamaURL(); got != "http://127.0.0.1:11434" {
+		t.Errorf("DefaultOllamaURL() = %q, want default", got)
+	}
+
+	t.Setenv("OLLAMA_HOST", "myhost:8080")
+	if got := DefaultOllamaURL(); got != "http://myhost:8080" {
+		t.Errorf("DefaultOllamaURL() = %q, want http://myhost:8080", got)
+	}
+
+	t.Setenv("OLLAMA_HOST", "https://secure:443")
+	if got := DefaultOllamaURL(); got != "https://secure:443" {
+		t.Errorf("DefaultOllamaURL() = %q, want https://secure:443", got)
+	}
+}
+
+func TestDetectOllamaServer_NotRunning(t *testing.T) {
+	// Test against a port that's not listening.
+	if DetectOllamaServer(context.Background(), "http://127.0.0.1:19999") {
+		t.Error("expected false for non-listening port")
+	}
+}
+
+func TestDetectOllamaServer_Running(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if !DetectOllamaServer(context.Background(), srv.URL) {
+		t.Error("expected true for running server")
+	}
+}
+
+func TestImportGGUFToOllama_MockServer(t *testing.T) {
+	var gotModel, gotFrom string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/create" {
+			var req map[string]any
+			json.NewDecoder(r.Body).Decode(&req)
+			gotModel, _ = req["model"].(string)
+			gotFrom, _ = req["from"].(string)
+			// Send a streaming progress response.
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			w.Write([]byte(`{"status":"creating model"}` + "\n"))
+			w.Write([]byte(`{"status":"success"}` + "\n"))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	var statuses []string
+	err := ImportGGUFToOllama(context.Background(), srv.URL, "test-model", "/path/to/model.gguf", func(status string) {
+		statuses = append(statuses, status)
+	})
+	if err != nil {
+		t.Fatalf("ImportGGUFToOllama: %v", err)
+	}
+	if gotModel != "test-model" {
+		t.Errorf("model = %q, want %q", gotModel, "test-model")
+	}
+	if gotFrom != "/path/to/model.gguf" {
+		t.Errorf("from = %q, want %q", gotFrom, "/path/to/model.gguf")
+	}
+	if len(statuses) == 0 {
+		t.Error("expected progress callbacks")
+	}
+}
