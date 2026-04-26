@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/qiangli/ycode/internal/httputil"
+
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/textparse"
 	"github.com/prometheus/prometheus/promql"
@@ -90,6 +92,7 @@ func (p *PrometheusComponent) Start(ctx context.Context) error {
 	// Serve the real Prometheus mantine-ui and API endpoints.
 	// The reverse proxy forwards the full path including the prefix
 	// (e.g. /prometheus/api/v1/query), so we mount under the prefix.
+	// Assets are pre-gzipped at build time; served via GzipFileServer.
 	uiFS, _ := fs.Sub(prometheusUI, "static/prometheus")
 	prefix := p.pathPrefix // e.g. "/prometheus"
 
@@ -173,11 +176,12 @@ func (p *PrometheusComponent) Start(ctx context.Context) error {
 	})
 	// Serve index.html with placeholders replaced.
 	indexHTML := p.buildIndexHTML(uiFS)
+	gzipServer := httputil.GzipFileServer(uiFS)
 	mux.HandleFunc(prefix+"/", func(w http.ResponseWriter, r *http.Request) {
-		// For asset files, serve from embedded FS directly.
+		// For asset files, serve from embedded FS (pre-gzipped).
 		relPath := strings.TrimPrefix(r.URL.Path, prefix+"/")
 		if relPath != "" && relPath != "index.html" {
-			http.StripPrefix(prefix, http.FileServer(http.FS(uiFS))).ServeHTTP(w, r)
+			http.StripPrefix(prefix, gzipServer).ServeHTTP(w, r)
 			return
 		}
 		// Serve processed index.html for the root and index.html paths.
@@ -229,9 +233,9 @@ func (p *PrometheusComponent) HTTPHandler() http.Handler { return nil }
 // Port returns the Prometheus HTTP port for reverse proxying.
 func (p *PrometheusComponent) Port() int { return p.port }
 
-// buildIndexHTML reads the embedded index.html and replaces Prometheus placeholders.
+// buildIndexHTML reads the embedded index.html (pre-gzipped) and replaces Prometheus placeholders.
 func (p *PrometheusComponent) buildIndexHTML(uiFS fs.FS) []byte {
-	data, err := fs.ReadFile(uiFS, "index.html")
+	data, err := httputil.ReadGzipFile(uiFS, "index.html")
 	if err != nil {
 		return []byte("<html><body>Prometheus UI not available</body></html>")
 	}

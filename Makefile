@@ -1,6 +1,6 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
+LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 PACKAGES := $(shell go list ./... | grep -v '/priorart/')
 
 # Deploy / validate defaults
@@ -11,7 +11,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL
 
-.PHONY: help init sync compile build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-check collector deploy deploy-local deploy-remote validate validate-ui validate-all
+.PHONY: help init sync compile compile-debug build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-check collector deploy deploy-local deploy-remote validate validate-ui validate-all
 
 .DEFAULT_GOAL := help
 
@@ -20,10 +20,11 @@ help: ## Show this help
 
 # ─── Source Management ──────────────────────────────────────────────────────
 
-init: ## Initialize submodules and fetch Perses plugins for embedding
+init: ## Initialize submodules, fetch plugins, and prepare embedded assets
 	@git submodule init 2>&1 | grep -v 'already registered' || true
 	@git submodule update --recursive 2>&1 | grep -v '^From \|^Submodule path\| \* branch' || true
 	@./scripts/fetch-perses-plugins.sh
+	@./scripts/gzip-embeds.sh
 
 sync: ## Pull latest changes for all submodules (skips on conflict)
 	@./scripts/sync-submodules.sh
@@ -31,7 +32,10 @@ sync: ## Pull latest changes for all submodules (skips on conflict)
 # ─── Build ──────────────────────────────────────────────────────────────────
 
 compile: ## Compile the ycode binary to bin/ (no checks)
-	go build $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	go build -trimpath $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+
+compile-debug: ## Compile with debug symbols (for profiling/debugging)
+	go build -trimpath -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/ycode ./cmd/ycode/
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
 
 build: ## Build with full quality gate: tidy → fmt → vet → compile → test → verify
@@ -90,21 +94,21 @@ all: build ## Full quality gate (alias for build)
 cross: dist/ycode-linux-amd64 dist/ycode-linux-arm64 dist/ycode-darwin-amd64 dist/ycode-darwin-arm64 dist/ycode-windows-amd64.exe ## Cross-compile for all platforms
 
 dist/ycode-linux-amd64:
-	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $@ ./cmd/ycode/
+	GOOS=linux GOARCH=amd64 go build -trimpath $(LDFLAGS) -o $@ ./cmd/ycode/
 
 dist/ycode-linux-arm64:
-	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $@ ./cmd/ycode/
+	GOOS=linux GOARCH=arm64 go build -trimpath $(LDFLAGS) -o $@ ./cmd/ycode/
 
 dist/ycode-darwin-amd64:
-	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $@ ./cmd/ycode/
+	GOOS=darwin GOARCH=amd64 go build -trimpath $(LDFLAGS) -o $@ ./cmd/ycode/
 	@codesign -f -s - $@ 2>/dev/null || true
 
 dist/ycode-darwin-arm64:
-	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $@ ./cmd/ycode/
+	GOOS=darwin GOARCH=arm64 go build -trimpath $(LDFLAGS) -o $@ ./cmd/ycode/
 	@codesign -f -s - $@ 2>/dev/null || true
 
 dist/ycode-windows-amd64.exe:
-	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $@ ./cmd/ycode/
+	GOOS=windows GOARCH=amd64 go build -trimpath $(LDFLAGS) -o $@ ./cmd/ycode/
 
 # ─── Inference Runner ──────────────────────────────────────────────────────
 
