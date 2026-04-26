@@ -48,7 +48,7 @@ Use parallel exploration where possible -- launch multiple searches or reads con
 For each feature domain identified in Step 1, examine this project's implementation:
 
 - Check `internal/`, `pkg/`, `cmd/` for the corresponding code
-- Read existing docs: `docs/architecture.md`, `USAGE.md`, and relevant `docs/*.md` files
+- Read existing docs: `docs/architecture.md`, `docs/usage.md`, and relevant `docs/*.md` files
 - Note what this project already has, what is partially implemented, and what is missing
 - Note where this project is **ahead** of the reference project
 

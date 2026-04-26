@@ -40,12 +40,12 @@ Run read_file/glob_search calls **in parallel** when checking multiple files.
 
 Use glob_search and read_file to check which of these files exist:
 
-- `README.md`, `USAGE.md`, `INSTRUCTIONS.md`
+- `README.md`, `docs/usage.md`, `docs/instructions.md`
 - `CLAUDE.md`, `AGENTS.md`
 - `Makefile`, `go.mod`, `package.json`, `Cargo.toml`, `pyproject.toml`
 
 Read only the files that exist. Skip files not found.
-Read at most 5 files — prioritize README.md, USAGE.md, and the primary
+Read at most 5 files — prioritize README.md, docs/usage.md, and the primary
 manifest file.
 
 ## Step 2: Enhance AGENTS.md
@@ -58,16 +58,16 @@ additions worth keeping:
 **Header**: `# AGENTS.md` followed by a 1-sentence project description
 derived from README.md or the manifest file.
 
-**Reference to USAGE.md**: If USAGE.md exists:
-`**Read [USAGE.md](./USAGE.md)** for detailed build commands, configuration,
+**Reference to docs/usage.md**: If docs/usage.md exists:
+`**Read [docs/usage.md](./docs/usage.md)** for detailed build commands, configuration,
 tools, and workflows.`
 
 **Reference to CLAUDE.md**: If CLAUDE.md exists:
 `**Read [CLAUDE.md](./CLAUDE.md)** for additional project conventions and
 Claude Code-specific guidance.`
 
-**Quick commands**: Only if USAGE.md does NOT exist — add build/test/lint
-commands found in manifest files. If USAGE.md covers these, omit them.
+**Quick commands**: Only if docs/usage.md does NOT exist — add build/test/lint
+commands found in manifest files. If docs/usage.md covers these, omit them.
 
 **Repo-specific guidance**: Only facts an agent would miss without help:
 - Non-obvious architectural boundaries

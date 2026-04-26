@@ -10,6 +10,7 @@ ycode -- pure Go CLI agent harness for autonomous software development. Go 1.25+
 make init           # REQUIRED first: initialize git submodules + fetch Perses plugins
 make build          # full quality gate: tidy -> fmt -> vet -> compile -> test -> verify
 make compile        # quick compile only (bin/ycode)
+make install        # build + install to ~/bin/ycode (re-signs on macOS)
 make test           # unit tests only (-short -race)
 make cross          # cross-compile all platforms (dist/)
 ```
@@ -17,6 +18,31 @@ make cross          # cross-compile all platforms (dist/)
 Single test: `go test -short -race -run TestName ./internal/path/to/package/`
 
 Integration tests: `go test -tags integration -v -count=1 ./internal/integration/...`
+
+Additional test targets:
+```bash
+make test-container   # container integration tests (requires podman)
+make test-gitserver   # git server workspace tests
+make test-tui         # TUI integration tests (direct Update + teatest)
+make test-tui-e2e     # TUI E2E tests in a PTY (requires compiled binary)
+make test-tui-fuzz    # TUI fuzz tests (30s each)
+make test-ui          # Playwright browser tests (e2e/ dir, requires running server + npx)
+make test-all         # all of the above combined
+```
+
+Validation against a running instance:
+```bash
+make validate         # Go integration tests against running server
+make validate-ui      # Playwright browser tests against running server
+make validate-all     # both
+```
+
+Inference runner (local Ollama):
+```bash
+make runner-download  # download pre-built Ollama runner for current platform
+make runner-build     # build runner from source (requires C++ toolchain)
+make runner-check     # verify runner binary + health check
+```
 
 `PACKAGES` in the Makefile excludes `priorart/` from all Go commands.
 
@@ -34,6 +60,13 @@ Key subsystems:
 - **Storage** (`internal/storage/`): KV, SQLite, vector DB, full-text search
 - **Observability** (`internal/collector/`, `internal/observability/`): embedded OTEL stack; Perses plugins embedded via `go:embed`; submodules in `external/`
 - **Plugins** (`internal/plugins/`): hook lifecycle, runtime tool registration
+- **Server** (`internal/server/`, `internal/service/`): HTTP serve mode (`ycode serve`) with dashboard
+- **Web** (`internal/web/`): web UI/dashboard frontend
+- **Inference** (`internal/inference/`): local model inference via embedded Ollama runner
+- **Container** (`internal/container/`): container management (Podman)
+- **Git server** (`internal/gitserver/`): git server workspace operations
+- **Memos** (`internal/memos/`): memos integration for note-taking
+- **Event bus** (`internal/bus/`): internal event routing between subsystems
 
 Design: `RuntimeContext` (no global state), three-tier config merge, five-layer memory.
 
@@ -58,7 +91,7 @@ Each step depends on the previous one succeeding. On failure: diagnose, fix sour
 
 ## Conventions
 
-See [INSTRUCTIONS.md](./INSTRUCTIONS.md) for full details: skill dispatch, build system layers, testing, commit rules.
+See [docs/instructions.md](./docs/instructions.md) for full details: skill dispatch, build system layers, testing, commit rules.
 
 **Layered build system** -- strict three-layer separation:
 1. **Makefile** -- dependency graph only. No multi-line logic or embedded bash blocks.
@@ -100,6 +133,6 @@ macOS arm64: binaries are ad-hoc codesigned after compile (`codesign -f -s -`). 
 ## References
 
 Read on demand:
-- [INSTRUCTIONS.md](./INSTRUCTIONS.md) -- conventions, skill system, build/test/commit rules
-- [USAGE.md](./USAGE.md) -- CLI modes, config, tools, workflows
+- [docs/instructions.md](./docs/instructions.md) -- conventions, skill system, build/test/commit rules
+- [docs/usage.md](./docs/usage.md) -- CLI modes, config, tools, workflows
 - [docs/architecture.md](./docs/architecture.md) -- full architecture, design decisions, component details

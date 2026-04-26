@@ -92,5 +92,5 @@ When asked to commit changes in this project, follow the `/commit` skill (embedd
 ## For More Detail
 
 Read these on demand, not upfront:
-- [USAGE.md](./USAGE.md) — CLI modes, config, tools, workflows
-- [docs/architecture.md](./docs/architecture.md) — full architecture, design decisions, component details
+- [usage.md](./usage.md) — CLI modes, config, tools, workflows
+- [architecture.md](./architecture.md) — full architecture, design decisions, component details

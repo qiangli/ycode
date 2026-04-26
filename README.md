@@ -60,7 +60,7 @@ make cross                      # cross-compile all platforms
 
 ## Documentation
 
-- [USAGE.md](./USAGE.md) -- CLI commands, configuration, sessions, tools, and workflows
+- [docs/usage.md](./docs/usage.md) -- CLI commands, configuration, sessions, tools, and workflows
 - [docs/architecture.md](./docs/architecture.md) -- architecture, design decisions, and component details
 
 ## Project structure
