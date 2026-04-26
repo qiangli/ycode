@@ -31,6 +31,7 @@ sync: ## Pull latest changes for all submodules (skips on conflict)
 
 compile: ## Compile the ycode binary to bin/ (no checks)
 	go build $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
 
 build: ## Build with full quality gate: tidy → fmt → vet → compile → test → verify
 	@./scripts/build.sh
@@ -71,6 +72,7 @@ clean: ## Remove build artifacts
 install: build ## Install ycode to ~/bin/
 	@mkdir -p ~/bin
 	@cp bin/ycode ~/bin/ycode
+	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - ~/bin/ycode 2>/dev/null || true; fi
 	@echo "Installed ycode to ~/bin/ycode"
 	@echo 'Make sure ~/bin is in your PATH: export PATH="$$HOME/bin:$$PATH"'
 
@@ -88,9 +90,11 @@ dist/ycode-linux-arm64:
 
 dist/ycode-darwin-amd64:
 	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $@ ./cmd/ycode/
+	@codesign -f -s - $@ 2>/dev/null || true
 
 dist/ycode-darwin-arm64:
 	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $@ ./cmd/ycode/
+	@codesign -f -s - $@ 2>/dev/null || true
 
 dist/ycode-windows-amd64.exe:
 	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $@ ./cmd/ycode/

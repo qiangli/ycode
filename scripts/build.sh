@@ -14,6 +14,7 @@ go vet ${PACKAGES}
 
 echo "=== Step 4: Build binary ==="
 go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o bin/ycode ./cmd/ycode/
+if [ "$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
 
 echo "=== Step 5: Unit tests ==="
 go test -short -race ${PACKAGES}
