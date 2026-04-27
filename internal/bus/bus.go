@@ -28,6 +28,9 @@ const (
 	EventAgentStart       EventType = "agent.start"    // subagent spawned
 	EventAgentProgress    EventType = "agent.progress" // subagent tool/turn update
 	EventAgentComplete    EventType = "agent.complete" // subagent finished
+	EventAgentHandoff     EventType = "agent.handoff"  // control transfer between agents
+	EventAgentMessage     EventType = "agent.message"  // inter-agent messaging
+	EventFlowStep         EventType = "flow.step"      // flow orchestration step
 )
 
 // Event is a single message flowing through the bus.

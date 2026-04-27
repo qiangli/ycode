@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/qiangli/ycode/internal/runtime/agentdef"
 	"github.com/qiangli/ycode/internal/runtime/task"
 )
 
@@ -99,13 +100,32 @@ type AgentManifest struct {
 	Prompt          string    `json:"prompt"`
 	Depth           int       `json:"depth"`
 	RunInBackground bool      `json:"run_in_background,omitempty"`
+	Model           string    `json:"model,omitempty"`           // model override for this agent
+	CustomDef       *agentdef.AgentDefinition `json:"-"`        // custom definition (nil for built-in types)
+}
+
+// BuiltinAgentTypes is the list of hardcoded agent types.
+var BuiltinAgentTypes = []AgentType{
+	AgentExplore, AgentPlan, AgentVerification,
+	AgentGeneralPurpose, AgentGuide, AgentStatusLine,
+}
+
+// isBuiltinAgentType checks if the type is a hardcoded builtin.
+func isBuiltinAgentType(t AgentType) bool {
+	for _, bt := range BuiltinAgentTypes {
+		if t == bt {
+			return true
+		}
+	}
+	return false
 }
 
 // RegisterAgentHandler registers the Agent tool handler.
 // parentMode controls subagent constraints: when the parent is in plan mode,
 // all subagents are forced to explore type.
+// agentDefs is optional; when provided, custom user-defined agents are available.
 // taskRegistry is optional; when provided, background agents are tracked as tasks.
-func RegisterAgentHandler(r *Registry, parentMode func() AgentMode, spawner func(ctx context.Context, manifest *AgentManifest) (string, error), taskRegistry *task.Registry) {
+func RegisterAgentHandler(r *Registry, parentMode func() AgentMode, spawner func(ctx context.Context, manifest *AgentManifest) (string, error), taskRegistry *task.Registry, agentDefs *agentdef.Registry) {
 	spec, ok := r.Get("Agent")
 	if !ok {
 		return
@@ -116,6 +136,7 @@ func RegisterAgentHandler(r *Registry, parentMode func() AgentMode, spawner func
 			Prompt          string `json:"prompt"`
 			SubagentType    string `json:"subagent_type,omitempty"`
 			RunInBackground bool   `json:"run_in_background,omitempty"`
+			Model           string `json:"model,omitempty"`
 		}
 		if err := json.Unmarshal(input, &params); err != nil {
 			return "", fmt.Errorf("parse Agent input: %w", err)
@@ -131,18 +152,24 @@ func RegisterAgentHandler(r *Registry, parentMode func() AgentMode, spawner func
 			agentType = AgentExplore
 		}
 
-		// Validate agent type.
-		validTypes := []AgentType{AgentExplore, AgentPlan, AgentVerification, AgentGeneralPurpose, AgentGuide, AgentStatusLine}
-		valid := false
-		for _, t := range validTypes {
-			if agentType == t {
-				valid = true
-				break
+		// Check if this is a custom agent definition.
+		var customDef *agentdef.AgentDefinition
+		if agentDefs != nil {
+			// Strip "agent:" prefix if present (ai-swarm convention).
+			lookupName := strings.TrimPrefix(string(agentType), "agent:")
+			if def, ok := agentDefs.Lookup(lookupName); ok {
+				customDef = def
 			}
 		}
-		if !valid {
+
+		// Validate: must be either a builtin type or a custom definition.
+		if customDef == nil && !isBuiltinAgentType(agentType) {
+			validNames := agentTypeStrings(BuiltinAgentTypes)
+			if agentDefs != nil {
+				validNames = append(validNames, agentDefs.Names()...)
+			}
 			return "", fmt.Errorf("invalid agent type: %s (valid: %s)",
-				agentType, strings.Join(agentTypeStrings(validTypes), ", "))
+				agentType, strings.Join(validNames, ", "))
 		}
 
 		manifest := &AgentManifest{
@@ -150,6 +177,8 @@ func RegisterAgentHandler(r *Registry, parentMode func() AgentMode, spawner func
 			Description:     params.Description,
 			Prompt:          params.Prompt,
 			RunInBackground: params.RunInBackground,
+			Model:           params.Model,
+			CustomDef:       customDef,
 		}
 
 		if spawner == nil {

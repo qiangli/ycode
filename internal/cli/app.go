@@ -16,6 +16,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/commands"
+	"github.com/qiangli/ycode/internal/runtime/agentdef"
 	"github.com/qiangli/ycode/internal/runtime/agentpool"
 	"github.com/qiangli/ycode/internal/runtime/builtin"
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -57,6 +58,9 @@ type App struct {
 	// Agent pool for tracking active subagents and progress reporting.
 	agentPool *agentpool.Pool
 
+	// Custom agent definitions loaded from YAML config.
+	agentDefs *agentdef.Registry
+
 	// Session tracking for summary reporting.
 	usageTracker *usage.Tracker
 	sessionStart time.Time
@@ -91,6 +95,7 @@ type AppOptions struct {
 	Storage        *storage.Manager
 	ConvOTEL       *conversation.OTELConfig
 	OllamaLister   api.OllamaLister
+	AgentDefsDir   string // directory containing custom agent YAML definitions
 }
 
 // NewApp creates a new app instance.
@@ -168,6 +173,17 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		tools.RegisterTaskHandlers(app.toolRegistry, app.taskRegistry)
 		tools.RegisterWorkerHandlers(app.toolRegistry, worker.NewRegistry())
 		tools.RegisterTeamHandlers(app.toolRegistry, team.NewRegistry(), team.NewCronRegistry())
+		tools.RegisterHandoffHandler(app.toolRegistry)
+	}
+
+	// Load custom agent definitions from config directories.
+	if o.AgentDefsDir != "" {
+		reg, err := agentdef.Load(o.AgentDefsDir)
+		if err != nil {
+			slog.Warn("failed to load agent definitions", "dir", o.AgentDefsDir, "error", err)
+		} else {
+			app.agentDefs = reg
+		}
 	}
 
 	// Wire the agent spawner so the Agent tool can create child runtimes.
@@ -185,7 +201,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 			MaxAgent:         cfg.Parallel.MaxAgent,
 			AgentPool:        app.agentPool,
 		})
-		tools.RegisterAgentHandler(app.toolRegistry, app.parentAgentMode, spawner, app.taskRegistry)
+		tools.RegisterAgentHandler(app.toolRegistry, app.parentAgentMode, spawner, app.taskRegistry, app.agentDefs)
 	}
 
 	return app, nil

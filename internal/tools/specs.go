@@ -186,6 +186,14 @@ func builtinSpecs() []*ToolSpec {
 			Category:     CategoryAgent,
 		},
 		{
+			Name:         "Handoff",
+			Description:  "Transfer control to another agent, passing context variables and a message.",
+			InputSchema:  mustJSON(handoffSchema),
+			RequiredMode: permission.DangerFullAccess,
+			Source:       SourceBuiltin,
+			Category:     CategoryAgent,
+		},
+		{
 			Name:         "TaskCreate",
 			Description:  "Create a background task.",
 			InputSchema:  mustJSON(taskCreateSchema),
@@ -587,6 +595,16 @@ var (
 			"max_results": {"type": "integer", "description": "Maximum results (default 5)"}
 		},
 		"required": ["query"]
+	}`
+
+	handoffSchema = `{
+		"type": "object",
+		"properties": {
+			"target_agent": {"type": "string", "description": "Name of the agent to hand off control to"},
+			"context_vars": {"type": "object", "description": "Key-value pairs to pass as context to the target agent", "additionalProperties": {"type": "string"}},
+			"message": {"type": "string", "description": "Instructions or context for the target agent"}
+		},
+		"required": ["target_agent"]
 	}`
 
 	agentSchema = `{

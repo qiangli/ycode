@@ -69,6 +69,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.43.0
 	go.podman.io/podman/v6 v6.0.0-20260424181651-a8c36318565d
 	google.golang.org/grpc v1.80.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.48.2
 )
 
@@ -649,7 +650,6 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/api v0.35.4 // indirect
 	k8s.io/apimachinery v0.35.4 // indirect
 	k8s.io/apiserver v0.35.4 // indirect

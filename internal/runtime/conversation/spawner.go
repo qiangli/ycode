@@ -91,12 +91,38 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 			}
 		}
 
-		// Build mode-specific system prompt.
-		systemPrompt := prompt.BuildDefault(sc.PromptCtx, string(mode), sc.CachingSupported, nil)
+		// Resolve model: custom definition > manifest > spawner config.
+		model := sc.Model
+		if manifest.Model != "" {
+			model = manifest.Model
+		}
 
-		// Get allowed tools for this mode and create a filtered registry.
-		allowed := tools.AllowedToolsForMode(mode)
-		filtered := tools.NewFilteredRegistry(sc.Registry, allowed)
+		// Build system prompt and tool access based on custom definition or mode.
+		var systemPrompt string
+		var filtered *tools.FilteredRegistry
+
+		if def := manifest.CustomDef; def != nil {
+			// Custom agent: use definition's instruction as system prompt.
+			systemPrompt = def.Instruction
+			if def.Context != "" {
+				systemPrompt += "\n\n" + def.Context
+			}
+			if def.Model != "" {
+				model = def.Model
+			}
+			// Custom tools override mode-based tools.
+			if len(def.Tools) > 0 {
+				filtered = tools.NewFilteredRegistry(sc.Registry, def.Tools)
+			} else {
+				allowed := tools.AllowedToolsForMode(mode)
+				filtered = tools.NewFilteredRegistry(sc.Registry, allowed)
+			}
+		} else {
+			// Built-in agent: use mode-based system prompt and tools.
+			systemPrompt = prompt.BuildDefault(sc.PromptCtx, string(mode), sc.CachingSupported, nil)
+			allowed := tools.AllowedToolsForMode(mode)
+			filtered = tools.NewFilteredRegistry(sc.Registry, allowed)
+		}
 
 		// Build tool definitions from the filtered set.
 		var toolDefs []api.ToolDefinition
@@ -117,20 +143,34 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 			})
 		}
 
+		// Prepend custom agent message if defined.
+		var initialText string
+		if def := manifest.CustomDef; def != nil && def.Message != "" {
+			initialText = def.Message + "\n\n" + manifest.Prompt
+		} else {
+			initialText = manifest.Prompt
+		}
+
 		// Build initial messages with the user prompt from the manifest.
 		messages := []api.Message{
 			{
 				Role: api.RoleUser,
 				Content: []api.ContentBlock{
-					{Type: api.ContentTypeText, Text: manifest.Prompt},
+					{Type: api.ContentTypeText, Text: initialText},
 				},
 			},
 		}
 
+		// Determine max iterations: custom definition overrides default.
+		maxIter := maxSubagentIterations
+		if def := manifest.CustomDef; def != nil {
+			maxIter = def.EffectiveMaxIter()
+		}
+
 		// Agentic loop: send → receive → execute tools → repeat.
-		for i := 0; i < maxSubagentIterations; i++ {
+		for i := 0; i < maxIter; i++ {
 			req := &api.Request{
-				Model:     sc.Model,
+				Model:     model,
 				MaxTokens: MaxOutputTokenCap,
 				System:    systemPrompt,
 				Messages:  messages,
