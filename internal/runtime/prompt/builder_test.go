@@ -64,3 +64,95 @@ func TestSystemPromptBuilder_EmptyContentSkipped(t *testing.T) {
 		t.Error("should only have one content section")
 	}
 }
+
+func TestBuildDefault_IncludesDiagnosticsWhenPresent(t *testing.T) {
+	ctx := &ProjectContext{
+		WorkDir:  "/tmp/test",
+		Platform: "linux",
+		Diagnostics: &DiagnosticsInfo{
+			DegradedTools: []DegradedTool{
+				{Name: "bash", SuccessRate: 0.3, TotalCalls: 10, FailureCount: 7},
+			},
+		},
+	}
+
+	result := BuildDefault(ctx, "build", true, nil)
+
+	if !strings.Contains(result, "Runtime diagnostics") {
+		t.Error("should include diagnostics section when degraded tools present")
+	}
+	if !strings.Contains(result, "bash") {
+		t.Error("should include degraded tool name")
+	}
+}
+
+func TestBuildDefault_OmitsDiagnosticsWhenNil(t *testing.T) {
+	ctx := &ProjectContext{
+		WorkDir:  "/tmp/test",
+		Platform: "linux",
+	}
+
+	result := BuildDefault(ctx, "build", true, nil)
+
+	if strings.Contains(result, "Runtime diagnostics") {
+		t.Error("should NOT include diagnostics section when nil")
+	}
+}
+
+func TestBuildDefault_OmitsDiagnosticsWhenEmpty(t *testing.T) {
+	ctx := &ProjectContext{
+		WorkDir:     "/tmp/test",
+		Platform:    "linux",
+		Diagnostics: &DiagnosticsInfo{},
+	}
+
+	result := BuildDefault(ctx, "build", true, nil)
+
+	if strings.Contains(result, "Runtime diagnostics") {
+		t.Error("should NOT include diagnostics section when empty (no actionable items)")
+	}
+}
+
+func TestBuildDefault_DiagnosticsAfterMemoryBeforePlan(t *testing.T) {
+	ctx := &ProjectContext{
+		WorkDir:  "/tmp/test",
+		Platform: "linux",
+		Diagnostics: &DiagnosticsInfo{
+			ContextHealthPct:   80,
+			ContextHealthLevel: "critical",
+		},
+	}
+
+	result := BuildDefault(ctx, "plan", true, nil)
+
+	diagIdx := strings.Index(result, "Runtime diagnostics")
+	planIdx := strings.Index(result, "Plan Mode")
+
+	if diagIdx < 0 {
+		t.Fatal("should contain diagnostics section")
+	}
+	if planIdx < 0 {
+		t.Fatal("should contain plan mode section")
+	}
+	if diagIdx > planIdx {
+		t.Error("diagnostics should appear before plan mode section")
+	}
+}
+
+func TestBuildDefault_ExploreModeSuppressesDiagnostics(t *testing.T) {
+	ctx := &ProjectContext{
+		WorkDir:  "/tmp/test",
+		Platform: "linux",
+		Diagnostics: &DiagnosticsInfo{
+			DegradedTools: []DegradedTool{
+				{Name: "bash", SuccessRate: 0.3, TotalCalls: 10, FailureCount: 7},
+			},
+		},
+	}
+
+	result := BuildDefault(ctx, "explore", true, nil)
+
+	if strings.Contains(result, "Runtime diagnostics") {
+		t.Error("explore mode should NOT include diagnostics (lean prompt)")
+	}
+}

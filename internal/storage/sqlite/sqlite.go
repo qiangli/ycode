@@ -332,5 +332,12 @@ func defaultMigrations() []Migration {
 				END`,
 			}, ";\n"),
 		},
+		{
+			Version: 3,
+			Name:    "tool_usage_task_type",
+			SQL: `ALTER TABLE tool_usage ADD COLUMN task_type TEXT NOT NULL DEFAULT '';
+				  ALTER TABLE tool_usage ADD COLUMN model TEXT NOT NULL DEFAULT '';
+				  CREATE INDEX IF NOT EXISTS idx_tool_usage_task_type ON tool_usage(task_type)`,
+		},
 	}
 }

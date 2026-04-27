@@ -163,3 +163,146 @@ func TestGitSection_NotARepo(t *testing.T) {
 		t.Errorf("should return empty string for non-repo, got %q", result)
 	}
 }
+
+// --- DiagnosticsSection tests ---
+
+func TestDiagnosticsSection_NilReturnsEmpty(t *testing.T) {
+	result := DiagnosticsSection(nil)
+	if result != "" {
+		t.Errorf("nil diagnostics should return empty string, got %q", result)
+	}
+}
+
+func TestDiagnosticsSection_NoDiagnosticsReturnsEmpty(t *testing.T) {
+	diag := &DiagnosticsInfo{}
+	result := DiagnosticsSection(diag)
+	if result != "" {
+		t.Errorf("empty diagnostics should return empty string, got %q", result)
+	}
+}
+
+func TestDiagnosticsSection_DegradedTools(t *testing.T) {
+	diag := &DiagnosticsInfo{
+		DegradedTools: []DegradedTool{
+			{Name: "bash", SuccessRate: 0.4, TotalCalls: 10, FailureCount: 6},
+		},
+	}
+
+	result := DiagnosticsSection(diag)
+
+	if !strings.Contains(result, "# Runtime diagnostics") {
+		t.Error("should contain diagnostics header")
+	}
+	if !strings.Contains(result, `"bash"`) {
+		t.Error("should mention the degraded tool name")
+	}
+	if !strings.Contains(result, "failed 6/10") {
+		t.Error("should show failure count and total calls")
+	}
+	if !strings.Contains(result, "40% success") {
+		t.Error("should show success rate percentage")
+	}
+}
+
+func TestDiagnosticsSection_ContextHealthWarning(t *testing.T) {
+	diag := &DiagnosticsInfo{
+		ContextHealthPct:   72,
+		ContextHealthLevel: "warning",
+	}
+
+	result := DiagnosticsSection(diag)
+
+	if !strings.Contains(result, "Context usage: 72%") {
+		t.Error("should show context usage percentage")
+	}
+	if !strings.Contains(result, "compact_context") {
+		t.Error("should suggest compact_context for warning level")
+	}
+}
+
+func TestDiagnosticsSection_ContextHealthCritical(t *testing.T) {
+	diag := &DiagnosticsInfo{
+		ContextHealthPct:   85,
+		ContextHealthLevel: "critical",
+	}
+
+	result := DiagnosticsSection(diag)
+
+	if !strings.Contains(result, "Compact immediately") {
+		t.Error("should urge immediate compaction for critical level")
+	}
+}
+
+func TestDiagnosticsSection_ContextHealthHealthy(t *testing.T) {
+	diag := &DiagnosticsInfo{
+		ContextHealthPct:   40,
+		ContextHealthLevel: "healthy",
+	}
+
+	result := DiagnosticsSection(diag)
+
+	if result != "" {
+		t.Errorf("healthy context should not produce diagnostics, got %q", result)
+	}
+}
+
+func TestDiagnosticsSection_PriorSessionSummary(t *testing.T) {
+	diag := &DiagnosticsInfo{
+		PriorSessionSummary: "Fixed auth middleware; 3 test failures remaining.",
+	}
+
+	result := DiagnosticsSection(diag)
+
+	if !strings.Contains(result, "Prior session context:") {
+		t.Error("should show prior session context label")
+	}
+	if !strings.Contains(result, "Fixed auth middleware") {
+		t.Error("should include the summary content")
+	}
+}
+
+func TestDiagnosticsSection_CombinedDiagnostics(t *testing.T) {
+	diag := &DiagnosticsInfo{
+		DegradedTools: []DegradedTool{
+			{Name: "grep_search", SuccessRate: 0.5, TotalCalls: 8, FailureCount: 4},
+		},
+		ContextHealthPct:    75,
+		ContextHealthLevel:  "warning",
+		PriorSessionSummary: "Refactoring config parser.",
+	}
+
+	result := DiagnosticsSection(diag)
+
+	if !strings.Contains(result, "grep_search") {
+		t.Error("should show degraded tool")
+	}
+	if !strings.Contains(result, "Context usage: 75%") {
+		t.Error("should show context health")
+	}
+	if !strings.Contains(result, "Refactoring config parser") {
+		t.Error("should show prior session summary")
+	}
+}
+
+func TestContextHealthAdvice(t *testing.T) {
+	tests := []struct {
+		level    string
+		contains string
+	}{
+		{"warning", "compact_context"},
+		{"critical", "Compact immediately"},
+		{"overflow", "imminent"},
+		{"healthy", ""},
+	}
+
+	for _, tt := range tests {
+		result := contextHealthAdvice(tt.level)
+		if tt.contains == "" {
+			if result != "" {
+				t.Errorf("level %q: expected empty advice, got %q", tt.level, result)
+			}
+		} else if !strings.Contains(result, tt.contains) {
+			t.Errorf("level %q: expected advice containing %q, got %q", tt.level, tt.contains, result)
+		}
+	}
+}

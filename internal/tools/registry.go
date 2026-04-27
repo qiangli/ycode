@@ -102,6 +102,13 @@ func (r *Registry) SetQualityMonitor(qm *QualityMonitor) {
 	r.qualityMonitor = qm
 }
 
+// QualityMonitor returns the attached quality monitor, if any.
+func (r *Registry) QualityMonitor() *QualityMonitor {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.qualityMonitor
+}
+
 // SetSearchIndex attaches a Bleve search index for semantic tool discovery.
 func (r *Registry) SetSearchIndex(idx *ToolSearchIndex) {
 	r.mu.Lock()

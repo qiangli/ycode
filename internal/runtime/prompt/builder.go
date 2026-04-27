@@ -173,6 +173,10 @@ func BuildDefault(ctx *ProjectContext, mode string, cachingSupported bool, basel
 			b.AddDynamicSection(SectionActiveTopic, "[Active Topic: "+ctx.ActiveTopic+"]")
 		}
 
+		// Runtime diagnostics: degraded tools, context health alerts.
+		// Only injected when there are actionable issues (zero tokens when healthy).
+		b.AddDynamicSection(SectionDiagnostics, DiagnosticsSection(ctx.Diagnostics))
+
 		if mode == "plan" {
 			b.AddDynamicSection(SectionPlanMode, PlanModeSection())
 		}

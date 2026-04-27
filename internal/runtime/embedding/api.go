@@ -95,12 +95,13 @@ func (p *APIProvider) Dimensions() int {
 	return p.dims
 }
 
-// DetectProvider creates an embedding provider.
-// API-based embedding (OpenAI) is only used when explicitly enabled via
-// YCODE_EMBEDDING_API=true, to prevent unexpected API costs. The OPENAI_API_KEY
-// environment variable must also be set.
-// Returns a SimpleHashProvider as the default — fast, free, local-only.
+// DetectProvider creates an embedding provider using the following priority:
+//
+//  1. OpenAI API (explicit opt-in via YCODE_EMBEDDING_API=true + OPENAI_API_KEY)
+//  2. Local Ollama with embedding model (YCODE_OLLAMA_EMBEDDING=true, zero cost)
+//  3. TF-IDF (default — local, fast, free, keyword-semantic similarity)
 func DetectProvider() Provider {
+	// Priority 1: OpenAI API — explicit opt-in to prevent unexpected costs.
 	if os.Getenv("YCODE_EMBEDDING_API") == "true" {
 		if key := os.Getenv("OPENAI_API_KEY"); key != "" {
 			return NewAPIProvider(APIConfig{
@@ -112,6 +113,15 @@ func DetectProvider() Provider {
 		}
 	}
 
-	// Default: TF-IDF provider — local, fast, free, keyword-semantic similarity.
+	// Priority 2: Local Ollama — zero cost, requires running instance + model.
+	if os.Getenv("YCODE_OLLAMA_EMBEDDING") == "true" {
+		ollamaURL := os.Getenv("OLLAMA_HOST")
+		ollamaModel := os.Getenv("YCODE_OLLAMA_EMBEDDING_MODEL")
+		if provider := DetectOllamaEmbedding(ollamaURL, ollamaModel); provider != nil {
+			return provider
+		}
+	}
+
+	// Priority 3: TF-IDF — local, fast, free, always available.
 	return NewTFIDFProvider(384)
 }

@@ -292,6 +292,64 @@ func FilesystemSection(allowedDirs []string) string {
 	return strings.Join(lines, "\n")
 }
 
+// SectionDiagnostics is the section name for runtime diagnostics.
+const SectionDiagnostics = "diagnostics"
+
+// DiagnosticsSection returns a compact system prompt section with runtime
+// diagnostics: degraded tools and context health warnings.
+// Returns "" when there are no actionable diagnostics (zero-cost on healthy turns).
+func DiagnosticsSection(diag *DiagnosticsInfo) string {
+	if diag == nil {
+		return ""
+	}
+
+	var parts []string
+
+	// Degraded tools alert.
+	if len(diag.DegradedTools) > 0 {
+		for _, d := range diag.DegradedTools {
+			pct := int(d.SuccessRate * 100)
+			parts = append(parts, fmt.Sprintf(
+				"- Tool %q has failed %d/%d recent calls (%d%% success). Consider alternative approaches or re-check inputs.",
+				d.Name, d.FailureCount, d.TotalCalls, pct,
+			))
+		}
+	}
+
+	// Context health alert (only warning and above).
+	if diag.ContextHealthPct >= 60 {
+		parts = append(parts, fmt.Sprintf(
+			"- Context usage: %d%% (%s). %s",
+			diag.ContextHealthPct, diag.ContextHealthLevel, contextHealthAdvice(diag.ContextHealthLevel),
+		))
+	}
+
+	// Prior session summary (injected on first turn of resumed sessions).
+	if diag.PriorSessionSummary != "" {
+		parts = append(parts, fmt.Sprintf("- Prior session context: %s", diag.PriorSessionSummary))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return "# Runtime diagnostics\n" + strings.Join(parts, "\n")
+}
+
+// contextHealthAdvice returns terse guidance for the given health level.
+func contextHealthAdvice(level string) string {
+	switch level {
+	case "warning":
+		return "Finish current task soon or use compact_context to free space."
+	case "critical":
+		return "Compact immediately with compact_context before starting new work."
+	case "overflow":
+		return "Context exceeded — compaction is imminent."
+	default:
+		return ""
+	}
+}
+
 // Plan/Build/Explore mode sections.
 
 const SectionPlanMode = "plan-mode"

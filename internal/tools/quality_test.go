@@ -89,3 +89,24 @@ func TestQualityMonitorDefaultThreshold(t *testing.T) {
 		t.Errorf("expected default threshold 0.7, got %f", qm.threshold)
 	}
 }
+
+func TestRegistryQualityMonitorGetter(t *testing.T) {
+	reg := NewRegistry()
+
+	// Initially nil.
+	if got := reg.QualityMonitor(); got != nil {
+		t.Error("expected nil QualityMonitor before setting")
+	}
+
+	// Set and retrieve.
+	qm := NewQualityMonitor(0.7)
+	reg.SetQualityMonitor(qm)
+
+	got := reg.QualityMonitor()
+	if got == nil {
+		t.Fatal("expected non-nil QualityMonitor after setting")
+	}
+	if got != qm {
+		t.Error("expected same QualityMonitor instance")
+	}
+}

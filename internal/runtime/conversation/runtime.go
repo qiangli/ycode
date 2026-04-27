@@ -17,6 +17,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
+	"github.com/qiangli/ycode/internal/runtime/routing"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/tools"
@@ -75,6 +76,14 @@ type Runtime struct {
 	// Agent mode — controls system prompt assembly and tool filtering.
 	// Values: "build" (default), "plan" (read-only), "explore" (subagent).
 	mode string
+
+	// lastContextHealth caches the most recent context health check result
+	// from TurnWithRecovery, so collectDiagnostics can inject it into the prompt.
+	lastContextHealth *session.ContextHealth
+
+	// Optional inference router for multi-factor model selection.
+	// Used by Tier 2 tool pre-activation (LLM classification).
+	inferenceRouter *routing.Router
 
 	// Optional OTEL instrumentation.
 	otel *OTELConfig
@@ -169,6 +178,13 @@ func (r *Runtime) SetCacheWarmer(cw *api.CacheWarmer) {
 	r.cacheWarmer = cw
 }
 
+// SetInferenceRouter attaches an inference router for multi-factor model selection.
+// When set, Tier 2 tool pre-activation uses the router to classify user messages
+// via a lightweight LLM call (local Ollama or cheap remote model).
+func (r *Runtime) SetInferenceRouter(router *routing.Router) {
+	r.inferenceRouter = router
+}
+
 // SetMode sets the agent mode for this runtime ("build", "plan", or "explore").
 func (r *Runtime) SetMode(mode string) {
 	r.mode = mode
@@ -202,6 +218,35 @@ func (r *Runtime) RestoreTopicFromGhost() {
 		r.topicTracker.SetTopic(ghost.ActiveTopic)
 		r.logger.Info("restored active topic from ghost", "topic", ghost.ActiveTopic)
 	}
+}
+
+// RestoreSessionDiagnostics loads the latest ghost snapshot and injects
+// a prior-session summary into the prompt context. Called once on session
+// resume so the agent has warm-start context about what happened previously.
+func (r *Runtime) RestoreSessionDiagnostics() {
+	if r.session == nil {
+		return
+	}
+	ghost, err := session.LoadLatestGhost(r.session.Dir)
+	if err != nil {
+		r.logger.Warn("failed to load ghost for session diagnostics", "error", err)
+		return
+	}
+	if ghost == nil || ghost.Summary == "" {
+		return
+	}
+
+	// Build a compact summary from the ghost snapshot.
+	summary := ghost.Summary
+	if len(summary) > 300 {
+		summary = summary[:300] + "..."
+	}
+
+	if r.promptCtx.Diagnostics == nil {
+		r.promptCtx.Diagnostics = &prompt.DiagnosticsInfo{}
+	}
+	r.promptCtx.Diagnostics.PriorSessionSummary = summary
+	r.logger.Info("restored session diagnostics from ghost", "summary_len", len(summary))
 }
 
 // SetPlanMode enables or disables plan mode for this runtime.
@@ -249,8 +294,9 @@ type ToolCall struct {
 }
 
 // activatedToolTTL is the number of turns after which an activated deferred
-// tool is expired if not used. Keeps the tool list lean in long sessions.
-const activatedToolTTL = 3
+// tool is expired if not used. Set to 8 to reduce re-discovery overhead in
+// multi-phase tasks (build→test→fix cycles) while still expiring unused tools.
+const activatedToolTTL = 8
 
 // Turn executes one turn of the conversation: send messages, get response, execute tools.
 func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult, error) {
@@ -272,8 +318,23 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		r.promptCtx.ActiveTopic = r.topicTracker.CurrentTopic()
 	}
 
+	// Collect runtime diagnostics for the system prompt.
+	r.collectDiagnostics()
+
+	// Clear prior session summary after the first turn — it's a one-time warm-start signal.
+	if r.turnCount > 1 && r.promptCtx.Diagnostics != nil {
+		r.promptCtx.Diagnostics.PriorSessionSummary = ""
+	}
+
 	// Build system prompt.
 	systemPrompt := prompt.BuildDefault(r.promptCtx, r.Mode(), r.cachingSupported, r.contextBaseline)
+
+	// Pre-activate deferred tools based on intent signals in the user message.
+	// Tier 1a: high-precision keywords. Tier 1b: SearchTools() scoring.
+	// This eliminates the 2-turn ToolSearch overhead for common operations.
+	if userMsg := lastUserText(messages); userMsg != "" {
+		r.preActivateTools(userMsg)
+	}
 
 	// Build tool definitions — in plan/explore mode, exclude tools requiring write access.
 	var toolSpecs []*tools.ToolSpec
@@ -699,6 +760,47 @@ func (r *Runtime) distillResults(calls []ToolCall, results []api.ContentBlock) [
 	return results
 }
 
+// collectDiagnostics gathers runtime diagnostics (degraded tools, context health)
+// and attaches them to the prompt context for system prompt injection.
+func (r *Runtime) collectDiagnostics() {
+	info := &prompt.DiagnosticsInfo{}
+	hasContent := false
+
+	// Degraded tools from QualityMonitor.
+	if qm := r.registry.QualityMonitor(); qm != nil {
+		for _, d := range qm.DegradedTools() {
+			info.DegradedTools = append(info.DegradedTools, prompt.DegradedTool{
+				Name:         d.Name,
+				SuccessRate:  d.SuccessRate,
+				TotalCalls:   d.TotalCalls,
+				FailureCount: d.FailureCount,
+			})
+			hasContent = true
+		}
+	}
+
+	// Context health — populated by TurnWithRecovery before Turn is called.
+	if r.lastContextHealth != nil {
+		info.ContextHealthPct = int(r.lastContextHealth.Ratio * 100)
+		info.ContextHealthLevel = r.lastContextHealth.Level.String()
+		if info.ContextHealthPct >= 60 {
+			hasContent = true
+		}
+	}
+
+	// Preserve prior session summary if it was set externally (e.g., by RestoreSessionDiagnostics).
+	if r.promptCtx.Diagnostics != nil && r.promptCtx.Diagnostics.PriorSessionSummary != "" {
+		info.PriorSessionSummary = r.promptCtx.Diagnostics.PriorSessionSummary
+		hasContent = true
+	}
+
+	if hasContent {
+		r.promptCtx.Diagnostics = info
+	} else {
+		r.promptCtx.Diagnostics = nil
+	}
+}
+
 func joinParts(parts []string) string {
 	s := ""
 	for _, p := range parts {
@@ -758,6 +860,7 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 	messages = r.sessionMessagesToAPI(sessionMsgs)
 
 	health := session.CheckContextHealth(sessionMsgs)
+	r.lastContextHealth = &health
 	r.logger.Info("context health", "tokens", health.EstimatedTokens, "level", health.Level.String())
 
 	// --- Layer 1: Pruning (in-memory tool result trimming) ---

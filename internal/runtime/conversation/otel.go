@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/qiangli/ycode/internal/api"
+	"github.com/qiangli/ycode/internal/runtime/usage"
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
@@ -295,7 +296,7 @@ func (r *Runtime) LogConversation(turnIndex int, req *api.Request, result *TurnR
 		record.CacheCreation = result.Usage.CacheCreationInput
 		record.CacheRead = result.Usage.CacheReadInput
 		record.DurationMs = result.Duration.Milliseconds()
-		record.EstimatedCostUSD = yotel.EstimateCost(r.config.Model,
+		record.EstimatedCostUSD = usage.EstimateCost(r.config.Model,
 			record.TokensIn, record.TokensOut, record.CacheCreation, record.CacheRead)
 
 		for _, tc := range toolResults {
@@ -354,7 +355,7 @@ func (r *Runtime) recordTurnMetrics(ctx context.Context, result *TurnResult) {
 	if result.Usage.CacheCreationInput > 0 {
 		inst.LLMTokensCacheWrite.Add(ctx, int64(result.Usage.CacheCreationInput), attrs)
 	}
-	cost := yotel.EstimateCost(r.config.Model, int(inputTokens), int(outputTokens),
+	cost := usage.EstimateCost(r.config.Model, int(inputTokens), int(outputTokens),
 		result.Usage.CacheCreationInput, result.Usage.CacheReadInput)
 	if cost > 0 {
 		inst.LLMCostDollars.Add(ctx, cost, attrs)

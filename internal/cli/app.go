@@ -239,6 +239,9 @@ func (a *App) conversationRuntime() *conversation.Runtime {
 	// Restore L1 working memory (active topic) from ghost snapshot
 	// if this is a resumed session with prior compaction.
 	rt.RestoreTopicFromGhost()
+	// Inject prior-session diagnostics (summary from last ghost snapshot)
+	// so the agent has warm-start context about what happened previously.
+	rt.RestoreSessionDiagnostics()
 	return rt
 }
 
