@@ -148,9 +148,9 @@ func ScoreQuality(model string, isLocal bool, task TaskType) float64 {
 func remoteQualityScore(model string) float64 {
 	// Prefix matching for known model families.
 	prefixes := map[string]float64{
-		"claude-opus":       1.0,
-		"claude-sonnet":     0.85,
-		"claude-haiku":      0.70,
+		"claude-opus":      1.0,
+		"claude-sonnet":    0.85,
+		"claude-haiku":     0.70,
 		"gpt-4o-mini":      0.65,
 		"gpt-4o":           0.85,
 		"o3":               0.95,

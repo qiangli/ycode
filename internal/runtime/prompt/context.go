@@ -45,7 +45,7 @@ type ProjectContext struct {
 	ActiveTopic   string           `json:"active_topic,omitempty"` // current high-level task focus
 	Personality   string           `json:"personality,omitempty"`  // builtin personality name (e.g., "pirate", "stern")
 	Memories      []*memory.Memory `json:"memories,omitempty"`
-	Diagnostics   *DiagnosticsInfo `json:"diagnostics,omitempty"` // runtime diagnostics for system prompt
+	Diagnostics   *DiagnosticsInfo `json:"diagnostics,omitempty"`   // runtime diagnostics for system prompt
 	RepoMapText   string           `json:"repo_map_text,omitempty"` // pre-rendered repo map for system prompt
 }
 

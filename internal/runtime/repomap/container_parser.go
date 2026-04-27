@@ -115,4 +115,3 @@ func langForExt(ext string) string {
 		return ""
 	}
 }
-

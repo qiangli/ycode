@@ -144,9 +144,9 @@ func TestScanForInjection_BenignContent(t *testing.T) {
 		"The quick brown fox jumps over the lazy dog.",
 		"Can you explain how Go interfaces work?",
 		"I need to ignore the previous version and use the new API.", // "ignore" but not "ignore previous instructions"
-		"Let me act as a developer on this project.",                // "act as" but not "act as if"
-		"<div>normal html</div>",                                    // div without hidden style
-		"aGVsbG8=",                                                  // short base64, under 100 chars
+		"Let me act as a developer on this project.",                 // "act as" but not "act as if"
+		"<div>normal html</div>",                                     // div without hidden style
+		"aGVsbG8=",                                                   // short base64, under 100 chars
 		"My name is Bob and I like coding.",
 	}
 	for _, b := range benign {

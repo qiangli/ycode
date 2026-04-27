@@ -14,10 +14,10 @@ import (
 // StateSnapshot is a cumulative workspace state that is updated (not appended)
 // on each compaction. It represents the integrated state across all compactions.
 type StateSnapshot struct {
-	PrimaryGoal      string    `json:"primary_goal,omitempty"`
-	CompletedSteps   []string  `json:"completed_steps,omitempty"`
-	CurrentStep      string    `json:"current_step,omitempty"`
-	WorkingFiles     []string  `json:"working_files,omitempty"`
+	PrimaryGoal      string            `json:"primary_goal,omitempty"`
+	CompletedSteps   []string          `json:"completed_steps,omitempty"`
+	CurrentStep      string            `json:"current_step,omitempty"`
+	WorkingFiles     []string          `json:"working_files,omitempty"`
 	EnvironmentState string            `json:"environment_state,omitempty"` // e.g., "tests passing", "build broken"
 	ChannelLogs      map[string]string `json:"channel_logs,omitempty"`      // platform channel -> recent log excerpt
 	TaskState        map[string]any    `json:"task_state,omitempty"`        // arbitrary structured task state

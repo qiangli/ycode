@@ -249,4 +249,3 @@ func TestJSONRPCResponse_Unmarshal(t *testing.T) {
 		}
 	})
 }
-

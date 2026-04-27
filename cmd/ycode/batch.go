@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/qiangli/ycode/internal/runtime/batch"
+	"github.com/spf13/cobra"
 )
 
 func newBatchCmd() *cobra.Command {

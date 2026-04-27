@@ -30,7 +30,7 @@ var PricingTable = map[string]ModelPricing{
 	"gpt-4.1-mini": {InputPerM: 0.40, OutputPerM: 1.60},
 	"gpt-4.1-nano": {InputPerM: 0.10, OutputPerM: 0.40},
 	// OpenAI o-series
-	"o3":     {InputPerM: 10.0, OutputPerM: 40.0, CacheWritePerM: 0, CacheReadPerM: 5.0},
+	"o3":      {InputPerM: 10.0, OutputPerM: 40.0, CacheWritePerM: 0, CacheReadPerM: 5.0},
 	"o3-mini": {InputPerM: 1.10, OutputPerM: 4.40, CacheWritePerM: 0, CacheReadPerM: 0.55},
 	"o4-mini": {InputPerM: 1.10, OutputPerM: 4.40, CacheWritePerM: 0, CacheReadPerM: 0.55},
 	// Google Gemini

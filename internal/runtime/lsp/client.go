@@ -128,10 +128,10 @@ func (c *Client) ensureConnected(ctx context.Context) (*conn, error) {
 		"rootUri":   fileURI(c.rootDir),
 		"capabilities": map[string]any{
 			"textDocument": map[string]any{
-				"definition":    map[string]any{},
-				"references":    map[string]any{},
-				"documentSymbol": map[string]any{},
-				"hover":         map[string]any{},
+				"definition":         map[string]any{},
+				"references":         map[string]any{},
+				"documentSymbol":     map[string]any{},
+				"hover":              map[string]any{},
 				"publishDiagnostics": map[string]any{},
 			},
 		},
@@ -362,10 +362,10 @@ func parseLocations(result json.RawMessage) ([]Location, error) {
 func parseSymbol(raw json.RawMessage, file string) []Symbol {
 	// Try DocumentSymbol (has children).
 	var docSym struct {
-		Name           string           `json:"name"`
-		Kind           int              `json:"kind"`
-		Range          json.RawMessage  `json:"range"`
-		SelectionRange json.RawMessage  `json:"selectionRange"`
+		Name           string            `json:"name"`
+		Kind           int               `json:"kind"`
+		Range          json.RawMessage   `json:"range"`
+		SelectionRange json.RawMessage   `json:"selectionRange"`
 		Children       []json.RawMessage `json:"children"`
 	}
 	if err := json.Unmarshal(raw, &docSym); err == nil && docSym.Name != "" {

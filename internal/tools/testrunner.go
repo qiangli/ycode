@@ -24,16 +24,16 @@ type testRunnerParams struct {
 
 // TestResult is the structured output returned by run_tests.
 type TestResult struct {
-	Framework  string        `json:"framework"`
-	Passed     int           `json:"passed"`
-	Failed     int           `json:"failed"`
-	Skipped    int           `json:"skipped"`
-	Total      int           `json:"total"`
-	Duration   string        `json:"duration"`
-	Success    bool          `json:"success"`
-	Failures   []TestFailure `json:"failures,omitempty"`
-	RawOutput  string        `json:"raw_output,omitempty"`
-	Error      string        `json:"error,omitempty"`
+	Framework string        `json:"framework"`
+	Passed    int           `json:"passed"`
+	Failed    int           `json:"failed"`
+	Skipped   int           `json:"skipped"`
+	Total     int           `json:"total"`
+	Duration  string        `json:"duration"`
+	Success   bool          `json:"success"`
+	Failures  []TestFailure `json:"failures,omitempty"`
+	RawOutput string        `json:"raw_output,omitempty"`
+	Error     string        `json:"error,omitempty"`
 }
 
 // TestFailure describes a single test failure with location.

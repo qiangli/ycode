@@ -9,11 +9,11 @@ import (
 
 // ApprovalRequest represents a pending approval for a dangerous tool operation.
 type ApprovalRequest struct {
-	ID          string    // unique request ID
-	ToolName    string    // tool requiring approval
-	Description string    // human-readable description of the operation
-	ChannelType string    // originating platform (e.g., "telegram", "cli")
-	ChannelID   string    // platform-specific destination for the prompt
+	ID          string // unique request ID
+	ToolName    string // tool requiring approval
+	Description string // human-readable description of the operation
+	ChannelType string // originating platform (e.g., "telegram", "cli")
+	ChannelID   string // platform-specific destination for the prompt
 	CreatedAt   time.Time
 }
 
