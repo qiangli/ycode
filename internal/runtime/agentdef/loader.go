@@ -291,6 +291,19 @@ func normalizeMultiDoc(data []byte) []byte {
 	return bytes.Join(out, []byte("\n"))
 }
 
+// DefaultLoadDirs returns the standard directories for agent definition loading.
+// Global (~/.agents/ycode/agents/) is loaded first; project-local overrides.
+func DefaultLoadDirs(projectDir string) []string {
+	var dirs []string
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, filepath.Join(home, ".agents", "ycode", "agents"))
+	}
+	if projectDir != "" {
+		dirs = append(dirs, filepath.Join(projectDir, ".agents", "ycode", "agents"))
+	}
+	return dirs
+}
+
 // LoadPaths loads agent definitions from multiple directories, in order.
 // Later directories override earlier ones (by agent name).
 func LoadPaths(dirs ...string) ([]*AgentDefinition, error) {

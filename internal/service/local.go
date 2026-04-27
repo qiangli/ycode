@@ -14,7 +14,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 )
 
-const maxToolIterations = 25
+const maxToolIterations = 25 // kept for reference; IterationBudget is the active mechanism
 
 // LocalService implements Service by wrapping a cli.App instance.
 // It bridges the existing App methods into the service interface and
@@ -137,7 +137,18 @@ func (s *LocalService) SendMessage(ctx context.Context, sessionID string, input 
 
 	// Agentic loop: send → receive → execute tools → repeat until end_turn.
 	loopDetector := conversation.NewLoopDetector()
-	for i := range maxToolIterations {
+	budget := conversation.NewIterationBudget(maxToolIterations)
+	for i := 0; budget.Consume(); i++ {
+		// Inject grace message on the final turn so the LLM wraps up.
+		if budget.IsGrace() {
+			messages = append(messages, api.Message{
+				Role: api.RoleUser,
+				Content: []api.ContentBlock{
+					{Type: api.ContentTypeText, Text: budget.GraceMessage()},
+				},
+			})
+		}
+		// i is used for error context below.
 		turnIdx := s.app.NextTurnIndex()
 		result, _, err := rt.InstrumentedTurnWithRecovery(ctx, messages, turnIdx)
 		if err != nil {

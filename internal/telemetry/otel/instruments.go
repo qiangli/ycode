@@ -62,6 +62,23 @@ type Instruments struct {
 	InferenceModelLoadTime metric.Float64Histogram
 	InferenceRunnerStarts  metric.Int64Counter
 	InferenceRunnerCrashes metric.Int64Counter
+
+	// Memory metrics
+	MemoryRecallDuration metric.Float64Histogram
+	MemoryRecallTotal    metric.Int64Counter
+	MemorySaveTotal      metric.Int64Counter
+
+	// Ralph metrics
+	RalphIterationTotal metric.Int64Counter
+	RalphIterationScore metric.Float64Histogram
+	RalphRunDuration    metric.Float64Histogram
+
+	// DAG metrics
+	DAGRunDuration  metric.Float64Histogram
+	DAGNodeDuration metric.Float64Histogram
+
+	// Quality metrics
+	ToolDegradationTotal metric.Int64Counter
 }
 
 // NewInstruments creates all OTEL metric instruments from the given meter.
@@ -234,6 +251,45 @@ func NewInstruments(m metric.Meter) (*Instruments, error) {
 	}
 	if inst.InferenceRunnerCrashes, err = m.Int64Counter("ycode.inference.runner.crashes",
 		metric.WithDescription("Runner process crash count")); err != nil {
+		return nil, err
+	}
+
+	// Memory instruments.
+	if inst.MemoryRecallDuration, err = m.Float64Histogram("ycode.memory.recall_duration",
+		metric.WithUnit("ms")); err != nil {
+		return nil, err
+	}
+	if inst.MemoryRecallTotal, err = m.Int64Counter("ycode.memory.recall_total"); err != nil {
+		return nil, err
+	}
+	if inst.MemorySaveTotal, err = m.Int64Counter("ycode.memory.save_total"); err != nil {
+		return nil, err
+	}
+
+	// Ralph instruments.
+	if inst.RalphIterationTotal, err = m.Int64Counter("ycode.ralph.iteration_total"); err != nil {
+		return nil, err
+	}
+	if inst.RalphIterationScore, err = m.Float64Histogram("ycode.ralph.iteration_score"); err != nil {
+		return nil, err
+	}
+	if inst.RalphRunDuration, err = m.Float64Histogram("ycode.ralph.run_duration",
+		metric.WithUnit("ms")); err != nil {
+		return nil, err
+	}
+
+	// DAG instruments.
+	if inst.DAGRunDuration, err = m.Float64Histogram("ycode.dag.run_duration",
+		metric.WithUnit("ms")); err != nil {
+		return nil, err
+	}
+	if inst.DAGNodeDuration, err = m.Float64Histogram("ycode.dag.node_duration",
+		metric.WithUnit("ms")); err != nil {
+		return nil, err
+	}
+
+	// Quality instruments.
+	if inst.ToolDegradationTotal, err = m.Int64Counter("ycode.tool.degradation_total"); err != nil {
 		return nil, err
 	}
 

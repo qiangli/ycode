@@ -19,6 +19,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/cli"
+	"github.com/qiangli/ycode/internal/runtime/health"
 	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -567,6 +568,23 @@ var rootCmd = &cobra.Command{
 	Short: "ycode – autonomous agent harness for software development",
 	Long:  "ycode is a CLI agent harness that provides 50+ tools, MCP/LSP integration, a plugin system, permission enforcement, and session management.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Dry-run mode: preview session setup without calling the model.
+		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+			report := health.NewReadinessReport()
+			// Check provider.
+			if os.Getenv("ANTHROPIC_API_KEY") != "" || os.Getenv("OPENAI_API_KEY") != "" {
+				report.Add("provider", health.StatusReady, "API key found")
+			} else {
+				report.Add("provider", health.StatusBlocked, "No API key (set ANTHROPIC_API_KEY or OPENAI_API_KEY)")
+			}
+			// Check working directory.
+			if _, err := os.Getwd(); err == nil {
+				report.Add("workspace", health.StatusReady, "Working directory accessible")
+			}
+			fmt.Print(report.Format())
+			return nil
+		}
+
 		// Remote mode: connect to a running ycode server.
 		if connectURL != "" {
 			return runRemoteTUI(connectURL)
@@ -713,6 +731,30 @@ var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Run health checks",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Dry-run mode: quick readiness check without starting the full system.
+		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+			report := health.NewReadinessReport()
+			if os.Getenv("ANTHROPIC_API_KEY") != "" || os.Getenv("OPENAI_API_KEY") != "" || os.Getenv("XAI_API_KEY") != "" {
+				report.Add("provider", health.StatusReady, "API key found")
+			} else {
+				report.Add("provider", health.StatusBlocked, "No API key set")
+			}
+			if wd, err := os.Getwd(); err == nil {
+				report.Add("workspace", health.StatusReady, wd)
+			} else {
+				report.Add("workspace", health.StatusWarning, "Cannot determine working directory")
+			}
+			home, _ := os.UserHomeDir()
+			configDir := filepath.Join(home, ".config", "ycode")
+			if _, err := os.Stat(configDir); err == nil {
+				report.Add("config", health.StatusReady, "Config directory exists")
+			} else {
+				report.Add("config", health.StatusWarning, "Config directory not created yet")
+			}
+			fmt.Print(report.Format())
+			return nil
+		}
+
 		fmt.Println("ycode doctor - Health Check")
 		fmt.Println("===========================")
 
@@ -972,6 +1014,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "Model to use (overrides config and env vars)")
 	rootCmd.PersistentFlags().BoolVar(&dangerSkipPermissions, "danger-skip-permissions", false, "Skip all permission checks (grants full access to all tools)")
 	rootCmd.PersistentFlags().StringVar(&connectURL, "connect", "", "Connect to a remote ycode server (ws:// or nats://)")
+	rootCmd.Flags().Bool("dry-run", false, "Preview session setup without calling the model")
 
 	// no-otel: accepted for backward compatibility with integration tests (no-op).
 	var noOtel bool
@@ -980,6 +1023,7 @@ func init() {
 
 	loopCmd.Flags().String("interval", "10m", "Loop interval (e.g., 5m, 1h)")
 	loopCmd.Flags().String("prompt", "", "Path to prompt file")
+	doctorCmd.Flags().Bool("dry-run", false, "Quick readiness check without starting the full system")
 	rootCmd.AddCommand(promptCmd, versionCmd, doctorCmd, loopCmd, loginCmd, logoutCmd)
 
 	// Self-heal commands
@@ -991,6 +1035,15 @@ func init() {
 
 	// Container management commands (podman/docker)
 	rootCmd.AddCommand(newPodmanCmd())
+
+	// Batch processing
+	rootCmd.AddCommand(newBatchCmd())
+
+	// Training and evaluation
+	rootCmd.AddCommand(newTrainCmd())
+
+	// Autonomous agent mesh
+	rootCmd.AddCommand(newMeshCmd())
 
 	// Evaluation framework
 	registerEvalCmd(rootCmd)

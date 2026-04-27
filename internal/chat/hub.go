@@ -542,6 +542,15 @@ func (h *Hub) handleListModels(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// RequestApproval sends an approval request to the specified channel and waits for a response.
+// This enables dangerous-command approval on messaging platforms (not just CLI stdin).
+// Returns true if approved, false if denied or timed out.
+func (h *Hub) RequestApproval(ctx context.Context, channelType, channelID, toolName, description string) (bool, error) {
+	// TODO: route to the appropriate channel adapter and wait for response.
+	// For now, default-deny for platform channels (CLI approval still works via existing path).
+	return false, fmt.Errorf("platform approval routing not yet implemented for channel %s", channelType)
+}
+
 func (h *Hub) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	rooms, err := h.store.ListRooms()
 	if err != nil {

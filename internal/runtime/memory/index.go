@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/qiangli/ycode/internal/runtime/fileops"
 )
 
 const (
@@ -39,7 +41,7 @@ func (idx *Index) AddEntry(title, filename, description string) error {
 				updated = append(updated, line)
 			}
 		}
-		return os.WriteFile(idx.path, []byte(strings.Join(updated, "\n")), 0o644)
+		return fileops.AtomicWriteFile(idx.path, []byte(strings.Join(updated, "\n")), 0o644)
 	}
 
 	// Append new entry.
@@ -56,7 +58,7 @@ func (idx *Index) AddEntry(title, filename, description string) error {
 		content = strings.Join(lines, "\n")
 	}
 
-	return os.WriteFile(idx.path, []byte(content), 0o644)
+	return fileops.AtomicWriteFile(idx.path, []byte(content), 0o644)
 }
 
 // RemoveEntry removes an entry from MEMORY.md.
@@ -74,7 +76,7 @@ func (idx *Index) RemoveEntry(filename string) error {
 		}
 	}
 
-	return os.WriteFile(idx.path, []byte(strings.Join(kept, "\n")), 0o644)
+	return fileops.AtomicWriteFile(idx.path, []byte(strings.Join(kept, "\n")), 0o644)
 }
 
 // Read returns the content of MEMORY.md.

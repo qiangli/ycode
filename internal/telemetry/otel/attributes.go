@@ -64,4 +64,29 @@ var (
 
 	// Instance tracking.
 	AttrInstanceID = attribute.Key("ycode.instance.id")
+
+	// Memory attributes
+	AttrMemoryQuery       = attribute.Key("memory.query")
+	AttrMemoryResultCount = attribute.Key("memory.results_count")
+	AttrMemoryName        = attribute.Key("memory.name")
+	AttrMemoryType        = attribute.Key("memory.type")
+	AttrMemoryScope       = attribute.Key("memory.scope")
+	AttrMemoryImportance  = attribute.Key("memory.importance")
+
+	// Ralph attributes
+	AttrRalphIteration = attribute.Key("ralph.iteration")
+	AttrRalphScore     = attribute.Key("ralph.score")
+	AttrRalphStatus    = attribute.Key("ralph.status")
+	AttrRalphStoryID   = attribute.Key("ralph.story_id")
+
+	// DAG attributes
+	AttrDAGWorkflow   = attribute.Key("dag.workflow")
+	AttrDAGNodeCount  = attribute.Key("dag.node_count")
+	AttrDAGLayerCount = attribute.Key("dag.layer_count")
+
+	// Router attributes
+	AttrRouterSelected = attribute.Key("router.selected")
+
+	// Manager attributes
+	AttrManagerAgentCount = attribute.Key("manager.agent_count")
 )

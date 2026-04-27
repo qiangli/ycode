@@ -13,6 +13,7 @@ type ScheduleEntry struct {
 	ID       string
 	Interval time.Duration
 	Command  string
+	Delivery *DeliveryTarget // optional: where to deliver results
 	ctrl     *Controller
 }
 

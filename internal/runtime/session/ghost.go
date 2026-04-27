@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/qiangli/ycode/internal/runtime/fileops"
 )
 
 // GhostSnapshot captures session state before compaction.
@@ -37,7 +39,7 @@ func SaveGhostSnapshot(sessionDir string, snap *GhostSnapshot) error {
 		return fmt.Errorf("marshal ghost: %w", err)
 	}
 
-	return os.WriteFile(path, data, 0o644)
+	return fileops.AtomicWriteFile(path, data, 0o644)
 }
 
 // LoadLatestGhost reads the most recent ghost snapshot from the session directory.

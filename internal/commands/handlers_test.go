@@ -61,7 +61,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 
 	expected := []string{
 		// session
-		"help", "status", "cost", "version", "model", "retry", "revert", "rename",
+		"help", "status", "cost", "version", "model", "retry", "revert", "rename", "search",
 		// workspace
 		"clear", "compact", "config", "export", "init", "memory",
 		// discovery
@@ -101,6 +101,7 @@ func TestAllCommandsExecute(t *testing.T) {
 		"revert": true,
 		"rename": true, // requires args
 		"commit": true, // requires Provider
+		"search": true, // requires args
 	}
 
 	for _, spec := range r.List() {

@@ -112,16 +112,26 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 			}
 			// Custom tools override mode-based tools.
 			if len(def.Tools) > 0 {
-				filtered = tools.NewFilteredRegistry(sc.Registry, def.Tools)
+				allowed := tools.ApplyBlocklist(def.Tools, tools.DefaultSubagentBlocklist)
+				filtered = tools.NewFilteredRegistry(sc.Registry, allowed)
 			} else {
-				allowed := tools.AllowedToolsForMode(mode)
+				allowed := tools.ApplyBlocklist(tools.AllowedToolsForMode(mode), tools.DefaultSubagentBlocklist)
 				filtered = tools.NewFilteredRegistry(sc.Registry, allowed)
 			}
 		} else {
 			// Built-in agent: use mode-based system prompt and tools.
 			systemPrompt = prompt.BuildDefault(sc.PromptCtx, string(mode), sc.CachingSupported, nil)
 			allowed := tools.AllowedToolsForMode(mode)
-			filtered = tools.NewFilteredRegistry(sc.Registry, allowed)
+			allowed = tools.ApplyBlocklist(allowed, tools.DefaultSubagentBlocklist)
+			if allowed != nil {
+				filtered = tools.NewFilteredRegistry(sc.Registry, allowed)
+			} else {
+				// Unrestricted mode (e.g., build): create unfiltered registry, then hide blocked tools.
+				filtered = tools.NewFilteredRegistry(sc.Registry, nil)
+				for _, name := range tools.DefaultSubagentBlocklist {
+					filtered.Hide(name)
+				}
+			}
 		}
 
 		// Build tool definitions from the filtered set.

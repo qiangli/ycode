@@ -1,9 +1,15 @@
 package memory
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sort"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Manager coordinates memory operations across global and project scopes.
@@ -14,6 +20,7 @@ type Manager struct {
 
 	bleveSearcher  *BleveSearcher  // optional Bleve full-text search
 	vectorSearcher *VectorSearcher // optional vector semantic search
+	provider       MemoryProvider  // optional pluggable provider (supplements stores)
 }
 
 // NewManager creates a new memory manager with a project-scoped store.
@@ -61,8 +68,26 @@ func (m *Manager) SetVectorSearcher(v *VectorSearcher) {
 	m.vectorSearcher = v
 }
 
+// SetProvider attaches an optional MemoryProvider that supplements the
+// default Store-based flow. When set, lifecycle hooks (e.g., OnMemoryWrite)
+// are called after the primary store operations succeed.
+func (m *Manager) SetProvider(p MemoryProvider) {
+	m.provider = p
+}
+
 // Save persists a memory to the appropriate store based on scope.
 func (m *Manager) Save(mem *Memory) error {
+	ctx := context.Background()
+	tracer := otel.Tracer("ycode.memory")
+	_, span := tracer.Start(ctx, "ycode.memory.save",
+		trace.WithAttributes(
+			attribute.String("memory.name", mem.Name),
+			attribute.String("memory.type", string(mem.Type)),
+			attribute.String("memory.scope", string(mem.EffectiveScope())),
+			attribute.Float64("memory.importance", mem.Importance),
+		))
+	defer span.End()
+
 	store := m.storeForScope(mem.EffectiveScope())
 	if err := store.Save(mem); err != nil {
 		return fmt.Errorf("save memory: %w", err)
@@ -78,12 +103,28 @@ func (m *Manager) Save(mem *Memory) error {
 		m.bleveSearcher.IndexMemory(mem)
 	}
 
+	// Notify the pluggable provider if one is attached.
+	if m.provider != nil {
+		if err := m.provider.OnMemoryWrite(context.Background(), mem); err != nil {
+			slog.Warn("memory provider OnMemoryWrite failed", "error", err)
+		}
+	}
+
 	return nil
 }
 
 // Recall retrieves memories matching a query from all scopes.
 // Project-scoped memories are ranked higher than global ones.
 func (m *Manager) Recall(query string, maxResults int) ([]SearchResult, error) {
+	ctx := context.Background()
+	tracer := otel.Tracer("ycode.memory")
+	_, span := tracer.Start(ctx, "ycode.memory.recall",
+		trace.WithAttributes(
+			attribute.String("memory.query", query),
+			attribute.Int("memory.max_results", maxResults),
+		))
+	defer span.End()
+
 	memories, err := m.All()
 	if err != nil {
 		return nil, fmt.Errorf("list memories: %w", err)
@@ -132,9 +173,15 @@ func (m *Manager) Recall(query string, maxResults int) ([]SearchResult, error) {
 		results = Search(memories, query, maxResults*2)
 	}
 
-	// Apply decay scoring and scope boost.
+	// Apply composite scoring (semantic similarity + recency + importance).
+	weights := DefaultWeights()
 	for i := range results {
-		results[i].Score = DecayScore(results[i].Score, results[i].Memory)
+		results[i].Score = CompositeScore(
+			results[i].Score,             // semantic similarity
+			results[i].Memory.UpdatedAt,  // recency
+			results[i].Memory.Importance, // importance
+			weights,
+		)
 		// Project-scoped memories get a slight boost.
 		if results[i].Memory.EffectiveScope() == ScopeProject {
 			results[i].Score *= 1.1
@@ -150,6 +197,15 @@ func (m *Manager) Recall(query string, maxResults int) ([]SearchResult, error) {
 	if len(results) > maxResults {
 		results = results[:maxResults]
 	}
+
+	span.SetAttributes(
+		attribute.Int("memory.results_count", len(results)),
+	)
+	slog.Info("memory.recall",
+		"query", query,
+		"max_results", maxResults,
+		"results_count", len(results),
+	)
 
 	return results, nil
 }

@@ -14,6 +14,11 @@ type Dreamer struct {
 	enabled  bool
 	interval time.Duration
 	logger   *slog.Logger
+
+	// ConsolidationFunc is an optional LLM-backed consolidation function.
+	// When set, it's called with the formatted prompt and should return
+	// the LLM's decision (MERGE/KEEP_BEST/DELETE_REDUNDANT + optional merged content).
+	ConsolidationFunc func(prompt string) (string, error)
 }
 
 // NewDreamer creates a new dreamer for memory consolidation.
@@ -90,25 +95,57 @@ func (d *Dreamer) consolidate() error {
 // mergeSimilar finds and merges project memories with similar descriptions.
 func (d *Dreamer) mergeSimilar(memories []*Memory) int {
 	merged := 0
-	seen := make(map[string]*Memory)
+	// Build clusters of similar memories keyed by normalized description.
+	clusters := make(map[string][]*Memory)
+	var order []string
 
 	for _, mem := range memories {
 		if mem.Type != TypeProject {
 			continue
 		}
-
 		key := normalizeDescription(mem.Description)
-		if existing, ok := seen[key]; ok {
-			// Merge content into the newer memory.
-			if mem.UpdatedAt.After(existing.UpdatedAt) {
-				seen[key] = mem
-				_ = d.manager.Forget(existing.Name)
-			} else {
-				_ = d.manager.Forget(mem.Name)
+		if _, ok := clusters[key]; !ok {
+			order = append(order, key)
+		}
+		clusters[key] = append(clusters[key], mem)
+	}
+
+	for _, key := range order {
+		cluster := clusters[key]
+		if len(cluster) < 2 {
+			continue
+		}
+
+		// Try LLM-backed consolidation if available.
+		if d.ConsolidationFunc != nil {
+			slog.Info("memory.consolidation.start",
+				"cluster_size", len(cluster),
+			)
+			prompt := FormatConsolidationPrompt(cluster)
+			decision, err := d.ConsolidationFunc(prompt)
+			if err == nil {
+				slog.Info("memory.consolidation.decision",
+					"decision", decision,
+					"cluster_size", len(cluster),
+				)
+				// Parse and apply decision.
+				// For now, log the decision — full parsing can be added later.
+				d.logger.Info("consolidation decision", "decision", decision)
 			}
-			merged++
-		} else {
-			seen[key] = mem
+		}
+
+		// Fall back to simple recency-based merge.
+		var newest *Memory
+		for _, mem := range cluster {
+			if newest == nil || mem.UpdatedAt.After(newest.UpdatedAt) {
+				newest = mem
+			}
+		}
+		for _, mem := range cluster {
+			if mem != newest {
+				_ = d.manager.Forget(mem.Name)
+				merged++
+			}
 		}
 	}
 

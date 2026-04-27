@@ -15,6 +15,7 @@ type Tracker struct {
 	CacheReadInput     int
 
 	TotalRequests int
+	Model         string
 }
 
 // NewTracker creates a new usage tracker.
@@ -33,6 +34,20 @@ func (t *Tracker) Add(input, output, cacheCreate, cacheRead int) {
 	t.TotalRequests++
 }
 
+// AddWithModel records token usage with model-specific pricing.
+func (t *Tracker) AddWithModel(model string, input, output, cacheCreate, cacheRead int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.InputTokens += input
+	t.OutputTokens += output
+	t.CacheCreationInput += cacheCreate
+	t.CacheReadInput += cacheRead
+	t.TotalRequests++
+	if model != "" {
+		t.Model = model
+	}
+}
+
 // Cost estimates the cost in USD based on Claude Sonnet pricing.
 func (t *Tracker) Cost() float64 {
 	t.mu.Lock()
@@ -41,6 +56,10 @@ func (t *Tracker) Cost() float64 {
 }
 
 func (t *Tracker) costLocked() float64 {
+	if t.Model != "" {
+		return EstimateCost(t.Model, t.InputTokens, t.OutputTokens, t.CacheCreationInput, t.CacheReadInput)
+	}
+	// Fallback: hardcoded Claude Sonnet pricing for backward compatibility.
 	inputCost := float64(t.InputTokens) * 3.0 / 1_000_000
 	outputCost := float64(t.OutputTokens) * 15.0 / 1_000_000
 	cacheWriteCost := float64(t.CacheCreationInput) * 3.75 / 1_000_000

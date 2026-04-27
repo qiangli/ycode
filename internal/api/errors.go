@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -122,6 +123,182 @@ func ParseTokenLimitError(body string) *TokenLimitError {
 	}
 
 	return err
+}
+
+// FailoverReason classifies API errors for smart recovery routing.
+type FailoverReason int
+
+const (
+	ReasonUnknown         FailoverReason = iota
+	ReasonAuth                           // transient auth error (invalid/expired key)
+	ReasonAuthPermanent                  // permanent auth failure
+	ReasonBilling                        // billing/payment issue
+	ReasonRateLimit                      // 429 rate limited
+	ReasonOverloaded                     // 529 or provider overloaded
+	ReasonServerError                    // 5xx server errors
+	ReasonTimeout                        // 408 or timeout in body
+	ReasonContextOverflow                // token/context limit exceeded
+	ReasonPayloadTooLarge                // request body too large (non-token)
+	ReasonModelNotFound                  // requested model does not exist
+	ReasonPolicyBlocked                  // content policy violation
+	ReasonFormatError                    // malformed request
+)
+
+var failoverReasonNames = [...]string{
+	"Unknown",
+	"Auth",
+	"AuthPermanent",
+	"Billing",
+	"RateLimit",
+	"Overloaded",
+	"ServerError",
+	"Timeout",
+	"ContextOverflow",
+	"PayloadTooLarge",
+	"ModelNotFound",
+	"PolicyBlocked",
+	"FormatError",
+}
+
+func (r FailoverReason) String() string {
+	if int(r) < len(failoverReasonNames) {
+		return failoverReasonNames[r]
+	}
+	return "Unknown"
+}
+
+// RecoveryAction indicates what to do for a given error.
+type RecoveryAction int
+
+const (
+	ActionRetry           RecoveryAction = iota // retry with backoff
+	ActionRotateKey                             // try a different API key
+	ActionFallbackModel                         // fall back to an alternate model
+	ActionCompressContext                       // compress/truncate context and retry
+	ActionAbort                                 // non-recoverable, stop immediately
+)
+
+var recoveryActionNames = [...]string{
+	"Retry",
+	"RotateKey",
+	"FallbackModel",
+	"CompressContext",
+	"Abort",
+}
+
+func (a RecoveryAction) String() string {
+	if int(a) < len(recoveryActionNames) {
+		return recoveryActionNames[a]
+	}
+	return "Retry"
+}
+
+// ClassifyError determines the FailoverReason from an HTTP status and response body.
+func ClassifyError(statusCode int, body string) FailoverReason {
+	bodyLower := strings.ToLower(body)
+
+	switch {
+	case (statusCode == 401 || statusCode == 403) &&
+		(strings.Contains(bodyLower, "billing") || strings.Contains(bodyLower, "payment")):
+		return ReasonBilling
+
+	case (statusCode == 401 || statusCode == 403) &&
+		(strings.Contains(bodyLower, "invalid") || strings.Contains(bodyLower, "expired")):
+		return ReasonAuth
+
+	case statusCode == 401 || statusCode == 403:
+		// Generic auth error without specific keywords — still an auth issue.
+		return ReasonAuth
+
+	case statusCode == 429:
+		return ReasonRateLimit
+
+	case statusCode == 529:
+		return ReasonOverloaded
+
+	case statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504:
+		return ReasonServerError
+
+	case statusCode == 408:
+		return ReasonTimeout
+
+	case (statusCode == 400 || statusCode == 413) && hasTokenLimitKeywords(bodyLower):
+		return ReasonContextOverflow
+
+	case statusCode == 404 && strings.Contains(bodyLower, "model"):
+		return ReasonModelNotFound
+
+	case statusCode == 400 &&
+		(strings.Contains(bodyLower, "policy") || strings.Contains(bodyLower, "content")):
+		return ReasonPolicyBlocked
+
+	case strings.Contains(bodyLower, "overloaded"):
+		return ReasonOverloaded
+
+	case strings.Contains(bodyLower, "timeout"):
+		return ReasonTimeout
+
+	default:
+		return ReasonUnknown
+	}
+}
+
+// hasTokenLimitKeywords checks for token/context limit related keywords.
+func hasTokenLimitKeywords(bodyLower string) bool {
+	return strings.Contains(bodyLower, "token limit") ||
+		strings.Contains(bodyLower, "context length") ||
+		strings.Contains(bodyLower, "maximum context") ||
+		strings.Contains(bodyLower, "too large") ||
+		strings.Contains(bodyLower, "too long") ||
+		strings.Contains(bodyLower, "context window") ||
+		(strings.Contains(bodyLower, "exceeded") && strings.Contains(bodyLower, "token"))
+}
+
+// RecommendedAction returns the best recovery action for a given reason.
+func (r FailoverReason) RecommendedAction() RecoveryAction {
+	switch r {
+	case ReasonAuth:
+		return ActionRotateKey
+	case ReasonAuthPermanent, ReasonBilling:
+		return ActionAbort
+	case ReasonRateLimit, ReasonOverloaded, ReasonServerError, ReasonTimeout:
+		return ActionRetry
+	case ReasonContextOverflow:
+		return ActionCompressContext
+	case ReasonModelNotFound:
+		return ActionFallbackModel
+	case ReasonPolicyBlocked, ReasonFormatError:
+		return ActionAbort
+	default:
+		return ActionRetry
+	}
+}
+
+// ClassifiedError wraps an API error with classification metadata.
+type ClassifiedError struct {
+	Reason     FailoverReason
+	Action     RecoveryAction
+	StatusCode int
+	Body       string
+}
+
+func (e *ClassifiedError) Error() string {
+	return fmt.Sprintf("API error %d [%s → %s]: %s",
+		e.StatusCode, e.Reason, e.Action, truncateBody(e.Body, 200))
+}
+
+// truncateBody truncates a string for error display.
+func truncateBody(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+// IsClassifiedError checks if an error is a ClassifiedError.
+func IsClassifiedError(err error) bool {
+	var ce *ClassifiedError
+	return errors.As(err, &ce)
 }
 
 // extractNumber extracts the first integer from a string.

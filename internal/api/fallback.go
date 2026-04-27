@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -76,8 +77,39 @@ func (fp *FallbackProvider) Send(ctx context.Context, req *Request) (<-chan *Str
 			return events, doneCh
 		}
 
-		// Check if error is transient (retryable).
-		if isTransientError(err) {
+		// Use ClassifiedError for smart recovery when available.
+		var classifiedErr *ClassifiedError
+		if errors.As(err, &classifiedErr) {
+			switch classifiedErr.Action {
+			case ActionRetry:
+				fp.setCooldown(i, 60*time.Second)
+				fp.logger.Warn("provider failed, trying fallback",
+					"index", i,
+					"provider", fp.configs[i].DisplayKind(),
+					"reason", classifiedErr.Reason.String(),
+				)
+				continue
+			case ActionRotateKey:
+				// Put this provider on longer cooldown (auth issue).
+				fp.setCooldown(i, 5*time.Minute)
+				fp.logger.Warn("provider auth error, rotating to fallback",
+					"index", i,
+					"provider", fp.configs[i].DisplayKind(),
+					"reason", classifiedErr.Reason.String(),
+				)
+				continue
+			case ActionFallbackModel:
+				fp.setCooldown(i, 5*time.Minute)
+				fp.logger.Warn("model not found, trying fallback provider",
+					"index", i,
+					"provider", fp.configs[i].DisplayKind(),
+				)
+				continue
+			default:
+				// ActionAbort, ActionCompressContext — return to caller.
+			}
+		} else if isTransientError(err) {
+			// Legacy fallback for non-classified errors.
 			fp.setCooldown(i, 60*time.Second)
 			fp.logger.Warn("provider failed with transient error, trying fallback",
 				"index", i,

@@ -13,9 +13,10 @@ type Action func(ctx context.Context, input string) (string, error)
 
 // FlowExecutor runs a list of actions composed according to a FlowType.
 type FlowExecutor struct {
-	flow    FlowType
-	actions []Action
-	maxIter int // for FlowLoop; 0 means use default (10)
+	flow        FlowType
+	actions     []Action
+	maxIter     int          // for FlowLoop; 0 means use default (10)
+	dagWorkflow *DAGWorkflow // for FlowDAG
 }
 
 // NewFlowExecutor creates a flow executor for the given flow type and actions.
@@ -25,6 +26,11 @@ func NewFlowExecutor(flow FlowType, actions []Action) *FlowExecutor {
 		actions: actions,
 		maxIter: 10,
 	}
+}
+
+// SetDAGWorkflow sets the DAG workflow definition for FlowDAG execution.
+func (fe *FlowExecutor) SetDAGWorkflow(w *DAGWorkflow) {
+	fe.dagWorkflow = w
 }
 
 // SetMaxIterations sets the max iterations for loop flows.
@@ -53,6 +59,8 @@ func (fe *FlowExecutor) Run(ctx context.Context, input string) (string, error) {
 		return fe.runFallback(ctx, input)
 	case FlowChoice:
 		return fe.runChoice(ctx, input)
+	case FlowDAG:
+		return fe.runDAG(ctx, input)
 	default:
 		return "", fmt.Errorf("unknown flow type: %s", fe.flow)
 	}
@@ -160,4 +168,40 @@ func (fe *FlowExecutor) runFallback(ctx context.Context, input string) (string, 
 func (fe *FlowExecutor) runChoice(ctx context.Context, input string) (string, error) {
 	idx := rand.IntN(len(fe.actions))
 	return fe.actions[idx](ctx, input)
+}
+
+// runDAG executes a DAG workflow using the first action as the node handler.
+// The input is passed as the initial context. Node outputs are collected.
+func (fe *FlowExecutor) runDAG(ctx context.Context, input string) (string, error) {
+	if fe.dagWorkflow == nil {
+		return "", fmt.Errorf("FlowDAG requires a DAGWorkflow to be set")
+	}
+	handler := func(ctx context.Context, node DAGNode, vars map[string]string) (string, error) {
+		// Substitute variables in the node prompt/command.
+		prompt := SubstituteVariables(node.Prompt, vars)
+		if prompt == "" {
+			prompt = SubstituteVariables(node.Command, vars)
+		}
+		if prompt == "" {
+			prompt = input
+		}
+		// Use the first action as the executor.
+		if len(fe.actions) > 0 {
+			return fe.actions[0](ctx, prompt)
+		}
+		return prompt, nil
+	}
+	executor := NewDAGExecutor(handler)
+	outputs, err := executor.Run(ctx, fe.dagWorkflow)
+	if err != nil {
+		return "", err
+	}
+	// Return the last node's output.
+	if len(fe.dagWorkflow.Nodes) > 0 {
+		lastNode := fe.dagWorkflow.Nodes[len(fe.dagWorkflow.Nodes)-1]
+		if out, ok := outputs[lastNode.ID]; ok {
+			return out, nil
+		}
+	}
+	return input, nil
 }

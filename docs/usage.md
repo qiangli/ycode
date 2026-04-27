@@ -129,7 +129,7 @@ Config is loaded from three tiers (later overrides earlier):
 
 1. `~/.config/ycode/settings.json` (user)
 2. `.agents/ycode/settings.json` (project)
-3. `.agents/ycode/settings.json` (local/CWD)
+3. `.agents/ycode/settings.local.json` (local, git-ignored)
 
 ### Settings
 
@@ -398,7 +398,7 @@ Modes: ReadOnly, WorkspaceWrite, DangerFullAccess. Each tool declares its requir
 
 ## Dependencies
 
-Only permissive licenses (MIT, Apache-2.0, BSD). Key deps: cobra (CLI), bubbletea (TUI), glamour (markdown), chroma (syntax highlighting), uuid. Go stdlib for everything else (Go 1.25+).
+Only permissive licenses (MIT, Apache-2.0, BSD). Key deps: cobra (CLI), bubbletea (TUI), glamour (markdown), chroma (syntax highlighting), uuid. Go stdlib for everything else (Go 1.26+).
 
 ## Key Design Decisions
 

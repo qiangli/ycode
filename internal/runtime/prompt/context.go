@@ -22,6 +22,7 @@ type ProjectContext struct {
 	ContextFiles  []ContextFile    `json:"context_files,omitempty"`
 	AllowedDirs   []string         `json:"allowed_dirs,omitempty"`
 	ActiveTopic   string           `json:"active_topic,omitempty"` // current high-level task focus
+	Personality   string           `json:"personality,omitempty"`  // builtin personality name (e.g., "pirate", "stern")
 	Memories      []*memory.Memory `json:"memories,omitempty"`
 }
 

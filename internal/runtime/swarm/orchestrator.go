@@ -15,6 +15,7 @@ type Orchestrator struct {
 	spawner    func(ctx context.Context, manifest *tools.AgentManifest) (string, error)
 	contextVar *ContextVars
 	logger     *slog.Logger
+	router     *Router
 
 	// handoffHistory tracks the agent chain to detect cycles.
 	handoffHistory []string
@@ -169,4 +170,46 @@ func (o *Orchestrator) SetContextVar(key, value string) {
 // GetContextVars returns a snapshot of the current context variables.
 func (o *Orchestrator) GetContextVars() map[string]string {
 	return o.contextVar.Snapshot()
+}
+
+// SetRouter sets the AI router for fallback agent selection.
+func (o *Orchestrator) SetRouter(r *Router) {
+	o.router = r
+}
+
+// RunHierarchical decomposes a task and delegates to specialist agents.
+func (o *Orchestrator) RunHierarchical(ctx context.Context, task string) (string, error) {
+	var agents []AgentSpec
+	for _, name := range o.agentDefs.Names() {
+		def, ok := o.agentDefs.Lookup(name)
+		if !ok {
+			continue
+		}
+		agents = append(agents, AgentSpec{
+			Name:        name,
+			Role:        def.Mode,
+			Description: def.Description,
+		})
+	}
+	mgr := NewHierarchicalManager(ManagerConfig{Agents: agents})
+	// Wire the delegate function to use the existing spawner.
+	mgr.DelegateFunc = func(ctx context.Context, agentName, task string) (string, error) {
+		return o.spawnAgent(ctx, agentName, task)
+	}
+	return mgr.Run(ctx, task)
+}
+
+// spawnAgent spawns an agent by name with the given task prompt.
+func (o *Orchestrator) spawnAgent(ctx context.Context, agentName, task string) (string, error) {
+	def, ok := o.agentDefs.Lookup(agentName)
+	if !ok {
+		return "", fmt.Errorf("agent %q not found in registry", agentName)
+	}
+	manifest := &tools.AgentManifest{
+		Type:        tools.AgentType(agentName),
+		Description: def.Description,
+		Prompt:      task,
+		CustomDef:   def,
+	}
+	return o.spawner(ctx, manifest)
 }

@@ -39,6 +39,8 @@ type AgentDefinition struct {
 	MaxTime     int               `yaml:"max_time,omitempty" json:"max_time,omitempty"`
 	Triggers    []TriggerPattern  `yaml:"triggers,omitempty" json:"triggers,omitempty"`
 	Parameters  json.RawMessage   `yaml:"parameters,omitempty" json:"parameters,omitempty"`
+	Nodes       []DAGNode         `yaml:"nodes,omitempty" json:"nodes,omitempty"`
+	Process     string            `yaml:"process,omitempty" json:"process,omitempty"`
 }
 
 // AdvicesConfig defines AOP-style hooks around agent execution.
@@ -84,6 +86,7 @@ const (
 	FlowLoop     FlowType = "loop"     // repeat until condition
 	FlowFallback FlowType = "fallback" // try A, if fails try B, if fails try C
 	FlowChoice   FlowType = "choice"   // random selection
+	FlowDAG      FlowType = "dag"      // directed acyclic graph workflow
 )
 
 // ValidFlowTypes is the set of recognized flow types.
@@ -94,6 +97,7 @@ var ValidFlowTypes = map[FlowType]bool{
 	FlowLoop:     true,
 	FlowFallback: true,
 	FlowChoice:   true,
+	FlowDAG:      true,
 }
 
 // nameRe validates agent names: lowercase alphanumeric plus underscore and hyphen.

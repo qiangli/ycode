@@ -9,7 +9,7 @@ ycode -- pure Go CLI agent harness for autonomous software development. Go 1.26+
 ## First-Time Setup
 
 ```bash
-make init                              # REQUIRED: initialize git submodules + fetch Perses plugins
+make init                              # REQUIRED: initialize submodules, fetch Perses plugins, gzip embedded assets
 export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY for OpenAI-compatible providers
 ```
 
@@ -18,6 +18,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY for OpenAI-compatible
 ```bash
 make build          # full quality gate: tidy -> fmt -> vet -> compile -> test -> verify
 make compile        # quick compile only (bin/ycode)
+make compile-debug  # compile with debug symbols (for profiling/debugging)
 make install        # build + install to ~/bin/ycode (re-signs on macOS)
 make test           # unit tests only (-short -race)
 make cross          # cross-compile all platforms (dist/)
@@ -110,18 +111,18 @@ See [docs/instructions.md](./docs/instructions.md) for full details: skill dispa
 
 **Commit conventions**: stage files by name (never `git add -A`), only stage your own changes, match the repo's prefix style from `git log` (`fix:`, `feat:`, `docs:`).
 
-**Pre-commit checks** -- ALWAYS run before committing:
+**Pre-commit checks** -- ALWAYS run `make build` (or at minimum the four steps below) before committing:
 ```bash
 go fmt ./...              # fix formatting
 go vet ./...              # catch issues
 go mod tidy               # sync dependencies
 make compile              # ensure it builds
 ```
-All four must pass with no errors. Do NOT commit code with formatting issues, vet warnings, or stale go.mod/go.sum. Alternatively, `make build` runs all of these (plus tests) as a single quality gate.
+All four must pass with no errors. Do NOT commit code with formatting issues, vet warnings, or stale go.mod/go.sum.
 
 ## Directory Boundaries
 
-- **`priorart/`** -- **read-only reference code.** Never modify files under `priorart/`. These are upstream submodules kept for exploration, research, and design reference. Do not create, edit, or delete anything in this tree. The `PACKAGES` variable in the Makefile excludes `priorart/` from all Go commands.
+- **`priorart/`** -- **read-only reference code.** Never modify files under `priorart/`. These are upstream submodules kept for exploration, research, and design reference. Do not create, edit, or delete anything in this tree. The `PACKAGES` variable in the Makefile (`go list ./... | grep -v '/priorart/'`) excludes `priorart/` from all Go commands. When running Go commands manually (outside `make`), use `$(go list ./... | grep -v '/priorart/')` instead of `./...` to avoid hitting these packages.
 - **`external/`** -- vendored dependencies used by the ycode build. If code from `priorart/` (or any external project) needs to be incorporated into ycode, vendor it into `external/` with appropriate attribution.
 
 ## Submodule Dependencies

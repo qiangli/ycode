@@ -155,3 +155,227 @@ func TestTokenLimitError_Error(t *testing.T) {
 		t.Errorf("Error() = %q, want %q", got, want)
 	}
 }
+
+func TestClassifyError(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantReason FailoverReason
+		wantAction RecoveryAction
+	}{
+		{
+			name:       "401 with invalid key",
+			statusCode: 401,
+			body:       `{"error":"invalid api key"}`,
+			wantReason: ReasonAuth,
+			wantAction: ActionRotateKey,
+		},
+		{
+			name:       "403 with expired token",
+			statusCode: 403,
+			body:       `{"error":"token has expired"}`,
+			wantReason: ReasonAuth,
+			wantAction: ActionRotateKey,
+		},
+		{
+			name:       "401 with billing issue",
+			statusCode: 401,
+			body:       `{"error":"billing account suspended, payment required"}`,
+			wantReason: ReasonBilling,
+			wantAction: ActionAbort,
+		},
+		{
+			name:       "429 rate limit",
+			statusCode: 429,
+			body:       `{"error":"rate limit exceeded"}`,
+			wantReason: ReasonRateLimit,
+			wantAction: ActionRetry,
+		},
+		{
+			name:       "529 overloaded",
+			statusCode: 529,
+			body:       `{"error":"service overloaded"}`,
+			wantReason: ReasonOverloaded,
+			wantAction: ActionRetry,
+		},
+		{
+			name:       "200 with overloaded in body",
+			statusCode: 200,
+			body:       `{"error":"API is overloaded"}`,
+			wantReason: ReasonOverloaded,
+			wantAction: ActionRetry,
+		},
+		{
+			name:       "500 server error",
+			statusCode: 500,
+			body:       `{"error":"internal server error"}`,
+			wantReason: ReasonServerError,
+			wantAction: ActionRetry,
+		},
+		{
+			name:       "502 bad gateway",
+			statusCode: 502,
+			body:       `bad gateway`,
+			wantReason: ReasonServerError,
+			wantAction: ActionRetry,
+		},
+		{
+			name:       "503 service unavailable",
+			statusCode: 503,
+			body:       `service unavailable`,
+			wantReason: ReasonServerError,
+			wantAction: ActionRetry,
+		},
+		{
+			name:       "504 gateway timeout",
+			statusCode: 504,
+			body:       `gateway timeout`,
+			wantReason: ReasonServerError,
+			wantAction: ActionRetry,
+		},
+		{
+			name:       "408 request timeout",
+			statusCode: 408,
+			body:       `request timeout`,
+			wantReason: ReasonTimeout,
+			wantAction: ActionRetry,
+		},
+		{
+			name:       "non-5xx with timeout in body",
+			statusCode: 422,
+			body:       `{"error":"request timeout exceeded"}`,
+			wantReason: ReasonTimeout,
+			wantAction: ActionRetry,
+		},
+		{
+			name:       "400 with token limit",
+			statusCode: 400,
+			body:       `{"error":"token limit exceeded: 200000 requested, 128000 maximum"}`,
+			wantReason: ReasonContextOverflow,
+			wantAction: ActionCompressContext,
+		},
+		{
+			name:       "413 context too large",
+			statusCode: 413,
+			body:       `{"error":"context length exceeded"}`,
+			wantReason: ReasonContextOverflow,
+			wantAction: ActionCompressContext,
+		},
+		{
+			name:       "400 context window",
+			statusCode: 400,
+			body:       `{"error":"exceeds the context window"}`,
+			wantReason: ReasonContextOverflow,
+			wantAction: ActionCompressContext,
+		},
+		{
+			name:       "404 model not found",
+			statusCode: 404,
+			body:       `{"error":"model 'gpt-5' not found"}`,
+			wantReason: ReasonModelNotFound,
+			wantAction: ActionFallbackModel,
+		},
+		{
+			name:       "400 content policy",
+			statusCode: 400,
+			body:       `{"error":"content policy violation"}`,
+			wantReason: ReasonPolicyBlocked,
+			wantAction: ActionAbort,
+		},
+		{
+			name:       "400 generic content filter",
+			statusCode: 400,
+			body:       `{"error":"flagged by content filter"}`,
+			wantReason: ReasonPolicyBlocked,
+			wantAction: ActionAbort,
+		},
+		{
+			name:       "unknown error",
+			statusCode: 418,
+			body:       `I'm a teapot`,
+			wantReason: ReasonUnknown,
+			wantAction: ActionRetry,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reason := ClassifyError(tt.statusCode, tt.body)
+			if reason != tt.wantReason {
+				t.Errorf("ClassifyError(%d, %q) reason = %v, want %v",
+					tt.statusCode, tt.body, reason, tt.wantReason)
+			}
+			action := reason.RecommendedAction()
+			if action != tt.wantAction {
+				t.Errorf("RecommendedAction() for %v = %v, want %v",
+					reason, action, tt.wantAction)
+			}
+		})
+	}
+}
+
+func TestFailoverReason_String(t *testing.T) {
+	tests := []struct {
+		reason FailoverReason
+		want   string
+	}{
+		{ReasonUnknown, "Unknown"},
+		{ReasonAuth, "Auth"},
+		{ReasonRateLimit, "RateLimit"},
+		{ReasonContextOverflow, "ContextOverflow"},
+		{FailoverReason(99), "Unknown"},
+	}
+
+	for _, tt := range tests {
+		got := tt.reason.String()
+		if got != tt.want {
+			t.Errorf("FailoverReason(%d).String() = %q, want %q", tt.reason, got, tt.want)
+		}
+	}
+}
+
+func TestRecoveryAction_String(t *testing.T) {
+	tests := []struct {
+		action RecoveryAction
+		want   string
+	}{
+		{ActionRetry, "Retry"},
+		{ActionAbort, "Abort"},
+		{ActionCompressContext, "CompressContext"},
+		{RecoveryAction(99), "Retry"},
+	}
+
+	for _, tt := range tests {
+		got := tt.action.String()
+		if got != tt.want {
+			t.Errorf("RecoveryAction(%d).String() = %q, want %q", tt.action, got, tt.want)
+		}
+	}
+}
+
+func TestClassifiedError_Error(t *testing.T) {
+	err := &ClassifiedError{
+		Reason:     ReasonRateLimit,
+		Action:     ActionRetry,
+		StatusCode: 429,
+		Body:       "rate limit exceeded",
+	}
+	got := err.Error()
+	if got == "" {
+		t.Error("ClassifiedError.Error() should not be empty")
+	}
+	if !errors.Is(nil, nil) { // just use errors import
+		t.Fatal("unreachable")
+	}
+}
+
+func TestIsClassifiedError(t *testing.T) {
+	ce := &ClassifiedError{Reason: ReasonAuth, StatusCode: 401, Body: "invalid key"}
+	if !IsClassifiedError(ce) {
+		t.Error("IsClassifiedError should return true for ClassifiedError")
+	}
+	if IsClassifiedError(errors.New("plain error")) {
+		t.Error("IsClassifiedError should return false for plain error")
+	}
+}

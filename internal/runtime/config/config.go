@@ -77,6 +77,13 @@ type Config struct {
 	// Embedded git server settings (Gitea-based)
 	GitServer *GitServerConfig `json:"gitServer,omitempty"`
 
+	// Toolsets maps user-defined toolset names to tool names.
+	Toolsets map[string][]string `json:"toolsets,omitempty"`
+
+	// Personality settings
+	Personality string `json:"personality,omitempty"` // builtin personality name (e.g., "pirate", "stern")
+	SOULFile    string `json:"soul_file,omitempty"`   // path to SOUL.md for custom identity
+
 	// Custom settings (arbitrary key-value pairs from plugins/MCP)
 	Custom map[string]any `json:"custom,omitempty"`
 }
@@ -443,6 +450,20 @@ func mergeFromFile(cfg *Config, path string) error {
 		if gs.Token != "" {
 			cfg.GitServer.Token = gs.Token
 		}
+	}
+	if overlay.Toolsets != nil {
+		if cfg.Toolsets == nil {
+			cfg.Toolsets = make(map[string][]string)
+		}
+		for k, v := range overlay.Toolsets {
+			cfg.Toolsets[k] = v
+		}
+	}
+	if overlay.Personality != "" {
+		cfg.Personality = overlay.Personality
+	}
+	if overlay.SOULFile != "" {
+		cfg.SOULFile = overlay.SOULFile
 	}
 	if overlay.Custom != nil {
 		if cfg.Custom == nil {

@@ -15,6 +15,9 @@ const (
 	ChannelDiscord  ChannelID = "discord"
 	ChannelWeChat   ChannelID = "wechat"
 	ChannelAgent    ChannelID = "agent"
+	ChannelSlack    ChannelID = "slack"
+	ChannelMatrix   ChannelID = "matrix"
+	ChannelEmail    ChannelID = "email"
 )
 
 // Capabilities declares what a channel supports.

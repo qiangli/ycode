@@ -89,6 +89,39 @@ func (si *SearchIndexer) IndexMessage(msg ConversationMessage) {
 	}
 }
 
+// IndexSearchResult represents a search hit from the full-text search index.
+type IndexSearchResult struct {
+	SessionID string
+	Score     float64
+	Snippet   string
+}
+
+// Search queries the search index and returns matching results.
+func (si *SearchIndexer) Search(query string, maxResults int) ([]IndexSearchResult, error) {
+	ctx := context.Background()
+	results, err := si.index.Search(ctx, sessionIndexName, query, maxResults)
+	if err != nil {
+		return nil, err
+	}
+	var out []IndexSearchResult
+	for _, r := range results {
+		sessionID := r.Document.Metadata["session_id"]
+		if sessionID == "" {
+			sessionID = si.sessionID
+		}
+		snippet := r.Document.Content
+		if len(snippet) > 200 {
+			snippet = snippet[:200] + "..."
+		}
+		out = append(out, IndexSearchResult{
+			SessionID: sessionID,
+			Score:     r.Score,
+			Snippet:   snippet,
+		})
+	}
+	return out, nil
+}
+
 // extractTextContent extracts text content from a conversation message.
 func extractTextContent(msg ConversationMessage) string {
 	var parts []string

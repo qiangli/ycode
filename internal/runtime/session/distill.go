@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/qiangli/ycode/internal/runtime/fileops"
 )
 
 const (
@@ -209,7 +211,7 @@ func saveFullOutput(dir, toolName, output string) string {
 	filename := fmt.Sprintf("%s_%s.txt", toolName, ts)
 	path := filepath.Join(dir, filename)
 
-	if err := os.WriteFile(path, []byte(output), 0o644); err != nil {
+	if err := fileops.AtomicWriteFile(path, []byte(output), 0o644); err != nil {
 		return ""
 	}
 	return path

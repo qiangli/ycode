@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/qiangli/ycode/internal/runtime/fileops"
 )
 
 // SessionMetadata holds per-session metadata that persists alongside the JSONL.
@@ -100,5 +102,5 @@ func (ms *MetadataStore) saveToDisk(sessionDir string, m *SessionMetadata) error
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
+	return fileops.AtomicWriteFile(path, append(data, '\n'), 0o644)
 }

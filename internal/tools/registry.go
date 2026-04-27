@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/qiangli/ycode/internal/runtime/permission"
 )
@@ -50,6 +51,9 @@ type Registry struct {
 
 	// Optional hook called when tools access file paths.
 	fileAccessHook FileAccessHook
+
+	// Optional quality monitor for tracking tool call success/failure rates.
+	qualityMonitor *QualityMonitor
 }
 
 // NewRegistry creates a new empty tool registry.
@@ -89,6 +93,13 @@ func (r *Registry) NotifyFileAccess(path string) {
 	if hook != nil {
 		hook(path)
 	}
+}
+
+// SetQualityMonitor attaches a quality monitor for tracking tool call metrics.
+func (r *Registry) SetQualityMonitor(qm *QualityMonitor) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.qualityMonitor = qm
 }
 
 // SetSearchIndex attaches a Bleve search index for semantic tool discovery.
@@ -164,7 +175,17 @@ func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessag
 		}
 	}
 
-	return spec.Handler(ctx, input)
+	start := time.Now()
+	result, err := spec.Handler(ctx, input)
+
+	// Record call metrics in quality monitor.
+	if r.qualityMonitor != nil {
+		success := err == nil
+		duration := time.Since(start).Milliseconds()
+		r.qualityMonitor.RecordCall(name, success, float64(duration))
+	}
+
+	return result, err
 }
 
 // AlwaysAvailable returns tool specs that should be sent in every API request.

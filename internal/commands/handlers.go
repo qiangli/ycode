@@ -557,6 +557,9 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		},
 	})
 
+	// Search command
+	RegisterSearchCommand(r, deps)
+
 	// Plugin commands
 	r.Register(&Spec{
 		Name:        "plugin",

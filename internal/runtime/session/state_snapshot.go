@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/qiangli/ycode/internal/runtime/fileops"
 )
 
 // StateSnapshot is a cumulative workspace state that is updated (not appended)
@@ -16,9 +18,12 @@ type StateSnapshot struct {
 	CompletedSteps   []string  `json:"completed_steps,omitempty"`
 	CurrentStep      string    `json:"current_step,omitempty"`
 	WorkingFiles     []string  `json:"working_files,omitempty"`
-	EnvironmentState string    `json:"environment_state,omitempty"` // e.g., "tests passing", "build broken"
-	CompactionCount  int       `json:"compaction_count"`
-	LastUpdated      time.Time `json:"last_updated"`
+	EnvironmentState string            `json:"environment_state,omitempty"` // e.g., "tests passing", "build broken"
+	ChannelLogs      map[string]string `json:"channel_logs,omitempty"`      // platform channel -> recent log excerpt
+	TaskState        map[string]any    `json:"task_state,omitempty"`        // arbitrary structured task state
+	WorkSummary      string            `json:"work_summary,omitempty"`      // high-level summary of work done
+	CompactionCount  int               `json:"compaction_count"`
+	LastUpdated      time.Time         `json:"last_updated"`
 }
 
 // UpdateStateSnapshot merges new compaction information into the cumulative state.
@@ -95,6 +100,9 @@ func (s *StateSnapshot) Format() string {
 	if s.EnvironmentState != "" {
 		lines = append(lines, "State: "+s.EnvironmentState)
 	}
+	if s.WorkSummary != "" {
+		lines = append(lines, "Summary: "+s.WorkSummary)
+	}
 	lines = append(lines, fmt.Sprintf("Compactions: %d", s.CompactionCount))
 	lines = append(lines, "</state_snapshot>")
 
@@ -108,7 +116,7 @@ func SaveStateSnapshot(sessionDir string, snap *StateSnapshot) error {
 		return fmt.Errorf("marshal state snapshot: %w", err)
 	}
 	path := filepath.Join(sessionDir, "state_snapshot.json")
-	return os.WriteFile(path, data, 0o644)
+	return fileops.AtomicWriteFile(path, data, 0o644)
 }
 
 // LoadStateSnapshot reads the state snapshot from disk.

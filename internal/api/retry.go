@@ -98,13 +98,57 @@ func doWithRetry(ctx context.Context, client *http.Client, makeReq func() (*http
 		resp.Body.Close()
 		body := string(bodyBytes)
 
-		// Check for token limit errors first - these need special handling
-		if resp.StatusCode == 400 || resp.StatusCode == 413 || resp.StatusCode == 422 {
+		// Classify the error for smart recovery routing.
+		reason := ClassifyError(resp.StatusCode, body)
+		action := reason.RecommendedAction()
+
+		// Check for token limit errors first - these need special handling.
+		if reason == ReasonContextOverflow {
 			if tokenErr := ParseTokenLimitError(body); tokenErr != nil {
 				return nil, tokenErr
 			}
+			// Even if we can't parse token numbers, return a classified error.
+			return nil, &ClassifiedError{
+				Reason:     reason,
+				Action:     action,
+				StatusCode: resp.StatusCode,
+				Body:       body,
+			}
 		}
 
+		// For abort actions, return immediately without retrying.
+		if action == ActionAbort {
+			return nil, &ClassifiedError{
+				Reason:     reason,
+				Action:     action,
+				StatusCode: resp.StatusCode,
+				Body:       body,
+			}
+		}
+
+		// For rotate-key and fallback-model, return a classified error so callers
+		// can handle the recovery strategy.
+		if action == ActionRotateKey || action == ActionFallbackModel {
+			return nil, &ClassifiedError{
+				Reason:     reason,
+				Action:     action,
+				StatusCode: resp.StatusCode,
+				Body:       body,
+			}
+		}
+
+		// For retry actions, continue the retry loop.
+		if action == ActionRetry {
+			lastErr = &ClassifiedError{
+				Reason:     reason,
+				Action:     action,
+				StatusCode: resp.StatusCode,
+				Body:       body,
+			}
+			continue
+		}
+
+		// Fallback: use the legacy classification.
 		apiErr := &APIError{
 			StatusCode: resp.StatusCode,
 			Body:       body,

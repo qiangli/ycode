@@ -13,6 +13,14 @@ const (
 	// PreserveLastMessages is the number of recent messages to keep verbatim.
 	PreserveLastMessages = 4
 
+	// HeadProtectedTurns is the number of initial user turns to always preserve.
+	// These provide critical context-setting information.
+	HeadProtectedTurns = 2
+
+	// TailProtectedTokens is the token budget reserved for recent messages.
+	// The tail gets exact message preservation, not summarization.
+	TailProtectedTokens = 8000
+
 	compactContinuationPreamble = "A previous model instance worked on this task and produced a context checkpoint handoff. Use it to build on completed work, avoid duplicating effort, and verify current state with tools before making assumptions.\n\n"
 	compactRecentMessagesNote   = "Recent messages are preserved verbatim."
 	compactDirectResumeInstr    = "Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, and do not preface with continuation text."
@@ -20,11 +28,12 @@ const (
 
 // CompactionResult holds the outcome of a compaction.
 type CompactionResult struct {
-	Summary          string
-	FormattedSummary string
-	PreservedCount   int
-	CompactedCount   int
-	PreviousSummary  string
+	Summary            string
+	FormattedSummary   string
+	PreservedCount     int
+	CompactedCount     int
+	PreviousSummary    string
+	HeadPreservedCount int
 }
 
 // NeedsCompaction checks if the session exceeds the token threshold.
@@ -126,7 +135,12 @@ func Compact(messages []ConversationMessage, previousSummary string, maxHistoryT
 		keepFrom--
 	}
 
-	toCompact := messages[compactedPrefixLen:keepFrom]
+	// Head protection: find the end of the first HeadProtectedTurns user messages.
+	headProtectEnd := findHeadProtectEnd(messages, compactedPrefixLen, keepFrom)
+
+	// Only summarize messages between headProtectEnd and keepFrom.
+	// Head messages (compactedPrefixLen to headProtectEnd) are preserved verbatim.
+	toCompact := messages[headProtectEnd:keepFrom]
 	summary := buildIntentSummary(toCompact)
 
 	// Merge with previous summary if present.
@@ -134,6 +148,15 @@ func Compact(messages []ConversationMessage, previousSummary string, maxHistoryT
 		summary = mergeCompactSummaries(previousSummary, summary)
 	} else if existingSummary := extractExistingCompactedSummary(messages[0]); existingSummary != "" {
 		summary = mergeCompactSummaries(existingSummary, summary)
+	}
+
+	// Extract and preserve structured task state across compaction.
+	taskState := extractTaskState(toCompact)
+	if taskState != "" {
+		slog.Info("session.compact.task_state_preserved",
+			"state_length", len(taskState),
+		)
+		summary += "\n\nTask State:\n" + taskState
 	}
 
 	// Enforce history budget cap if specified.
@@ -144,11 +167,12 @@ func Compact(messages []ConversationMessage, previousSummary string, maxHistoryT
 	formatted := formatCompactSummary(summary)
 
 	return &CompactionResult{
-		Summary:          summary,
-		FormattedSummary: formatted,
-		PreservedCount:   len(messages) - keepFrom,
-		CompactedCount:   len(toCompact),
-		PreviousSummary:  previousSummary,
+		Summary:            summary,
+		FormattedSummary:   formatted,
+		PreservedCount:     len(messages) - keepFrom,
+		CompactedCount:     len(toCompact),
+		PreviousSummary:    previousSummary,
+		HeadPreservedCount: headProtectEnd - compactedPrefixLen,
 	}
 }
 
@@ -279,6 +303,30 @@ func buildIntentSummary(messages []ConversationMessage) string {
 	if len(pendingWork) > 0 {
 		lines = append(lines, "Pending Work:")
 		for _, item := range pendingWork {
+			lines = append(lines, "- "+item)
+		}
+	}
+
+	// Resolved Questions: question/answer pairs from the conversation.
+	resolvedQs := extractResolvedQuestions(messages)
+	if len(resolvedQs) > 0 {
+		lines = append(lines, "Resolved Questions:")
+		for _, q := range resolvedQs {
+			lines = append(lines, "- "+q)
+		}
+	}
+
+	// Active Task: the most recent unfinished user request.
+	if activeTask := extractActiveTask(messages); activeTask != "" {
+		lines = append(lines, "Active Task: "+activeTask)
+	}
+
+	// Remaining Work: pending items not yet addressed (distinct from Pending Work
+	// which uses keyword heuristics — this looks at unanswered user requests).
+	remaining := inferRemainingWork(messages)
+	if len(remaining) > 0 {
+		lines = append(lines, "Remaining Work:")
+		for _, item := range remaining {
 			lines = append(lines, "- "+item)
 		}
 	}
@@ -689,7 +737,11 @@ func CompactWithLLM(ctx context.Context, messages []ConversationMessage, previou
 		keepFrom--
 	}
 
-	toCompact := messages[compactedPrefixLen:keepFrom]
+	// Head protection: find the end of the first HeadProtectedTurns user messages.
+	headProtectEnd := findHeadProtectEnd(messages, compactedPrefixLen, keepFrom)
+
+	// Only summarize messages between headProtectEnd and keepFrom.
+	toCompact := messages[headProtectEnd:keepFrom]
 
 	// Try LLM summarization first, fall back to heuristic.
 	var summary string
@@ -711,6 +763,15 @@ func CompactWithLLM(ctx context.Context, messages []ConversationMessage, previou
 		summary = mergeCompactSummaries(existingSummary, summary)
 	}
 
+	// Extract and preserve structured task state across compaction.
+	taskState := extractTaskState(toCompact)
+	if taskState != "" {
+		slog.Info("session.compact.task_state_preserved",
+			"state_length", len(taskState),
+		)
+		summary += "\n\nTask State:\n" + taskState
+	}
+
 	// Enforce history budget cap if specified.
 	if len(maxHistoryTokens) > 0 && maxHistoryTokens[0] > 0 {
 		summary = EnforceSummaryCap(summary, maxHistoryTokens[0])
@@ -719,11 +780,12 @@ func CompactWithLLM(ctx context.Context, messages []ConversationMessage, previou
 	formatted := formatCompactSummary(summary)
 
 	return &CompactionResult{
-		Summary:          summary,
-		FormattedSummary: formatted,
-		PreservedCount:   len(messages) - keepFrom,
-		CompactedCount:   len(toCompact),
-		PreviousSummary:  previousSummary,
+		Summary:            summary,
+		FormattedSummary:   formatted,
+		PreservedCount:     len(messages) - keepFrom,
+		CompactedCount:     len(toCompact),
+		PreviousSummary:    previousSummary,
+		HeadPreservedCount: headProtectEnd - compactedPrefixLen,
 	}
 }
 
@@ -754,6 +816,191 @@ func EnforceSummaryCap(summary string, maxTokens int) string {
 	omitted := len(summary) - headChars - tailChars
 
 	return head + fmt.Sprintf("\n[... %d chars of summary omitted to fit history budget ...]\n", omitted) + tail
+}
+
+// inferRemainingWork finds user requests that didn't receive a completion response.
+func inferRemainingWork(messages []ConversationMessage) []string {
+	var remaining []string
+	seen := make(map[string]bool)
+
+	for i := 0; i < len(messages) && len(remaining) < 5; i++ {
+		if messages[i].Role != RoleUser {
+			continue
+		}
+		text := firstTextBlock(messages[i])
+		if text == "" {
+			continue
+		}
+
+		// Check if a subsequent assistant message addressed this.
+		addressed := false
+		for j := i + 1; j < len(messages); j++ {
+			if messages[j].Role == RoleAssistant {
+				aText := firstTextBlock(messages[j])
+				if aText != "" {
+					addressed = true
+				}
+				break
+			}
+		}
+		if !addressed {
+			summary := truncateSummary(text, 120)
+			if !seen[summary] {
+				seen[summary] = true
+				remaining = append(remaining, summary)
+			}
+		}
+	}
+	return remaining
+}
+
+// findHeadProtectEnd returns the index past the first HeadProtectedTurns user
+// messages (and their paired assistant responses). If there aren't enough user
+// turns in the compaction range, it returns start (no head protection).
+func findHeadProtectEnd(messages []ConversationMessage, start, limit int) int {
+	userTurnsSeen := 0
+	end := start
+	for i := start; i < limit; i++ {
+		if messages[i].Role == RoleUser {
+			// Count only genuine user messages (not tool results acting as user turns).
+			hasText := false
+			for _, c := range messages[i].Content {
+				if c.Type == ContentTypeText {
+					hasText = true
+					break
+				}
+			}
+			if hasText {
+				userTurnsSeen++
+			}
+		}
+		end = i + 1
+		if userTurnsSeen >= HeadProtectedTurns {
+			// Include the assistant response that follows the last protected user turn.
+			for end < limit && messages[end].Role == RoleAssistant {
+				end++
+			}
+			break
+		}
+	}
+	if userTurnsSeen < HeadProtectedTurns {
+		// Not enough user turns to protect — don't protect anything.
+		return start
+	}
+	return end
+}
+
+// extractResolvedQuestions finds question/answer pairs from user messages
+// that received assistant responses.
+func extractResolvedQuestions(messages []ConversationMessage) []string {
+	var resolved []string
+	questionMarkers := []string{"?", "how ", "what ", "why ", "can you ", "could you ", "is there "}
+
+	for i := 0; i < len(messages)-1 && len(resolved) < 5; i++ {
+		if messages[i].Role != RoleUser {
+			continue
+		}
+		text := firstTextBlock(messages[i])
+		if text == "" {
+			continue
+		}
+		lowered := strings.ToLower(text)
+		isQuestion := false
+		for _, marker := range questionMarkers {
+			if strings.Contains(lowered, marker) {
+				isQuestion = true
+				break
+			}
+		}
+		if !isQuestion {
+			continue
+		}
+
+		// Look for the next assistant response.
+		for j := i + 1; j < len(messages); j++ {
+			if messages[j].Role == RoleAssistant {
+				answer := firstTextBlock(messages[j])
+				if answer != "" {
+					resolved = append(resolved,
+						"Q: "+truncateSummary(text, 100)+" → A: "+truncateSummary(answer, 100))
+				}
+				break
+			}
+		}
+	}
+	return resolved
+}
+
+// extractActiveTask finds the most recent user request that hasn't been completed.
+// A task is considered incomplete if the last assistant response after it contains
+// work-in-progress indicators or if no assistant response follows.
+func extractActiveTask(messages []ConversationMessage) string {
+	// Walk backward to find the last user request with text content.
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != RoleUser {
+			continue
+		}
+		text := firstTextBlock(messages[i])
+		if text == "" {
+			continue
+		}
+		// Check if there's a subsequent assistant message indicating completion.
+		completed := false
+		for j := i + 1; j < len(messages); j++ {
+			if messages[j].Role != RoleAssistant {
+				continue
+			}
+			aText := strings.ToLower(firstTextBlock(messages[j]))
+			if strings.Contains(aText, "done") ||
+				strings.Contains(aText, "complete") ||
+				strings.Contains(aText, "finished") ||
+				strings.Contains(aText, "here's the result") ||
+				strings.Contains(aText, "successfully") {
+				completed = true
+			}
+			break
+		}
+		if !completed {
+			return truncateSummary(text, 200)
+		}
+	}
+	return ""
+}
+
+// extractTaskState identifies structured task state from messages
+// (e.g., checkpoint data, tracked variables) and preserves it across compaction.
+func extractTaskState(messages []ConversationMessage) string {
+	var state []string
+	for _, msg := range messages {
+		text := firstTextBlock(msg)
+		if text == "" {
+			continue
+		}
+		// Look for explicit state markers.
+		lower := strings.ToLower(text)
+		if strings.Contains(lower, "checkpoint:") ||
+			strings.Contains(lower, "state:") ||
+			strings.Contains(lower, "progress:") ||
+			strings.Contains(lower, "status:") {
+			summary := truncateSummary(text, 200)
+			if !containsDuplicate(state, summary) {
+				state = append(state, summary)
+			}
+		}
+	}
+	if len(state) > 5 {
+		state = state[len(state)-5:] // keep most recent
+	}
+	return strings.Join(state, "\n")
+}
+
+func containsDuplicate(items []string, item string) bool {
+	for _, existing := range items {
+		if existing == item {
+			return true
+		}
+	}
+	return false
 }
 
 // collapseBlankLines collapses consecutive blank lines into one.

@@ -101,15 +101,19 @@ func TestDoWithRetry_NonRetryableError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for 401")
 	}
-	apiErr, ok := err.(*APIError)
+	// 401 is now classified as an auth error with RotateKey action (non-retryable).
+	classErr, ok := err.(*ClassifiedError)
 	if !ok {
-		t.Fatalf("expected *APIError, got %T: %v", err, err)
+		t.Fatalf("expected *ClassifiedError, got %T: %v", err, err)
 	}
-	if apiErr.StatusCode != 401 {
-		t.Errorf("expected status 401, got %d", apiErr.StatusCode)
+	if classErr.StatusCode != 401 {
+		t.Errorf("expected status 401, got %d", classErr.StatusCode)
 	}
-	if apiErr.Retryable {
-		t.Error("expected non-retryable")
+	if classErr.Reason != ReasonAuth {
+		t.Errorf("expected ReasonAuth, got %v", classErr.Reason)
+	}
+	if classErr.Action != ActionRotateKey {
+		t.Errorf("expected ActionRotateKey, got %v", classErr.Action)
 	}
 }
 

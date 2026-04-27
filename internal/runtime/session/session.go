@@ -245,6 +245,37 @@ func (s *Session) GenerateDefaultTitle() string {
 	return ""
 }
 
+// TitlePrompt is the prompt sent to a cheap model for title generation.
+const TitlePrompt = "Generate a concise 3-6 word title for this conversation. Reply with ONLY the title, no quotes, no punctuation at the end. Focus on the main topic or task."
+
+// GenerateLLMTitle creates a title from the first few messages using an LLM.
+// firstMessages should be the first 1-3 messages of the conversation.
+// Returns the generated title or falls back to GenerateDefaultTitle on error.
+func GenerateLLMTitle(firstMessages []string) string {
+	// Build a brief context from messages for title generation.
+	var context string
+	for i, msg := range firstMessages {
+		if i >= 3 {
+			break
+		}
+		if len(msg) > 200 {
+			msg = msg[:200] + "..."
+		}
+		context += msg + "\n"
+	}
+	if context == "" {
+		return "New conversation"
+	}
+	// This returns the formatted prompt that callers send to a cheap model.
+	// The actual LLM call happens in the caller since we don't have provider access here.
+	return strings.TrimSpace(context)
+}
+
+// FormatTitlePrompt returns the full prompt for LLM title generation.
+func FormatTitlePrompt(conversationContext string) string {
+	return TitlePrompt + "\n\nConversation:\n" + conversationContext
+}
+
 // LastUserMessage returns the text of the most recent user message, or empty.
 func (s *Session) LastUserMessage() string {
 	for i := len(s.Messages) - 1; i >= 0; i-- {

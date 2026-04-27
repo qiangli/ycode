@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qiangli/ycode/internal/runtime/fileops"
 )
 
 // ChildSession is a subagent session linked to a parent.
@@ -54,7 +55,7 @@ func (cs *ChildSession) writeMetadata() error {
 	path := filepath.Join(cs.Dir, "metadata.json")
 	data := fmt.Sprintf(`{"parent_id":%q,"agent_type":%q,"depth":%d,"created_at":%q}`+"\n",
 		cs.ParentID, cs.AgentType, cs.Depth, cs.CreatedAt.Format(time.RFC3339))
-	return os.WriteFile(path, []byte(data), 0o644)
+	return fileops.AtomicWriteFile(path, []byte(data), 0o644)
 }
 
 // ListChildSessions returns metadata for all child sessions under a parent.

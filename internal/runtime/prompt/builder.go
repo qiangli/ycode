@@ -149,6 +149,13 @@ func BuildDefault(ctx *ProjectContext, mode string, cachingSupported bool, basel
 	} else {
 		// Build and plan modes share the full section set.
 		b.AddStaticSection(SectionIntro, IntroSection())
+
+		// Personality/identity section (after intro, before system).
+		personalityContent := PersonalitySection(LoadSOUL(ctx.ProjectRoot), ctx.Personality)
+		if personalityContent != "" {
+			b.AddStaticSection(SectionPersonality, personalityContent)
+		}
+
 		b.AddStaticSection(SectionSystem, SystemSection())
 		b.AddStaticSection(SectionTasks, TasksSection())
 		b.AddStaticSection(SectionActions, ActionsSection())

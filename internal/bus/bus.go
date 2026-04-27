@@ -31,6 +31,16 @@ const (
 	EventAgentHandoff     EventType = "agent.handoff"  // control transfer between agents
 	EventAgentMessage     EventType = "agent.message"  // inter-agent messaging
 	EventFlowStep         EventType = "flow.step"      // flow orchestration step
+
+	// Mesh agent events.
+	EventDiagReport    EventType = "diagnostic.report"
+	EventFixStart      EventType = "fix.start"
+	EventFixComplete   EventType = "fix.complete"
+	EventFixFailed     EventType = "fix.failed"
+	EventLearnComplete EventType = "learn.complete"
+	EventResearchDone  EventType = "research.done"
+	EventTrainStart    EventType = "train.start"
+	EventTrainComplete EventType = "train.complete"
 )
 
 // Event is a single message flowing through the bus.

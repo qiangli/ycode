@@ -122,6 +122,12 @@ func (fr *FilteredRegistry) Names() []string {
 	return filtered
 }
 
+// NewFilteredRegistryFromToolsets creates a FilteredRegistry using resolved toolset names.
+func NewFilteredRegistryFromToolsets(base *Registry, toolsetReg *ToolsetRegistry, toolsetNames []string) *FilteredRegistry {
+	resolved := toolsetReg.ResolveMultiple(toolsetNames)
+	return NewFilteredRegistry(base, resolved)
+}
+
 func (fr *FilteredRegistry) filterSpecs(specs []*ToolSpec) []*ToolSpec {
 	if fr.allowed == nil && (fr.hidden == nil || len(fr.hidden) == 0) {
 		return specs
