@@ -94,14 +94,14 @@ func AllowedToolsForAgent(agentType AgentType) []string {
 
 // AgentManifest records a spawned agent and its configuration.
 type AgentManifest struct {
-	ID              string    `json:"id"`
-	Type            AgentType `json:"type"`
-	Description     string    `json:"description"`
-	Prompt          string    `json:"prompt"`
-	Depth           int       `json:"depth"`
-	RunInBackground bool      `json:"run_in_background,omitempty"`
-	Model           string    `json:"model,omitempty"`           // model override for this agent
-	CustomDef       *agentdef.AgentDefinition `json:"-"`        // custom definition (nil for built-in types)
+	ID              string                    `json:"id"`
+	Type            AgentType                 `json:"type"`
+	Description     string                    `json:"description"`
+	Prompt          string                    `json:"prompt"`
+	Depth           int                       `json:"depth"`
+	RunInBackground bool                      `json:"run_in_background,omitempty"`
+	Model           string                    `json:"model,omitempty"` // model override for this agent
+	CustomDef       *agentdef.AgentDefinition `json:"-"`               // custom definition (nil for built-in types)
 }
 
 // BuiltinAgentTypes is the list of hardcoded agent types.

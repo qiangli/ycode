@@ -6,10 +6,13 @@ import "time"
 type Type string
 
 const (
-	TypeUser      Type = "user"
-	TypeFeedback  Type = "feedback"
-	TypeProject   Type = "project"
-	TypeReference Type = "reference"
+	TypeUser       Type = "user"
+	TypeFeedback   Type = "feedback"
+	TypeProject    Type = "project"
+	TypeReference  Type = "reference"
+	TypeEpisodic   Type = "episodic"   // specific agent experiences with temporal context
+	TypeProcedural Type = "procedural" // workflow patterns, decision-making heuristics
+	TypeTask       Type = "task"       // persistent structured task state
 )
 
 // Scope determines where a memory is stored.

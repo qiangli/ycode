@@ -9,8 +9,8 @@ import (
 // handoffSignal is the JSON structure returned by the Handoff tool.
 // The orchestrator in the swarm package detects this marker.
 type handoffSignal struct {
-	Handoff bool           `json:"__handoff__"`
-	Result  handoffResult  `json:"result"`
+	Handoff bool          `json:"__handoff__"`
+	Result  handoffResult `json:"result"`
 }
 
 type handoffResult struct {
