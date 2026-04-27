@@ -26,6 +26,7 @@ const (
 	SectionActiveTopic   = "active-topic"
 	SectionPersonality   = "personality"
 	SectionPlatform      = "platform"
+	SectionRepoMap       = "repo-map"
 )
 
 // FrontierModelName is the human-readable model family name for prompts.

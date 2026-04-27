@@ -19,6 +19,8 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/cli"
+	"github.com/qiangli/ycode/internal/container"
+	"github.com/qiangli/ycode/internal/runtime/bash"
 	"github.com/qiangli/ycode/internal/runtime/health"
 	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/inference"
@@ -27,7 +29,9 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/embedding"
 	"github.com/qiangli/ycode/internal/runtime/git"
 	"github.com/qiangli/ycode/internal/runtime/indexer"
+	"github.com/qiangli/ycode/internal/runtime/lsp"
 	"github.com/qiangli/ycode/internal/runtime/memory"
+	"github.com/qiangli/ycode/internal/runtime/repomap"
 	"github.com/qiangli/ycode/internal/runtime/oauth"
 	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
@@ -216,7 +220,67 @@ func newApp() (*cli.App, error) {
 	// Initialize tool registry with handlers.
 	toolReg := tools.NewRegistry()
 	tools.RegisterBuiltins(toolReg)
-	tools.RegisterBashHandler(toolReg, cwd)
+
+	// Container sandbox: when enabled, bash commands run inside an isolated container
+	// instead of directly on the host. The workspace is bind-mounted read-write.
+	var bashExecutor bash.Executor
+	if cfg.Container != nil && cfg.Container.Enabled {
+		engine, err := container.NewEngine(rootCtx, &container.EngineConfig{
+			BinaryPath: cfg.Container.BinaryPath,
+			SocketPath: cfg.Container.SocketPath,
+		})
+		if err != nil {
+			slog.Warn("container sandbox unavailable, falling back to host execution", "error", err)
+		} else {
+			image := cfg.Container.Image
+			if image == "" {
+				image = "ycode-sandbox:latest"
+			}
+			sandboxCfg := &container.ContainerConfig{
+				Name:     fmt.Sprintf("ycode-sandbox-%s", instanceID[:8]),
+				Image:    image,
+				WorkDir:  "/workspace",
+				ReadOnly: cfg.Container.ReadOnlyRoot,
+				Init:     true,
+				Mounts: []container.Mount{
+					{Source: cwd, Target: "/workspace", ReadOnly: false},
+				},
+				Tmpfs:  []string{"/tmp", "/var/tmp"},
+				Labels: map[string]string{"managed-by": "ycode", "instance": instanceID},
+				Resources: container.Resources{
+					CPUs:   cfg.Container.CPUs,
+					Memory: cfg.Container.Memory,
+				},
+			}
+			if cfg.Container.Network != "" {
+				sandboxCfg.Network = cfg.Container.Network
+			}
+			sandbox, err := engine.CreateContainer(rootCtx, sandboxCfg)
+			if err != nil {
+				slog.Warn("failed to create sandbox container, falling back to host execution", "error", err)
+			} else if err := sandbox.Start(rootCtx); err != nil {
+				slog.Warn("failed to start sandbox container, falling back to host execution", "error", err)
+				sandbox.Remove(rootCtx, true)
+			} else {
+				bashExecutor = &bash.ContainerExecutor{Container: sandbox}
+				slog.Info("container sandbox active", "container", sandbox.Name, "image", image)
+				// Clean up sandbox on shutdown.
+				defer func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					sandbox.Stop(ctx, 5*time.Second)
+					sandbox.Remove(ctx, true)
+					engine.Close(ctx)
+				}()
+			}
+		}
+	}
+
+	if bashExecutor != nil {
+		tools.RegisterBashHandler(toolReg, "/workspace", bashExecutor)
+	} else {
+		tools.RegisterBashHandler(toolReg, cwd)
+	}
 	tools.RegisterFileHandlers(toolReg, v)
 	tools.RegisterSearchHandlers(toolReg, v)
 	tools.RegisterVFSHandlers(toolReg, v)
@@ -233,6 +297,17 @@ func newApp() (*cli.App, error) {
 	tools.RegisterConfigHandler(toolReg, cfg)
 	tools.RegisterSemanticSearchHandler(toolReg)
 	tools.RegisterGitHandlers(toolReg, cwd)
+	tools.RegisterTestRunnerHandler(toolReg, cwd)
+
+	// LSP: auto-detect available language servers and register them.
+	lspRegistry := lsp.NewClientRegistry()
+	for _, serverCfg := range lsp.AutoDetectServers() {
+		client := lsp.NewClient(serverCfg)
+		client.SetRootDir(cwd)
+		lspRegistry.Register(serverCfg.Language, client)
+		slog.Info("registered LSP server", "language", serverCfg.Language, "command", serverCfg.Command)
+	}
+	tools.RegisterLSPHandler(toolReg, lspRegistry)
 
 	// Wire permission enforcement: resolve current mode from the live
 	// settings.local.json file so that plan mode toggles take effect immediately.
@@ -427,6 +502,8 @@ func newApp() (*cli.App, error) {
 	// Register cleanup (LIFO order — last registered runs first):
 	// 1. rootCancel: stop background goroutines so they stop producing telemetry
 	// 2. OTEL shutdown: flush remaining spans/metrics/logs
+	// 3. LSP servers: shut down language server processes
+	app.RegisterCleanup(func() { lspRegistry.Close() })
 	if otelRes != nil {
 		app.RegisterCleanup(otelRes.shutdown)
 	}
@@ -466,9 +543,10 @@ func buildPromptContext(workDir, model string, configInstructions []string, memM
 		ctx.ProjectRoot = workDir
 	}
 
-	// Discover instruction files and load memories concurrently.
+	// Discover instruction files, load memories, and generate repo map concurrently.
 	var contextFiles []prompt.ContextFile
 	var memories []*memory.Memory
+	var repoMapText string
 	var wg sync.WaitGroup
 
 	wg.Add(1)
@@ -489,9 +567,22 @@ func buildPromptContext(workDir, model string, configInstructions []string, memM
 		}()
 	}
 
+	// Generate repo map in the background.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		rm, err := repomap.Generate(ctx.ProjectRoot, nil)
+		if err != nil {
+			slog.Debug("repo map generation", "error", err)
+			return
+		}
+		repoMapText = rm.Format()
+	}()
+
 	wg.Wait()
 	ctx.ContextFiles = contextFiles
 	ctx.Memories = memories
+	ctx.RepoMapText = repoMapText
 
 	// Config-based instruction paths (relative, absolute, ~/home, URLs).
 	if len(configInstructions) > 0 {

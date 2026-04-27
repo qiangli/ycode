@@ -10,11 +10,19 @@ import (
 )
 
 // RegisterBashHandler registers the bash tool handler.
-func RegisterBashHandler(r *Registry, workDir string) {
+// An optional executor can be provided to route commands through a container
+// sandbox. When executor is nil, commands run directly on the host.
+func RegisterBashHandler(r *Registry, workDir string, executor ...bash.Executor) {
 	spec, ok := r.Get("bash")
 	if !ok {
 		return
 	}
+
+	var exec bash.Executor
+	if len(executor) > 0 {
+		exec = executor[0]
+	}
+
 	spec.Handler = func(ctx context.Context, input json.RawMessage) (string, error) {
 		var params bash.ExecParams
 		if err := json.Unmarshal(input, &params); err != nil {
@@ -35,7 +43,7 @@ func RegisterBashHandler(r *Registry, workDir string) {
 			return "", fmt.Errorf("bash safety check: %w", err)
 		}
 
-		result, err := bash.Execute(ctx, params)
+		result, err := bash.ExecuteWith(ctx, exec, params)
 		if err != nil {
 			return "", err
 		}

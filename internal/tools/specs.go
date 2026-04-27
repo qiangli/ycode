@@ -402,6 +402,13 @@ func builtinSpecs() []*ToolSpec {
 			RequiredMode: permission.WorkspaceWrite,
 			Source:       SourceBuiltin,
 		},
+		{
+			Name:         "run_tests",
+			Description:  "Detect and run the project's test suite, returning structured results with failed test names, failure messages, and file:line locations. Supports Go, Python (pytest), JavaScript/TypeScript (jest/vitest), and Rust (cargo test). Much more useful than running test commands via bash because the output is parsed into structured JSON.",
+			InputSchema:  mustJSON(runTestsSchema),
+			RequiredMode: permission.DangerFullAccess,
+			Source:       SourceBuiltin,
+		},
 	}
 }
 
@@ -899,5 +906,28 @@ var (
 			}
 		},
 		"required": ["query_type"]
+	}`
+
+	runTestsSchema = `{
+		"type": "object",
+		"properties": {
+			"pattern": {
+				"type": "string",
+				"description": "Test name pattern to filter (e.g. 'TestFoo' for Go, '-k test_foo' for pytest). Optional — runs all tests if omitted."
+			},
+			"path": {
+				"type": "string",
+				"description": "Directory or file path to run tests in. Defaults to project root."
+			},
+			"framework": {
+				"type": "string",
+				"enum": ["auto", "go", "pytest", "jest", "vitest", "cargo"],
+				"description": "Test framework to use. 'auto' (default) detects from project files."
+			},
+			"timeout": {
+				"type": "integer",
+				"description": "Timeout in seconds (default: 120)."
+			}
+		}
 	}`
 )

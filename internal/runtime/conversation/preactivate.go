@@ -47,6 +47,10 @@ var intentToolBundles = map[string][]string{
 	"memo":  {"MemosStore", "MemosSearch", "MemosList"},
 	"memos": {"MemosStore", "MemosSearch", "MemosList"},
 
+	// Testing.
+	"test":  {"run_tests"},
+	"tests": {"run_tests"},
+
 	// Scheduling.
 	"cron": {"CronCreate", "CronList", "CronDelete"},
 }
