@@ -218,16 +218,16 @@ func shouldExclude(rel string, patterns []string) bool {
 		if matched, _ := filepath.Match(pattern, rel); matched {
 			return true
 		}
-		// Also check the doublestar patterns by trying each path component.
 		if strings.Contains(pattern, "**") {
-			simple := strings.ReplaceAll(pattern, "**/", "")
-			if matched, _ := filepath.Match(simple, filepath.Base(rel)); matched {
-				return true
+			// "dir/**" → exclude anything under "dir/"
+			if prefix, ok := strings.CutSuffix(pattern, "/**"); ok {
+				if strings.HasPrefix(rel, prefix+"/") || rel == prefix {
+					return true
+				}
 			}
-			// Check directory components.
-			parts := strings.Split(rel, string(filepath.Separator))
-			for _, part := range parts {
-				if matched, _ := filepath.Match(simple, part); matched {
+			// "**/*.ext" → match the filename pattern against any file
+			if suffix, ok := strings.CutPrefix(pattern, "**/"); ok {
+				if matched, _ := filepath.Match(suffix, filepath.Base(rel)); matched {
 					return true
 				}
 			}
