@@ -43,6 +43,7 @@ type Indexer struct {
 	search   storage.SearchIndex
 	kv       storage.KVStore // for tracking file mtimes
 	RefGraph *RefGraph       // optional reference graph for Go files
+	Trigrams *TrigramIndex   // optional trigram index for regex acceleration
 }
 
 // New creates a codebase indexer.
@@ -52,6 +53,7 @@ func New(workDir string, search storage.SearchIndex, kv storage.KVStore) *Indexe
 		search:   search,
 		kv:       kv,
 		RefGraph: NewRefGraph(kv),
+		Trigrams: NewTrigramIndex(kv),
 	}
 }
 
@@ -101,6 +103,11 @@ func (idx *Indexer) IndexOnce(ctx context.Context) (int, error) {
 		// Build reference graph for Go files.
 		if lang == "go" && idx.RefGraph != nil {
 			idx.RefGraph.IndexFileReferences(path, relPath)
+		}
+
+		// Update trigram index.
+		if idx.Trigrams != nil {
+			idx.Trigrams.IndexFile(path, relPath)
 		}
 
 		// Record mtime.
