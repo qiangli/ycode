@@ -19,8 +19,13 @@ import (
 )
 
 const (
-	// singleShotTimeout is the maximum time for a single-shot LLM call.
-	singleShotTimeout = 30 * time.Second
+	// DefaultSingleShotTimeout is the default timeout for short single-shot
+	// LLM calls (e.g., commit message generation).
+	DefaultSingleShotTimeout = 30 * time.Second
+
+	// InitSingleShotTimeout is the timeout for /init AGENTS.md generation,
+	// which sends a large prompt with full project context.
+	InitSingleShotTimeout = 120 * time.Second
 )
 
 // ModelChain tries a sequence of models in order, returning the first
@@ -52,11 +57,16 @@ func (mc *ModelChain) SingleShot(ctx context.Context, systemPrompt, userContent 
 
 // SingleShotWithUsage sends a single system+user message pair to the LLM and
 // returns both the text response and token usage. It tries each model in the
-// chain, returning the first successful response.
+// chain, returning the first successful response. Uses DefaultSingleShotTimeout.
 func (mc *ModelChain) SingleShotWithUsage(ctx context.Context, systemPrompt, userContent string, maxTokens int) (*SingleShotResult, error) {
+	return mc.SingleShotWithUsageAndTimeout(ctx, systemPrompt, userContent, maxTokens, DefaultSingleShotTimeout)
+}
+
+// SingleShotWithUsageAndTimeout is like SingleShotWithUsage but with a custom timeout.
+func (mc *ModelChain) SingleShotWithUsageAndTimeout(ctx context.Context, systemPrompt, userContent string, maxTokens int, timeout time.Duration) (*SingleShotResult, error) {
 	var lastErr error
 	for _, ms := range mc.Models {
-		result, err := singleShotWithUsage(ctx, ms, systemPrompt, userContent, maxTokens)
+		result, err := singleShotWithUsage(ctx, ms, systemPrompt, userContent, maxTokens, timeout)
 		if err != nil {
 			slog.Info("single-shot call failed, trying next model", "model", ms.Model, "error", err)
 			lastErr = err
@@ -70,10 +80,16 @@ func (mc *ModelChain) SingleShotWithUsage(ctx context.Context, systemPrompt, use
 
 // SingleShotStreaming sends a single system+user message pair and calls onDelta
 // for each text delta as it arrives. Returns the full result with usage.
+// Uses DefaultSingleShotTimeout.
 func (mc *ModelChain) SingleShotStreaming(ctx context.Context, systemPrompt, userContent string, maxTokens int, onDelta func(text string)) (*SingleShotResult, error) {
+	return mc.SingleShotStreamingWithTimeout(ctx, systemPrompt, userContent, maxTokens, DefaultSingleShotTimeout, onDelta)
+}
+
+// SingleShotStreamingWithTimeout is like SingleShotStreaming but with a custom timeout.
+func (mc *ModelChain) SingleShotStreamingWithTimeout(ctx context.Context, systemPrompt, userContent string, maxTokens int, timeout time.Duration, onDelta func(text string)) (*SingleShotResult, error) {
 	var lastErr error
 	for _, ms := range mc.Models {
-		result, err := singleShotStreamingImpl(ctx, ms, systemPrompt, userContent, maxTokens, onDelta)
+		result, err := singleShotStreamingImpl(ctx, ms, systemPrompt, userContent, maxTokens, timeout, onDelta)
 		if err != nil {
 			slog.Info("single-shot streaming call failed, trying next model", "model", ms.Model, "error", err)
 			lastErr = err
@@ -85,8 +101,8 @@ func (mc *ModelChain) SingleShotStreaming(ctx context.Context, systemPrompt, use
 }
 
 // singleShotStreamingImpl sends a streaming request and invokes onDelta per text chunk.
-func singleShotStreamingImpl(ctx context.Context, ms session.ModelSpec, systemPrompt, userContent string, maxTokens int, onDelta func(text string)) (*SingleShotResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, singleShotTimeout)
+func singleShotStreamingImpl(ctx context.Context, ms session.ModelSpec, systemPrompt, userContent string, maxTokens int, timeout time.Duration, onDelta func(text string)) (*SingleShotResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	req := &api.Request{
@@ -170,7 +186,7 @@ func singleShotStreamingImpl(ctx context.Context, ms session.ModelSpec, systemPr
 
 // singleShotWith sends the request to a specific model.
 func singleShotWith(ctx context.Context, ms session.ModelSpec, systemPrompt, userContent string, maxTokens int) (string, error) {
-	result, err := singleShotWithUsage(ctx, ms, systemPrompt, userContent, maxTokens)
+	result, err := singleShotWithUsage(ctx, ms, systemPrompt, userContent, maxTokens, DefaultSingleShotTimeout)
 	if err != nil {
 		return "", err
 	}
@@ -178,8 +194,8 @@ func singleShotWith(ctx context.Context, ms session.ModelSpec, systemPrompt, use
 }
 
 // singleShotWithUsage sends the request to a specific model and returns usage.
-func singleShotWithUsage(ctx context.Context, ms session.ModelSpec, systemPrompt, userContent string, maxTokens int) (*SingleShotResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, singleShotTimeout)
+func singleShotWithUsage(ctx context.Context, ms session.ModelSpec, systemPrompt, userContent string, maxTokens int, timeout time.Duration) (*SingleShotResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	req := &api.Request{

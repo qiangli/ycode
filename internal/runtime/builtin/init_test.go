@@ -158,6 +158,38 @@ func TestInitGenerator_GoProject(t *testing.T) {
 	}
 }
 
+func TestInitGenerator_MakefileOverridesDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Write go.mod (sets default build/test/lint).
+	gomod := "module github.com/test/project\n\ngo 1.21"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(gomod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write Makefile with build/test targets. These should override the
+	// Go defaults so the project summary says "make build", not "go build ./...".
+	makefile := "build:\n\tgo build -o bin/app ./cmd/app\n\ntest:\n\tgo test -v -count=1 ./internal/...\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "Makefile"), []byte(makefile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewInitGenerator(tmpDir)
+	result, err := gen.Generate("")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// The rendered context should show "make build" and "make test",
+	// not "go build ./..." and "go test -race ./...".
+	if !strings.Contains(result.UserPrompt, "`make build`") {
+		t.Error("expected Makefile build to override go default: want `make build` in prompt")
+	}
+	if !strings.Contains(result.UserPrompt, "`make test`") {
+		t.Error("expected Makefile test to override go default: want `make test` in prompt")
+	}
+}
+
 func TestInitGenerator_NPMProject(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -397,6 +429,336 @@ func TestInitGenerator_ExistingAgentsMD(t *testing.T) {
 	// Verify existing AGENTS.md content is in the prompt.
 	if !strings.Contains(result.UserPrompt, "Custom instructions that should be preserved") {
 		t.Error("expected existing AGENTS.md content in user prompt")
+	}
+}
+
+func TestCleanInitOutput(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "no fences",
+			in:   "# AGENTS.md\n\nContent here.",
+			want: "# AGENTS.md\n\nContent here.\n",
+		},
+		{
+			name: "markdown fence",
+			in:   "```markdown\n# AGENTS.md\n\nContent here.\n```",
+			want: "# AGENTS.md\n\nContent here.\n",
+		},
+		{
+			name: "md fence",
+			in:   "```md\n# AGENTS.md\n\nContent here.\n```",
+			want: "# AGENTS.md\n\nContent here.\n",
+		},
+		{
+			name: "bare fence",
+			in:   "```\n# AGENTS.md\n\nContent here.\n```",
+			want: "# AGENTS.md\n\nContent here.\n",
+		},
+		{
+			name: "CLAUDE.md header replaced",
+			in:   "# CLAUDE.md\n\nContent here.",
+			want: "# AGENTS.md\n\nContent here.\n",
+		},
+		{
+			name: "fence plus CLAUDE.md header",
+			in:   "```markdown\n# CLAUDE.md\n\nContent here.\n```",
+			want: "# AGENTS.md\n\nContent here.\n",
+		},
+		{
+			name: "trailing newline preserved",
+			in:   "# AGENTS.md\n\nContent.\n",
+			want: "# AGENTS.md\n\nContent.\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CleanInitOutput(tt.in)
+			if got != tt.want {
+				t.Errorf("CleanInitOutput() =\n%q\nwant:\n%q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestContentUnchanged(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing string
+		gen      string
+		want     bool
+	}{
+		{
+			name:     "identical",
+			existing: "# AGENTS.md\n\nContent here.\n",
+			gen:      "# AGENTS.md\n\nContent here.\n",
+			want:     true,
+		},
+		{
+			name:     "whitespace differences",
+			existing: "# AGENTS.md\n\nContent  here.\n",
+			gen:      "# AGENTS.md\n\nContent here.\n",
+			want:     true,
+		},
+		{
+			name:     "trailing newline difference",
+			existing: "# AGENTS.md\n\nContent here.\n",
+			gen:      "# AGENTS.md\n\nContent here.\n\n",
+			want:     true,
+		},
+		{
+			name:     "different content",
+			existing: "# AGENTS.md\n\nOld content.\n",
+			gen:      "# AGENTS.md\n\nNew content.\n",
+			want:     false,
+		},
+		{
+			name:     "substantial addition",
+			existing: "# AGENTS.md\n\nShort.\n",
+			gen:      "# AGENTS.md\n\nShort.\n\n## New Section\nDetails.\n",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ContentUnchanged(tt.existing, tt.gen)
+			if got != tt.want {
+				t.Errorf("ContentUnchanged() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDiscoverSubInstructions(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create sub-directory instruction files.
+	for _, rel := range []string{
+		"docker/metrics/AGENTS.md",
+		"skills/build/CLAUDE.md",
+		"internal/AGENTS.md",
+	} {
+		path := filepath.Join(tmpDir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("# "+rel), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	gen := NewInitGenerator(tmpDir)
+	ctx := &initContext{
+		CIFiles:     make(map[string]string),
+		ConfigFiles: make(map[string]string),
+	}
+	gen.discoverSubInstructions(ctx)
+
+	if len(ctx.SubInstructions) != 3 {
+		t.Errorf("expected 3 sub-instructions, got %d: %v", len(ctx.SubInstructions), ctx.SubInstructions)
+	}
+
+	// Verify expected paths are found.
+	found := map[string]bool{}
+	for _, p := range ctx.SubInstructions {
+		found[p] = true
+	}
+	for _, want := range []string{"docker/metrics/AGENTS.md", "skills/build/CLAUDE.md", "internal/AGENTS.md"} {
+		if !found[want] {
+			t.Errorf("expected to find %s in sub-instructions", want)
+		}
+	}
+}
+
+func TestReadScripts(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create scripts/ directory with shell scripts.
+	scriptsDir := filepath.Join(tmpDir, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(scriptsDir, "start.sh"), []byte("#!/bin/bash\n# Start the server\necho starting"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(scriptsDir, "_lib.sh"), []byte("#!/bin/bash\n# Shared library functions\nIMAGE_TAG=v1.0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Non-shell file should be skipped.
+	if err := os.WriteFile(filepath.Join(scriptsDir, "config.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewInitGenerator(tmpDir)
+	ctx := &initContext{
+		Scripts:     make(map[string]string),
+		CIFiles:     make(map[string]string),
+		ConfigFiles: make(map[string]string),
+	}
+	gen.readScripts(ctx)
+
+	if len(ctx.Scripts) != 2 {
+		t.Errorf("expected 2 scripts, got %d: %v", len(ctx.Scripts), ctx.Scripts)
+	}
+	if _, ok := ctx.Scripts["scripts/start.sh"]; !ok {
+		t.Error("expected scripts/start.sh to be read")
+	}
+	if _, ok := ctx.Scripts["scripts/_lib.sh"]; !ok {
+		t.Error("expected scripts/_lib.sh to be read")
+	}
+}
+
+func TestReadComposeFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create root docker-compose.yml.
+	if err := os.WriteFile(filepath.Join(tmpDir, "docker-compose.yml"), []byte("version: '3'\nservices:\n  web:\n    image: nginx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create docker/metrics/docker-compose.yml.
+	metricsDir := filepath.Join(tmpDir, "docker", "metrics")
+	if err := os.MkdirAll(metricsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(metricsDir, "docker-compose.yaml"), []byte("version: '3'\nservices:\n  prometheus:\n    image: prom/prometheus"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewInitGenerator(tmpDir)
+	ctx := &initContext{
+		ComposeFiles: make(map[string]string),
+		CIFiles:      make(map[string]string),
+		ConfigFiles:  make(map[string]string),
+	}
+	gen.readComposeFiles(ctx)
+
+	if len(ctx.ComposeFiles) != 2 {
+		t.Errorf("expected 2 compose files, got %d: %v", len(ctx.ComposeFiles), ctx.ComposeFiles)
+	}
+	if _, ok := ctx.ComposeFiles["docker-compose.yml"]; !ok {
+		t.Error("expected root docker-compose.yml to be read")
+	}
+	if _, ok := ctx.ComposeFiles["docker/metrics/docker-compose.yaml"]; !ok {
+		t.Error("expected docker/metrics/docker-compose.yaml to be read")
+	}
+}
+
+func TestReadEntryPoints(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Root main.go.
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n\nfunc main() { cmd.Execute() }"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// cmd/server/main.go.
+	cmdDir := filepath.Join(tmpDir, "cmd", "server")
+	if err := os.MkdirAll(cmdDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cmdDir, "main.go"), []byte("package main\n\nfunc main() { serve() }"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// server/main.go.
+	serverDir := filepath.Join(tmpDir, "server")
+	if err := os.MkdirAll(serverDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(serverDir, "main.go"), []byte("package main\n\nfunc main() { run() }"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewInitGenerator(tmpDir)
+	ctx := &initContext{
+		EntryPoints: make(map[string]string),
+		CIFiles:     make(map[string]string),
+		ConfigFiles: make(map[string]string),
+	}
+	gen.readEntryPoints(ctx)
+
+	if len(ctx.EntryPoints) != 3 {
+		t.Errorf("expected 3 entry points, got %d: %v", len(ctx.EntryPoints), ctx.EntryPoints)
+	}
+	for _, want := range []string{"main.go", "cmd/server/main.go", "server/main.go"} {
+		if _, ok := ctx.EntryPoints[want]; !ok {
+			t.Errorf("expected entry point %s to be read", want)
+		}
+	}
+}
+
+func TestReadToolVersions(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Write mise.toml.
+	if err := os.WriteFile(filepath.Join(tmpDir, "mise.toml"), []byte("[tools]\ngo = \"1.22\"\nnode = \"20\""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewInitGenerator(tmpDir)
+	ctx := &initContext{
+		CIFiles:     make(map[string]string),
+		ConfigFiles: make(map[string]string),
+	}
+	gen.readToolVersions(ctx)
+
+	if ctx.ToolVersions == "" {
+		t.Error("expected ToolVersions to be non-empty")
+	}
+	if !strings.Contains(ctx.ToolVersions, "go = \"1.22\"") {
+		t.Error("expected ToolVersions to contain go version")
+	}
+}
+
+func TestRenderContext_NewFields(t *testing.T) {
+	ctx := &initContext{
+		ProjectName: "testproject",
+		Languages:   []string{"Go"},
+		BuildCmd:    "make build",
+		TestCmd:     "make test",
+		CIFiles:     map[string]string{},
+		ConfigFiles: map[string]string{},
+		EntryPoints: map[string]string{
+			"server/main.go": "package main\n\nfunc main() { cmd.Execute() }",
+		},
+		ComposeFiles: map[string]string{
+			"docker-compose.yml": "version: '3'\nservices:\n  web:\n    image: nginx",
+		},
+		Scripts: map[string]string{
+			"scripts/start.sh": "#!/bin/bash\n# Start the server",
+		},
+		ToolVersions: "### mise.toml\n```\n[tools]\ngo = \"1.22\"\n```\n\n",
+	}
+
+	rendered := renderContext(ctx)
+
+	// Verify entry points are included.
+	if !strings.Contains(rendered, "cmd.Execute()") {
+		t.Error("expected entry point content in rendered context")
+	}
+
+	// Verify compose files are included.
+	if !strings.Contains(rendered, "nginx") {
+		t.Error("expected compose file content in rendered context")
+	}
+
+	// Verify scripts section is included.
+	if !strings.Contains(rendered, "Scripts") {
+		t.Error("expected scripts section in rendered context")
+	}
+	if !strings.Contains(rendered, "Start the server") {
+		t.Error("expected script content in rendered context")
+	}
+
+	// Verify tool versions are included.
+	if !strings.Contains(rendered, "Tool Versions") {
+		t.Error("expected tool versions section in rendered context")
 	}
 }
 

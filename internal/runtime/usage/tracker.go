@@ -82,3 +82,10 @@ func (t *Tracker) TotalTokens() int {
 	defer t.mu.Unlock()
 	return t.InputTokens + t.OutputTokens
 }
+
+// HasRequests returns true if any requests have been tracked.
+func (t *Tracker) HasRequests() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.TotalRequests > 0
+}

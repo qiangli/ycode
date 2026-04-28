@@ -302,25 +302,39 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 
 		// Phase 2: Single-shot enhancement if provider available.
 		// Uses opencode-style template with structured investigation guidance.
-		if deps.Provider != nil && deps.Config != nil {
+		if deps.Provider == nil || deps.Config == nil {
+			outputParts = append(outputParts, "⚠ Skipped LLM enhancement (no API provider configured)")
+		} else {
 			chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
 
 			// Gather context using opencode-style investigation.
 			outputParts = append(outputParts, "⧗ Analyzing project structure...")
 			gen := builtin.NewInitGenerator(cwd)
 			initResult, genErr := gen.Generate(args)
-			if genErr == nil && initResult != nil {
+			if genErr != nil {
+				outputParts = append(outputParts, fmt.Sprintf("⚠ Failed to gather project context: %v", genErr))
+			} else if initResult == nil {
+				outputParts = append(outputParts, "⚠ Failed to gather project context (no result)")
+			} else {
 				// Generate AGENTS.md via single LLM call.
 				outputParts = append(outputParts, "⧗ Generating AGENTS.md via LLM...")
-				llmResult, llmErr := chain.SingleShotWithUsage(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096)
-				if llmErr == nil && llmResult != nil && llmResult.Text != "" {
+				llmResult, llmErr := chain.SingleShotWithUsageAndTimeout(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096, builtin.InitSingleShotTimeout)
+				if llmErr != nil {
+					outputParts = append(outputParts, fmt.Sprintf("⚠ LLM generation failed: %v", llmErr))
+				} else if llmResult == nil || llmResult.Text == "" {
+					outputParts = append(outputParts, "⚠ LLM returned empty response — AGENTS.md not updated")
+				} else {
 					agentsPath := filepath.Join(cwd, "AGENTS.md")
-					if err := os.WriteFile(agentsPath, []byte(llmResult.Text), 0o644); err == nil {
-						// Track usage if tracker is available.
-						if deps.TrackUsage != nil {
-							deps.TrackUsage(llmResult.InputTokens, llmResult.OutputTokens, llmResult.CacheCreate, llmResult.CacheRead)
-						}
-						outputParts = append(outputParts, fmt.Sprintf("✓ Enhanced AGENTS.md (analyzed: %v)", initResult.FilesRead))
+					cleaned := builtin.CleanInitOutput(llmResult.Text)
+
+					// Compare against existing content to detect no-op updates.
+					existing, _ := os.ReadFile(agentsPath)
+					if len(existing) > 0 && builtin.ContentUnchanged(string(existing), cleaned) {
+						outputParts = append(outputParts, "✓ AGENTS.md is already well-structured — no changes needed")
+					} else if err := os.WriteFile(agentsPath, []byte(cleaned), 0o644); err != nil {
+						outputParts = append(outputParts, fmt.Sprintf("⚠ Failed to write AGENTS.md: %v", err))
+					} else {
+						outputParts = append(outputParts, fmt.Sprintf("✓ Updated AGENTS.md (analyzed: %v)", initResult.FilesRead))
 						if len(initResult.Questions) > 0 {
 							outputParts = append(outputParts, "")
 							outputParts = append(outputParts, "Consider answering these questions to improve AGENTS.md:")
@@ -328,13 +342,15 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 								outputParts = append(outputParts, fmt.Sprintf("  - %s", q))
 							}
 						}
-						// Show token usage if available.
-						if llmResult.InputTokens > 0 || llmResult.OutputTokens > 0 {
-							totalTokens := llmResult.InputTokens + llmResult.OutputTokens
-							outputParts = append(outputParts, fmt.Sprintf("  Tokens: %d in, %d out (%d total)",
-								llmResult.InputTokens, llmResult.OutputTokens, totalTokens))
-						}
-						return strings.Join(outputParts, "\n"), nil
+					}
+					// Track usage regardless of whether content changed.
+					if deps.TrackUsage != nil {
+						deps.TrackUsage(llmResult.InputTokens, llmResult.OutputTokens, llmResult.CacheCreate, llmResult.CacheRead)
+					}
+					if llmResult.InputTokens > 0 || llmResult.OutputTokens > 0 {
+						totalTokens := llmResult.InputTokens + llmResult.OutputTokens
+						outputParts = append(outputParts, fmt.Sprintf("  Tokens: %d in, %d out (%d total)",
+							llmResult.InputTokens, llmResult.OutputTokens, totalTokens))
 					}
 				}
 			}
@@ -639,26 +655,41 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 		progress(report.Render())
 
 		// Phase 2: Single-shot LLM enhancement if provider available.
-		if deps.Provider != nil && deps.Config != nil {
+		if deps.Provider == nil || deps.Config == nil {
+			progress("⚠ Skipped LLM enhancement (no API provider configured)")
+		} else {
 			chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
 
 			progress("⧗ Analyzing project structure...")
 			gen := builtin.NewInitGenerator(cwd)
 			initResult, genErr := gen.Generate(args)
-			if genErr == nil && initResult != nil {
+			if genErr != nil {
+				progress(fmt.Sprintf("⚠ Failed to gather project context: %v", genErr))
+			} else if initResult == nil {
+				progress("⚠ Failed to gather project context (no result)")
+			} else {
 				progress("⧗ Generating AGENTS.md via LLM...")
-				llmResult, llmErr := chain.SingleShotStreaming(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096, func(text string) {
+				llmResult, llmErr := chain.SingleShotStreamingWithTimeout(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096, builtin.InitSingleShotTimeout, func(text string) {
 					if deps.LogDelta != nil {
 						deps.LogDelta(text)
 					}
 				})
-				if llmErr == nil && llmResult != nil && llmResult.Text != "" {
+				if llmErr != nil {
+					progress(fmt.Sprintf("⚠ LLM generation failed: %v", llmErr))
+				} else if llmResult == nil || llmResult.Text == "" {
+					progress("⚠ LLM returned empty response — AGENTS.md not updated")
+				} else {
 					agentsPath := filepath.Join(cwd, "AGENTS.md")
-					if err := os.WriteFile(agentsPath, []byte(llmResult.Text), 0o644); err == nil {
-						if deps.TrackUsage != nil {
-							deps.TrackUsage(llmResult.InputTokens, llmResult.OutputTokens, llmResult.CacheCreate, llmResult.CacheRead)
-						}
-						progress(fmt.Sprintf("✓ Analyzed: %v", initResult.FilesRead))
+					cleaned := builtin.CleanInitOutput(llmResult.Text)
+
+					// Compare against existing content to detect no-op updates.
+					existing, _ := os.ReadFile(agentsPath)
+					if len(existing) > 0 && builtin.ContentUnchanged(string(existing), cleaned) {
+						progress("✓ AGENTS.md is already well-structured — no changes needed")
+					} else if err := os.WriteFile(agentsPath, []byte(cleaned), 0o644); err != nil {
+						progress(fmt.Sprintf("⚠ Failed to write AGENTS.md: %v", err))
+					} else {
+						progress(fmt.Sprintf("✓ Updated AGENTS.md (analyzed: %v)", initResult.FilesRead))
 						if len(initResult.Questions) > 0 {
 							progress("")
 							progress("Consider answering these questions to improve AGENTS.md:")
@@ -666,16 +697,14 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 								progress(fmt.Sprintf("  - %s", q))
 							}
 						}
-						if llmResult.InputTokens > 0 || llmResult.OutputTokens > 0 {
-							totalTokens := llmResult.InputTokens + llmResult.OutputTokens
-							progress(fmt.Sprintf("  Tokens: %d in, %d out (%d total)",
-								llmResult.InputTokens, llmResult.OutputTokens, totalTokens))
-						}
-						// When streaming via LogProgress, return empty — output already shown.
-						if deps.LogProgress != nil {
-							return "", nil
-						}
-						return strings.Join(finalParts, "\n"), nil
+					}
+					if deps.TrackUsage != nil {
+						deps.TrackUsage(llmResult.InputTokens, llmResult.OutputTokens, llmResult.CacheCreate, llmResult.CacheRead)
+					}
+					if llmResult.InputTokens > 0 || llmResult.OutputTokens > 0 {
+						totalTokens := llmResult.InputTokens + llmResult.OutputTokens
+						progress(fmt.Sprintf("  Tokens: %d in, %d out (%d total)",
+							llmResult.InputTokens, llmResult.OutputTokens, totalTokens))
 					}
 				}
 			}

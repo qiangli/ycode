@@ -13,13 +13,33 @@ var initTemplate string
 
 const (
 	// initMaxTokens limits LLM output for AGENTS.md generation.
-	initMaxTokens = 4096
+	initMaxTokens = 8192
 
 	// initSystemPrompt provides the LLM with its role.
 	initSystemPrompt = `You are an expert at creating AGENTS.md files for software repositories.
 Your task is to analyze project context and generate a concise, high-quality AGENTS.md file.
 Follow the investigation guidance and writing rules provided in the user prompt.
-Output only the AGENTS.md content without any additional explanation.`
+
+Output format:
+- Output ONLY the raw markdown content for AGENTS.md. No wrapper, no explanation.
+- Do NOT wrap the output in code fences (no ` + "```" + `markdown ... ` + "```" + `). The output is written directly to the file.
+- The file header MUST be "# AGENTS.md" (not "# CLAUDE.md"). This is a tool-agnostic instruction file.
+- Include "This file provides guidance to AI coding assistants working in this repository." as the first line after the header.
+
+Key principles:
+- Every line must earn its place. If an agent would figure it out without help, omit it.
+- Delegate to sub-directory instruction files instead of duplicating their content.
+- Never include speculative "Open Questions" sections or content you cannot verify.
+- Prefer pointers ("see X for details") over inline tables or verbose lists.
+
+Architecture depth:
+- For multi-service repos, include a service table with tech stack AND port numbers.
+- Document entry points with the actual call chain (e.g., main.go → cmd.Execute(embeddedAssets)).
+- Describe non-obvious internal packages — an agent can read filenames but not infer purpose.
+- Document build patterns like embedded assets, code generation, or rsync-then-embed flows.
+- Include operational commands: hot-reload endpoints, apply scripts, data persistence warnings.
+- If .env files are machine-specific and gitignored, say so explicitly.
+- Summarize key scripts in a table when scripts/ contains non-trivial operational tooling.`
 )
 
 // InitGenerator creates AGENTS.md with single-shot LLM call.
@@ -85,6 +105,11 @@ type initContext struct {
 	DockerContent    string
 	CIFiles          map[string]string // filename -> content
 	ConfigFiles      map[string]string // other config files
+	SubInstructions  []string          // sub-directory AGENTS.md/CLAUDE.md paths
+	Scripts          map[string]string // script path -> header/purpose lines
+	ComposeFiles     map[string]string // docker-compose path -> content
+	EntryPoints      map[string]string // main.go / cmd/ entry -> content
+	ToolVersions     string            // mise.toml or .tool-versions content
 	Focus            string
 	FilesRead        []string
 	MissingContext   []string
@@ -93,9 +118,12 @@ type initContext struct {
 // gatherContext reads relevant project files following opencode's priority order.
 func (ig *InitGenerator) gatherContext() *initContext {
 	ctx := &initContext{
-		CIFiles:     make(map[string]string),
-		ConfigFiles: make(map[string]string),
-		Languages:   []string{},
+		CIFiles:      make(map[string]string),
+		ConfigFiles:  make(map[string]string),
+		Scripts:      make(map[string]string),
+		ComposeFiles: make(map[string]string),
+		EntryPoints:  make(map[string]string),
+		Languages:    []string{},
 	}
 
 	// Phase 1: Read highest-value sources first (README, manifests)
@@ -111,8 +139,23 @@ func (ig *InitGenerator) gatherContext() *initContext {
 	// Phase 4: Read existing instruction files
 	ig.readInstructionFiles(ctx)
 
-	// Phase 5: Detect frameworks
+	// Phase 5: Discover sub-directory instruction files
+	ig.discoverSubInstructions(ctx)
+
+	// Phase 6: Detect frameworks
 	ctx.Frameworks = ig.detectFrameworks()
+
+	// Phase 7: Read scripts for operational context
+	ig.readScripts(ctx)
+
+	// Phase 8: Read docker-compose files for service topology
+	ig.readComposeFiles(ctx)
+
+	// Phase 9: Read entry points for architecture understanding
+	ig.readEntryPoints(ctx)
+
+	// Phase 10: Read tool version files
+	ig.readToolVersions(ctx)
 
 	return ctx
 }
@@ -212,17 +255,19 @@ func (ig *InitGenerator) readBuildConfig(ctx *initContext) {
 	if content, ok := ig.readFile("Makefile"); ok {
 		ctx.HasMakefile = true
 		ctx.FilesRead = append(ctx.FilesRead, "Makefile")
-		ctx.ConfigFiles["Makefile"] = truncateContent(content, 60)
+		ctx.ConfigFiles["Makefile"] = truncateContent(content, 150)
 
-		// Extract common targets
+		// Extract common targets. Makefile targets override language
+		// defaults because Makefiles often wrap raw commands with
+		// project-specific flags, paths, or prerequisites.
 		targets := ig.extractMakeTargets(content)
-		if ctx.BuildCmd == "" && targets["build"] != "" {
+		if targets["build"] != "" {
 			ctx.BuildCmd = "make build"
 		}
-		if ctx.TestCmd == "" && targets["test"] != "" {
+		if targets["test"] != "" {
 			ctx.TestCmd = "make test"
 		}
-		if ctx.LintCmd == "" && targets["lint"] != "" {
+		if targets["lint"] != "" {
 			ctx.LintCmd = "make lint"
 		}
 	}
@@ -304,6 +349,164 @@ func (ig *InitGenerator) readInstructionFiles(ctx *initContext) {
 	}
 }
 
+// discoverSubInstructions walks one level of subdirectories looking for
+// AGENTS.md or CLAUDE.md files so the LLM knows they exist and can
+// delegate to them rather than duplicating their content.
+func (ig *InitGenerator) discoverSubInstructions(ctx *initContext) {
+	entries, err := os.ReadDir(ig.cwd)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+			rel := filepath.Join(entry.Name(), name)
+			if _, err := os.Stat(filepath.Join(ig.cwd, rel)); err == nil {
+				ctx.SubInstructions = append(ctx.SubInstructions, rel)
+			}
+		}
+		// Also check one more level (e.g., docker/metrics/AGENTS.md).
+		subEntries, err := os.ReadDir(filepath.Join(ig.cwd, entry.Name()))
+		if err != nil {
+			continue
+		}
+		for _, sub := range subEntries {
+			if !sub.IsDir() || strings.HasPrefix(sub.Name(), ".") {
+				continue
+			}
+			for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+				rel := filepath.Join(entry.Name(), sub.Name(), name)
+				if _, err := os.Stat(filepath.Join(ig.cwd, rel)); err == nil {
+					ctx.SubInstructions = append(ctx.SubInstructions, rel)
+				}
+			}
+		}
+	}
+}
+
+// readScripts reads shell scripts from common directories to capture
+// operational context (what each script does). Only the first ~10 lines
+// are kept to extract purpose comments and usage patterns.
+func (ig *InitGenerator) readScripts(ctx *initContext) {
+	scriptDirs := []string{"scripts", "script", "bin", "hack", "tools"}
+	for _, dir := range scriptDirs {
+		entries, err := os.ReadDir(filepath.Join(ig.cwd, dir))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			// Only read shell scripts and common automation files.
+			if !strings.HasSuffix(name, ".sh") &&
+				!strings.HasSuffix(name, ".bash") &&
+				!strings.HasSuffix(name, ".zsh") {
+				continue
+			}
+			rel := filepath.Join(dir, name)
+			if content, ok := ig.readFile(rel); ok {
+				ctx.Scripts[rel] = truncateContent(content, 10)
+				ctx.FilesRead = append(ctx.FilesRead, rel)
+			}
+		}
+	}
+}
+
+// readComposeFiles finds docker-compose files for service topology.
+func (ig *InitGenerator) readComposeFiles(ctx *initContext) {
+	// Check root-level compose files.
+	composeNames := []string{
+		"docker-compose.yml", "docker-compose.yaml",
+		"compose.yml", "compose.yaml",
+	}
+	for _, name := range composeNames {
+		if content, ok := ig.readFile(name); ok {
+			ctx.ComposeFiles[name] = truncateContent(content, 80)
+			ctx.FilesRead = append(ctx.FilesRead, name)
+		}
+	}
+
+	// Check docker/ subdirectory (common location).
+	dockerDirs := []string{"docker", "deploy", "infra"}
+	for _, dir := range dockerDirs {
+		entries, err := os.ReadDir(filepath.Join(ig.cwd, dir))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			for _, name := range composeNames {
+				rel := filepath.Join(dir, entry.Name(), name)
+				if content, ok := ig.readFile(rel); ok {
+					ctx.ComposeFiles[rel] = truncateContent(content, 80)
+					ctx.FilesRead = append(ctx.FilesRead, rel)
+				}
+			}
+		}
+	}
+}
+
+// readEntryPoints reads main.go files and cmd/ directory structure to
+// understand application architecture and entry points.
+func (ig *InitGenerator) readEntryPoints(ctx *initContext) {
+	// Root main.go.
+	if content, ok := ig.readFile("main.go"); ok {
+		ctx.EntryPoints["main.go"] = truncateContent(content, 30)
+		ctx.FilesRead = append(ctx.FilesRead, "main.go")
+	}
+
+	// cmd/ directory — each subdirectory is typically a separate binary.
+	ig.readCmdDir(ctx, "cmd")
+
+	// Check for main.go in common service directories.
+	serviceDirs := []string{"server", "client", "api", "app", "web", "worker"}
+	for _, dir := range serviceDirs {
+		rel := filepath.Join(dir, "main.go")
+		if content, ok := ig.readFile(rel); ok {
+			ctx.EntryPoints[rel] = truncateContent(content, 30)
+			ctx.FilesRead = append(ctx.FilesRead, rel)
+		}
+		// Also check cmd/ inside service dirs.
+		ig.readCmdDir(ctx, filepath.Join(dir, "cmd"))
+	}
+}
+
+// readCmdDir reads main.go files under a cmd/ directory structure.
+func (ig *InitGenerator) readCmdDir(ctx *initContext, cmdDir string) {
+	entries, err := os.ReadDir(filepath.Join(ig.cwd, cmdDir))
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		rel := filepath.Join(cmdDir, entry.Name(), "main.go")
+		if content, ok := ig.readFile(rel); ok {
+			ctx.EntryPoints[rel] = truncateContent(content, 30)
+			ctx.FilesRead = append(ctx.FilesRead, rel)
+		}
+	}
+}
+
+// readToolVersions reads mise.toml, .tool-versions, or similar files
+// that pin tool/runtime versions.
+func (ig *InitGenerator) readToolVersions(ctx *initContext) {
+	versionFiles := []string{"mise.toml", ".mise.toml", ".tool-versions", ".node-version", ".go-version", ".python-version", ".ruby-version"}
+	for _, name := range versionFiles {
+		if content, ok := ig.readFile(name); ok {
+			ctx.ToolVersions += fmt.Sprintf("### %s\n```\n%s\n```\n\n", name, truncateContent(content, 20))
+			ctx.FilesRead = append(ctx.FilesRead, name)
+		}
+	}
+}
+
 func (ig *InitGenerator) detectFrameworks() []string {
 	var frameworks []string
 
@@ -325,6 +528,9 @@ func (ig *InitGenerator) detectFrameworks() []string {
 		"prisma/schema.prisma": "Prisma",
 		"drizzle.config.ts":    "Drizzle",
 		"docker-compose.yml":   "Docker Compose",
+		"docker-compose.yaml":  "Docker Compose",
+		"compose.yml":          "Docker Compose",
+		"compose.yaml":         "Docker Compose",
 		"k8s":                  "Kubernetes",
 		"terraform":            "Terraform",
 	}
@@ -537,5 +743,99 @@ func renderContext(ctx *initContext) string {
 		writeSection(name, content)
 	}
 
+	// Entry points — so the LLM understands architecture.
+	for name, content := range ctx.EntryPoints {
+		writeSection(name, content)
+	}
+
+	// Docker Compose files — service topology.
+	for name, content := range ctx.ComposeFiles {
+		writeSection(name, content)
+	}
+
+	// Scripts — operational context.
+	if len(ctx.Scripts) > 0 {
+		b.WriteString("### Scripts\n")
+		b.WriteString("Script headers (first ~10 lines each) for understanding operational commands:\n\n")
+		for name, content := range ctx.Scripts {
+			writeSection(name, content)
+		}
+	}
+
+	// Tool version files.
+	if ctx.ToolVersions != "" {
+		b.WriteString("### Tool Versions\n")
+		b.WriteString(ctx.ToolVersions)
+	}
+
+	// Sub-directory instruction files — listed so the LLM can delegate to them.
+	if len(ctx.SubInstructions) > 0 {
+		b.WriteString("### Sub-directory Instruction Files\n")
+		b.WriteString("These files contain authoritative guidance for their directories. ")
+		b.WriteString("Delegate to them instead of duplicating their content in root AGENTS.md.\n\n")
+		for _, rel := range ctx.SubInstructions {
+			fmt.Fprintf(&b, "- `%s`\n", rel)
+		}
+		b.WriteString("\n")
+	}
+
 	return b.String()
+}
+
+// ContentUnchanged compares existing file content against new LLM output,
+// returning true if they are substantively the same (ignoring whitespace
+// differences). This lets /init report "already well-structured" instead of
+// needlessly rewriting the file.
+func ContentUnchanged(existing, generated string) bool {
+	return normalizeWS(existing) == normalizeWS(generated)
+}
+
+// normalizeWS collapses all runs of whitespace to a single space and trims.
+func normalizeWS(s string) string {
+	var b strings.Builder
+	inWS := false
+	for _, r := range s {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			if !inWS {
+				b.WriteByte(' ')
+				inWS = true
+			}
+		} else {
+			b.WriteRune(r)
+			inWS = false
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// CleanInitOutput post-processes LLM output for AGENTS.md:
+// - strips wrapping code fences (```markdown ... ```)
+// - ensures the file starts with "# AGENTS.md"
+func CleanInitOutput(text string) string {
+	text = strings.TrimSpace(text)
+
+	// Strip outer code fences. LLMs commonly wrap output in ```markdown ... ```
+	// even when told not to.
+	if (strings.HasPrefix(text, "```markdown") || strings.HasPrefix(text, "```md") || strings.HasPrefix(text, "```")) &&
+		strings.HasSuffix(text, "```") {
+		// Remove opening fence line.
+		if idx := strings.Index(text, "\n"); idx >= 0 {
+			text = text[idx+1:]
+		}
+		// Remove closing fence.
+		text = strings.TrimSuffix(text, "```")
+		text = strings.TrimSpace(text)
+	}
+
+	// Ensure the header is "# AGENTS.md" not "# CLAUDE.md".
+	if strings.HasPrefix(text, "# CLAUDE.md") {
+		text = "# AGENTS.md" + text[len("# CLAUDE.md"):]
+	}
+
+	// Ensure trailing newline.
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+
+	return text
 }

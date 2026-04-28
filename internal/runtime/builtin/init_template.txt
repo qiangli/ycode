@@ -10,9 +10,6 @@ User-provided focus or constraints (honor these):
 Project context has been pre-gathered and is included below. Use it to produce AGENTS.md.
 Focus on synthesizing the provided file contents — do not reference files that are not included.
 
-If architecture is still unclear from the provided context, note what additional investigation
-would help, but produce the best AGENTS.md you can from what is available.
-
 ## What to extract
 
 Look for the highest-signal facts for an agent working in this repo:
@@ -26,12 +23,26 @@ Look for the highest-signal facts for an agent working in this repo:
 - important constraints from existing instruction files worth preserving
 - concrete guardrails: directories that must never be modified, commands that must never be run, patterns that are prohibited — use "NEVER", "MUST NOT", "ALWAYS" with specific subjects
 
+### Architecture depth (critical for multi-service repos)
+
+When the project has multiple services, components, or binaries:
+- **Service table with ports**: list each component with its directory, tech stack, and port numbers. An agent debugging connectivity issues needs ports; an agent reading code needs entry points.
+- **Entry points and internal structure**: for each service, document the actual entry point (e.g., `server/main.go → cmd.Execute()`) and key internal packages/directories. Mention what the non-obvious internal packages do — an agent can read filenames but cannot easily infer that `internal/vncauth/` implements Apple Remote Desktop authentication.
+- **Build patterns that aren't obvious**: embedded assets, code generation steps, rsync-then-embed patterns, asset directories that should never be edited directly.
+- **Service topology and reverse proxies**: if services communicate through a proxy, load balancer, or service mesh, describe the routing (e.g., "all HTTP goes through Traefik on port 8080").
+
+### Operational knowledge
+
+- **Hot-reload / apply commands**: if config changes can be applied without restart, document the exact commands (e.g., `curl -X POST http://localhost:9090/-/reload`).
+- **Data persistence**: warn about commands that destroy persistent volumes or data directories. Document where runtime data lives.
+- **Environment files**: if `.env` files are machine-specific and gitignored, say so explicitly — agents will otherwise try to commit them.
+- **Script purposes**: when `scripts/` contains operational scripts, summarize what each key script does in a table. Focus on the non-obvious ones — an agent can guess what `start.sh` does but not what `_lib.sh` provides.
+
+### Multi-tenancy / deployment model
+
+If the project has a non-obvious deployment model (air-gapped, per-user containers, edge deployment), describe it briefly. This shapes how an agent thinks about testing and configuration.
+
 Good `AGENTS.md` content is usually hard-earned context that took reading multiple files to infer.
-
-## Questions
-
-If the provided context leaves important questions unanswered, list them at the end of
-your output as a `## Open Questions` section in AGENTS.md so the user can address them.
 
 ## Writing rules
 
@@ -44,18 +55,37 @@ Include only high-signal, repo-specific guidance such as:
 
 Prefer fenced code blocks with exact commands over prose descriptions.
 The Makefile or build tool is the source of truth for build commands — reference it, don't paraphrase it.
+When a Makefile exists, read its actual target recipes to determine what each target does. Do not guess or infer from language defaults. If `make test` runs `go test ./internal/...`, document that — not `go test ./...`. Include all non-obvious targets (clean, package, cross-compile, etc.).
 
-Exclude:
+### Delegation over duplication
+
+Sub-directories may have their own `AGENTS.md` or `CLAUDE.md` files with authoritative, detailed guidance (e.g., `docker/metrics/AGENTS.md`, `skills/build/AGENTS.md`). When the root AGENTS.md touches a topic that a sub-directory file covers in depth:
+- **Point to the sub-directory file** instead of inlining the detail. Example: `See [docker/metrics/AGENTS.md](docker/metrics/AGENTS.md) for service URLs and compose setup.`
+- Never duplicate tables, URL lists, or configuration details that belong in a sub-directory's instruction file.
+- The root AGENTS.md should provide the high-level map; leaf files own the specifics.
+
+### What to exclude
+
 - generic software advice ("write clean code", "follow best practices", "prefer small changes")
 - long tutorials or exhaustive file trees
 - obvious language conventions
 - speculative claims or anything you could not verify from the provided context
-- content better stored in another file
+- content better stored in another file (delegate to it, don't inline it)
 - instructions the agent would follow anyway without being told
 - content that restates language or framework defaults
+- **"Open Questions" sections** — do not include speculative questions about what might be missing. If context is incomplete, the output should simply be shorter, not padded with guesses.
+- verbose tables (Docker Compose services, full dependency lists, endpoint catalogs) — summarize or point to the authoritative source file instead
 
 When in doubt, omit.
 
 Prefer short sections and bullets. If the repo is simple, keep the file simple. If the repo is large, summarize the few structural facts that actually change how an agent should work.
 
 If `AGENTS.md` already exists at `{{PATH}}`, improve it in place rather than rewriting blindly. Preserve verified useful guidance, delete fluff or stale claims, and reconcile it with the provided project context.
+
+## Output format
+
+Output raw markdown only. Do NOT wrap in code fences. Start with:
+
+# AGENTS.md
+
+This file provides guidance to AI coding assistants working in this repository.
