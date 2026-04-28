@@ -275,10 +275,11 @@ func newApp() (*cli.App, error) {
 		}
 	}
 
+	jobRegistry := bash.NewJobRegistry()
 	if bashExecutor != nil {
-		tools.RegisterBashHandler(toolReg, "/workspace", bashExecutor)
+		tools.RegisterBashHandler(toolReg, "/workspace", jobRegistry, bashExecutor)
 	} else {
-		tools.RegisterBashHandler(toolReg, cwd)
+		tools.RegisterBashHandler(toolReg, cwd, jobRegistry)
 	}
 	tools.RegisterFileHandlers(toolReg, v)
 	tools.RegisterSearchHandlers(toolReg, v)

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/qiangli/ycode/internal/runtime/bash"
 	"github.com/qiangli/ycode/internal/runtime/permission"
 )
 
@@ -54,6 +55,10 @@ type Registry struct {
 
 	// Optional quality monitor for tracking tool call success/failure rates.
 	qualityMonitor *QualityMonitor
+
+	// Optional TTY executor for running interactive commands (ssh, sudo, etc.)
+	// with full terminal access. Only available in TUI mode.
+	ttyExecutor bash.TTYExecutor
 }
 
 // NewRegistry creates a new empty tool registry.
@@ -75,6 +80,20 @@ func (r *Registry) SetPermissionPrompter(prompter PermissionPrompter) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.permPrompter = prompter
+}
+
+// SetTTYExecutor sets the executor for interactive commands that need terminal access.
+func (r *Registry) SetTTYExecutor(exec bash.TTYExecutor) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ttyExecutor = exec
+}
+
+// TTYExecutor returns the configured TTY executor, or nil.
+func (r *Registry) TTYExecutor() bash.TTYExecutor {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.ttyExecutor
 }
 
 // SetFileAccessHook sets a callback invoked when tools access file paths.

@@ -620,6 +620,53 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case ttyExecRequestMsg:
+		// An agent tool wants to run an interactive command with TTY access.
+		// Wrap with `script` to capture output back to the agent.
+		ttyCmd := msg.Command
+		ttyDir := msg.WorkDir
+		ttyResultCh := msg.ResultCh
+
+		launchTTY := func() tea.Cmd {
+			m.appendOutput(fmt.Sprintf("> [TTY] %s\n", ttyCmd))
+			scriptFile, cmd := ttyCommandWithCapture(ttyCmd, ttyDir)
+			return tea.ExecProcess(cmd, func(err error) tea.Msg {
+				exitCode := 0
+				if err != nil {
+					if exitErr, ok := err.(*exec.ExitError); ok {
+						exitCode = exitErr.ExitCode()
+						err = nil // non-zero exit is not an error
+					}
+				}
+				return ttyExecDoneMsg{ResultCh: ttyResultCh, ExitCode: exitCode, Err: err, ScriptFile: scriptFile}
+			})
+		}
+
+		// If user previously chose "always allow", auto-approve without prompting.
+		if m.permAlwaysAllow {
+			m.logState("tty_exec_auto_approved", "command", ttyCmd)
+			return m, launchTTY()
+		}
+
+		// Show confirmation prompt; on approval, suspend the TUI and run it.
+		m.confirming = true
+		m.logState("tty_exec_prompt", "command", ttyCmd)
+		m.confirmPrompt = fmt.Sprintf("Allow interactive command: %q? (y/n/a)", ttyCmd)
+		m.confirmYes = launchTTY
+		m.confirmNo = func() tea.Cmd {
+			ttyResultCh <- ttyExecResult{Err: fmt.Errorf("user denied interactive command: %s", ttyCmd)}
+			return func() tea.Msg { return repaintMsg{} }
+		}
+		return m, nil
+
+	case ttyExecDoneMsg:
+		// Interactive process finished — read captured output and unblock
+		// the waiting tool goroutine.
+		capturedOutput := readAndCleanScriptFile(msg.ScriptFile)
+		msg.ResultCh <- ttyExecResult{ExitCode: msg.ExitCode, Err: msg.Err, Output: capturedOutput}
+		m.appendOutput("(interactive command exited)\n\n")
+		return m, func() tea.Msg { return repaintMsg{} }
+
 	case turnResultMsg:
 		if msg.Err != nil {
 			m.working = false

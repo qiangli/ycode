@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -21,11 +22,14 @@ const (
 
 // ExecParams configures bash execution.
 type ExecParams struct {
-	Command     string `json:"command"`
-	Timeout     int    `json:"timeout,omitempty"` // milliseconds
-	Background  bool   `json:"run_in_background,omitempty"`
-	Description string `json:"description,omitempty"`
-	WorkDir     string `json:"-"`
+	Command     string       `json:"command"`
+	Timeout     int          `json:"timeout,omitempty"` // milliseconds
+	Background  bool         `json:"run_in_background,omitempty"`
+	Description string       `json:"description,omitempty"`
+	Stdin       string       `json:"stdin,omitempty"` // content to pipe to stdin
+	WorkDir     string       `json:"-"`
+	TTYExec     TTYExecutor  `json:"-"` // optional: delegate interactive commands here
+	Jobs        *JobRegistry `json:"-"` // optional: registry for background job tracking
 }
 
 // ExecResult holds the result of a bash execution.
@@ -51,6 +55,12 @@ func NeedsTTY(command string) bool {
 	// Commands that commonly prompt for passwords or interactive input.
 	switch base {
 	case "ssh", "scp", "sftp":
+		// BatchMode=yes disables all interactive prompts — the command
+		// will fail rather than ask for a password, so it's safe to run
+		// without a TTY (used for connectivity testing, deploy scripts, etc.).
+		if strings.Contains(command, "BatchMode=yes") {
+			return false
+		}
 		return true
 	case "sudo", "su", "passwd":
 		return true
@@ -105,12 +115,27 @@ func NeedsTTY(command string) bool {
 
 // Execute runs a bash command and returns the result.
 func Execute(ctx context.Context, params ExecParams) (*ExecResult, error) {
-	// Reject commands that need interactive terminal access — they would
-	// hang waiting for stdin that can never arrive through piped execution.
+	// Commands that need interactive terminal access cannot run through
+	// piped execution. Delegate to the TTY executor if one is available;
+	// otherwise reject with a helpful error.
 	if NeedsTTY(params.Command) {
+		if params.TTYExec != nil {
+			return params.TTYExec.ExecuteTTY(ctx, params.Command, params.WorkDir)
+		}
 		return nil, fmt.Errorf("%w: %q requires user interaction (password, confirmation, etc.). "+
 			"The user should run this command directly in their terminal using: !! %s",
 			ErrNeedsTTY, params.Command, params.Command)
+	}
+
+	// Background execution: start process and return immediately with job ID.
+	if params.Background && params.Jobs != nil {
+		jobID, err := params.Jobs.Start(ctx, params.Command, params.WorkDir)
+		if err != nil {
+			return nil, err
+		}
+		return &ExecResult{
+			Stdout: fmt.Sprintf("Background job started: %s\nUse job_id=%q to check output or send signals.", jobID, jobID),
+		}, nil
 	}
 
 	timeout := DefaultTimeout
@@ -119,6 +144,9 @@ func Execute(ctx context.Context, params ExecParams) (*ExecResult, error) {
 		if timeout > MaxTimeout {
 			timeout = MaxTimeout
 		}
+	} else {
+		// Use adaptive timeout based on command type.
+		timeout = CommandTimeoutHint(params.Command)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -128,13 +156,19 @@ func Execute(ctx context.Context, params ExecParams) (*ExecResult, error) {
 	if params.WorkDir != "" {
 		cmd.Dir = params.WorkDir
 	}
+	// Create a new process group so signals reach the entire process tree.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	// Explicitly prevent stdin reads — commands that need interactive input
-	// are rejected above; this ensures any missed cases get EOF instead of hanging.
-	cmd.Stdin, _ = os.Open(os.DevNull)
+
+	// Stdin: use provided content or /dev/null.
+	if params.Stdin != "" {
+		cmd.Stdin = strings.NewReader(params.Stdin)
+	} else {
+		cmd.Stdin, _ = os.Open(os.DevNull)
+	}
 
 	err := cmd.Run()
 
@@ -156,10 +190,44 @@ func Execute(ctx context.Context, params ExecParams) (*ExecResult, error) {
 	return result, nil
 }
 
-// truncateOutput limits output to MaxOutputSize.
-func truncateOutput(s string) string {
-	if len(s) <= MaxOutputSize {
-		return strings.TrimRight(s, "\n")
+// CommandTimeoutHint returns an appropriate timeout duration based on the
+// command type. Used when no explicit timeout is provided.
+func CommandTimeoutHint(command string) time.Duration {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return DefaultTimeout
 	}
-	return s[:MaxOutputSize] + "\n... (output truncated)"
+	base := fields[0]
+
+	// Quick commands: 30 seconds.
+	switch base {
+	case "ls", "cat", "head", "tail", "echo", "pwd", "which", "type",
+		"date", "whoami", "hostname", "wc", "file", "stat", "true", "false":
+		return 30 * time.Second
+	}
+
+	// Build/package commands: 5 minutes.
+	switch base {
+	case "make", "cargo", "go", "npm", "yarn", "pnpm", "mvn", "gradle",
+		"pip", "pip3", "apt", "apt-get", "brew", "dnf", "yum", "pacman",
+		"gem", "bundle", "rustc", "gcc", "g++", "clang", "javac":
+		return 5 * time.Minute
+	}
+
+	// Heavy operations: max timeout.
+	switch base {
+	case "docker", "podman":
+		if len(fields) > 1 && (fields[1] == "build" || fields[1] == "pull") {
+			return MaxTimeout
+		}
+	case "wget", "curl":
+		return 5 * time.Minute
+	}
+
+	return DefaultTimeout
+}
+
+// truncateOutput limits output to MaxOutputSize, preserving both head and tail.
+func truncateOutput(s string) string {
+	return TruncateOutput(s, MaxOutputSize)
 }

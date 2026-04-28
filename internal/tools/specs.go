@@ -421,12 +421,15 @@ var (
 	bashSchema = `{
 		"type": "object",
 		"properties": {
-			"command": {"type": "string", "description": "The bash command to execute"},
+			"command": {"type": "string", "description": "The bash command to execute. Mutually exclusive with job_id."},
 			"timeout": {"type": "integer", "description": "Timeout in milliseconds (max 600000)"},
-			"run_in_background": {"type": "boolean", "description": "Run command in background"},
-			"description": {"type": "string", "description": "Description of what this command does"}
+			"run_in_background": {"type": "boolean", "description": "Run command in background and return a job ID for later polling"},
+			"description": {"type": "string", "description": "Description of what this command does"},
+			"stdin": {"type": "string", "description": "Content to pipe to the command's stdin"},
+			"job_id": {"type": "string", "description": "Retrieve output from a background job. Mutually exclusive with command."},
+			"signal": {"type": "string", "enum": ["SIGINT", "SIGTERM", "SIGKILL"], "description": "Send signal to a background job (requires job_id)"}
 		},
-		"required": ["command"]
+		"required": []
 	}`
 
 	readFileSchema = `{

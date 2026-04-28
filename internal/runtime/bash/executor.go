@@ -14,6 +14,14 @@ type Executor interface {
 	Execute(ctx context.Context, params ExecParams) (*ExecResult, error)
 }
 
+// TTYExecutor runs commands with full terminal access (PTY).
+// Used for interactive commands (ssh, sudo, etc.) that need user input.
+// When available, commands that NeedsTTY are delegated here instead of
+// being rejected with ErrNeedsTTY.
+type TTYExecutor interface {
+	ExecuteTTY(ctx context.Context, command string, workDir string) (*ExecResult, error)
+}
+
 // HostExecutor runs commands directly on the host OS.
 // This is the default executor and provides the existing behavior.
 type HostExecutor struct{}

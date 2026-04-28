@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/qiangli/ycode/internal/runtime/bash"
@@ -46,7 +47,7 @@ func TestRegisterBashHandler_WithExecutor(t *testing.T) {
 		},
 	}
 
-	RegisterBashHandler(reg, "/workspace", mock)
+	RegisterBashHandler(reg, "/workspace", nil, mock)
 
 	spec, ok := reg.Get("bash")
 	if !ok {
@@ -63,8 +64,9 @@ func TestRegisterBashHandler_WithExecutor(t *testing.T) {
 		t.Errorf("expected 'container output', got %q", output)
 	}
 
-	if mock.lastParams.Command != "echo hello" {
-		t.Errorf("expected command 'echo hello', got %q", mock.lastParams.Command)
+	// Command is wrapped with session's cwd tracking.
+	if !strings.Contains(mock.lastParams.Command, "echo hello") {
+		t.Errorf("expected command to contain 'echo hello', got %q", mock.lastParams.Command)
 	}
 }
 
@@ -83,7 +85,7 @@ func TestRegisterBashHandler_WithoutExecutor(t *testing.T) {
 	})
 
 	// Register without executor — should use host execution.
-	RegisterBashHandler(reg, t.TempDir())
+	RegisterBashHandler(reg, t.TempDir(), nil)
 
 	spec, ok := reg.Get("bash")
 	if !ok {
@@ -119,7 +121,7 @@ func TestRegisterBashHandler_WorkDirDefault(t *testing.T) {
 	}
 
 	workDir := "/test/workspace"
-	RegisterBashHandler(reg, workDir, mock)
+	RegisterBashHandler(reg, workDir, nil, mock)
 
 	spec, _ := reg.Get("bash")
 	input := json.RawMessage(`{"command": "pwd"}`)
@@ -152,7 +154,7 @@ func TestRegisterBashHandler_ExitCode(t *testing.T) {
 		},
 	}
 
-	RegisterBashHandler(reg, "/workspace", mock)
+	RegisterBashHandler(reg, "/workspace", nil, mock)
 
 	spec, _ := reg.Get("bash")
 	input := json.RawMessage(`{"command": "false"}`)

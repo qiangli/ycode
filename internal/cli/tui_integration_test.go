@@ -283,6 +283,28 @@ func TestTUI_PermissionRequest_AutoApprove(t *testing.T) {
 	}
 }
 
+func TestTUI_TTYExecRequest_AutoApprove(t *testing.T) {
+	m := newTestTUIModel(t)
+	m.permAlwaysAllow = true
+	resultCh := make(chan ttyExecResult, 1)
+
+	updated, cmd := m.Update(ttyExecRequestMsg{
+		Command:  "echo hello",
+		WorkDir:  t.TempDir(),
+		ResultCh: resultCh,
+	})
+	m = updated.(*TUIModel)
+
+	// Should NOT show confirmation dialog — auto-approved.
+	if m.confirming {
+		t.Error("expected auto-approve for TTY exec, but got confirming=true")
+	}
+	// Should return a command (tea.ExecProcess) to run the interactive process.
+	if cmd == nil {
+		t.Error("expected a tea.Cmd for the TTY exec process")
+	}
+}
+
 // --- Turn result messages ---
 
 func TestTUI_TurnResult_NoToolCalls_Complete(t *testing.T) {

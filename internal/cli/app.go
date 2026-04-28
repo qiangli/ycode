@@ -712,6 +712,7 @@ func (a *App) RunInteractiveWithClient(ctx context.Context, cl agentClient) erro
 	if a.toolRegistry != nil {
 		prompter := NewTUIPrompter(p)
 		a.toolRegistry.SetPermissionPrompter(prompter.Prompt)
+		a.toolRegistry.SetTTYExecutor(NewTUITTYExecutor(p))
 	}
 
 	_, err := p.Run()
@@ -733,11 +734,13 @@ func (a *App) RunInteractive(ctx context.Context) error {
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	m.SetProgram(p)
 
-	// Wire TUI-based permission prompter into the tool registry so that
-	// tools requiring elevated permissions can ask the user interactively.
+	// Wire TUI-based permission prompter and TTY executor into the tool
+	// registry so that tools can ask for permission and run interactive
+	// commands (ssh, sudo, etc.) through the TUI.
 	if a.toolRegistry != nil {
 		prompter := NewTUIPrompter(p)
 		a.toolRegistry.SetPermissionPrompter(prompter.Prompt)
+		a.toolRegistry.SetTTYExecutor(NewTUITTYExecutor(p))
 	}
 
 	_, err := p.Run()
