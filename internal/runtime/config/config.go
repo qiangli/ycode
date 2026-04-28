@@ -139,8 +139,8 @@ type ObservabilityConfig struct {
 	PersistTraces    bool   `json:"persistTraces"`    // write traces to disk, default true when enabled
 	PersistMetrics   bool   `json:"persistMetrics"`   // write metrics to disk, default true when enabled
 
-	// Container-based Pulse
-	AutoPulse bool `json:"autoPulse,omitempty"` // auto-start containerized pulse on CLI invocation
+	// Auto-start: fork a detached `ycode serve` if no collector is running.
+	AutoPulse bool `json:"autoPulse,omitempty"`
 }
 
 // InferenceConfig controls the embedded Ollama-based inference engine.

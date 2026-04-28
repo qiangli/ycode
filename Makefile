@@ -11,7 +11,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL
 
-.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-pulse test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross source-archive runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-all-evals
+.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-all-evals
 
 .DEFAULT_GOAL := help
 
@@ -37,13 +37,13 @@ priorart-sync: ## Pull latest changes for all priorart repos
 
 # ─── Build ──────────────────────────────────────────────────────────────────
 
-compile: source-archive ## Compile the ycode binary to bin/
-	go build -trimpath -tags embed_source $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+compile: ## Compile the ycode binary to bin/ (no checks)
+	go build -trimpath $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 
-compile-full: source-archive ## Compile with embedded podman + runner + source (single binary, all-in-one)
-	go build -trimpath -tags "embed_podman,embed_runner,embed_source" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+compile-full: ## Compile with embedded podman + runner (single binary, all-in-one)
+	go build -trimpath -tags "embed_podman,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
-	@echo "Built single binary with embedded podman + runner + source: bin/ycode"
+	@echo "Built single binary with embedded podman + runner: bin/ycode"
 
 compile-debug: ## Compile with debug symbols (for profiling/debugging)
 	go build -trimpath -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/ycode ./cmd/ycode/
@@ -60,9 +60,6 @@ test-integration: ## Run Go integration tests (requires running server)
 
 test-container: ## Run container integration tests (requires podman)
 	go test -tags integration -race -count=1 -timeout 180s -v ./internal/container/...
-
-test-pulse: ## Run pulse container integration tests (requires podman)
-	go test -tags integration -race -count=1 -timeout 600s -v ./internal/pulse/...
 
 test-gitserver: ## Run git server workspace integration tests
 	go test -tags integration -race -count=1 -timeout 60s -v ./internal/gitserver/...
@@ -124,18 +121,6 @@ install: build ## Install ycode to ~/bin/
 	@echo 'Make sure ~/bin is in your PATH: export PATH="$$HOME/bin:$$PATH"'
 
 all: build ## Full quality gate (alias for build)
-
-# ─── Source Archive (for embedded builds) ──────────────────────────────────
-
-source-archive: ## Create vendored source archive for pulse container builds
-	@echo "=== Creating source archive ==="
-	go mod vendor
-	tar czf internal/pulse/source_embed/source.tar.gz \
-		--exclude=priorart --exclude=.git --exclude='*.test' \
-		--exclude='internal/pulse/source_embed/source.tar.gz' \
-		cmd/ internal/ pkg/ go.mod go.sum vendor/ Makefile scripts/ configs/
-	rm -rf vendor/
-	@echo "Source archive: $$(du -h internal/pulse/source_embed/source.tar.gz | cut -f1)"
 
 # ─── Cross-Compile ──────────────────────────────────────────────────────────
 

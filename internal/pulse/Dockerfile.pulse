@@ -1,7 +1,0 @@
-FROM docker.io/library/alpine:3.21
-RUN apk add --no-cache ca-certificates
-COPY ycode /usr/local/bin/ycode
-RUN chmod +x /usr/local/bin/ycode
-EXPOSE 4317 58080 4222
-ENTRYPOINT ["/usr/local/bin/ycode"]
-CMD ["serve"]
