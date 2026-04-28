@@ -1,7 +1,7 @@
 // machine.go provides machine lifecycle management for ycode.
-// On macOS, containers require a Linux VM. This module manages
-// machine init/start/stop so ycode can auto-provision the VM
-// without the user installing or running podman separately.
+// On macOS/Windows, containers require a Linux VM. This module manages
+// machine init/start/stop using podman's Go libraries directly —
+// no external podman binary needed.
 package container
 
 import (
@@ -9,10 +9,16 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"go.podman.io/podman/v6/pkg/machine"
+	machineDefine "go.podman.io/podman/v6/pkg/machine/define"
+	"go.podman.io/podman/v6/pkg/machine/env"
+	"go.podman.io/podman/v6/pkg/machine/provider"
+	"go.podman.io/podman/v6/pkg/machine/shim"
+	"go.podman.io/podman/v6/pkg/machine/vmconfigs"
 
 	vfkitEmbed "github.com/qiangli/ycode/internal/container/vfkit_embed"
 )
@@ -36,41 +42,66 @@ func DefaultMachineConfig() MachineConfig {
 }
 
 // EnsureMachine ensures a podman machine is initialized and running.
-// Called automatically by NewEngine on macOS when no socket is found.
+// Uses podman's Go libraries directly — no external binary needed.
 func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
-	// Ensure vfkit helper is available (macOS).
+	// Ensure vfkit helper is available (macOS VM hypervisor).
 	ensureVfkitOnPath()
 
-	// Find podman binary for machine management.
-	podmanPath, err := discoverBinary("")
+	// Get the platform's VM provider (AppleHV on macOS, QEMU on Linux, HyperV on Windows).
+	mp, err := provider.Get()
 	if err != nil {
-		return fmt.Errorf("podman binary needed for machine management: %w", err)
+		return fmt.Errorf("get machine provider: %w", err)
 	}
 
 	// Check if machine already exists and is running.
-	if running, _ := isMachineRunning(ctx, podmanPath, cfg.Name); running {
-		slog.Info("container: machine already running", "name", cfg.Name)
-		return nil
-	}
+	mc, exists := findMachine(cfg.Name, mp)
+	if exists {
+		state, err := mp.State(mc, false)
+		if err == nil && state == machineDefine.Running {
+			slog.Info("container: machine already running", "name", cfg.Name)
+			return nil
+		}
 
-	// Check if machine exists but is stopped.
-	if exists, _ := machineExists(ctx, podmanPath, cfg.Name); !exists {
+		// Machine exists but not running — start it.
+		slog.Info("container: starting machine", "name", cfg.Name)
+		updateConn := true
+		if err := shim.Start(mc, mp, machine.StartOptions{}, &updateConn); err != nil {
+			return fmt.Errorf("machine start: %w", err)
+		}
+	} else {
+		// Machine doesn't exist — init and start.
 		slog.Info("container: initializing machine (first-time setup, downloads ~800MB VM image)",
 			"name", cfg.Name, "cpus", cfg.CPUs, "memory_mb", cfg.Memory, "disk_gb", cfg.Disk)
-		if err := machineInit(ctx, podmanPath, cfg); err != nil {
+
+		initOpts := machineDefine.InitOptions{
+			Name:      cfg.Name,
+			CPUS:      uint64(cfg.CPUs),
+			Memory:    uint64(cfg.Memory),
+			DiskSize:  uint64(cfg.Disk),
+			IsDefault: true,
+		}
+
+		if err := shim.Init(initOpts, mp); err != nil {
 			return fmt.Errorf("machine init: %w", err)
+		}
+
+		// Re-find the machine config after init.
+		mc, exists = findMachine(cfg.Name, mp)
+		if !exists {
+			return fmt.Errorf("machine init succeeded but config not found")
+		}
+
+		slog.Info("container: starting machine", "name", cfg.Name)
+		updateConn := true
+		if err := shim.Start(mc, mp, machine.StartOptions{}, &updateConn); err != nil {
+			return fmt.Errorf("machine start: %w", err)
 		}
 	}
 
-	slog.Info("container: starting machine", "name", cfg.Name)
-	if err := machineStart(ctx, podmanPath, cfg.Name); err != nil {
-		return fmt.Errorf("machine start: %w", err)
-	}
-
-	// Wait for socket to become available after machine starts.
-	for i := 0; i < 10; i++ {
+	// Wait for socket to become available.
+	for i := 0; i < 15; i++ {
 		if socketPath := defaultSocketPath(); socketPath != "" {
-			if err := waitForSocket(socketPath, 15*time.Second); err == nil {
+			if err := waitForSocket(socketPath, 2*time.Second); err == nil {
 				slog.Info("container: machine ready", "name", cfg.Name, "socket", socketPath)
 				return nil
 			}
@@ -81,18 +112,19 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 	return fmt.Errorf("machine started but socket not available after 30s")
 }
 
-// StopMachine stops the podman machine.
+// StopMachine stops the podman machine using Go libraries.
 func StopMachine(ctx context.Context, name string) error {
-	podmanPath, err := discoverBinary("")
+	mp, err := provider.Get()
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, podmanPath, "machine", "stop", name)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("machine stop: %s", string(out))
+
+	mc, exists := findMachine(name, mp)
+	if !exists {
+		return fmt.Errorf("machine %q not found", name)
 	}
-	return nil
+
+	return shim.Stop(mc, mp, false)
 }
 
 // --- internal helpers ---
@@ -116,35 +148,15 @@ func ensureVfkitOnPath() {
 	slog.Info("container: using embedded vfkit", "path", path)
 }
 
-func isMachineRunning(ctx context.Context, podmanPath, name string) (bool, error) {
-	cmd := exec.CommandContext(ctx, podmanPath, "machine", "inspect", name)
-	out, err := cmd.CombinedOutput()
+// findMachine looks up a machine config by name from the provider.
+func findMachine(name string, mp vmconfigs.VMProvider) (*vmconfigs.MachineConfig, bool) {
+	dirs, err := env.GetMachineDirs(mp.VMType())
 	if err != nil {
-		return false, err
+		return nil, false
 	}
-	return strings.Contains(string(out), `"Running"`), nil
-}
-
-func machineExists(ctx context.Context, podmanPath, name string) (bool, error) {
-	cmd := exec.CommandContext(ctx, podmanPath, "machine", "inspect", name)
-	return cmd.Run() == nil, nil
-}
-
-func machineInit(ctx context.Context, podmanPath string, cfg MachineConfig) error {
-	args := []string{"machine", "init", cfg.Name,
-		fmt.Sprintf("--cpus=%d", cfg.CPUs),
-		fmt.Sprintf("--memory=%d", cfg.Memory),
-		fmt.Sprintf("--disk-size=%d", cfg.Disk),
+	mc, err := vmconfigs.LoadMachineByName(name, dirs)
+	if err != nil {
+		return nil, false
 	}
-	cmd := exec.CommandContext(ctx, podmanPath, args...)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func machineStart(ctx context.Context, podmanPath, name string) error {
-	cmd := exec.CommandContext(ctx, podmanPath, "machine", "start", name)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return mc, true
 }

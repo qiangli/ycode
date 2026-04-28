@@ -472,7 +472,6 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 		containerComp = container.NewContainerComponent(
 			&container.ComponentConfig{
 				Enabled:      containerCfg.Enabled,
-				BinaryPath:   containerCfg.BinaryPath,
 				SocketPath:   containerCfg.SocketPath,
 				Image:        containerCfg.Image,
 				Network:      containerCfg.Network,

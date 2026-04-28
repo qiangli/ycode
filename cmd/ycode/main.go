@@ -226,7 +226,6 @@ func newApp() (*cli.App, error) {
 	var bashExecutor bash.Executor
 	if cfg.Container != nil && cfg.Container.Enabled {
 		engine, err := container.NewEngine(rootCtx, &container.EngineConfig{
-			BinaryPath: cfg.Container.BinaryPath,
 			SocketPath: cfg.Container.SocketPath,
 		})
 		if err != nil {

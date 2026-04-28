@@ -65,8 +65,3 @@ type NetworkInfo struct {
 	ID     string `json:"Id"`
 	Driver string `json:"Driver"`
 }
-
-// HostGateway returns the hostname that containers use to reach the host.
-func (e *Engine) HostGateway() string {
-	return "host.containers.internal"
-}

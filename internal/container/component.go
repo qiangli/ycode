@@ -38,7 +38,6 @@ type ContainerComponent struct {
 // ComponentConfig holds configuration for the container component.
 type ComponentConfig struct {
 	Enabled      bool   `json:"enabled"`                // enable container isolation
-	BinaryPath   string `json:"binaryPath,omitempty"`   // explicit podman binary path
 	SocketPath   string `json:"socketPath,omitempty"`   // explicit podman socket path
 	Image        string `json:"image,omitempty"`        // default sandbox image
 	Network      string `json:"network,omitempty"`      // network mode: "bridge" (default), "host", "none"
@@ -73,7 +72,6 @@ func (c *ContainerComponent) Start(ctx context.Context) error {
 	slog.Info("container: starting component")
 
 	engine, err := NewEngine(ctx, &EngineConfig{
-		BinaryPath: c.cfg.BinaryPath,
 		SocketPath: c.cfg.SocketPath,
 		DataDir:    c.dataDir,
 	})

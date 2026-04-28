@@ -154,7 +154,6 @@ type InferenceConfig struct {
 // ContainerConfig controls the embedded Podman-based container isolation engine.
 type ContainerConfig struct {
 	Enabled      bool   `json:"enabled"`                // enable container isolation for agents
-	BinaryPath   string `json:"binaryPath,omitempty"`   // explicit podman binary path
 	SocketPath   string `json:"socketPath,omitempty"`   // explicit podman socket path
 	Image        string `json:"image,omitempty"`        // default sandbox image (default: ycode-sandbox:latest)
 	Network      string `json:"network,omitempty"`      // network mode: "bridge" (default), "host", "none"
@@ -404,9 +403,6 @@ func mergeFromFile(cfg *Config, path string) error {
 		co := overlay.Container
 		if co.Enabled {
 			cfg.Container.Enabled = true
-		}
-		if co.BinaryPath != "" {
-			cfg.Container.BinaryPath = co.BinaryPath
 		}
 		if co.SocketPath != "" {
 			cfg.Container.SocketPath = co.SocketPath
