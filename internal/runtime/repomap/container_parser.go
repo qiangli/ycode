@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/runtime/containertool"
 )
 
@@ -32,7 +33,7 @@ type treesitterSymbol struct {
 }
 
 // newTreeSitterTool creates the container tool for tree-sitter parsing.
-func newTreeSitterTool(workspaceRoot string) *containertool.Tool {
+func newTreeSitterTool(workspaceRoot string, engine *container.Engine) *containertool.Tool {
 	return &containertool.Tool{
 		Name:       "treesitter",
 		Image:      treesitterImage,
@@ -45,16 +46,17 @@ func newTreeSitterTool(workspaceRoot string) *containertool.Tool {
 		Mounts: []containertool.Mount{
 			{Source: workspaceRoot, Target: "/workspace", ReadOnly: true},
 		},
+		Engine: engine,
 	}
 }
 
 // parseFilesWithTreeSitter runs the containerized parser on non-Go source files.
-func parseFilesWithTreeSitter(ctx context.Context, root string, files []fileInfo) ([]Symbol, error) {
+func parseFilesWithTreeSitter(ctx context.Context, root string, files []fileInfo, engine *container.Engine) ([]Symbol, error) {
 	if len(files) == 0 {
 		return nil, nil
 	}
 
-	tool := newTreeSitterTool(root)
+	tool := newTreeSitterTool(root, engine)
 
 	// Build input manifest.
 	var input treesitterInput

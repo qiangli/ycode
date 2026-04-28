@@ -4,7 +4,6 @@ package container
 
 import (
 	"context"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -12,8 +11,11 @@ import (
 
 func skipIfNoPodman(t *testing.T) {
 	t.Helper()
-	if _, err := exec.LookPath("podman"); err != nil {
-		t.Skip("podman not available, skipping integration test")
+	// Check for a running podman socket — ycode IS podman, so we don't
+	// look for an external binary. The socket is provided by either
+	// the in-process service (Linux) or a podman machine (macOS).
+	if sp := defaultSocketPath(); sp == "" || !socketAvailable(sp) {
+		t.Skip("no podman socket available, skipping integration test")
 	}
 }
 

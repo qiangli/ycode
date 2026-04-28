@@ -18,6 +18,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/qiangli/ycode/internal/container"
 )
 
 // MaxTokenBudget is the default maximum token budget for the repo map.
@@ -59,6 +61,9 @@ type Options struct {
 	RelevanceQuery string
 	// MaxFiles limits the number of files included (0 = no limit, uses token budget).
 	MaxFiles int
+	// ContainerEngine is the optional container engine for tree-sitter parsing.
+	// When nil, non-Go files are skipped with a warning.
+	ContainerEngine any // *container.Engine — uses any to avoid import cycle
 }
 
 // DefaultOptions returns sensible defaults for repo map generation.
@@ -138,11 +143,15 @@ func Generate(root string, opts *Options) (*RepoMap, error) {
 		})
 	}
 
-	// Parse non-Go files via containerized tree-sitter.
+	// Parse non-Go files via containerized tree-sitter (requires container engine).
 	if len(tsFiles) > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		tsSymbols, err := parseFilesWithTreeSitter(ctx, root, tsFiles)
+		var eng *container.Engine
+		if opts.ContainerEngine != nil {
+			eng, _ = opts.ContainerEngine.(*container.Engine)
+		}
+		tsSymbols, err := parseFilesWithTreeSitter(ctx, root, tsFiles, eng)
 		if err != nil {
 			// Tree-sitter failure is non-fatal — log and continue with Go-only map.
 			slog.Warn("tree-sitter parsing unavailable, repo map will include Go files only", "error", err)
