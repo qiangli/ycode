@@ -78,6 +78,35 @@ Queries impossible with regex become trivial with AST patterns.
 
 - Connect chromem-go vector store for natural language queries. Opt-in (requires embedding model via Ollama).
 
+## Validation
+
+Contract-tier tests (deterministic, no LLM) validate that the search infrastructure produces correct, complete results. Run against ycode's own codebase and synthetic projects.
+
+```bash
+go test -race -v ./internal/eval/contract/            # full suite (~20s)
+go test -short -race ./internal/eval/contract/         # skip codebase tests (~2s)
+go test -race -run TestFullPipeline ./internal/eval/contract/  # pipeline only
+```
+
+### Test Groups
+
+| # | Test | What It Validates |
+|---|------|-------------------|
+| 1 | `TestGrepSearch_FindsKnownPatterns` | Grep finds known functions/types in ycode codebase |
+| 2 | `TestGrepSearch_ContextLinesCorrectness` | `-C` context lines mark match vs context correctly |
+| 3 | `TestGrepSearch_SkipsIgnoredDirs` | No results from `.git`, `node_modules`, `priorart` |
+| 4 | `TestGlobSearch_DoubleStarOnRealCodebase` | `**/*.go`, `**/*_test.go` work recursively |
+| 5 | `TestSymbolIndexer_RealGoFile` | Go AST extracts symbols with correct metadata |
+| 6 | `TestRefGraph_RealGoCode` | Caller/callee edges correct across files |
+| 7 | `TestIndexedGrep_ConsistentWithFullWalk` | Indexed path matches full-walk results |
+| 8 | `TestTrigramIndex_NarrowsCandidatesCorrectly` | Trigram intersection produces correct file sets |
+| 9 | `TestLiteralExtraction_QualityOnRealPatterns` | Regex decomposition works for real agent patterns |
+| 10 | `TestFullPipeline_IndexSearchVerify` | End-to-end: index -> grep -> symbols -> refgraph -> trigram |
+
+### Quality Metrics
+
+The `TestRepoMap_GraphRankingImprovement` test logs ranking quality as a metric without hard-failing, enabling trend tracking as the ranking algorithm is tuned over time.
+
 ## Key Files
 
 | File | Purpose |
@@ -96,3 +125,6 @@ Queries impossible with regex become trivial with AST patterns.
 | `internal/tools/symbol_search.go` | symbol_search tool (Phase 3) |
 | `internal/tools/references.go` | find_references + find_impact tools (Phase 3) |
 | `internal/runtime/repomap/repomap.go` | Graph-ranked relevance (Phase 3) |
+| `internal/runtime/repomap/pagerank.go` | PageRank + naming heuristics (Phase 3) |
+| `internal/tools/ast_search.go` | ast_search tool (Phase 4) |
+| `internal/eval/contract/search_validation_test.go` | E2E validation tests (10 groups) |
