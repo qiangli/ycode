@@ -67,9 +67,14 @@ func TasksSection() string {
 
 # Additional tools
 Beyond the core tools, additional capabilities are available on demand via ToolSearch.
-Categories: file management, web access, git operations, persistent memory (save/recall/forget),
-metrics analysis (query_metrics), context management, code intelligence, task tracking, and agent delegation.
-Use ToolSearch to discover and load these tools when needed.`
+Categories: persistent memory (save/recall/forget), metrics analysis (query_metrics),
+context management, code intelligence, task tracking, and agent delegation.
+Use ToolSearch to discover and load these tools when needed.
+
+# Standard commands
+For standard system commands (ssh, ping, curl, scp, rsync, git, docker, etc.) use the bash
+tool directly — do not search for specialized tools first. ToolSearch is only for discovering
+agent-specific tools, not replacements for common CLI utilities.`
 }
 
 // ActionsSection returns guidance for safe actions.

@@ -136,7 +136,9 @@ func (s *LocalService) SendMessage(ctx context.Context, sessionID string, input 
 	})
 
 	// Agentic loop: send → receive → execute tools → repeat until end_turn.
-	loopDetector := conversation.NewLoopDetector()
+	loopDetector := conversation.NewEnhancedLoopDetector(conversation.EnhancedLoopDetectorConfig{
+		SessionID: sessionID,
+	})
 	budget := conversation.NewIterationBudget(maxToolIterations)
 	for i := 0; budget.Consume(); i++ {
 		// Inject grace message on the final turn so the LLM wraps up.
@@ -178,10 +180,34 @@ func (s *LocalService) SendMessage(ctx context.Context, sessionID string, input 
 			}),
 		})
 
-		// Check for stuck loops.
+		// Check for stuck loops (response similarity).
 		if result.TextContent != "" {
-			loopStatus := loopDetector.Record(result.TextContent)
-			if loopStatus == conversation.LoopBreak {
+			loopStatus := loopDetector.RecordResponse(result.TextContent)
+			switch loopStatus {
+			case conversation.LoopBreak:
+				s.b.Publish(bus.Event{
+					Type:      bus.EventTurnComplete,
+					SessionID: sessionID,
+					Data:      mustJSON(map[string]string{"status": "loop_break"}),
+				})
+				return nil
+			case conversation.LoopWarning:
+				messages = append(messages, api.Message{
+					Role: api.RoleUser,
+					Content: []api.ContentBlock{{
+						Type: api.ContentTypeText,
+						Text: "<system-reminder>You appear to be repeating similar actions. " +
+							"Stop searching and try a different approach. For standard commands " +
+							"(ssh, ping, curl, etc.) use the bash tool directly.</system-reminder>",
+					}},
+				})
+			}
+		}
+
+		// Check for stuck loops (tool call patterns).
+		for _, tc := range result.ToolCalls {
+			toolStatus := loopDetector.RecordToolCall(tc.Name)
+			if toolStatus == conversation.LoopBreak {
 				s.b.Publish(bus.Event{
 					Type:      bus.EventTurnComplete,
 					SessionID: sessionID,
