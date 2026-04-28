@@ -77,6 +77,12 @@ func grepCandidateFiles(params GrepParams, candidates map[string]bool) (*GrepRes
 
 // extractLiterals parses a regex pattern and returns literal substrings
 // that must appear in any match. These are used to query the full-text index.
+// ExtractLiterals parses a regex pattern and returns literal substrings
+// that must appear in any match. These are used to query the full-text index.
+func ExtractLiterals(pattern string) []string {
+	return extractLiterals(pattern)
+}
+
 func extractLiterals(pattern string) []string {
 	re, err := syntax.Parse(pattern, syntax.Perl)
 	if err != nil {
