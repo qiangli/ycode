@@ -12,14 +12,17 @@ go fmt ${PACKAGES}
 echo "=== Step 3: Static analysis ==="
 go vet ${PACKAGES}
 
-echo "=== Step 4: Build binary ==="
-go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o bin/ycode ./cmd/ycode/
+echo "=== Step 4: Source archive ==="
+make source-archive
+
+echo "=== Step 5: Build binary ==="
+go build -trimpath -tags embed_source -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o bin/ycode ./cmd/ycode/
 if [ "$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
 
-echo "=== Step 5: Unit tests ==="
+echo "=== Step 6: Unit tests ==="
 go test -short -race ${PACKAGES}
 
-echo "=== Step 6: Verify ==="
+echo "=== Step 7: Verify ==="
 bin/ycode version
 
 echo "=== Build PASSED ==="

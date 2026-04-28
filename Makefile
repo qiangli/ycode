@@ -37,8 +37,8 @@ priorart-sync: ## Pull latest changes for all priorart repos
 
 # ─── Build ──────────────────────────────────────────────────────────────────
 
-compile: ## Compile the ycode binary to bin/ (no checks)
-	go build -trimpath $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+compile: source-archive ## Compile the ycode binary to bin/
+	go build -trimpath -tags embed_source $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 
 compile-full: source-archive ## Compile with embedded podman + runner + source (single binary, all-in-one)
 	go build -trimpath -tags "embed_podman,embed_runner,embed_source" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
@@ -132,6 +132,7 @@ source-archive: ## Create vendored source archive for pulse container builds
 	go mod vendor
 	tar czf internal/pulse/source_embed/source.tar.gz \
 		--exclude=priorart --exclude=.git --exclude='*.test' \
+		--exclude='internal/pulse/source_embed/source.tar.gz' \
 		cmd/ internal/ pkg/ go.mod go.sum vendor/ Makefile scripts/ configs/
 	rm -rf vendor/
 	@echo "Source archive: $$(du -h internal/pulse/source_embed/source.tar.gz | cut -f1)"
