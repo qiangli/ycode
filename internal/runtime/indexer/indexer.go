@@ -39,17 +39,19 @@ const (
 
 // Indexer scans workspace files and indexes them in Bleve.
 type Indexer struct {
-	workDir string
-	search  storage.SearchIndex
-	kv      storage.KVStore // for tracking file mtimes
+	workDir  string
+	search   storage.SearchIndex
+	kv       storage.KVStore // for tracking file mtimes
+	RefGraph *RefGraph       // optional reference graph for Go files
 }
 
 // New creates a codebase indexer.
 func New(workDir string, search storage.SearchIndex, kv storage.KVStore) *Indexer {
 	return &Indexer{
-		workDir: workDir,
-		search:  search,
-		kv:      kv,
+		workDir:  workDir,
+		search:   search,
+		kv:       kv,
+		RefGraph: NewRefGraph(kv),
 	}
 }
 
@@ -85,9 +87,20 @@ func (idx *Indexer) IndexOnce(ctx context.Context) (int, error) {
 			return nil
 		}
 
+		lang := strings.TrimPrefix(ext, ".")
 		if err := idx.indexFile(ctx, relPath, string(content), ext); err != nil {
 			slog.Debug("indexer: index file", "path", relPath, "error", err)
 			return nil
+		}
+
+		// Also index symbols from this file.
+		if err := idx.IndexSymbols(ctx, relPath, path, lang); err != nil {
+			slog.Debug("indexer: index symbols", "path", relPath, "error", err)
+		}
+
+		// Build reference graph for Go files.
+		if lang == "go" && idx.RefGraph != nil {
+			idx.RefGraph.IndexFileReferences(path, relPath)
 		}
 
 		// Record mtime.

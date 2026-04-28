@@ -61,6 +61,9 @@ type Options struct {
 	RelevanceQuery string
 	// MaxFiles limits the number of files included (0 = no limit, uses token budget).
 	MaxFiles int
+	// ChatContextFiles are files currently in the conversation context.
+	// These get a 50x ranking boost (Aider-inspired personalization).
+	ChatContextFiles []string
 	// ContainerEngine is the optional container engine for tree-sitter parsing.
 	// When nil, non-Go files are skipped with a warning.
 	ContainerEngine any // *container.Engine — uses any to avoid import cycle
@@ -173,7 +176,7 @@ func Generate(root string, opts *Options) (*RepoMap, error) {
 
 	// Apply relevance scoring if a query is provided.
 	if opts.RelevanceQuery != "" {
-		scoreByRelevance(rm, opts.RelevanceQuery)
+		scoreByRelevanceGraph(rm, opts.RelevanceQuery, opts.ChatContextFiles)
 	}
 
 	// Sort by score descending, then by path.
