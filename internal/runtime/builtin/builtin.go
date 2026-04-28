@@ -82,14 +82,16 @@ func (mc *ModelChain) SingleShotWithUsageAndTimeout(ctx context.Context, systemP
 // for each text delta as it arrives. Returns the full result with usage.
 // Uses DefaultSingleShotTimeout.
 func (mc *ModelChain) SingleShotStreaming(ctx context.Context, systemPrompt, userContent string, maxTokens int, onDelta func(text string)) (*SingleShotResult, error) {
-	return mc.SingleShotStreamingWithTimeout(ctx, systemPrompt, userContent, maxTokens, DefaultSingleShotTimeout, onDelta)
+	return mc.SingleShotStreamingWithTimeout(ctx, systemPrompt, userContent, maxTokens, DefaultSingleShotTimeout, onDelta, nil)
 }
 
 // SingleShotStreamingWithTimeout is like SingleShotStreaming but with a custom timeout.
-func (mc *ModelChain) SingleShotStreamingWithTimeout(ctx context.Context, systemPrompt, userContent string, maxTokens int, timeout time.Duration, onDelta func(text string)) (*SingleShotResult, error) {
+// onUsage, if non-nil, is called with incremental token deltas as usage events
+// arrive during streaming, enabling real-time status bar updates.
+func (mc *ModelChain) SingleShotStreamingWithTimeout(ctx context.Context, systemPrompt, userContent string, maxTokens int, timeout time.Duration, onDelta func(text string), onUsage func(inputTokens, outputTokens, cacheCreate, cacheRead int)) (*SingleShotResult, error) {
 	var lastErr error
 	for _, ms := range mc.Models {
-		result, err := singleShotStreamingImpl(ctx, ms, systemPrompt, userContent, maxTokens, timeout, onDelta)
+		result, err := singleShotStreamingImpl(ctx, ms, systemPrompt, userContent, maxTokens, timeout, onDelta, onUsage)
 		if err != nil {
 			slog.Info("single-shot streaming call failed, trying next model", "model", ms.Model, "error", err)
 			lastErr = err
@@ -101,7 +103,8 @@ func (mc *ModelChain) SingleShotStreamingWithTimeout(ctx context.Context, system
 }
 
 // singleShotStreamingImpl sends a streaming request and invokes onDelta per text chunk.
-func singleShotStreamingImpl(ctx context.Context, ms session.ModelSpec, systemPrompt, userContent string, maxTokens int, timeout time.Duration, onDelta func(text string)) (*SingleShotResult, error) {
+// onUsage, if non-nil, receives incremental token deltas as usage events arrive.
+func singleShotStreamingImpl(ctx context.Context, ms session.ModelSpec, systemPrompt, userContent string, maxTokens int, timeout time.Duration, onDelta func(text string), onUsage func(inputTokens, outputTokens, cacheCreate, cacheRead int)) (*SingleShotResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -124,7 +127,7 @@ func singleShotStreamingImpl(ctx context.Context, ms session.ModelSpec, systemPr
 	events, errc := ms.Provider.Send(ctx, req)
 
 	var textParts []string
-	var usage api.Usage
+	var usage, reported api.Usage
 
 	for ev := range events {
 		if ev.Type == "message_start" && ev.Message != nil {
@@ -144,6 +147,19 @@ func singleShotStreamingImpl(ctx context.Context, ms session.ModelSpec, systemPr
 			}
 			usage.CacheCreationInput += ev.Usage.CacheCreationInput
 			usage.CacheReadInput += ev.Usage.CacheReadInput
+		}
+
+		// Report incremental usage deltas so the caller can update the
+		// status bar in real time (e.g., input tokens appear at stream start).
+		if onUsage != nil {
+			di := usage.InputTokens - reported.InputTokens
+			do := usage.OutputTokens - reported.OutputTokens
+			dc := usage.CacheCreationInput - reported.CacheCreationInput
+			dr := usage.CacheReadInput - reported.CacheReadInput
+			if di > 0 || do > 0 || dc > 0 || dr > 0 {
+				onUsage(di, do, dc, dr)
+				reported = usage
+			}
 		}
 
 		if ev.Delta != nil {

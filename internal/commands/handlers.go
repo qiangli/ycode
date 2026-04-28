@@ -673,7 +673,7 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 					if deps.LogDelta != nil {
 						deps.LogDelta(text)
 					}
-				})
+				}, deps.TrackUsage)
 				if llmErr != nil {
 					progress(fmt.Sprintf("⚠ LLM generation failed: %v", llmErr))
 				} else if llmResult == nil || llmResult.Text == "" {
@@ -697,9 +697,6 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 								progress(fmt.Sprintf("  - %s", q))
 							}
 						}
-					}
-					if deps.TrackUsage != nil {
-						deps.TrackUsage(llmResult.InputTokens, llmResult.OutputTokens, llmResult.CacheCreate, llmResult.CacheRead)
 					}
 					if llmResult.InputTokens > 0 || llmResult.OutputTokens > 0 {
 						totalTokens := llmResult.InputTokens + llmResult.OutputTokens
