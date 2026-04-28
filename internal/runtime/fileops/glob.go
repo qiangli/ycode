@@ -2,10 +2,12 @@ package fileops
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 // GlobParams configures glob search.
@@ -31,45 +33,17 @@ func GlobSearch(params GlobParams) (*GlobResult, error) {
 	}
 
 	var matches []string
-	err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil // skip inaccessible dirs
-		}
-
-		// Skip hidden directories (except the base).
-		name := d.Name()
-		if d.IsDir() && strings.HasPrefix(name, ".") && path != base {
-			return filepath.SkipDir
-		}
-		// Skip node_modules, vendor, etc.
-		if d.IsDir() && (name == "node_modules" || name == "vendor" || name == "__pycache__") {
-			return filepath.SkipDir
-		}
-
-		if d.IsDir() {
+	err := WalkSourceFiles(base, nil, func(path string, d fs.DirEntry) error {
+		rel, relErr := filepath.Rel(base, path)
+		if relErr != nil {
 			return nil
 		}
+		// Use forward slashes for consistent matching.
+		rel = filepath.ToSlash(rel)
 
-		// Match against pattern.
-		rel, err := filepath.Rel(base, path)
-		if err != nil {
+		matched, matchErr := doublestar.Match(params.Pattern, rel)
+		if matchErr != nil {
 			return nil
-		}
-
-		matched, err := filepath.Match(params.Pattern, filepath.Base(rel))
-		if err != nil {
-			return nil
-		}
-
-		// Also try matching the full relative path for patterns like "**/*.go".
-		if !matched {
-			matched, _ = filepath.Match(params.Pattern, rel)
-		}
-
-		// Simple ** support: if pattern contains **, try matching just the base name.
-		if !matched && strings.Contains(params.Pattern, "**") {
-			subPattern := strings.TrimPrefix(params.Pattern, "**/")
-			matched, _ = filepath.Match(subPattern, filepath.Base(rel))
 		}
 
 		if matched {

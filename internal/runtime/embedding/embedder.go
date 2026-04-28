@@ -2,6 +2,7 @@ package embedding
 
 import (
 	"context"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qiangli/ycode/internal/runtime/fileops"
 	"github.com/qiangli/ycode/internal/storage"
 )
 
@@ -175,25 +177,19 @@ func (e *Embedder) EmbedDocFile(ctx context.Context, relPath, content string) er
 // RunCodeEmbedding performs a single pass of code embedding over the workspace.
 func (e *Embedder) RunCodeEmbedding(ctx context.Context) (int, error) {
 	indexed := 0
-	err := filepath.WalkDir(e.workDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || ctx.Err() != nil {
+	walkOpts := &fileops.WalkOptions{MaxFileSize: 1 << 20}
+	err := fileops.WalkSourceFiles(e.workDir, walkOpts, func(path string, d fs.DirEntry) error {
+		if ctx.Err() != nil {
 			return ctx.Err()
-		}
-		if d.IsDir() {
-			base := filepath.Base(path)
-			if isSkipDir(base) {
-				return filepath.SkipDir
-			}
-			return nil
 		}
 
 		ext := strings.ToLower(filepath.Ext(path))
-		if !isSourceExt(ext) {
+		if !fileops.IsSourceExt(ext) {
 			return nil
 		}
 
-		info, err := d.Info()
-		if err != nil || info.Size() > 1<<20 || info.Size() == 0 {
+		info, infoErr := d.Info()
+		if infoErr != nil {
 			return nil
 		}
 
@@ -283,21 +279,5 @@ func splitDocChunks(content string, maxSize int) []string {
 	return chunks
 }
 
-func isSkipDir(name string) bool {
-	skip := map[string]bool{
-		".git": true, ".hg": true, "node_modules": true, "vendor": true,
-		"__pycache__": true, ".agents": true, ".claw": true, ".claude": true,
-		"dist": true, "build": true, "target": true, "bin": true, "priorart": true,
-	}
-	return skip[name]
-}
-
-func isSourceExt(ext string) bool {
-	exts := map[string]bool{
-		".go": true, ".rs": true, ".ts": true, ".tsx": true, ".js": true,
-		".py": true, ".java": true, ".c": true, ".cpp": true, ".h": true,
-		".rb": true, ".sh": true, ".md": true, ".json": true, ".yaml": true,
-		".yml": true, ".toml": true, ".sql": true, ".proto": true,
-	}
-	return exts[ext]
-}
+// NOTE: isSkipDir and isSourceExt removed — now using fileops.ShouldSkipDir
+// and fileops.IsSourceExt from the shared walker (walker.go).

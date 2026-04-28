@@ -10,12 +10,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/qiangli/ycode/internal/runtime/fileops"
 	"github.com/qiangli/ycode/internal/storage"
 )
 
@@ -31,25 +33,9 @@ const (
 	IndexInterval = 5 * time.Minute
 )
 
-// sourceExtensions is the set of file extensions to index.
-var sourceExtensions = map[string]bool{
-	".go": true, ".rs": true, ".ts": true, ".tsx": true, ".js": true, ".jsx": true,
-	".py": true, ".java": true, ".c": true, ".cpp": true, ".h": true, ".hpp": true,
-	".rb": true, ".sh": true, ".bash": true, ".zsh": true,
-	".json": true, ".yaml": true, ".yml": true, ".toml": true,
-	".md": true, ".txt": true, ".sql": true, ".graphql": true,
-	".css": true, ".scss": true, ".html": true, ".xml": true,
-	".proto": true, ".swift": true, ".kt": true, ".scala": true,
-}
-
-// skipDirs is the set of directories to always skip.
-var skipDirs = map[string]bool{
-	".git": true, ".hg": true, ".svn": true,
-	"node_modules": true, "vendor": true, "__pycache__": true,
-	".agents": true, ".claw": true, ".claude": true,
-	"dist": true, "build": true, "target": true, "bin": true,
-	"priorart": true,
-}
+// NOTE: Source extensions and skip directories are now defined in
+// fileops.SourceExtensions and fileops.DefaultSkipDirs (walker.go)
+// to avoid duplication across grep, glob, indexer, and embedder.
 
 // Indexer scans workspace files and indexes them in Bleve.
 type Indexer struct {
@@ -71,36 +57,23 @@ func New(workDir string, search storage.SearchIndex, kv storage.KVStore) *Indexe
 // Returns the number of files indexed.
 func (idx *Indexer) IndexOnce(ctx context.Context) (int, error) {
 	indexed := 0
-	err := filepath.WalkDir(idx.workDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil // skip errors
-		}
+	walkOpts := &fileops.WalkOptions{MaxFileSize: MaxFileSize}
+	err := fileops.WalkSourceFiles(idx.workDir, walkOpts, func(path string, d fs.DirEntry) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
-		// Skip directories.
-		if d.IsDir() {
-			base := filepath.Base(path)
-			if skipDirs[base] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
 		// Only index source files.
 		ext := strings.ToLower(filepath.Ext(path))
-		if !sourceExtensions[ext] {
-			return nil
-		}
-
-		// Check file size.
-		info, err := d.Info()
-		if err != nil || info.Size() > MaxFileSize || info.Size() == 0 {
+		if !fileops.IsSourceExt(ext) {
 			return nil
 		}
 
 		// Check if file has changed since last index.
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			return nil
+		}
 		relPath, _ := filepath.Rel(idx.workDir, path)
 		if !idx.hasChanged(relPath, info.ModTime()) {
 			return nil
