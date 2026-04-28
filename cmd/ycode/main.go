@@ -262,6 +262,7 @@ func newApp() (*cli.App, error) {
 				sandbox.Remove(rootCtx, true)
 			} else {
 				bashExecutor = &bash.ContainerExecutor{Container: sandbox}
+				tools.SetContainerEngine(engine, cwd)
 				slog.Info("container sandbox active", "container", sandbox.Name, "image", image)
 				// Clean up sandbox on shutdown.
 				defer func() {
@@ -283,6 +284,9 @@ func newApp() (*cli.App, error) {
 	}
 	tools.RegisterFileHandlers(toolReg, v)
 	tools.RegisterSearchHandlers(toolReg, v)
+	tools.RegisterSymbolSearchHandler(toolReg)
+	tools.RegisterReferenceHandlers(toolReg)
+	tools.RegisterASTSearchHandler(toolReg)
 	tools.RegisterVFSHandlers(toolReg, v)
 	tools.RegisterSleepHandler(toolReg)
 	tools.RegisterWebHandlers(toolReg)
@@ -357,6 +361,15 @@ func newApp() (*cli.App, error) {
 
 		// Start background codebase indexer.
 		codeIndexer := indexer.New(cwd, searchStore, storageMgr.KV())
+
+		// Wire reference graph to tools.
+		if codeIndexer.RefGraph != nil {
+			tools.SetRefGraph(codeIndexer.RefGraph)
+		}
+
+		// Wire file write hook for incremental re-indexing.
+		toolReg.SetFileWriteHook(codeIndexer.NotifyFileChanged)
+
 		go codeIndexer.Run(rootCtx)
 	}()
 
@@ -467,6 +480,10 @@ func newApp() (*cli.App, error) {
 	var convOTEL *conversation.OTELConfig
 	if otelRes != nil {
 		convOTEL = otelRes.convOTEL
+		// Wire OTEL instruments into search tools.
+		if convOTEL != nil && convOTEL.Inst != nil {
+			tools.SetSearchInstruments(convOTEL.Inst)
+		}
 	}
 
 	app, err := cli.NewApp(cfg, provider, sess, cli.AppOptions{

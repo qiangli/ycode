@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/qiangli/ycode/internal/runtime/indexer"
@@ -56,6 +57,11 @@ func RegisterReferenceHandlers(r *Registry) {
 			if params.Direction == "" {
 				params.Direction = "callers"
 			}
+
+			if searchInstruments != nil {
+				searchInstruments.SearchRefGraphTotal.Add(ctx, 1)
+			}
+			slog.Debug("find_references", "symbol", params.Symbol, "direction", params.Direction)
 
 			// Try exact match first, then search for matching symbols.
 			symbols := []string{params.Symbol}
@@ -140,6 +146,11 @@ func RegisterReferenceHandlers(r *Registry) {
 			if params.Depth > 5 {
 				params.Depth = 5
 			}
+
+			if searchInstruments != nil {
+				searchInstruments.SearchRefGraphTotal.Add(ctx, 1)
+			}
+			slog.Debug("find_impact", "symbol", params.Symbol, "depth", params.Depth)
 
 			// Find matching symbols.
 			symbols := refGraph.SymbolMatches(params.Symbol)

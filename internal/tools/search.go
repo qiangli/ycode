@@ -4,21 +4,35 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/qiangli/ycode/internal/runtime/fileops"
 	"github.com/qiangli/ycode/internal/runtime/vfs"
 	"github.com/qiangli/ycode/internal/storage"
+	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 // codeSearchIndex is an optional Bleve index for natural-language code search fallback.
 var codeSearchIndex storage.SearchIndex
+
+// searchInstruments holds optional OTEL instruments for search metrics.
+var searchInstruments *yotel.Instruments
 
 const codeIndexName = "code"
 
 // SetCodeSearchIndex sets the Bleve index used for natural-language grep fallback.
 func SetCodeSearchIndex(idx storage.SearchIndex) {
 	codeSearchIndex = idx
+}
+
+// SetSearchInstruments sets the OTEL instruments for search metrics.
+func SetSearchInstruments(inst *yotel.Instruments) {
+	searchInstruments = inst
 }
 
 // RegisterSearchHandlers registers glob and grep tool handlers with VFS path validation.
@@ -66,7 +80,19 @@ func RegisterSearchHandlers(r *Registry, v *vfs.VFS) {
 				params.Path = absPath
 				r.NotifyFileAccess(absPath)
 			}
+			start := time.Now()
 			result, err := fileops.IndexedGrepSearch(params, codeSearchIndex)
+			dur := time.Since(start)
+			if searchInstruments != nil {
+				searchInstruments.SearchGrepTotal.Add(ctx, 1)
+				searchInstruments.SearchGrepDuration.Record(ctx, float64(dur.Milliseconds()),
+					metric.WithAttributes(
+						attribute.String("search.pattern", params.Pattern),
+						attribute.String("search.mode", string(params.OutputMode)),
+					))
+			}
+			slog.Debug("grep_search", "pattern", params.Pattern, "duration_ms", dur.Milliseconds(),
+				"files", len(result.Files), "matches", len(result.Matches))
 			if err != nil {
 				return "", err
 			}

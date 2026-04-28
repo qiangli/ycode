@@ -79,6 +79,17 @@ type Instruments struct {
 
 	// Quality metrics
 	ToolDegradationTotal metric.Int64Counter
+
+	// Search metrics
+	SearchGrepDuration    metric.Float64Histogram
+	SearchGrepTotal       metric.Int64Counter
+	SearchGrepIndexedHits metric.Int64Counter // queries accelerated by index
+	SearchSymbolDuration  metric.Float64Histogram
+	SearchSymbolTotal     metric.Int64Counter
+	SearchRefGraphTotal   metric.Int64Counter
+	SearchTrigramTotal    metric.Int64Counter
+	SearchIndexerDuration metric.Float64Histogram
+	SearchIndexerFiles    metric.Int64Counter
 }
 
 // NewInstruments creates all OTEL metric instruments from the given meter.
@@ -290,6 +301,47 @@ func NewInstruments(m metric.Meter) (*Instruments, error) {
 
 	// Quality instruments.
 	if inst.ToolDegradationTotal, err = m.Int64Counter("ycode.tool.degradation_total"); err != nil {
+		return nil, err
+	}
+
+	// Search metrics.
+	if inst.SearchGrepDuration, err = m.Float64Histogram("ycode.search.grep.duration",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Grep search latency")); err != nil {
+		return nil, err
+	}
+	if inst.SearchGrepTotal, err = m.Int64Counter("ycode.search.grep.total",
+		metric.WithDescription("Total grep searches")); err != nil {
+		return nil, err
+	}
+	if inst.SearchGrepIndexedHits, err = m.Int64Counter("ycode.search.grep.indexed_hits",
+		metric.WithDescription("Grep queries accelerated by Bleve index")); err != nil {
+		return nil, err
+	}
+	if inst.SearchSymbolDuration, err = m.Float64Histogram("ycode.search.symbol.duration",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Symbol search latency")); err != nil {
+		return nil, err
+	}
+	if inst.SearchSymbolTotal, err = m.Int64Counter("ycode.search.symbol.total",
+		metric.WithDescription("Total symbol searches")); err != nil {
+		return nil, err
+	}
+	if inst.SearchRefGraphTotal, err = m.Int64Counter("ycode.search.refgraph.total",
+		metric.WithDescription("Total reference graph queries")); err != nil {
+		return nil, err
+	}
+	if inst.SearchTrigramTotal, err = m.Int64Counter("ycode.search.trigram.total",
+		metric.WithDescription("Total trigram index queries")); err != nil {
+		return nil, err
+	}
+	if inst.SearchIndexerDuration, err = m.Float64Histogram("ycode.search.indexer.duration",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Background indexer pass latency")); err != nil {
+		return nil, err
+	}
+	if inst.SearchIndexerFiles, err = m.Int64Counter("ycode.search.indexer.files",
+		metric.WithDescription("Files indexed by background indexer")); err != nil {
 		return nil, err
 	}
 

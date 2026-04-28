@@ -19,6 +19,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/runtime/fileops"
 	"github.com/qiangli/ycode/internal/storage"
+	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 const (
@@ -41,9 +42,10 @@ const (
 type Indexer struct {
 	workDir  string
 	search   storage.SearchIndex
-	kv       storage.KVStore // for tracking file mtimes
-	RefGraph *RefGraph       // optional reference graph for Go files
-	Trigrams *TrigramIndex   // optional trigram index for regex acceleration
+	kv       storage.KVStore      // for tracking file mtimes
+	RefGraph *RefGraph            // optional reference graph for Go files
+	Trigrams *TrigramIndex        // optional trigram index for regex acceleration
+	Inst     *yotel.Instruments   // optional OTEL instruments
 }
 
 // New creates a codebase indexer.
@@ -123,11 +125,7 @@ func (idx *Indexer) IndexOnce(ctx context.Context) (int, error) {
 // and then re-scans periodically. Blocks until ctx is cancelled.
 func (idx *Indexer) Run(ctx context.Context) {
 	// Initial indexing pass.
-	if n, err := idx.IndexOnce(ctx); err != nil {
-		slog.Debug("indexer: initial pass", "error", err)
-	} else if n > 0 {
-		slog.Debug("indexer: initial pass", "indexed", n)
-	}
+	idx.runIndexPass(ctx, "initial")
 
 	ticker := time.NewTicker(IndexInterval)
 	defer ticker.Stop()
@@ -137,11 +135,7 @@ func (idx *Indexer) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if n, err := idx.IndexOnce(ctx); err != nil {
-				slog.Debug("indexer: periodic pass", "error", err)
-			} else if n > 0 {
-				slog.Debug("indexer: periodic pass", "indexed", n)
-			}
+			idx.runIndexPass(ctx, "periodic")
 		}
 	}
 }
@@ -216,6 +210,27 @@ func (idx *Indexer) recordMtime(relPath string, mtime time.Time) {
 	}
 	hash := hashMtime(mtime)
 	_ = idx.kv.Put(kvBucket, relPath, []byte(hash))
+}
+
+// runIndexPass performs a single indexing pass with OTEL metrics and logging.
+func (idx *Indexer) runIndexPass(ctx context.Context, kind string) {
+	start := time.Now()
+	n, err := idx.IndexOnce(ctx)
+	dur := time.Since(start)
+
+	if err != nil {
+		slog.Debug("indexer: "+kind+" pass", "error", err)
+		return
+	}
+	if n > 0 {
+		slog.Debug("indexer: "+kind+" pass", "indexed", n, "duration_ms", dur.Milliseconds())
+	}
+	if idx.Inst != nil {
+		idx.Inst.SearchIndexerDuration.Record(ctx, float64(dur.Milliseconds()))
+		if n > 0 {
+			idx.Inst.SearchIndexerFiles.Add(ctx, int64(n))
+		}
+	}
 }
 
 // NotifyFileChanged immediately indexes a single file that was modified.

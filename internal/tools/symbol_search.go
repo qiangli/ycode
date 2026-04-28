@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/qiangli/ycode/internal/storage"
 )
@@ -79,6 +81,7 @@ func RegisterSymbolSearchHandler(r *Registry) {
 				filters["exported"] = "true"
 			}
 
+			start := time.Now()
 			var results []storage.SearchResult
 			var err error
 
@@ -87,6 +90,13 @@ func RegisterSymbolSearchHandler(r *Registry) {
 			} else {
 				results, err = codeSearchIndex.Search(ctx, symbolIndexName, params.Query, params.MaxResults)
 			}
+			dur := time.Since(start)
+			if searchInstruments != nil {
+				searchInstruments.SearchSymbolTotal.Add(ctx, 1)
+				searchInstruments.SearchSymbolDuration.Record(ctx, float64(dur.Milliseconds()))
+			}
+			slog.Debug("symbol_search", "query", params.Query, "kind", params.Kind,
+				"duration_ms", dur.Milliseconds(), "results", len(results))
 			if err != nil {
 				return "", fmt.Errorf("symbol search: %w", err)
 			}
