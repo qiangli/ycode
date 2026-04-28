@@ -48,7 +48,7 @@ All competitors shell out to ripgrep. None use indexing, structural search, or i
 - **Glob `**`**: Added `github.com/bmatcuk/doublestar/v4` (MIT). Patterns like `src/**/*.go` and `**/cmd/**/main.go` now work correctly.
 - **Pagination**: `GrepParams.Offset` enables paging through large result sets.
 
-### Phase 2: Bleve-Accelerated Grep
+### Phase 2: Bleve-Accelerated Grep (Complete)
 
 10-100x speedup on large codebases by querying the Bleve index before walking.
 
@@ -56,24 +56,27 @@ All competitors shell out to ripgrep. None use indexing, structural search, or i
 - **Two-stage indexed grep** (`grep_indexed.go`): Extract literals from regex via `regexp/syntax`, query Bleve for candidate files, regex-verify only candidates. Falls back to full walk when no literals extractable.
 - **Incremental freshness**: `NotifyFileChanged()` on indexer, wired to write/edit tool hooks for instant re-indexing of modified files.
 
-### Phase 3: Symbol Search + Reference Graph
+### Phase 3: Symbol Search + Reference Graph (Complete)
 
 Structured symbol search and impact analysis — no competitor has this.
 
-- **Symbol indexer** (`symbol_indexer.go`): Go symbols via `go/ast`, other languages via regex patterns. Indexed into Bleve `"symbols"` index with name, kind, file, language, signature, line.
+- **Symbol indexer** (`symbol_indexer.go`): Go symbols via `go/ast`, other languages via regex patterns (Python, JS/TS, Rust, Java, Ruby). Indexed into Bleve `"symbols"` index with name, kind, file, language, signature, line.
 - **`symbol_search` tool**: Query symbols by name, kind, language, exported status.
-- **Reference graph** (`refgraph.go`): Bidirectional caller/callee edges from `go/ast`, stored in bbolt KV.
-- **`find_references`/`find_impact` tools**: "Who calls X?" and "If I change X, what breaks?" with N-level traversal.
-- **Graph-ranked RepoMap** (Aider-inspired): PageRank on define/reference graph with naming heuristics (sqrt freq scaling, 50x chat-context boost, meaningful-name detection).
+- **Reference graph** (`refgraph.go`): Bidirectional caller/callee edges from `go/ast`, stored in bbolt KV. Includes `SymbolMatches` for fuzzy lookup.
+- **`find_references`/`find_impact` tools**: "Who calls X?" and "If I change X, what breaks?" with N-level BFS traversal.
+- **Graph-ranked RepoMap** (Aider-inspired): PageRank on define/reference graph with naming heuristics (sqrt freq scaling, 50x chat-context boost, meaningful-name detection, camelCase/snake_case boost, unexported penalty).
 
-### Phase 4: AST-Aware Structural Search
+### Phase 4: AST-Aware Structural Search (Complete)
 
 Queries impossible with regex become trivial with AST patterns.
 
-- **Containerized ast-grep** (`internal/runtime/astgrep/`): `containertool.Tool` pattern, same as tree-sitter. Patterns like `func $NAME($$$PARAMS) error` and `if err != nil { return $$$REST }`.
-- **Extended tree-sitter container**: S-expression structural queries for lighter-weight patterns.
-- **Trigram index** (`trigram.go`): Lightweight custom implementation or import Zoekt packages. Handles edge case where Bleve literal extraction falls back.
-- **Semantic code search**: Connect chromem-go vector store for natural language queries. Opt-in (requires embedding model via Ollama).
+- **Containerized ast-grep** (`internal/runtime/astgrep/`): `containertool.Tool` pattern with node:22-alpine multi-stage build. Patterns like `func $NAME($$$PARAMS) error` and `if err != nil { return $$$REST }`.
+- **`ast_search` tool**: Pattern, language, path, rewrite parameters. Requires container engine.
+- **Trigram index** (`trigram.go`): Lightweight in-memory + KV-backed implementation. Per-line trigram extraction, intersection queries for regex acceleration when Bleve literal extraction falls back.
+
+### Future: Semantic Code Search (Not yet implemented)
+
+- Connect chromem-go vector store for natural language queries. Opt-in (requires embedding model via Ollama).
 
 ## Key Files
 
