@@ -1,0 +1,16 @@
+FROM docker.io/oven/bun:1-debian AS builder
+WORKDIR /src
+COPY . .
+RUN bun install --frozen-lockfile && bun run build
+
+FROM docker.io/library/ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash ca-certificates curl git make ripgrep && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:$PATH"
+COPY --from=builder /src /opt/opencode
+RUN ln -s /opt/opencode/packages/opencode/bin/opencode /usr/local/bin/opencode
+RUN useradd -m -s /bin/bash -u 1000 agent
+USER agent
+WORKDIR /workspace
+CMD ["sleep", "infinity"]

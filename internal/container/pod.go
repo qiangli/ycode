@@ -3,7 +3,11 @@ package container
 import (
 	"context"
 	"fmt"
-	"strings"
+
+	nettypes "go.podman.io/common/libnetwork/types"
+	"go.podman.io/podman/v6/pkg/bindings/pods"
+	entTypes "go.podman.io/podman/v6/pkg/domain/entities/types"
+	"go.podman.io/podman/v6/pkg/specgen"
 )
 
 // PodOptions holds configuration for creating a pod.
@@ -20,60 +24,70 @@ type PodInfo struct {
 	Status string `json:"Status"`
 }
 
-// CreatePod creates a new pod for grouping related agent containers.
-// Containers in the same pod share a network namespace.
+// CreatePod creates a new pod for grouping related agent containers via REST API.
 func (e *Engine) CreatePod(ctx context.Context, opts *PodOptions) (string, error) {
-	args := []string{"pod", "create"}
-
-	if opts.Name != "" {
-		args = append(args, "--name", opts.Name)
+	podSpec := specgen.PodSpecGenerator{
+		PodBasicConfig: specgen.PodBasicConfig{
+			Name:   opts.Name,
+			Labels: opts.Labels,
+		},
 	}
+
 	if opts.Network != "" {
-		args = append(args, "--network", opts.Network)
-	}
-	for k, v := range opts.Labels {
-		args = append(args, "--label", k+"="+v)
+		podSpec.Networks = map[string]nettypes.PerNetworkOptions{
+			opts.Network: {},
+		}
 	}
 
-	out, err := e.Run(ctx, args...)
+	spec := &entTypes.PodSpec{
+		PodSpecGen: podSpec,
+	}
+
+	resp, err := pods.CreatePodFromSpec(e.connCtx, spec)
 	if err != nil {
 		return "", fmt.Errorf("create pod: %w", err)
 	}
-	return strings.TrimSpace(string(out)), nil
+	return resp.Id, nil
 }
 
-// StartPod starts all containers in a pod.
+// StartPod starts all containers in a pod via REST API.
 func (e *Engine) StartPod(ctx context.Context, nameOrID string) error {
-	_, err := e.Run(ctx, "pod", "start", nameOrID)
+	_, err := pods.Start(e.connCtx, nameOrID, nil)
 	return err
 }
 
-// StopPod stops all containers in a pod.
+// StopPod stops all containers in a pod via REST API.
 func (e *Engine) StopPod(ctx context.Context, nameOrID string) error {
-	_, err := e.Run(ctx, "pod", "stop", nameOrID)
+	_, err := pods.Stop(e.connCtx, nameOrID, nil)
 	return err
 }
 
-// RemovePod removes a pod and all its containers.
+// RemovePod removes a pod and all its containers via REST API.
 func (e *Engine) RemovePod(ctx context.Context, nameOrID string, force bool) error {
-	args := []string{"pod", "rm"}
-	if force {
-		args = append(args, "-f")
-	}
-	args = append(args, nameOrID)
-	_, err := e.Run(ctx, args...)
+	opts := new(pods.RemoveOptions).WithForce(force)
+	_, err := pods.Remove(e.connCtx, nameOrID, opts)
 	return err
 }
 
-// ListPods lists pods matching the given name filter.
+// ListPods lists pods matching the given name filter via REST API.
 func (e *Engine) ListPods(ctx context.Context, nameFilter string) ([]PodInfo, error) {
-	args := []string{"pod", "ls"}
+	opts := new(pods.ListOptions)
 	if nameFilter != "" {
-		args = append(args, "--filter", "name="+nameFilter)
+		opts = opts.WithFilters(map[string][]string{"name": {nameFilter}})
 	}
-	var pods []PodInfo
-	if err := e.RunJSON(ctx, &pods, args...); err != nil {
+
+	listed, err := pods.List(e.connCtx, opts)
+	if err != nil {
 		return nil, err
 	}
-	return pods, nil
+
+	var infos []PodInfo
+	for _, p := range listed {
+		infos = append(infos, PodInfo{
+			ID:     p.Id,
+			Name:   p.Name,
+			Status: p.Status,
+		})
+	}
+	return infos, nil
 }

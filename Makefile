@@ -11,7 +11,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL
 
-.PHONY: help init sync priorart-list priorart-sync compile compile-debug build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-check collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-contract eval-smoke eval-behavioral eval-e2e eval-all-evals
+.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-all-evals
 
 .DEFAULT_GOAL := help
 
@@ -39,6 +39,11 @@ priorart-sync: ## Pull latest changes for all priorart repos
 
 compile: ## Compile the ycode binary to bin/ (no checks)
 	go build -trimpath $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+
+compile-full: ## Compile with embedded podman + runner (single binary, all-in-one)
+	go build -trimpath -tags "embed_podman,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
+	@echo "Built single binary with embedded podman + runner: bin/ycode"
 
 compile-debug: ## Compile with debug symbols (for profiling/debugging)
 	go build -trimpath -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/ycode ./cmd/ycode/
@@ -78,6 +83,12 @@ test-tui-fuzz: ## Run TUI fuzz tests for 30s each
 test-all: test test-container test-gitserver test-tui test-tui-e2e test-integration test-ui ## Run all tests: unit + container + gitserver + TUI + integration + browser
 
 # ─── Evaluation ────────────────────────────────────────────────────────────
+
+eval-agentsmd: ## Validate AGENTS.md quality (static analysis, no LLM)
+	go test -v -run TestAnalyze -race ./internal/eval/agentsmd/...
+
+bench-init: ## Run /init E2E benchmark (HOST=localhost for local, HOST=<remote> for remote)
+	go test -tags benchmark -count=1 -timeout 35m -v ./internal/eval/benchmark/...
 
 eval-contract: ## Run contract-tier evals (no LLM, deterministic, fast)
 	go test -short -race ./internal/eval/...
@@ -140,8 +151,26 @@ runner-download: ## Download pre-built Ollama runner for current platform
 runner-build: ## Build Ollama runner from source (requires C++ toolchain)
 	@./scripts/build-runner.sh
 
+runner-build-thin: ## Build thin runner and compress for embedding into ycode
+	@./scripts/build-runner-thin.sh
+
 runner-check: ## Verify runner binary exists and responds to health check
 	@./scripts/check-runner.sh
+
+podman-embed: ## Compress system podman binary for embedding into ycode
+	@./scripts/embed-podman.sh
+
+vfkit-embed: ## Compress vfkit binary for embedding into ycode (macOS only)
+	@./scripts/embed-vfkit.sh
+
+build-single: podman-embed vfkit-embed runner-build-thin ## Build single self-contained ycode binary
+	go build -trimpath -tags "embed_podman,embed_vfkit,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
+	@echo ""
+	@echo "=== Single binary ready: bin/ycode ==="
+	@echo "Includes: embedded podman, embedded vfkit, embedded inference runner"
+	@echo "Ship this one file — ycode auto-provisions everything on first run."
+	@ls -lh bin/ycode
 
 # ─── Collector ──────────────────────────────────────────────────────────────
 

@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	runnerEmbed "github.com/qiangli/ycode/internal/inference/runner_embed"
 )
 
 // RunnerManager manages the lifecycle of the external C++ inference runner.
@@ -224,7 +226,7 @@ func (r *RunnerManager) BaseURL() string {
 
 // discoverRunner finds the runner binary using a priority search.
 func discoverRunner(explicit string) (string, error) {
-	// 1. Explicit path.
+	// 1. Explicit path from config.
 	if explicit != "" {
 		if _, err := os.Stat(explicit); err == nil {
 			return explicit, nil
@@ -232,14 +234,23 @@ func discoverRunner(explicit string) (string, error) {
 		return "", fmt.Errorf("explicit runner path %q not found", explicit)
 	}
 
-	// 2. $OLLAMA_RUNNERS env var.
+	// 2. Self-extracting embedded runner (primary path for single-binary deploys).
+	if runnerEmbed.Available() {
+		cacheDir := defaultCacheDir()
+		if p, err := runnerEmbed.EnsureRunner(cacheDir); err == nil {
+			slog.Info("inference: using embedded runner", "path", p)
+			return p, nil
+		}
+	}
+
+	// 3. $OLLAMA_RUNNERS env var.
 	if p := os.Getenv("OLLAMA_RUNNERS"); p != "" {
 		if _, err := os.Stat(p); err == nil {
 			return p, nil
 		}
 	}
 
-	// 3. Adjacent to the current binary.
+	// 4. Adjacent to the current binary.
 	if exe, err := os.Executable(); err == nil {
 		adjacent := filepath.Join(filepath.Dir(exe), "ollama")
 		if _, err := os.Stat(adjacent); err == nil {
@@ -247,10 +258,18 @@ func discoverRunner(explicit string) (string, error) {
 		}
 	}
 
-	// 4. System PATH.
+	// 5. System PATH.
 	if p, err := exec.LookPath("ollama"); err == nil {
 		return p, nil
 	}
 
-	return "", fmt.Errorf("ollama binary not found in PATH, adjacent to ycode, or via $OLLAMA_RUNNERS")
+	return "", fmt.Errorf("inference runner not found: no embedded runner, not in PATH, not adjacent to ycode, not via $OLLAMA_RUNNERS")
+}
+
+// defaultCacheDir returns the cache directory for extracted binaries.
+func defaultCacheDir() string {
+	if dir, err := os.UserCacheDir(); err == nil {
+		return filepath.Join(dir, "ycode", "bin")
+	}
+	return filepath.Join(os.TempDir(), "ycode-bin")
 }

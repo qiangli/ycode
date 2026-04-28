@@ -1,0 +1,11 @@
+FROM docker.io/library/python:3.12-slim-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash ca-certificates git make ripgrep && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY . .
+RUN pip install --no-cache-dir -e .
+RUN useradd -m -s /bin/bash -u 1000 agent
+USER agent
+ENV PATH="/usr/local/bin:$PATH"
+WORKDIR /workspace
+CMD ["sleep", "infinity"]

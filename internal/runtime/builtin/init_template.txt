@@ -24,6 +24,7 @@ Look for the highest-signal facts for an agent working in this repo:
 - repo-specific style or workflow conventions that differ from defaults
 - testing quirks: fixtures, integration test prerequisites, snapshot workflows, required services, flaky or expensive suites
 - important constraints from existing instruction files worth preserving
+- concrete guardrails: directories that must never be modified, commands that must never be run, patterns that are prohibited — use "NEVER", "MUST NOT", "ALWAYS" with specific subjects
 
 Good `AGENTS.md` content is usually hard-earned context that took reading multiple files to infer.
 
@@ -41,23 +42,20 @@ Include only high-signal, repo-specific guidance such as:
 - setup requirements, environment quirks, and operational gotchas
 - references to existing instruction sources that matter
 
+Prefer fenced code blocks with exact commands over prose descriptions.
+The Makefile or build tool is the source of truth for build commands — reference it, don't paraphrase it.
+
 Exclude:
-- generic software advice
+- generic software advice ("write clean code", "follow best practices", "prefer small changes")
 - long tutorials or exhaustive file trees
 - obvious language conventions
 - speculative claims or anything you could not verify from the provided context
 - content better stored in another file
+- instructions the agent would follow anyway without being told
+- content that restates language or framework defaults
 
 When in doubt, omit.
 
 Prefer short sections and bullets. If the repo is simple, keep the file simple. If the repo is large, summarize the few structural facts that actually change how an agent should work.
 
 If `AGENTS.md` already exists at `{{PATH}}`, improve it in place rather than rewriting blindly. Preserve verified useful guidance, delete fluff or stale claims, and reconcile it with the provided project context.
- speculative claims or anything you could not verify
-- content better stored in another file
-
-When in doubt, omit.
-
-Prefer short sections and bullets. If the repo is simple, keep the file simple. If the repo is large, summarize the few structural facts that actually change how an agent should work.
-
-If `AGENTS.md` already exists at `{{PATH}}`, improve it in place rather than rewriting blindly. Preserve verified useful guidance, delete fluff or stale claims, and reconcile it with the current codebase.

@@ -1,11 +1,10 @@
 // Package container provides embedded Podman-based container management for ycode.
-// ycode embeds Podman's Go container management layer to create, manage, and
-// monitor isolated execution environments for agent swarms.
+// Operations use Podman's REST API client bindings (pure Go, no CLI shelling).
+// The Podman service is either an existing socket or started as a managed process.
 package container
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -17,36 +16,33 @@ import (
 	"sync/atomic"
 	"time"
 
-	// Anchor import to ensure podman embed dependencies are preserved by go mod tidy.
-	_ "go.podman.io/podman/v6/embed"
+	podmanEmbed "github.com/qiangli/ycode/internal/container/podman_embed"
+	"go.podman.io/podman/v6/pkg/bindings"
 )
 
 // Engine wraps the Podman container management layer.
-// It discovers the Podman socket (or starts a Podman service if needed)
-// and provides container lifecycle operations.
+// It connects to a Podman service via REST API bindings (pure Go)
+// and optionally manages the service process lifecycle.
 type Engine struct {
-	binaryPath string
+	connCtx    context.Context // connection context for REST API bindings
 	socketPath string
 	apiURL     string
 
 	healthy atomic.Bool
 	mu      sync.Mutex
-	cmd     *exec.Cmd // if we started our own podman service
-	cancel  context.CancelFunc
-	done    chan struct{}
+
+	// Only used when we start our own podman service.
+	binaryPath string
+	cmd        *exec.Cmd
+	cancel     context.CancelFunc
+	done       chan struct{}
 }
 
-// NewEngine creates a container engine. It discovers the Podman binary and
-// connects to an existing Podman socket or starts a new Podman service.
+// NewEngine creates a container engine. It connects to an existing Podman
+// socket or starts a new Podman service and establishes a REST API connection.
 func NewEngine(ctx context.Context, cfg *EngineConfig) (*Engine, error) {
-	path, err := discoverBinary(cfg.BinaryPath)
-	if err != nil {
-		return nil, fmt.Errorf("podman not found: %w (install podman or set container.binaryPath in config)", err)
-	}
-
 	e := &Engine{
-		binaryPath: path,
-		done:       make(chan struct{}),
+		done: make(chan struct{}),
 	}
 
 	// Try existing socket first.
@@ -58,28 +54,92 @@ func NewEngine(ctx context.Context, cfg *EngineConfig) (*Engine, error) {
 	if socketPath != "" && socketAvailable(socketPath) {
 		e.socketPath = socketPath
 		e.apiURL = "unix://" + socketPath
+		connCtx, err := bindings.NewConnection(ctx, e.apiURL)
+		if err != nil {
+			return nil, fmt.Errorf("connect to podman socket: %w", err)
+		}
+		e.connCtx = connCtx
 		e.healthy.Store(true)
 		slog.Info("container: connected to existing podman socket", "socket", socketPath)
 		return e, nil
 	}
 
-	// Start our own podman service on an ephemeral socket.
+	// Try in-process API server first (Linux: uses libpod directly, no binary).
+	if canStartInProcess() {
+		if err := e.startServiceInProcess(ctx, cfg); err != nil {
+			slog.Warn("container: in-process service failed, falling back to binary", "error", err)
+		} else {
+			connCtx, err := bindings.NewConnection(ctx, e.apiURL)
+			if err != nil {
+				return nil, fmt.Errorf("connect to in-process service: %w", err)
+			}
+			e.connCtx = connCtx
+			return e, nil
+		}
+	}
+
+	// macOS/other: auto-provision and start podman machine if needed.
+	if !canStartInProcess() {
+		slog.Info("container: no socket found, auto-provisioning machine")
+		mcfg := DefaultMachineConfig()
+		if err := EnsureMachine(ctx, mcfg); err != nil {
+			slog.Warn("container: machine auto-provision failed", "error", err)
+		} else {
+			// Machine started — try socket again.
+			if sp := defaultSocketPath(); sp != "" && socketAvailable(sp) {
+				e.socketPath = sp
+				e.apiURL = "unix://" + sp
+				connCtx, err := bindings.NewConnection(ctx, e.apiURL)
+				if err != nil {
+					return nil, fmt.Errorf("connect to machine socket: %w", err)
+				}
+				e.connCtx = connCtx
+				e.healthy.Store(true)
+				slog.Info("container: connected to machine", "socket", sp)
+				return e, nil
+			}
+		}
+	}
+
+	// Fallback: start podman as an external service process.
+	path, err := discoverBinary(cfg.BinaryPath)
+	if err != nil {
+		return nil, fmt.Errorf("podman not found: %w (install podman, start podman machine, or connect to a remote host)", err)
+	}
+	e.binaryPath = path
+
 	if err := e.startService(ctx, cfg); err != nil {
 		return nil, fmt.Errorf("start podman service: %w", err)
 	}
+
+	// Establish REST API connection to the started service.
+	connCtx, err := bindings.NewConnection(ctx, e.apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("connect to started podman service: %w", err)
+	}
+	e.connCtx = connCtx
 
 	return e, nil
 }
 
 // EngineConfig holds configuration for the container engine.
 type EngineConfig struct {
-	BinaryPath string // explicit path to podman binary (optional)
+	BinaryPath string // explicit path to podman binary (optional, only for service start)
 	SocketPath string // explicit socket path (optional)
 	DataDir    string // data directory for podman storage
 }
 
-// Run executes a podman CLI command and returns the combined output.
+// ConnCtx returns the REST API connection context for direct bindings access.
+func (e *Engine) ConnCtx() context.Context {
+	return e.connCtx
+}
+
+// Run executes a raw podman CLI command. This is only used by the `ycode podman`
+// pass-through CLI subcommand. All internal container operations use REST bindings.
 func (e *Engine) Run(ctx context.Context, args ...string) ([]byte, error) {
+	if e.binaryPath == "" {
+		return nil, fmt.Errorf("podman binary not available (connected via socket only; use REST APIs)")
+	}
 	cmd := exec.CommandContext(ctx, e.binaryPath, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -88,25 +148,12 @@ func (e *Engine) Run(ctx context.Context, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// RunJSON executes a podman CLI command with --format=json and unmarshals the result.
-func (e *Engine) RunJSON(ctx context.Context, result any, args ...string) error {
-	args = append(args, "--format=json")
-	out, err := e.Run(ctx, args...)
-	if err != nil {
-		return err
-	}
-	if err := json.Unmarshal(out, result); err != nil {
-		return fmt.Errorf("parse podman json output: %w", err)
-	}
-	return nil
-}
-
 // Healthy returns true if the engine can communicate with podman.
 func (e *Engine) Healthy() bool {
 	return e.healthy.Load()
 }
 
-// BinaryPath returns the discovered podman binary path.
+// BinaryPath returns the discovered podman binary path (empty if socket-only).
 func (e *Engine) BinaryPath() string {
 	return e.binaryPath
 }
@@ -125,6 +172,8 @@ func (e *Engine) Close(ctx context.Context) error {
 }
 
 // startService starts a podman system service on an ephemeral Unix socket.
+// This is the only operation that uses exec.Command — all subsequent
+// container operations use the REST API bindings.
 func (e *Engine) startService(ctx context.Context, cfg *EngineConfig) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -139,17 +188,16 @@ func (e *Engine) startService(ctx context.Context, cfg *EngineConfig) error {
 	}
 
 	socketPath := filepath.Join(dataDir, "podman.sock")
-	// Remove stale socket.
-	os.Remove(socketPath)
+	os.Remove(socketPath) // Remove stale socket.
 
 	sctx, cancel := context.WithCancel(ctx)
 	e.cancel = cancel
 
 	cmd := exec.CommandContext(sctx, e.binaryPath, "system", "service",
-		"--timeout=0", // no timeout, run until killed
+		"--timeout=0",
 		"unix://"+socketPath,
 	)
-	cmd.Stdout = os.Stderr // log podman output to stderr
+	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
@@ -160,7 +208,6 @@ func (e *Engine) startService(ctx context.Context, cfg *EngineConfig) error {
 	e.socketPath = socketPath
 	e.apiURL = "unix://" + socketPath
 
-	// Wait for socket to become available.
 	if err := waitForSocket(socketPath, 10*time.Second); err != nil {
 		cancel()
 		return fmt.Errorf("podman service did not start: %w", err)
@@ -169,7 +216,6 @@ func (e *Engine) startService(ctx context.Context, cfg *EngineConfig) error {
 	e.healthy.Store(true)
 	slog.Info("container: started podman service", "socket", socketPath)
 
-	// Monitor process.
 	go func() {
 		defer close(e.done)
 		err := cmd.Wait()
@@ -182,12 +228,14 @@ func (e *Engine) startService(ctx context.Context, cfg *EngineConfig) error {
 	return nil
 }
 
-// discoverBinary finds the podman binary using the following priority:
+// discoverBinary finds the podman binary using a priority search:
 //  1. Explicit path from config
-//  2. $YCODE_CONTAINER_RUNTIME environment variable
-//  3. Adjacent to the ycode binary: $(dirname ycode)/podman
-//  4. System PATH: which podman
+//  2. Self-extracting embedded binary (single-binary deploys)
+//  3. $YCODE_CONTAINER_RUNTIME environment variable
+//  4. Adjacent to ycode binary: $(dirname ycode)/podman
+//  5. System PATH
 func discoverBinary(explicit string) (string, error) {
+	// 1. Explicit path.
 	if explicit != "" {
 		if _, err := os.Stat(explicit); err == nil {
 			return explicit, nil
@@ -195,13 +243,23 @@ func discoverBinary(explicit string) (string, error) {
 		return "", fmt.Errorf("configured binary not found: %s", explicit)
 	}
 
+	// 2. Self-extracting embedded binary.
+	if podmanEmbed.Available() {
+		cacheDir := defaultBinCacheDir()
+		if p, err := podmanEmbed.EnsurePodman(cacheDir); err == nil {
+			slog.Info("container: using embedded podman", "path", p)
+			return p, nil
+		}
+	}
+
+	// 3. Environment variable.
 	if envPath := os.Getenv("YCODE_CONTAINER_RUNTIME"); envPath != "" {
 		if _, err := os.Stat(envPath); err == nil {
 			return envPath, nil
 		}
 	}
 
-	// Adjacent to ycode binary.
+	// 4. Adjacent to ycode binary.
 	if exe, err := os.Executable(); err == nil {
 		adjacent := filepath.Join(filepath.Dir(exe), "podman")
 		if _, err := os.Stat(adjacent); err == nil {
@@ -209,40 +267,43 @@ func discoverBinary(explicit string) (string, error) {
 		}
 	}
 
-	// System PATH.
+	// 5. System PATH.
 	if path, err := exec.LookPath("podman"); err == nil {
 		return path, nil
 	}
 
-	return "", fmt.Errorf("podman binary not found in PATH")
+	return "", fmt.Errorf("podman not found: no embedded binary, not in PATH, not adjacent to ycode, not via $YCODE_CONTAINER_RUNTIME")
+}
+
+// defaultBinCacheDir returns the cache directory for extracted companion binaries.
+func defaultBinCacheDir() string {
+	if dir, err := os.UserCacheDir(); err == nil {
+		return filepath.Join(dir, "ycode", "bin")
+	}
+	return filepath.Join(os.TempDir(), "ycode-bin")
 }
 
 // defaultSocketPath returns the default Podman user socket path.
-// It checks multiple known locations across macOS and Linux.
 func defaultSocketPath() string {
 	candidates := []string{}
 
-	// macOS: podman machine socket (most common on macOS with podman machine).
 	tmpDir := os.TempDir()
 	candidates = append(candidates,
 		filepath.Join(tmpDir, "podman", "podman-machine-default-api.sock"),
 	)
 
-	// macOS: older podman socket layout.
 	if uid := os.Getuid(); uid > 0 {
 		candidates = append(candidates,
 			filepath.Join(tmpDir, fmt.Sprintf("podman-run-%d", uid), "podman", "podman.sock"),
 		)
 	}
 
-	// Linux: XDG runtime dir.
 	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
 		candidates = append(candidates,
 			filepath.Join(xdg, "podman", "podman.sock"),
 		)
 	}
 
-	// Try CONTAINER_HOST env var.
 	if host := os.Getenv("CONTAINER_HOST"); host != "" {
 		if strings.HasPrefix(host, "unix://") {
 			path := strings.TrimPrefix(host, "unix://")
@@ -253,17 +314,6 @@ func defaultSocketPath() string {
 	for _, path := range candidates {
 		if _, err := os.Stat(path); err == nil {
 			return path
-		}
-	}
-
-	// Last resort: ask podman itself.
-	if out, err := exec.Command("podman", "info", "--format", "{{.Host.RemoteSocket.Path}}").Output(); err == nil {
-		path := strings.TrimSpace(string(out))
-		path = strings.TrimPrefix(path, "unix://")
-		if path != "" {
-			if _, err := os.Stat(path); err == nil {
-				return path
-			}
 		}
 	}
 

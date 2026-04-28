@@ -6,7 +6,7 @@ import (
 
 const (
 	// MaxRefreshBudget is the maximum characters for post-compaction context refresh.
-	MaxRefreshBudget = 1500
+	MaxRefreshBudget = 2500
 )
 
 // PostCompactionRefresh extracts critical sections from instruction files
@@ -26,6 +26,8 @@ func PostCompactionRefresh(contextFiles []ContextFile) string {
 		"Build & Test",
 		"Key Design Decisions",
 		"Dependencies",
+		"Conventions",
+		"Directory Boundaries",
 	}
 
 	var parts []string

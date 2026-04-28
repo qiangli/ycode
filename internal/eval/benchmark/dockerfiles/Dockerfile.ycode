@@ -1,0 +1,15 @@
+FROM docker.io/library/golang:1.23-bookworm AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -o /ycode ./cmd/ycode/
+
+FROM docker.io/library/ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash ca-certificates git make ripgrep && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -s /bin/bash -u 1000 agent
+COPY --from=builder /ycode /usr/local/bin/ycode
+USER agent
+WORKDIR /workspace
+CMD ["sleep", "infinity"]

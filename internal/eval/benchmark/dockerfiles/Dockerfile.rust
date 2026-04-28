@@ -1,0 +1,17 @@
+FROM docker.io/library/rust:1-bookworm AS builder
+WORKDIR /src
+COPY . .
+ARG BINARY_NAME=clawcode
+ARG CARGO_DIR=rust
+RUN cd ${CARGO_DIR} && cargo build --release \
+    && cp target/release/${BINARY_NAME} /tool || \
+    (find target/release -maxdepth 1 -type f -executable | head -1 | xargs -I{} cp {} /tool)
+
+FROM docker.io/library/ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash ca-certificates git make ripgrep && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -s /bin/bash -u 1000 agent
+COPY --from=builder /tool /usr/local/bin/tool
+USER agent
+WORKDIR /workspace
+CMD ["sleep", "infinity"]

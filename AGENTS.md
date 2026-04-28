@@ -24,9 +24,11 @@ make test           # unit tests only (-short -race)
 make cross          # cross-compile all platforms (dist/)
 ```
 
-Single test: `go test -short -race -run TestName ./internal/path/to/package/`
-
-Integration tests: `go test -tags integration -v -count=1 ./internal/integration/...`
+Single test and integration test:
+```bash
+go test -short -race -run TestName ./internal/path/to/package/
+go test -tags integration -v -count=1 ./internal/integration/...
+```
 
 Additional test targets:
 ```bash
@@ -55,35 +57,11 @@ make runner-check     # verify runner binary + health check
 
 ## Architecture
 
-Entry: `cmd/ycode/main.go` -> cobra CLI -> REPL (`internal/cli/app.go`) or one-shot mode.
-
-Core loop (`internal/runtime/conversation/runtime.go`): assemble request -> send to provider -> dispatch tool calls -> loop until done.
-
-Key subsystems:
-- **Providers** (`internal/api/`): Anthropic, OpenAI-compatible, Gemini
-- **Tools** (`internal/tools/`): map-based registry, always-available vs deferred, per-tool middleware
-- **Prompt** (`internal/runtime/prompt/`): section-based assembly with static/dynamic cache boundary
-- **Session** (`internal/runtime/session/`): JSONL persistence, auto-compaction at 100K tokens
-- **Storage** (`internal/storage/`): KV, SQLite, vector DB, full-text search
-- **Observability** (`internal/collector/`, `internal/observability/`): embedded OTEL stack; Perses plugins embedded via `go:embed`; submodules in `external/`
-- **Plugins** (`internal/plugins/`): hook lifecycle, runtime tool registration
-- **Server** (`internal/server/`, `internal/service/`): HTTP/WebSocket/NATS serve mode (`ycode serve`)
-- **Web** (`internal/web/`): embedded web UI (minimal)
-- **Inference** (`internal/inference/`): local model inference via embedded Ollama runner
-- **Container** (`internal/container/`): container management (Podman)
-- **Git server** (`internal/gitserver/`): git server workspace operations
-- **Memos** (`internal/memos/`): memos integration for note-taking
-- **Event bus** (`internal/bus/`): internal event routing between subsystems
-
-Public embedding API: `pkg/ycode/` exposes `NewAgent`, `Run`, and functional options for embedding ycode as a library in other Go programs.
-
-Design: `RuntimeContext` (no global state), three-tier config merge, five-layer memory.
+Entry: `cmd/ycode/main.go` -> cobra CLI -> REPL (`internal/cli/app.go`) or one-shot mode. Core loop in `internal/runtime/conversation/runtime.go`: assemble request -> send to provider -> dispatch tool calls -> loop until done. Public embedding API: `pkg/ycode/`. Design: `RuntimeContext` (no global state), three-tier config merge, five-layer memory.
 
 ## Skills
 
-When the user's message starts with `/<name>` (e.g. `/build`, `/deploy`, `/learn`), read `skills/<name>/skill.md` and follow its instructions exactly. Everything after `/<name> ` is `ARGS` — pass it wherever the skill references `{{ARGS}}`. If no matching skill file exists, tell the user.
-
-Project skills in `skills/`: `/build`, `/claude`, `/deploy`, `/learn`, `/setup`, `/validate`. Some skills (`/init`, `/commit`) are embedded in the ycode binary and dispatched via the `Skill` tool.
+When the user's message starts with `/<name>`, read `skills/<name>/skill.md` and follow it. Everything after `/<name> ` is `ARGS`. Project skills: `/build`, `/claude`, `/deploy`, `/learn`, `/setup`, `/validate`, `/bench-instructions`. Some skills (`/init`, `/commit`) are embedded in the binary.
 
 ## Development Cycle: Build -> Deploy -> Validate
 
@@ -96,46 +74,45 @@ make deploy HOST=staging PORT=58080     # remote deploy (passwordless SSH requir
 make validate HOST=staging PORT=58080   # validate remote
 ```
 
-Each step depends on the previous one succeeding. On failure: diagnose, fix source, re-run from `make build`. Allow up to 3 fix-and-retry cycles before escalating.
+Each step depends on the previous one succeeding. On failure: diagnose, fix source, re-run from `make build`.
 
 ## Conventions
 
-See [docs/instructions.md](./docs/instructions.md) for full details: skill dispatch, build system layers, testing, commit rules.
-
-**Layered build system** -- strict three-layer separation:
-1. **Makefile** -- dependency graph only. No multi-line logic or embedded bash blocks.
-2. **scripts/** -- bash orchestration only. Sequencing, env setup, conditionals.
-3. **Go** -- all logic. Tests, utilities, and any non-trivial computation must be in Go.
+**Layered build system** -- strict three-layer separation. Do not put logic in the Makefile (dependency graph only). Do not put logic in scripts/ (orchestration only). All logic must be in Go.
 
 **No test logic in bash.** Scripts may invoke `go test` but must not contain assertions, HTTP calls for validation, or result parsing.
 
-**Commit conventions**: stage files by name (never `git add -A`), only stage your own changes, match the repo's prefix style from `git log` (`fix:`, `feat:`, `docs:`).
+**Dependencies** -- never add a dependency with a non-permissive license (GPL, AGPL, SSPL, CPAL). Only MIT, Apache-2.0, BSD, ISC, and MPL-2.0 are allowed.
 
-**Pre-commit checks** -- ALWAYS run `make build` (or at minimum the four steps below) before committing:
+**No global state** -- never use package-level `var` for mutable state or registries. All state belongs on `RuntimeContext` or function parameters.
+
+**Logging discipline** -- do not add `log.Printf` or `fmt.Println` for debugging. Always use the structured logger from `RuntimeContext`. Never leave debug output on stderr — noisy shutdown logs have been a repeated source of fixes.
+
+**Test isolation** -- always use `t.TempDir()` for test files, never write to the working directory. Always use `testing.Short()` to skip slow tests. Do not add `//go:build integration` tags to unit tests.
+
+**Commit conventions**: stage files by name (never `git add -A` or `git add .`). Only stage your own changes — do not stage pre-existing modifications. Match the repo's prefix style from `git log` (`fix:`, `feat:`, `docs:`).
+
+**Pre-commit checks** -- ALWAYS run `make build` before committing. It runs tidy, fmt, vet, compile, and test in the correct order with `priorart/` excluded. If you need to run steps manually:
 ```bash
-go fmt ./...              # fix formatting
-go vet ./...              # catch issues
+PACKAGES=$(go list ./... | grep -v '/priorart/')
+go fmt $PACKAGES          # fix formatting
+go vet $PACKAGES          # catch issues
 go mod tidy               # sync dependencies
 make compile              # ensure it builds
 ```
-All four must pass with no errors. Do NOT commit code with formatting issues, vet warnings, or stale go.mod/go.sum.
+Never use bare `./...` — it hits read-only `priorart/` packages. All steps must pass with no errors.
 
 ## Directory Boundaries
 
-- **`priorart/`** -- **read-only reference code.** Never modify files under `priorart/`. These are upstream submodules kept for exploration, research, and design reference. Do not create, edit, or delete anything in this tree. The `PACKAGES` variable in the Makefile (`go list ./... | grep -v '/priorart/'`) excludes `priorart/` from all Go commands. When running Go commands manually (outside `make`), use `$(go list ./... | grep -v '/priorart/')` instead of `./...` to avoid hitting these packages.
-- **`external/`** -- vendored dependencies used by the ycode build. If code from `priorart/` (or any external project) needs to be incorporated into ycode, vendor it into `external/` with appropriate attribution.
+- **`priorart/`** -- **read-only.** Never modify, create, or delete anything under `priorart/`. Use `$(go list ./... | grep -v '/priorart/')` instead of `./...` for manual Go commands.
+- **`external/`** -- vendored submodules for the ycode build. Do not modify directly; vendor new code with attribution.
 
-## Submodule Dependencies
+## Evaluation
 
-The project uses local `replace` directives for embedded observability components:
-- `external/victorialogs/` -> `github.com/VictoriaMetrics/VictoriaLogs`
-- `external/jaeger/` -> `github.com/jaegertracing/jaeger`
-- `external/perses/` -> `github.com/perses/perses`
-- `external/memos/` -> `github.com/usememos/memos`
-
-## Build Notes
-
-macOS arm64: binaries are ad-hoc codesigned after compile (`codesign -f -s -`). Copying the binary (e.g. `cp`) invalidates the signature — re-sign after install. The `make install` target handles this automatically.
+```bash
+make eval-agentsmd                     # validate AGENTS.md quality (static, no LLM)
+make eval-contract                     # contract-tier evals (no LLM, deterministic)
+```
 
 ## References
 
