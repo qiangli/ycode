@@ -198,6 +198,47 @@ func (idx *Indexer) recordMtime(relPath string, mtime time.Time) {
 	_ = idx.kv.Put(kvBucket, relPath, []byte(hash))
 }
 
+// NotifyFileChanged immediately indexes a single file that was modified.
+// This keeps the index fresh for files the agent is actively editing,
+// without waiting for the next periodic scan.
+func (idx *Indexer) NotifyFileChanged(path string) {
+	// Resolve to absolute path and check it's within workDir.
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return
+	}
+	relPath, err := filepath.Rel(idx.workDir, absPath)
+	if err != nil || strings.HasPrefix(relPath, "..") {
+		return // outside workspace
+	}
+
+	// Check if it's a source file.
+	ext := strings.ToLower(filepath.Ext(absPath))
+	if !fileops.IsSourceExt(ext) {
+		return
+	}
+
+	// Check file size.
+	info, err := os.Stat(absPath)
+	if err != nil || info.Size() > MaxFileSize || info.Size() == 0 || info.IsDir() {
+		return
+	}
+
+	// Read and index.
+	content, err := os.ReadFile(absPath)
+	if err != nil {
+		return
+	}
+
+	ctx := context.Background()
+	if err := idx.indexFile(ctx, relPath, string(content), ext); err != nil {
+		slog.Debug("indexer: notify file changed", "path", relPath, "error", err)
+		return
+	}
+	idx.recordMtime(relPath, info.ModTime())
+	slog.Debug("indexer: re-indexed changed file", "path", relPath)
+}
+
 func hashMtime(t time.Time) string {
 	h := sha256.Sum256([]byte(t.UTC().Format(time.RFC3339Nano)))
 	return hex.EncodeToString(h[:8])

@@ -136,6 +136,10 @@ type SearchIndex interface {
 	// Search performs a full-text search query against a named index.
 	Search(ctx context.Context, indexName string, query string, maxResults int) ([]SearchResult, error)
 
+	// SearchWithFilter performs a full-text search combined with metadata filters.
+	// Filters are keyword match on metadata fields (e.g., "language": "go", "path": "internal/").
+	SearchWithFilter(ctx context.Context, indexName string, query string, filters map[string]string, maxResults int) ([]SearchResult, error)
+
 	// Delete removes a document by ID from a named index.
 	Delete(ctx context.Context, indexName string, docID string) error
 

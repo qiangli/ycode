@@ -15,6 +15,7 @@ import (
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
+	blevequery "github.com/blevesearch/bleve/v2/search/query"
 
 	"github.com/qiangli/ycode/internal/storage"
 )
@@ -170,6 +171,63 @@ func (s *Store) Search(_ context.Context, indexName string, query string, maxRes
 	result, err := idx.Search(searchReq)
 	if err != nil {
 		return nil, fmt.Errorf("search %q: %w", indexName, err)
+	}
+
+	var results []storage.SearchResult
+	for _, hit := range result.Hits {
+		doc := storage.Document{
+			ID:       hit.ID,
+			Metadata: make(map[string]string),
+		}
+		if content, ok := hit.Fields["content"].(string); ok {
+			doc.Content = content
+		}
+		for k, v := range hit.Fields {
+			if k == "content" || k == "id" {
+				continue
+			}
+			if sv, ok := v.(string); ok {
+				doc.Metadata[k] = sv
+			}
+		}
+		results = append(results, storage.SearchResult{
+			Document: doc,
+			Score:    hit.Score,
+		})
+	}
+
+	return results, nil
+}
+
+// SearchWithFilter performs a full-text search combined with metadata keyword filters.
+// Each filter entry constrains results to documents where the metadata field matches the value.
+func (s *Store) SearchWithFilter(_ context.Context, indexName string, query string, filters map[string]string, maxResults int) ([]storage.SearchResult, error) {
+	idx, err := s.getOrCreateIndex(indexName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build the text query.
+	textQuery := bleve.NewQueryStringQuery(query)
+
+	// Build conjunction: text query AND all metadata filters.
+	var queries []blevequery.Query
+	queries = append(queries, textQuery)
+
+	for field, value := range filters {
+		termQuery := bleve.NewTermQuery(value)
+		termQuery.SetField(field)
+		queries = append(queries, termQuery)
+	}
+
+	conjQuery := bleve.NewConjunctionQuery(queries...)
+	searchReq := bleve.NewSearchRequest(conjQuery)
+	searchReq.Size = maxResults
+	searchReq.Fields = []string{"*"}
+
+	result, err := idx.Search(searchReq)
+	if err != nil {
+		return nil, fmt.Errorf("search %q with filters: %w", indexName, err)
 	}
 
 	var results []storage.SearchResult

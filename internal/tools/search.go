@@ -66,7 +66,7 @@ func RegisterSearchHandlers(r *Registry, v *vfs.VFS) {
 				params.Path = absPath
 				r.NotifyFileAccess(absPath)
 			}
-			result, err := fileops.GrepSearch(params)
+			result, err := fileops.IndexedGrepSearch(params, codeSearchIndex)
 			if err != nil {
 				return "", err
 			}

@@ -63,6 +63,7 @@ func RegisterFileHandlers(r *Registry, v *vfs.VFS) {
 			if err := fileops.WriteFile(params, ""); err != nil {
 				return "", err
 			}
+			r.NotifyFileWrite(params.Path)
 			return fmt.Sprintf("wrote %d bytes to %s", len(params.Content), params.Path), nil
 		}
 	}
@@ -82,6 +83,7 @@ func RegisterFileHandlers(r *Registry, v *vfs.VFS) {
 			if err := fileops.EditFile(params); err != nil {
 				return "", err
 			}
+			r.NotifyFileWrite(params.Path)
 			return fmt.Sprintf("edited %s", params.Path), nil
 		}
 	}

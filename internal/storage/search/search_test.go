@@ -79,6 +79,38 @@ func TestStore(t *testing.T) {
 		}
 	})
 
+	t.Run("SearchWithFilter", func(t *testing.T) {
+		docs := []storage.Document{
+			{ID: "f1", Content: "handleAuth function validates user", Metadata: map[string]string{"path": "auth.go", "language": "go"}},
+			{ID: "f2", Content: "handleAuth function validates user", Metadata: map[string]string{"path": "auth.py", "language": "py"}},
+			{ID: "f3", Content: "renderPage function draws UI", Metadata: map[string]string{"path": "ui.go", "language": "go"}},
+		}
+		if err := s.BatchIndex(ctx, "filtered", docs); err != nil {
+			t.Fatalf("BatchIndex: %v", err)
+		}
+
+		// Search with language filter = go.
+		results, err := s.SearchWithFilter(ctx, "filtered", "handleAuth", map[string]string{"language": "go"}, 10)
+		if err != nil {
+			t.Fatalf("SearchWithFilter: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("SearchWithFilter results = %d, want 1", len(results))
+		}
+		if results[0].Document.ID != "f1" {
+			t.Errorf("result ID = %q, want %q", results[0].Document.ID, "f1")
+		}
+
+		// Empty filters should behave like regular Search.
+		results, err = s.SearchWithFilter(ctx, "filtered", "handleAuth", nil, 10)
+		if err != nil {
+			t.Fatalf("SearchWithFilter nil filters: %v", err)
+		}
+		if len(results) != 2 {
+			t.Fatalf("SearchWithFilter nil filters results = %d, want 2", len(results))
+		}
+	})
+
 	t.Run("DeleteIndex", func(t *testing.T) {
 		doc := storage.Document{ID: "di-1", Content: "entire index deletion"}
 		s.Index(ctx, "todelete", doc)

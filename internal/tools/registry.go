@@ -53,6 +53,9 @@ type Registry struct {
 	// Optional hook called when tools access file paths.
 	fileAccessHook FileAccessHook
 
+	// Optional hook called when tools modify a file (write/edit).
+	fileWriteHook FileAccessHook
+
 	// Optional quality monitor for tracking tool call success/failure rates.
 	qualityMonitor *QualityMonitor
 
@@ -101,6 +104,25 @@ func (r *Registry) SetFileAccessHook(hook FileAccessHook) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.fileAccessHook = hook
+}
+
+// SetFileWriteHook sets a callback invoked when tools modify a file.
+// Used to trigger incremental re-indexing of changed files.
+func (r *Registry) SetFileWriteHook(hook FileAccessHook) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.fileWriteHook = hook
+}
+
+// NotifyFileWrite calls the file write hook if set.
+// Tools should call this after successfully writing or editing a file.
+func (r *Registry) NotifyFileWrite(path string) {
+	r.mu.RLock()
+	hook := r.fileWriteHook
+	r.mu.RUnlock()
+	if hook != nil {
+		go hook(path) // async — don't block the tool response
+	}
 }
 
 // NotifyFileAccess calls the file access hook if set.
