@@ -19,6 +19,7 @@ import (
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/observability/dashboards"
+	"github.com/qiangli/ycode/internal/pulse"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/tools"
 )
@@ -531,27 +532,84 @@ func loadFullServeConfig() (*config.Config, *config.ObservabilityConfig, string,
 	return cfg, obsCfg, dataDir, nil
 }
 
-// pulseCmd is the branded alias for serve — starts the ycode Pulse observability hub.
+// pulseCmd is the containerized Pulse observability hub.
+// Unlike 'ycode serve' which runs on the host, 'ycode pulse start'
+// builds and runs the OTEL stack inside a podman container.
 var pulseCmd = &cobra.Command{
 	Use:   "pulse",
-	Short: "Start ycode Pulse — the observability and agent coordination hub",
+	Short: "Manage the containerized Pulse observability stack",
 	Long: `Pulse is ycode's nervous system — traces, metrics, logs, dashboards, alerts,
-and MCP server for external agent access, all in one command.
+and MCP server for external agent access, all running in a container.
 
-Services started:
-  Traces       Jaeger for distributed tracing
-  Metrics      Prometheus + Perses dashboards
-  Logs         VictoriaLogs for structured log search
-  Alerts       Alertmanager for alert routing
-  MCP          Model Context Protocol server at /pulse/
-  API          HTTP/WebSocket server + web UI
-  NATS         Message bus for multi-instance coordination
+Subcommands:
+  start       Build image (if needed) and start Pulse in a container
+  stop        Stop the running Pulse container
+  status      Show Pulse container status
+  dashboard   Open Pulse dashboard in browser
+  host        Run Pulse on the host (same as 'ycode serve')
+
+The container auto-builds from embedded source on first start.
+Each ycode CLI session auto-connects to the running Pulse collector.
 
 Connect from Claude Code or any MCP client:
-  {"mcpServers": {"ycode-pulse": {"url": "http://localhost:58080/pulse/"}}}
+  {"mcpServers": {"ycode-pulse": {"url": "http://localhost:58080/pulse/"}}}`,
+}
 
-This is equivalent to 'ycode serve'.`,
-	RunE: serveCmd.RunE,
+// pulseStartCmd starts Pulse in a container.
+var pulseStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start Pulse in a container",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		engine, err := container.NewEngine(cmd.Context(), &container.EngineConfig{})
+		if err != nil {
+			return fmt.Errorf("container engine: %w", err)
+		}
+		mgr := pulse.NewManager(engine, version, commit)
+		if err := mgr.Start(cmd.Context()); err != nil {
+			return err
+		}
+		fmt.Printf("Pulse started.\n")
+		fmt.Printf("  Collector:  127.0.0.1:%d (gRPC OTLP)\n", pulse.DefaultCollectorPort)
+		fmt.Printf("  Dashboard:  http://127.0.0.1:%d/\n", pulse.DefaultProxyPort)
+		fmt.Printf("  NATS:       127.0.0.1:%d\n", pulse.DefaultNATSPort)
+		return nil
+	},
+}
+
+// pulseStopCmd stops the Pulse container.
+var pulseStopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop the running Pulse container",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		engine, err := container.NewEngine(cmd.Context(), &container.EngineConfig{})
+		if err != nil {
+			return fmt.Errorf("container engine: %w", err)
+		}
+		mgr := pulse.NewManager(engine, version, commit)
+		return mgr.Stop(cmd.Context())
+	},
+}
+
+// pulseStatusCmd shows Pulse container status.
+var pulseStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show Pulse container status",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		engine, err := container.NewEngine(cmd.Context(), &container.EngineConfig{})
+		if err != nil {
+			return fmt.Errorf("container engine: %w", err)
+		}
+		mgr := pulse.NewManager(engine, version, commit)
+		fmt.Println(mgr.Status(cmd.Context()))
+		return nil
+	},
+}
+
+// pulseHostCmd runs Pulse on the host (same as 'ycode serve').
+var pulseHostCmd = &cobra.Command{
+	Use:   "host",
+	Short: "Run Pulse on the host (same as 'ycode serve')",
+	RunE:  serveCmd.RunE,
 }
 
 func init() {
@@ -566,17 +624,20 @@ func init() {
 	serveCmd.AddCommand(serveStopCmd, serveStatusCmd, serveDashboardCmd, serveResetCmd, serveAuditCmd)
 	rootCmd.AddCommand(serveCmd)
 
-	// Pulse is the branded alias — shares flags and subcommands with serve.
-	pulseCmd.PersistentFlags().IntVar(&servePort, "port", 58080, "Port for Pulse server")
-	pulseCmd.Flags().BoolVar(&serveDetach, "detach", false, "Run server in background")
-	pulseCmd.Flags().BoolVar(&serveNoAPI, "no-api", false, "Disable the API/WebSocket server")
-	pulseCmd.Flags().BoolVar(&serveNoNATS, "no-nats", false, "Disable the embedded NATS server")
-	pulseCmd.Flags().IntVar(&apiNATSPort, "nats-port", 4222, "Port for the embedded NATS server")
+	// Pulse uses containerized approach with start/stop/status subcommands.
+	// 'pulse host' provides the old on-host behavior.
+	pulseHostCmd.Flags().BoolVar(&serveDetach, "detach", false, "Run server in background")
+	pulseHostCmd.Flags().BoolVar(&serveNoAPI, "no-api", false, "Disable the API/WebSocket server")
+	pulseHostCmd.Flags().BoolVar(&serveNoNATS, "no-nats", false, "Disable the embedded NATS server")
+	pulseHostCmd.Flags().IntVar(&apiNATSPort, "nats-port", 4222, "Port for the embedded NATS server")
+
 	pulseCmd.AddCommand(
-		&cobra.Command{Use: "stop", Short: "Stop Pulse", RunE: serveStopCmd.RunE},
-		&cobra.Command{Use: "status", Short: "Show Pulse component health", RunE: serveStatusCmd.RunE},
+		pulseStartCmd,
+		pulseStopCmd,
+		pulseStatusCmd,
 		&cobra.Command{Use: "dashboard", Short: "Open Pulse dashboard in browser", RunE: serveDashboardCmd.RunE},
 		&cobra.Command{Use: "reset", Short: "Remove all Pulse data", RunE: serveResetCmd.RunE},
+		pulseHostCmd,
 	)
 	rootCmd.AddCommand(pulseCmd)
 }

@@ -26,6 +26,7 @@ type ContainerConfig struct {
 	Image    string            // container image
 	Env      map[string]string // environment variables
 	Mounts   []Mount           // volume mounts
+	Ports    []PortMapping     // port mappings (host -> container)
 	WorkDir  string            // working directory inside container
 	Network  string            // network name (empty = default bridge)
 	ReadOnly bool              // read-only root filesystem
@@ -35,6 +36,13 @@ type ContainerConfig struct {
 	Labels   map[string]string // container labels for tracking
 	Command  []string          // override command (default: image CMD)
 	Resources
+}
+
+// PortMapping maps a host port to a container port.
+type PortMapping struct {
+	HostPort      uint16 // port on the host
+	ContainerPort uint16 // port inside the container
+	Protocol      string // "tcp" (default) or "udp"
 }
 
 // Mount describes a bind mount from host to container.
@@ -96,6 +104,18 @@ func (e *Engine) CreateContainer(ctx context.Context, cfg *ContainerConfig) (*Co
 		capDrop = []string{"ALL"}
 	}
 	sg.CapDrop = capDrop
+
+	for _, p := range cfg.Ports {
+		proto := p.Protocol
+		if proto == "" {
+			proto = "tcp"
+		}
+		sg.PortMappings = append(sg.PortMappings, nettypes.PortMapping{
+			HostPort:      p.HostPort,
+			ContainerPort: p.ContainerPort,
+			Protocol:      proto,
+		})
+	}
 
 	if cfg.Network != "" {
 		sg.Networks = map[string]nettypes.PerNetworkOptions{

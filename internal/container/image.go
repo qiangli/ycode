@@ -122,6 +122,32 @@ func (e *Engine) BuildImage(ctx context.Context, name string, dockerfile []byte)
 	return nil
 }
 
+// BuildImageWithContext builds an image from a Dockerfile byte slice using the
+// given directory as the build context. This allows COPY instructions to
+// reference files placed in contextDir (e.g., a compiled binary).
+func (e *Engine) BuildImageWithContext(ctx context.Context, name string, dockerfile []byte, contextDir string) error {
+	dockerfilePath := filepath.Join(contextDir, "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, dockerfile, 0o644); err != nil {
+		return fmt.Errorf("write Dockerfile: %w", err)
+	}
+
+	slog.Info("container: building image with context", "image", name, "context", contextDir)
+
+	buildOpts := entTypes.BuildOptions{
+		BuildOptions: buildahDefine.BuildOptions{
+			Output:           name,
+			ContextDirectory: contextDir,
+		},
+		ContainerFiles: []string{dockerfilePath},
+	}
+
+	_, err := images.Build(e.connCtx, []string{contextDir}, buildOpts)
+	if err != nil {
+		return fmt.Errorf("build image %s: %w", name, err)
+	}
+	return nil
+}
+
 // Version returns the podman version string via REST API.
 func (e *Engine) Version(ctx context.Context) (string, error) {
 	info, err := system.Version(e.connCtx, nil)
