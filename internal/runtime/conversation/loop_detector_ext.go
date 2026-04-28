@@ -11,7 +11,21 @@ const (
 	DetectorGenericRepeat  DetectorType = "generic_repeat"  // consecutive similar responses
 	DetectorPingPong       DetectorType = "ping_pong"       // alternating identical tool calls
 	DetectorCircuitBreaker DetectorType = "circuit_breaker" // total tool calls per turn exceeded
+	DetectorRepetitiveTool DetectorType = "repetitive_tool" // same tool called too many times per turn
 )
+
+// repetitiveToolThreshold is the number of calls to the same discovery tool in
+// one turn that triggers a warning. Only applies to search/discovery tools
+// (ToolSearch, glob_search, grep_search) — not to action tools like bash or read_file.
+const repetitiveToolThreshold = 3
+
+// discoveryTools are tool names that indicate search/discovery behavior.
+// Repeated calls to these suggest the agent is stuck in a search loop.
+var discoveryTools = map[string]bool{
+	"ToolSearch":  true,
+	"glob_search": true,
+	"grep_search": true,
+}
 
 // LoopEvent describes a loop detection event.
 type LoopEvent struct {
@@ -33,6 +47,9 @@ type EnhancedLoopDetector struct {
 	// Circuit breaker: total tool calls this turn.
 	totalToolCalls    int
 	circuitBreakerMax int
+
+	// Repetitive tool detection: counts per-tool calls within a turn.
+	toolCallCounts map[string]int
 
 	// Event emission.
 	emitter   *bus.DiagnosticEmitter
@@ -56,6 +73,7 @@ func NewEnhancedLoopDetector(cfg EnhancedLoopDetectorConfig) *EnhancedLoopDetect
 		LoopDetector:      NewLoopDetector(),
 		maxToolTracked:    10,
 		circuitBreakerMax: cbMax,
+		toolCallCounts:    make(map[string]int),
 		emitter:           cfg.Emitter,
 		sessionID:         cfg.SessionID,
 	}
@@ -72,10 +90,11 @@ func (d *EnhancedLoopDetector) RecordResponse(response string) LoopStatus {
 	return status
 }
 
-// RecordToolCall records a tool invocation for ping-pong detection and circuit breaking.
-// Returns the loop status.
+// RecordToolCall records a tool invocation for ping-pong detection, circuit breaking,
+// and repetitive single-tool detection. Returns the loop status.
 func (d *EnhancedLoopDetector) RecordToolCall(toolName string) LoopStatus {
 	d.totalToolCalls++
+	d.toolCallCounts[toolName]++
 	d.recentToolCalls = append(d.recentToolCalls, toolName)
 	if len(d.recentToolCalls) > d.maxToolTracked {
 		d.recentToolCalls = d.recentToolCalls[len(d.recentToolCalls)-d.maxToolTracked:]
@@ -87,6 +106,19 @@ func (d *EnhancedLoopDetector) RecordToolCall(toolName string) LoopStatus {
 			d.emitter.EmitToolLoop(d.sessionID, string(DetectorCircuitBreaker), d.totalToolCalls, LoopBreak.String())
 		}
 		return LoopBreak
+	}
+
+	// Check repetitive discovery tool: same search/discovery tool called too
+	// many times in one turn. Catches search spirals (ToolSearch×3, Glob×3)
+	// that the ping-pong detector misses because they aren't strictly A-B-A-B.
+	// Only applies to discovery tools — action tools (bash, read_file) are normal.
+	if discoveryTools[toolName] {
+		if count := d.toolCallCounts[toolName]; count >= repetitiveToolThreshold {
+			if d.emitter != nil {
+				d.emitter.EmitToolLoop(d.sessionID, string(DetectorRepetitiveTool), count, LoopWarning.String())
+			}
+			return LoopWarning
+		}
 	}
 
 	// Check ping-pong: alternating A-B-A-B pattern.
@@ -143,6 +175,7 @@ func (d *EnhancedLoopDetector) detectPingPong() LoopStatus {
 func (d *EnhancedLoopDetector) ResetTurn() {
 	d.totalToolCalls = 0
 	d.recentToolCalls = nil
+	d.toolCallCounts = make(map[string]int)
 }
 
 // TotalToolCalls returns the total tool calls in the current turn.

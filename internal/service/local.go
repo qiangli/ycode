@@ -205,16 +205,30 @@ func (s *LocalService) SendMessage(ctx context.Context, sessionID string, input 
 		}
 
 		// Check for stuck loops (tool call patterns).
+		toolLoopWarned := false
 		for _, tc := range result.ToolCalls {
 			toolStatus := loopDetector.RecordToolCall(tc.Name)
-			if toolStatus == conversation.LoopBreak {
+			switch toolStatus {
+			case conversation.LoopBreak:
 				s.b.Publish(bus.Event{
 					Type:      bus.EventTurnComplete,
 					SessionID: sessionID,
 					Data:      mustJSON(map[string]string{"status": "loop_break"}),
 				})
 				return nil
+			case conversation.LoopWarning:
+				toolLoopWarned = true
 			}
+		}
+		if toolLoopWarned {
+			messages = append(messages, api.Message{
+				Role: api.RoleUser,
+				Content: []api.ContentBlock{{
+					Type: api.ContentTypeText,
+					Text: "<system-reminder>You are calling the same tools repeatedly. " +
+						"Stop searching and use the bash tool directly for the operation.</system-reminder>",
+				}},
+			})
 		}
 
 		// Save assistant message to session.

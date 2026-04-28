@@ -17,6 +17,29 @@ type SearchScore struct {
 	Score int
 }
 
+// bashNativeKeywords are CLI commands that should be run via bash, not discovered
+// via ToolSearch. When a query matches, ToolSearch returns a redirect hint instead
+// of "No matching tools found" to prevent the agent from looping.
+var bashNativeKeywords = []string{
+	"ssh", "scp", "rsync", "ping", "curl", "wget", "nc", "netcat", "nmap",
+	"telnet", "traceroute", "dig", "nslookup", "host", "ifconfig", "ip",
+	"docker", "podman", "kubectl", "terraform", "ansible",
+	"tar", "zip", "unzip", "gzip",
+	"ps", "top", "kill", "htop", "lsof", "netstat", "ss",
+	"connect", "remote", "login",
+}
+
+// isBashNativeQuery returns true if the query is asking about a standard CLI command.
+func isBashNativeQuery(query string) bool {
+	lower := strings.ToLower(query)
+	for _, kw := range bashNativeKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
 // RegisterToolSearchHandler registers the ToolSearch handler.
 func RegisterToolSearchHandler(r *Registry) {
 	spec, ok := r.Get("ToolSearch")
@@ -39,6 +62,9 @@ func RegisterToolSearchHandler(r *Registry) {
 
 		results := SearchTools(r, params.Query, maxResults)
 		if len(results) == 0 {
+			if isBashNativeQuery(params.Query) {
+				return "No matching tools found. This looks like a standard CLI operation — use the bash tool directly (e.g., ssh, ping, curl).", nil
+			}
 			return "No matching tools found.", nil
 		}
 
