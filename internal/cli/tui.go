@@ -214,6 +214,10 @@ type toolProgressMsg taskqueue.TaskEvent
 // repaintMsg triggers one more Update/View cycle to flush rendering.
 type repaintMsg struct{}
 
+// workingTickMsg is sent periodically while m.working is true so the status
+// bar re-renders with live token/cost updates during long-running commands.
+type workingTickMsg struct{}
+
 // busEventMsg wraps a bus.Event for delivery through bubbletea's message system.
 type busEventMsg struct{ bus.Event }
 
@@ -881,6 +885,13 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case repaintMsg:
 		// No-op; triggers Update/View cycle.
+
+	case workingTickMsg:
+		// Periodic tick while working — ensures the status bar re-renders
+		// with live token/cost during long-running commands like /init.
+		if m.working {
+			return m, workingTick()
+		}
 	}
 
 	// Update sub-components — textarea is always active so users can type
@@ -1285,19 +1296,21 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 		if spec, ok := m.app.commands.Get(name); ok {
 			// Show the command echo immediately, before starting execution.
 			m.appendOutput(fmt.Sprintf("> %s\n", text))
+			ctx, cancel := context.WithCancel(context.Background())
+			m.workCancel = cancel
 			m.working = true
 			promptFn := spec.AgentPrompt
 			cmdArgs := args
 			preReqs := m.app.usageTracker.TotalRequests
-			return func() tea.Msg {
-				output, err := m.app.commands.Execute(context.Background(), name, cmdArgs)
+			return tea.Batch(func() tea.Msg {
+				output, err := m.app.commands.Execute(ctx, name, cmdArgs)
 				msg := commandOutputMsg{Text: output, Err: err}
 				msg.UsageTracked = m.app.usageTracker.TotalRequests > preReqs
 				if promptFn != nil && err == nil {
 					msg.AgentPrompt = promptFn(cmdArgs)
 				}
 				return msg
-			}
+			}, workingTick())
 		}
 	}
 
@@ -1305,12 +1318,14 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 	if intent := builtin.DetectIntent(text); intent != nil {
 		m.appendOutput(fmt.Sprintf("> %s\n", text))
 		m.appendOutput("⧗ Running builtin /" + intent.Operation + "...\n")
+		ctx, cancel := context.WithCancel(context.Background())
+		m.workCancel = cancel
 		m.working = true
 		preReqs := m.app.usageTracker.TotalRequests
-		return func() tea.Msg {
-			output, err := m.app.commands.Execute(context.Background(), intent.Operation, intent.Args)
+		return tea.Batch(func() tea.Msg {
+			output, err := m.app.commands.Execute(ctx, intent.Operation, intent.Args)
 			return commandOutputMsg{Text: output, Err: err, UsageTracked: m.app.usageTracker.TotalRequests > preReqs}
-		}
+		}, workingTick())
 	}
 
 	// Start agentic turn — handles regular prompts and skill slash commands.
@@ -1752,6 +1767,15 @@ func toolDetail(name string, input json.RawMessage) string {
 	default:
 		return fmt.Sprintf("Tool(%s)", name)
 	}
+}
+
+// workingTick returns a Cmd that fires a workingTickMsg after a short delay.
+// The tick triggers a View cycle so the status bar re-renders with live
+// token/cost data while a command or agent turn is running.
+func workingTick() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg {
+		return workingTickMsg{}
+	})
 }
 
 // formatLLMMetrics returns a short summary of LLM call duration and token usage.

@@ -673,16 +673,7 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 					if deps.LogDelta != nil {
 						deps.LogDelta(text)
 					}
-				}, func(inputTokens, outputTokens, cacheCreate, cacheRead int) {
-					if deps.TrackUsage != nil {
-						deps.TrackUsage(inputTokens, outputTokens, cacheCreate, cacheRead)
-					}
-					// Send empty delta to trigger a TUI re-render so the
-					// status bar reflects the updated token/cost immediately.
-					if deps.LogDelta != nil {
-						deps.LogDelta("")
-					}
-				})
+				}, deps.TrackUsage)
 				if llmErr != nil {
 					progress(fmt.Sprintf("⚠ LLM generation failed: %v", llmErr))
 				} else if llmResult == nil || llmResult.Text == "" {
