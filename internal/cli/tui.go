@@ -191,10 +191,11 @@ type toolTaskProgress struct {
 // Custom message types.
 
 type commandOutputMsg struct {
-	Echo        string
-	Text        string
-	Err         error
-	AgentPrompt string // if non-empty, start an agentic turn after displaying Text
+	Echo         string
+	Text         string
+	Err          error
+	AgentPrompt  string // if non-empty, start an agentic turn after displaying Text
+	UsageTracked bool   // true if the command made LLM calls (show session summary)
 }
 
 // turnResultMsg is sent when a conversation turn completes.
@@ -836,6 +837,11 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.startAgentTurn(msg.AgentPrompt))
 			} else {
 				m.working = false
+				// Show session summary if the command made LLM calls (e.g. /init, /commit).
+				if msg.UsageTracked {
+					m.appendOutput(formatSessionSummary(m.app.usageTracker, m.app.sessionStart))
+					m.appendOutput("\n")
+				}
 				// Drain pending input queue or go idle.
 				if cmd := m.drainPendingInput(); cmd != nil {
 					cmds = append(cmds, cmd)
@@ -1017,7 +1023,7 @@ func (m *TUIModel) statusBar() string {
 	// Usage info (tokens + cost).
 	tracker := m.app.UsageTracker()
 	usageText := ""
-	if tracker.TotalRequests > 0 {
+	if tracker.HasRequests() {
 		totalTokens := tracker.TotalTokens()
 		cost := tracker.Cost()
 		if cost >= 0.01 {
@@ -1282,9 +1288,11 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 			m.working = true
 			promptFn := spec.AgentPrompt
 			cmdArgs := args
+			preReqs := m.app.usageTracker.TotalRequests
 			return func() tea.Msg {
 				output, err := m.app.commands.Execute(context.Background(), name, cmdArgs)
 				msg := commandOutputMsg{Text: output, Err: err}
+				msg.UsageTracked = m.app.usageTracker.TotalRequests > preReqs
 				if promptFn != nil && err == nil {
 					msg.AgentPrompt = promptFn(cmdArgs)
 				}
@@ -1298,9 +1306,10 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 		m.appendOutput(fmt.Sprintf("> %s\n", text))
 		m.appendOutput("⧗ Running builtin /" + intent.Operation + "...\n")
 		m.working = true
+		preReqs := m.app.usageTracker.TotalRequests
 		return func() tea.Msg {
 			output, err := m.app.commands.Execute(context.Background(), intent.Operation, intent.Args)
-			return commandOutputMsg{Text: output, Err: err}
+			return commandOutputMsg{Text: output, Err: err, UsageTracked: m.app.usageTracker.TotalRequests > preReqs}
 		}
 	}
 
