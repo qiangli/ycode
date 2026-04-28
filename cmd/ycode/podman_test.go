@@ -206,16 +206,13 @@ func TestHelpers(t *testing.T) {
 		t.Errorf("truncStr short: got %q", got)
 	}
 
-	if got := formatSize(float64(1.5e9)); got != "1.5 GB" {
+	if got := formatSize(1.5e9); got != "1.5 GB" {
 		t.Errorf("formatSize GB: got %q", got)
 	}
-	if got := formatSize(float64(50e6)); got != "50.0 MB" {
+	if got := formatSize(50e6); got != "50.0 MB" {
 		t.Errorf("formatSize MB: got %q", got)
 	}
-	if got := formatSize(float64(1024)); got != "1024 B" {
+	if got := formatSize(1024); got != "1024 B" {
 		t.Errorf("formatSize B: got %q", got)
-	}
-	if got := formatSize("unknown"); got != "unknown" {
-		t.Errorf("formatSize string: got %q", got)
 	}
 }

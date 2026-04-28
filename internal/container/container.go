@@ -1,11 +1,23 @@
 package container
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"go.podman.io/podman/v6/pkg/api/handlers"
+	"go.podman.io/podman/v6/pkg/bindings/containers"
+	"go.podman.io/podman/v6/pkg/specgen"
+
+	ociSpec "github.com/opencontainers/runtime-spec/specs-go"
+	nettypes "go.podman.io/common/libnetwork/types"
 )
 
 // ContainerConfig holds the configuration for creating a container.
@@ -19,8 +31,9 @@ type ContainerConfig struct {
 	ReadOnly bool              // read-only root filesystem
 	CapDrop  []string          // capabilities to drop (default: ["ALL"])
 	Tmpfs    []string          // tmpfs mounts (e.g., /tmp, /var/tmp)
-	Init     bool              // use --init for signal handling
+	Init     bool              // use init for signal handling
 	Labels   map[string]string // container labels for tracking
+	Command  []string          // override command (default: image CMD)
 	Resources
 }
 
@@ -44,6 +57,11 @@ type Container struct {
 	engine *Engine
 }
 
+// NewContainer creates a Container handle for an existing container by ID or name.
+func NewContainer(engine *Engine, idOrName string) *Container {
+	return &Container{ID: idOrName, engine: engine}
+}
+
 // ContainerInfo holds inspection data from podman.
 type ContainerInfo struct {
 	ID     string `json:"Id"`
@@ -53,137 +71,141 @@ type ContainerInfo struct {
 	Status string `json:"Status"`
 }
 
-// CreateContainer creates a new container from the given config.
+// CreateContainer creates a new container from the given config via REST API.
 func (e *Engine) CreateContainer(ctx context.Context, cfg *ContainerConfig) (*Container, error) {
-	args := []string{"create"}
+	sg := specgen.NewSpecGenerator(cfg.Image, false)
+	sg.Name = cfg.Name
+	sg.Command = cfg.Command
+	sg.Env = cfg.Env
+	sg.Labels = cfg.Labels
 
-	if cfg.Name != "" {
-		args = append(args, "--name", cfg.Name)
-	}
-
-	// Security defaults.
-	if cfg.ReadOnly {
-		args = append(args, "--read-only")
-	}
 	if cfg.Init {
-		args = append(args, "--init")
+		initTrue := true
+		sg.Init = &initTrue
+	}
+	if cfg.WorkDir != "" {
+		sg.WorkDir = cfg.WorkDir
+	}
+	if cfg.ReadOnly {
+		readOnly := true
+		sg.ReadOnlyFilesystem = &readOnly
 	}
 
 	capDrop := cfg.CapDrop
 	if len(capDrop) == 0 {
-		capDrop = []string{"ALL"} // secure default
+		capDrop = []string{"ALL"}
 	}
-	for _, cap := range capDrop {
-		args = append(args, "--cap-drop="+cap)
-	}
+	sg.CapDrop = capDrop
 
-	// tmpfs mounts for writable scratch when root is read-only.
-	for _, t := range cfg.Tmpfs {
-		args = append(args, "--tmpfs", t)
-	}
-
-	// Environment variables.
-	for k, v := range cfg.Env {
-		args = append(args, "-e", k+"="+v)
-	}
-
-	// Volume mounts.
-	for _, m := range cfg.Mounts {
-		mode := "rw"
-		if m.ReadOnly {
-			mode = "ro"
-		}
-		args = append(args, "-v", fmt.Sprintf("%s:%s:%s", m.Source, m.Target, mode))
-	}
-
-	// Working directory.
-	if cfg.WorkDir != "" {
-		args = append(args, "-w", cfg.WorkDir)
-	}
-
-	// Network.
 	if cfg.Network != "" {
-		args = append(args, "--network", cfg.Network)
+		sg.Networks = map[string]nettypes.PerNetworkOptions{
+			cfg.Network: {},
+		}
 	}
 
-	// Resource limits.
-	if cfg.CPUs != "" {
-		args = append(args, "--cpus="+cfg.CPUs)
-	}
-	if cfg.Memory != "" {
-		args = append(args, "--memory="+cfg.Memory)
+	for _, m := range cfg.Mounts {
+		opts := []string{"bind"}
+		if m.ReadOnly {
+			opts = append(opts, "ro")
+		} else {
+			opts = append(opts, "rw")
+		}
+		sg.Mounts = append(sg.Mounts, ociSpec.Mount{
+			Type:        "bind",
+			Source:      m.Source,
+			Destination: m.Target,
+			Options:     opts,
+		})
 	}
 
-	// Labels.
-	for k, v := range cfg.Labels {
-		args = append(args, "--label", k+"="+v)
+	for _, t := range cfg.Tmpfs {
+		sg.Mounts = append(sg.Mounts, ociSpec.Mount{
+			Type:        "tmpfs",
+			Destination: t,
+			Options:     []string{"rw", "nosuid", "nodev"},
+		})
 	}
 
-	args = append(args, cfg.Image)
-
-	out, err := e.Run(ctx, args...)
+	resp, err := containers.CreateWithSpec(e.connCtx, sg, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create container: %w", err)
 	}
 
-	id := strings.TrimSpace(string(out))
 	name := cfg.Name
-	if name == "" {
-		name = id[:12]
+	if name == "" && len(resp.ID) >= 12 {
+		name = resp.ID[:12]
 	}
 
 	return &Container{
-		ID:     id,
+		ID:     resp.ID,
 		Name:   name,
 		engine: e,
 	}, nil
 }
 
-// Start starts the container.
+// Start starts the container via REST API.
 func (c *Container) Start(ctx context.Context) error {
-	_, err := c.engine.Run(ctx, "start", c.ID)
-	return err
+	return containers.Start(c.engine.connCtx, c.ID, nil)
 }
 
-// Stop gracefully stops the container with the given timeout.
+// Stop gracefully stops the container with the given timeout via REST API.
 func (c *Container) Stop(ctx context.Context, timeout time.Duration) error {
-	_, err := c.engine.Run(ctx, "stop", "-t", fmt.Sprintf("%d", int(timeout.Seconds())), c.ID)
-	return err
+	secs := uint(timeout.Seconds())
+	opts := new(containers.StopOptions).WithTimeout(secs)
+	return containers.Stop(c.engine.connCtx, c.ID, opts)
 }
 
-// Remove removes the container. Use force=true to remove a running container.
+// Remove removes the container via REST API.
 func (c *Container) Remove(ctx context.Context, force bool) error {
-	args := []string{"rm"}
-	if force {
-		args = append(args, "-f")
-	}
-	args = append(args, c.ID)
-	_, err := c.engine.Run(ctx, args...)
+	opts := new(containers.RemoveOptions).WithForce(force)
+	_, err := containers.Remove(c.engine.connCtx, c.ID, opts)
 	return err
 }
 
-// Exec runs a command inside the container and returns the output.
+// Exec runs a command inside the container via REST API and returns the output.
 func (c *Container) Exec(ctx context.Context, command string, workDir string) (*ExecResult, error) {
-	args := []string{"exec"}
-
+	// Create exec session.
+	execCfg := &handlers.ExecCreateConfig{}
+	execCfg.Cmd = []string{"sh", "-c", command}
+	execCfg.AttachStdout = true
+	execCfg.AttachStderr = true
 	if workDir != "" {
-		args = append(args, "-w", workDir)
+		execCfg.WorkingDir = workDir
 	}
 
-	args = append(args, c.ID, "sh", "-c", command)
-
-	out, err := c.engine.Run(ctx, args...)
-	result := &ExecResult{
-		Stdout: strings.TrimRight(string(out), "\n"),
-	}
-
+	sessionID, err := containers.ExecCreate(c.engine.connCtx, c.ID, execCfg)
 	if err != nil {
-		// Try to extract exit code from error.
-		result.ExitCode = 1
-		result.Stderr = err.Error()
+		return nil, fmt.Errorf("exec create: %w", err)
 	}
 
-	return result, nil
+	// Attach and capture output.
+	var stdout, stderr bytes.Buffer
+	attachOpts := new(containers.ExecStartAndAttachOptions).
+		WithOutputStream(&stdout).
+		WithErrorStream(&stderr).
+		WithAttachOutput(true).
+		WithAttachError(true)
+
+	if err := containers.ExecStartAndAttach(c.engine.connCtx, sessionID, attachOpts); err != nil {
+		return &ExecResult{
+			Stdout:   stdout.String(),
+			Stderr:   stderr.String() + "\n" + err.Error(),
+			ExitCode: 1,
+		}, nil
+	}
+
+	// Get exit code.
+	inspect, err := containers.ExecInspect(c.engine.connCtx, sessionID, nil)
+	exitCode := 0
+	if err == nil {
+		exitCode = inspect.ExitCode
+	}
+
+	return &ExecResult{
+		Stdout:   strings.TrimRight(stdout.String(), "\n"),
+		Stderr:   strings.TrimRight(stderr.String(), "\n"),
+		ExitCode: exitCode,
+	}, nil
 }
 
 // ExecResult holds the result of a command execution inside a container.
@@ -193,46 +215,224 @@ type ExecResult struct {
 	ExitCode int
 }
 
-// IsRunning returns true if the container is currently running.
+// IsRunning returns true if the container is currently running via REST API.
 func (c *Container) IsRunning(ctx context.Context) bool {
-	out, err := c.engine.Run(ctx, "inspect", "--format", "{{.State.Running}}", c.ID)
+	data, err := containers.Inspect(c.engine.connCtx, c.ID, nil)
 	if err != nil {
 		return false
 	}
-	return strings.TrimSpace(string(out)) == "true"
+	return data.State != nil && data.State.Running
 }
 
-// CopyTo copies a file from host to the container.
+// CopyTo copies a host path into the container via REST API (tar streaming).
 func (c *Container) CopyTo(ctx context.Context, hostPath, containerPath string) error {
-	_, err := c.engine.Run(ctx, "cp", hostPath, c.ID+":"+containerPath)
-	return err
+	// Create a tar archive from the host path.
+	var buf bytes.Buffer
+	if err := tarPath(hostPath, &buf); err != nil {
+		return fmt.Errorf("create tar archive: %w", err)
+	}
+
+	copyFunc, err := containers.CopyFromArchive(c.engine.connCtx, c.ID, containerPath, &buf)
+	if err != nil {
+		return fmt.Errorf("copy to container: %w", err)
+	}
+	return copyFunc()
 }
 
-// CopyFrom copies a file from the container to the host.
+// CopyFrom copies a path from the container to the host via REST API (tar streaming).
 func (c *Container) CopyFrom(ctx context.Context, containerPath, hostPath string) error {
-	_, err := c.engine.Run(ctx, "cp", c.ID+":"+containerPath, hostPath)
-	return err
+	var buf bytes.Buffer
+	copyFunc, err := containers.CopyToArchive(c.engine.connCtx, c.ID, containerPath, &buf)
+	if err != nil {
+		return fmt.Errorf("copy from container: %w", err)
+	}
+	if err := copyFunc(); err != nil {
+		return fmt.Errorf("copy from container stream: %w", err)
+	}
+
+	// Extract tar archive to host path.
+	return untarToPath(&buf, hostPath)
 }
 
-// ListContainers lists containers matching the given filters.
+// ListContainers lists containers matching the given filters via REST API.
 func (e *Engine) ListContainers(ctx context.Context, filters map[string]string) ([]ContainerInfo, error) {
-	args := []string{"ps", "-a", "--no-trunc"}
-	for k, v := range filters {
-		args = append(args, "--filter", k+"="+v)
+	opts := new(containers.ListOptions).WithAll(true)
+	if len(filters) > 0 {
+		filterMap := make(map[string][]string, len(filters))
+		for k, v := range filters {
+			filterMap[k] = []string{v}
+		}
+		opts = opts.WithFilters(filterMap)
 	}
 
-	var containers []ContainerInfo
-	if err := e.RunJSON(ctx, &containers, args...); err != nil {
-		return nil, err
-	}
-	return containers, nil
-}
-
-// InspectContainer returns detailed information about a container.
-func (e *Engine) InspectContainer(ctx context.Context, idOrName string) (json.RawMessage, error) {
-	out, err := e.Run(ctx, "inspect", idOrName)
+	listed, err := containers.List(e.connCtx, opts)
 	if err != nil {
 		return nil, err
 	}
-	return json.RawMessage(out), nil
+
+	var infos []ContainerInfo
+	for _, c := range listed {
+		name := ""
+		if len(c.Names) > 0 {
+			name = c.Names[0]
+		}
+		infos = append(infos, ContainerInfo{
+			ID:    c.ID,
+			Name:  name,
+			State: c.State,
+			Image: c.Image,
+		})
+	}
+	return infos, nil
+}
+
+// InspectContainer returns detailed information about a container via REST API.
+func (e *Engine) InspectContainer(ctx context.Context, idOrName string) (json.RawMessage, error) {
+	data, err := containers.Inspect(e.connCtx, idOrName, nil)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(raw), nil
+}
+
+// ContainerLogs retrieves logs from a container via REST API.
+func (e *Engine) ContainerLogs(ctx context.Context, idOrName string, follow bool, tail string) (string, error) {
+	opts := new(containers.LogOptions).
+		WithStdout(true).
+		WithStderr(true).
+		WithFollow(follow)
+	if tail != "" {
+		opts = opts.WithTail(tail)
+	}
+
+	var stdout, stderr bytes.Buffer
+	stdoutCh := make(chan string, 1024)
+	stderrCh := make(chan string, 1024)
+
+	go func() {
+		for line := range stdoutCh {
+			stdout.WriteString(line)
+			stdout.WriteByte('\n')
+		}
+	}()
+	go func() {
+		for line := range stderrCh {
+			stderr.WriteString(line)
+			stderr.WriteByte('\n')
+		}
+	}()
+
+	if err := containers.Logs(e.connCtx, idOrName, opts, stdoutCh, stderrCh); err != nil {
+		return "", fmt.Errorf("container logs: %w", err)
+	}
+
+	result := stdout.String()
+	if s := stderr.String(); s != "" {
+		if result != "" {
+			result += s
+		} else {
+			result = s
+		}
+	}
+	return strings.TrimRight(result, "\n"), nil
+}
+
+// --- tar helpers ---
+
+// tarPath creates a tar archive from a host path.
+func tarPath(hostPath string, w io.Writer) error {
+	tw := tar.NewWriter(w)
+	defer tw.Close()
+
+	info, err := os.Stat(hostPath)
+	if err != nil {
+		return err
+	}
+
+	if !info.IsDir() {
+		// Single file.
+		return tarFile(tw, hostPath, info.Name())
+	}
+
+	// Directory — walk and add all files.
+	base := filepath.Base(hostPath)
+	return filepath.Walk(hostPath, func(path string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(hostPath, path)
+		name := filepath.Join(base, rel)
+		if fi.IsDir() {
+			return tw.WriteHeader(&tar.Header{
+				Name:     name + "/",
+				Typeflag: tar.TypeDir,
+				Mode:     0o755,
+			})
+		}
+		return tarFile(tw, path, name)
+	})
+}
+
+func tarFile(tw *tar.Writer, path, name string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+
+	hdr := &tar.Header{
+		Name: name,
+		Size: info.Size(),
+		Mode: int64(info.Mode()),
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return err
+	}
+	_, err = io.Copy(tw, f)
+	return err
+}
+
+// untarToPath extracts a tar archive to a host directory.
+func untarToPath(r io.Reader, hostPath string) error {
+	tr := tar.NewReader(r)
+
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		target := filepath.Join(hostPath, filepath.Base(hdr.Name))
+
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			os.MkdirAll(target, 0o755) //nolint:errcheck
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			f, err := os.Create(target)
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(f, tr); err != nil {
+				f.Close()
+				return err
+			}
+			f.Close()
+		}
+	}
+	return nil
 }

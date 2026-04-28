@@ -95,20 +95,21 @@ func TestIntegrationContainerLifecycle(t *testing.T) {
 		t.Fatalf("EnsureImage: %v", err)
 	}
 
-	// Create container.
+	// Create container with a long-running command via REST API.
 	containerName := "ycode-test-lifecycle"
+
+	// Remove any leftover from previous run.
+	leftover := NewContainer(engine, containerName)
+	leftover.Remove(ctx, true) // ignore error
+
 	cfg := &ContainerConfig{
 		Name:    containerName,
 		Image:   testImage,
-		Init:    true,
-		CapDrop: []string{"ALL"},
+		Command: []string{"sleep", "300"},
 		Labels: map[string]string{
 			SessionLabel: "integration-test",
 		},
 	}
-
-	// Remove any leftover from previous run.
-	engine.Run(ctx, "rm", "-f", containerName)
 
 	ctr, err := engine.CreateContainer(ctx, cfg)
 	if err != nil {
@@ -119,27 +120,6 @@ func TestIntegrationContainerLifecycle(t *testing.T) {
 	if ctr.ID == "" {
 		t.Error("expected non-empty container ID")
 	}
-
-	// Start container with a long-running command.
-	// We need to recreate with a command since podman create without one exits immediately.
-	ctr.Remove(ctx, true)
-
-	// Create with sleep command — labels must come before image name.
-	args := []string{"create", "--name", containerName, "--init"}
-	for k, v := range cfg.Labels {
-		args = append(args, "--label", k+"="+v)
-	}
-	args = append(args, testImage, "sleep", "300")
-	out, err := engine.Run(ctx, args...)
-	if err != nil {
-		t.Fatalf("create with command: %v", err)
-	}
-	ctr = &Container{
-		ID:     strings.TrimSpace(string(out)),
-		Name:   containerName,
-		engine: engine,
-	}
-	defer ctr.Remove(ctx, true)
 
 	if err := ctr.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)

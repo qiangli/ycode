@@ -58,44 +58,21 @@ func newPodmanPsCmd() *cobra.Command {
 				return err
 			}
 
-			psArgs := []string{"ps", "--format=json"}
-			if all {
-				psArgs = append(psArgs, "-a")
+			var filters map[string]string
+			if !all {
+				filters = map[string]string{"status": "running"}
 			}
 
-			out, err := engine.Run(cmd.Context(), psArgs...)
+			containers, err := engine.ListContainers(cmd.Context(), filters)
 			if err != nil {
 				return err
-			}
-
-			var containers []map[string]any
-			if err := json.Unmarshal(out, &containers); err != nil {
-				fmt.Print(string(out))
-				return nil
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "CONTAINER ID\tIMAGE\tSTATUS\tNAMES")
 			for _, c := range containers {
-				id := truncStr(fmt.Sprint(c["Id"]), 12)
-				image := fmt.Sprint(c["Image"])
-				status := fmt.Sprint(c["Status"])
-				names := ""
-				if n, ok := c["Names"]; ok {
-					switch v := n.(type) {
-					case []any:
-						parts := make([]string, len(v))
-						for i, p := range v {
-							parts[i] = fmt.Sprint(p)
-						}
-						names = strings.Join(parts, ",")
-					case string:
-						names = v
-					default:
-						names = fmt.Sprint(v)
-					}
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", id, image, status, names)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+					truncStr(c.ID, 12), c.Image, c.State, c.Name)
 			}
 			w.Flush()
 			return nil
@@ -117,41 +94,25 @@ func newPodmanImagesCmd() *cobra.Command {
 				return err
 			}
 
-			out, err := engine.Run(cmd.Context(), "images", "--format=json")
+			images, err := engine.ListImages(cmd.Context())
 			if err != nil {
 				return err
-			}
-
-			var images []map[string]any
-			if err := json.Unmarshal(out, &images); err != nil {
-				fmt.Print(string(out))
-				return nil
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "REPOSITORY\tTAG\tIMAGE ID\tSIZE")
 			for _, img := range images {
-				repo := ""
-				tag := ""
-				if names, ok := img["Names"]; ok {
-					switch v := names.(type) {
-					case []any:
-						if len(v) > 0 {
-							parts := strings.SplitN(fmt.Sprint(v[0]), ":", 2)
-							repo = parts[0]
-							if len(parts) > 1 {
-								tag = parts[1]
-							}
-						}
+				repo := "<none>"
+				tag := "<none>"
+				if len(img.Names) > 0 {
+					parts := strings.SplitN(img.Names[0], ":", 2)
+					repo = parts[0]
+					if len(parts) > 1 {
+						tag = parts[1]
 					}
 				}
-				if repo == "" {
-					repo = "<none>"
-					tag = "<none>"
-				}
-				id := truncStr(fmt.Sprint(img["Id"]), 12)
-				size := formatSize(img["Size"])
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", repo, tag, id, size)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+					repo, tag, truncStr(img.ID, 12), formatSize(float64(img.Size)))
 			}
 			w.Flush()
 			return nil
@@ -171,7 +132,11 @@ func newPodmanPullCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return engine.PullImage(cmd.Context(), args[0])
+			if err := engine.PullImage(cmd.Context(), args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("Pulled %s\n", args[0])
+			return nil
 		},
 	}
 }
@@ -188,12 +153,22 @@ func newPodmanExecCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			execArgs := append([]string{"exec", args[0]}, args[1:]...)
-			out, err := engine.Run(cmd.Context(), execArgs...)
-			if out != nil {
-				fmt.Print(string(out))
+			ctr := container.NewContainer(engine, args[0])
+			command := strings.Join(args[1:], " ")
+			result, err := ctr.Exec(cmd.Context(), command, "")
+			if err != nil {
+				return err
 			}
-			return err
+			if result.Stdout != "" {
+				fmt.Println(result.Stdout)
+			}
+			if result.Stderr != "" {
+				fmt.Fprintln(os.Stderr, result.Stderr)
+			}
+			if result.ExitCode != 0 {
+				os.Exit(result.ExitCode)
+			}
+			return nil
 		},
 	}
 }
@@ -212,19 +187,12 @@ func newPodmanLogsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logsArgs := []string{"logs"}
-			if follow {
-				logsArgs = append(logsArgs, "-f")
+			logs, err := engine.ContainerLogs(cmd.Context(), args[0], follow, tail)
+			if err != nil {
+				return err
 			}
-			if tail != "" {
-				logsArgs = append(logsArgs, "--tail", tail)
-			}
-			logsArgs = append(logsArgs, args[0])
-			out, err := engine.Run(cmd.Context(), logsArgs...)
-			if out != nil {
-				fmt.Print(string(out))
-			}
-			return err
+			fmt.Print(logs)
+			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow log output")
@@ -244,12 +212,15 @@ func newPodmanStopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			stopArgs := append([]string{"stop"}, args...)
-			out, err := engine.Run(cmd.Context(), stopArgs...)
-			if out != nil {
-				fmt.Print(string(out))
+			for _, id := range args {
+				ctr := container.NewContainer(engine, id)
+				if err := ctr.Stop(cmd.Context(), 10*time.Second); err != nil {
+					fmt.Fprintf(os.Stderr, "Error stopping %s: %v\n", id, err)
+				} else {
+					fmt.Println(id)
+				}
 			}
-			return err
+			return nil
 		},
 	}
 }
@@ -267,16 +238,15 @@ func newPodmanRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rmArgs := []string{"rm"}
-			if force {
-				rmArgs = append(rmArgs, "-f")
+			for _, id := range args {
+				ctr := container.NewContainer(engine, id)
+				if err := ctr.Remove(cmd.Context(), force); err != nil {
+					fmt.Fprintf(os.Stderr, "Error removing %s: %v\n", id, err)
+				} else {
+					fmt.Println(id)
+				}
 			}
-			rmArgs = append(rmArgs, args...)
-			out, err := engine.Run(cmd.Context(), rmArgs...)
-			if out != nil {
-				fmt.Print(string(out))
-			}
-			return err
+			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force removal of a running container")
@@ -297,19 +267,38 @@ func newPodmanRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			runArgs := []string{"run"}
+
+			cfg := &container.ContainerConfig{
+				Image: args[0],
+			}
+			if len(args) > 1 {
+				cfg.Command = args[1:]
+			}
+
+			ctr, err := engine.CreateContainer(cmd.Context(), cfg)
+			if err != nil {
+				return err
+			}
+
 			if rm {
-				runArgs = append(runArgs, "--rm")
+				defer ctr.Remove(cmd.Context(), true)
 			}
+
+			if err := ctr.Start(cmd.Context()); err != nil {
+				return err
+			}
+
 			if detach {
-				runArgs = append(runArgs, "-d")
+				fmt.Println(ctr.ID)
+				return nil
 			}
-			runArgs = append(runArgs, args...)
-			out, err := engine.Run(cmd.Context(), runArgs...)
-			if out != nil {
-				fmt.Print(string(out))
+
+			// Wait for container to finish and print logs.
+			logs, err := engine.ContainerLogs(cmd.Context(), ctr.ID, false, "")
+			if err == nil && logs != "" {
+				fmt.Print(logs)
 			}
-			return err
+			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&rm, "rm", false, "Automatically remove the container when it exits")
@@ -354,15 +343,9 @@ func newPodmanInspectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Pretty-print JSON.
-			var pretty json.RawMessage
-			if err := json.Unmarshal(data, &pretty); err == nil {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				enc.Encode(pretty)
-			} else {
-				fmt.Println(string(data))
-			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			enc.Encode(json.RawMessage(data))
 			return nil
 		},
 	}
@@ -377,17 +360,12 @@ func truncStr(s string, n int) string {
 	return s[:n]
 }
 
-func formatSize(v any) string {
-	switch s := v.(type) {
-	case float64:
-		if s > 1e9 {
-			return fmt.Sprintf("%.1f GB", s/1e9)
-		}
-		if s > 1e6 {
-			return fmt.Sprintf("%.1f MB", s/1e6)
-		}
-		return fmt.Sprintf("%.0f B", s)
-	default:
-		return fmt.Sprint(v)
+func formatSize(s float64) string {
+	if s > 1e9 {
+		return fmt.Sprintf("%.1f GB", s/1e9)
 	}
+	if s > 1e6 {
+		return fmt.Sprintf("%.1f MB", s/1e6)
+	}
+	return fmt.Sprintf("%.0f B", s)
 }
