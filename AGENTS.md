@@ -16,10 +16,16 @@ export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY for OpenAI-compatible
 ```bash
 make build          # full quality gate: tidy → fmt → vet → compile → test → verify
 make compile        # quick compile only (bin/ycode)
+make compile-full   # single binary with embedded podman + runner
 make compile-debug  # compile with debug symbols (for profiling/debugging)
 make install        # build + install to ~/bin/ycode (re-signs on macOS)
 make test           # unit tests only (-short -race)
 make cross          # cross-compile all platforms (dist/)
+```
+
+Manual `go build` requires build tags (handled automatically by `make compile`):
+```bash
+go build -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/
 ```
 
 Single test and integration test:
@@ -75,7 +81,8 @@ When the user's message starts with `/<name>`, read `skills/<name>/skill.md` and
 
 ```bash
 make build                              # full quality gate (must pass before deploy)
-make deploy                             # localhost:58080 by default
+bin/ycode serve                         # start local server (Gitea, Ollama, SearXNG on :58080)
+make deploy                             # deploy to localhost:58080 (or remote with HOST=)
 make validate                           # integration/acceptance/perf tests against running instance
 
 make deploy HOST=staging PORT=58080     # remote deploy (passwordless SSH required)
