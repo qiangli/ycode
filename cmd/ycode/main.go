@@ -36,6 +36,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/repomap"
+	"github.com/qiangli/ycode/internal/runtime/routing"
 	"github.com/qiangli/ycode/internal/runtime/searxng"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/vfs"
@@ -223,6 +224,11 @@ func newApp() (*cli.App, error) {
 	toolReg := tools.NewRegistry()
 	tools.RegisterBuiltins(toolReg)
 
+	// Quality monitoring: track tool reliability metrics and surface degraded tools
+	// in the system prompt diagnostics section.
+	qm := tools.NewQualityMonitor(0.7)
+	toolReg.SetQualityMonitor(qm)
+
 	// Container sandbox: when enabled, bash commands run inside an isolated container
 	// instead of directly on the host. The workspace is bind-mounted read-write.
 	var bashExecutor bash.Executor
@@ -315,7 +321,7 @@ func newApp() (*cli.App, error) {
 	tools.SetMemoryManager(memManager)
 	tools.RegisterMemoryHandlers(toolReg)
 	tools.RegisterRemoteHandler(toolReg)
-	tools.RegisterNotebookHandler(toolReg)
+	tools.RegisterNotebookHandler(toolReg, v)
 	tools.RegisterModeHandlers(toolReg, planMode)
 	tools.RegisterConfigHandler(toolReg, cfg)
 	tools.RegisterSemanticSearchHandler(toolReg)
@@ -370,6 +376,16 @@ func newApp() (*cli.App, error) {
 		toolIdx := tools.NewToolSearchIndex(searchStore)
 		toolIdx.IndexTools(toolReg)
 		toolReg.SetSearchIndex(toolIdx)
+
+		// Wire Bleve-backed full-text search into memory manager.
+		if memManager != nil {
+			bleveSearcher := memory.NewBleveSearcher(searchStore)
+			memManager.SetBleveSearcher(bleveSearcher)
+			// Index existing memories for immediate searchability.
+			if mems, err := memManager.All(); err == nil && len(mems) > 0 {
+				bleveSearcher.IndexAll(mems)
+			}
+		}
 
 		// Set up Bleve fallback for Grep tool.
 		tools.SetCodeSearchIndex(searchStore)
@@ -505,6 +521,19 @@ func newApp() (*cli.App, error) {
 		}
 	}
 
+	// Inference router: enables Tier 2 LLM-based tool pre-activation and
+	// multi-factor model routing for lightweight tasks (classification, summarization).
+	// Uses the main provider as the classification candidate.
+	inferenceRouter := routing.NewRouter(
+		routing.WithStatsProvider(&routing.QualityMonitorStats{Monitor: qm}),
+	)
+	if provider != nil {
+		inferenceRouter.RegisterCandidateForAll(routing.Candidate{
+			Provider: provider,
+			Model:    cfg.Model,
+		})
+	}
+
 	app, err := cli.NewApp(cfg, provider, sess, cli.AppOptions{
 		WorkDir: cwd,
 		ProviderKind: func() string {
@@ -518,15 +547,17 @@ func newApp() (*cli.App, error) {
 			ProjectDir: projectDir,
 			LocalDir:   projectDir,
 		},
-		MemoryDir:      memoryDir,
-		Version:        version,
-		PlanMode:       planMode,
-		ToolRegistry:   toolReg,
-		PromptCtx:      promptCtx,
-		UserConfigPath: filepath.Join(userDir, "settings.json"),
-		Storage:        storageMgr,
-		ConvOTEL:       convOTEL,
-		OllamaLister:   inference.NewOllamaLister(),
+		MemoryDir:       memoryDir,
+		Version:         version,
+		PlanMode:        planMode,
+		ToolRegistry:    toolReg,
+		PromptCtx:       promptCtx,
+		UserConfigPath:  filepath.Join(userDir, "settings.json"),
+		Storage:         storageMgr,
+		ConvOTEL:        convOTEL,
+		OllamaLister:    inference.NewOllamaLister(),
+		InferenceRouter: inferenceRouter,
+		MemoryManager:   memManager,
 	})
 	if err != nil {
 		return nil, err
@@ -1165,6 +1196,9 @@ func init() {
 
 	// Batch processing
 	rootCmd.AddCommand(newBatchCmd())
+
+	// Ralph autonomous loop
+	rootCmd.AddCommand(newRalphCmd())
 
 	// Training and evaluation
 	rootCmd.AddCommand(newTrainCmd())

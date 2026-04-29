@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/qiangli/ycode/internal/runtime/batch"
@@ -35,10 +36,14 @@ func newBatchCmd() *cobra.Command {
 				OutputPath:     output,
 				CheckpointPath: checkpoint,
 				Concurrency:    concurrency,
+				Execute: func(ctx context.Context, prompt, model string) (string, int, error) {
+					// Direct single-shot LLM call for batch processing.
+					// Each prompt runs independently without tool use.
+					return prompt, 0, fmt.Errorf("batch execute: not yet wired to provider")
+				},
 			})
-			_ = runner // TODO: wire up runner.Run() when conversation runtime integration is ready
-			fmt.Printf("Batch runner configured: input=%s output=%s concurrency=%d\n", input, output, concurrency)
-			return nil
+			fmt.Printf("Batch runner: input=%s output=%s concurrency=%d\n", input, output, concurrency)
+			return runner.Run(cmd.Context())
 		},
 	}
 	runCmd.Flags().String("input", "", "Input JSONL file with prompts")

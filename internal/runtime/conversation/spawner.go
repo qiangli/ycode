@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/agentpool"
+	"github.com/qiangli/ycode/internal/runtime/lanes"
+	"github.com/qiangli/ycode/internal/runtime/memory"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/tools"
@@ -39,6 +42,15 @@ type SpawnerConfig struct {
 
 	// Agent pool for progress tracking (optional).
 	AgentPool *agentpool.Pool
+
+	// Lane scheduler for concurrency control (optional).
+	LaneScheduler *lanes.Scheduler
+
+	// Memory manager for episodic memory recording (optional).
+	MemoryManager *memory.Manager
+
+	// Session ID for episodic memory context.
+	SessionID string
 }
 
 // NewAgentSpawner creates a spawner function that can be passed to
@@ -47,6 +59,16 @@ type SpawnerConfig struct {
 // agentic loop, and returns the text result.
 func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tools.AgentManifest) (string, error) {
 	return func(ctx context.Context, manifest *tools.AgentManifest) (string, error) {
+		// Acquire a subagent lane slot to bound concurrent subagent work.
+		if sc.LaneScheduler != nil {
+			release, err := sc.LaneScheduler.Acquire(ctx, lanes.LaneSubagent,
+				fmt.Sprintf("agent:%s", manifest.Type))
+			if err != nil {
+				return "", fmt.Errorf("subagent lane: %w", err)
+			}
+			defer release()
+		}
+
 		mode := tools.AgentTypeToMode(manifest.Type)
 		logger := sc.Logger
 		if logger == nil {
@@ -177,6 +199,10 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 			maxIter = def.EffectiveMaxIter()
 		}
 
+		// Track metrics for episodic memory.
+		startTime := time.Now()
+		toolsUsed := make(map[string]bool)
+
 		// Agentic loop: send → receive → execute tools → repeat.
 		for i := 0; i < maxIter; i++ {
 			req := &api.Request{
@@ -248,6 +274,7 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 				logger.Info("subagent completed", "turns", i+1)
 				completeAgent(false)
 				span.SetAttributes(attribute.Int("agent.turns", i+1))
+				recordEpisodicMemory(sc, manifest, agentID, startTime, toolsUsed, true)
 				return textContent, nil
 			}
 
@@ -279,6 +306,9 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 					pool.RecordToolUse(agentID, tc.Name)
 				}
 			}
+			for _, tc := range toolCalls {
+				toolsUsed[tc.Name] = true
+			}
 			toolResults := executeSubagentTools(ctx, sc, filtered, toolCalls, logger)
 
 			messages = append(messages, api.Message{
@@ -288,6 +318,7 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 		}
 
 		completeAgent(true)
+		recordEpisodicMemory(sc, manifest, agentID, startTime, toolsUsed, false)
 		err := fmt.Errorf("subagent exceeded maximum iterations (%d)", maxSubagentIterations)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -370,4 +401,33 @@ func executeSubagentToolsSequential(ctx context.Context, filtered *tools.Filtere
 		logger.Info("subagent tool executed", "tool", tc.Name, "error", err != nil)
 	}
 	return results
+}
+
+// recordEpisodicMemory saves an episodic memory for a completed subagent.
+// This captures agent experiences for future recall — what was attempted,
+// which tools were used, whether it succeeded, and how long it took.
+func recordEpisodicMemory(sc *SpawnerConfig, manifest *tools.AgentManifest, agentID string, startTime time.Time, toolsUsed map[string]bool, success bool) {
+	if sc.MemoryManager == nil {
+		return
+	}
+
+	var toolNames []string
+	for name := range toolsUsed {
+		toolNames = append(toolNames, name)
+	}
+
+	meta := &memory.EpisodicMetadata{
+		AgentType:   string(manifest.Type),
+		AgentID:     agentID,
+		TaskSummary: manifest.Description,
+		ToolsUsed:   toolNames,
+		Duration:    time.Since(startTime),
+		Success:     success,
+		SessionID:   sc.SessionID,
+	}
+
+	mem := memory.NewEpisodicMemory(meta)
+	if err := sc.MemoryManager.Save(mem); err != nil {
+		slog.Debug("episodic memory save failed", "agent", agentID, "error", err)
+	}
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/runtime/bash"
 	"github.com/qiangli/ycode/internal/runtime/permission"
+	"github.com/qiangli/ycode/internal/runtime/policy"
 )
 
 // PermissionResolver returns the current permission mode.
@@ -59,6 +60,9 @@ type Registry struct {
 	// Optional quality monitor for tracking tool call success/failure rates.
 	qualityMonitor *QualityMonitor
 
+	// Optional policy engine for rule-based permission decisions.
+	policyEngine *policy.Engine
+
 	// Optional TTY executor for running interactive commands (ssh, sudo, etc.)
 	// with full terminal access. Only available in TUI mode.
 	ttyExecutor bash.TTYExecutor
@@ -83,6 +87,14 @@ func (r *Registry) SetPermissionPrompter(prompter PermissionPrompter) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.permPrompter = prompter
+}
+
+// SetPolicyEngine attaches a policy engine for rule-based permission decisions.
+// When set, policy rules are checked before the standard permission mode.
+func (r *Registry) SetPolicyEngine(e *policy.Engine) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.policyEngine = e
 }
 
 // SetTTYExecutor sets the executor for interactive commands that need terminal access.
@@ -193,6 +205,23 @@ func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessag
 	}
 	if spec.Handler == nil {
 		return "", fmt.Errorf("tool %s has no handler", name)
+	}
+
+	// Check policy rules first (highest priority).
+	r.mu.RLock()
+	pe := r.policyEngine
+	r.mu.RUnlock()
+	if pe != nil {
+		decision, reason := pe.Evaluate(name, "")
+		switch decision {
+		case policy.DecisionDeny:
+			return "", fmt.Errorf("policy denied tool %q: %s", name, reason)
+		case policy.DecisionAllow:
+			// Skip normal permission checks — policy explicitly allows.
+			ctx = context.WithValue(ctx, permApprovedKey, true)
+		case policy.DecisionAsk:
+			// Fall through to normal permission flow.
+		}
 	}
 
 	// Check permission if a resolver is configured.

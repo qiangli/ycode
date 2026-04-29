@@ -85,6 +85,9 @@ type Runtime struct {
 	// Used by Tier 2 tool pre-activation (LLM classification).
 	inferenceRouter *routing.Router
 
+	// Prompt cache tracking — detects cache hits/misses/breaks for observability.
+	promptCache *api.PromptCache
+
 	// Optional OTEL instrumentation.
 	otel *OTELConfig
 
@@ -154,6 +157,7 @@ func NewRuntime(
 		routingCache:     session.NewRoutingCache(),
 		activatedTools:   make(map[string]int),
 		completionCache:  api.NewCompletionCache(completionCacheDir, api.CompletionCacheTTL),
+		promptCache:      api.NewPromptCache(),
 		jitDiscovery:     jit,
 		topicTracker:     prompt.NewTopicTracker(),
 	}
@@ -392,6 +396,12 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		Stream:    true,
 	}
 
+	// Track prompt cache fingerprint for hit/miss/break detection.
+	fp := api.Fingerprint(req)
+	if r.promptCache.Check(fp) {
+		r.logger.Debug("prompt cache: hit (static parts unchanged)")
+	}
+
 	// Check completion cache — skip the LLM entirely for identical requests.
 	reqHash := api.RequestHash(req)
 	if cached := r.completionCache.Lookup(reqHash); cached != nil {
@@ -497,6 +507,15 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		StopReason: result.StopReason,
 		Usage:      result.Usage,
 	})
+
+	// Update prompt cache fingerprint and detect breaks.
+	r.promptCache.Update(fp)
+	if r.promptCache.DetectBreak(result.Usage.CacheReadInput) {
+		r.logger.Warn("prompt cache: unexpected break detected",
+			"cache_read_tokens", result.Usage.CacheReadInput,
+			"breaks", r.promptCache.Breaks,
+		)
+	}
 
 	// Update cache warmer context so keep-alive pings use current system prompt.
 	if r.cacheWarmer != nil {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/qiangli/ycode/internal/runtime/vfs"
 )
 
 // NotebookCell represents a Jupyter notebook cell.
@@ -23,8 +25,8 @@ type Notebook struct {
 	NBFormatMinor int            `json:"nbformat_minor"`
 }
 
-// RegisterNotebookHandler registers the NotebookEdit tool handler.
-func RegisterNotebookHandler(r *Registry) {
+// RegisterNotebookHandler registers the NotebookEdit tool handler with VFS path validation.
+func RegisterNotebookHandler(r *Registry, v *vfs.VFS) {
 	spec, ok := r.Get("NotebookEdit")
 	if !ok {
 		return
@@ -39,6 +41,12 @@ func RegisterNotebookHandler(r *Registry) {
 		if err := json.Unmarshal(input, &params); err != nil {
 			return "", fmt.Errorf("parse NotebookEdit input: %w", err)
 		}
+
+		absPath, err := v.ValidatePath(ctx, params.NotebookPath)
+		if err != nil {
+			return "", err
+		}
+		params.NotebookPath = absPath
 
 		data, err := os.ReadFile(params.NotebookPath)
 		if err != nil {
@@ -82,6 +90,7 @@ func RegisterNotebookHandler(r *Registry) {
 		if err := os.WriteFile(params.NotebookPath, out, 0o644); err != nil {
 			return "", fmt.Errorf("write notebook: %w", err)
 		}
+		r.NotifyFileWrite(params.NotebookPath)
 
 		return fmt.Sprintf("notebook %s: %s cell at index %d", params.NotebookPath, params.Action, params.CellIndex), nil
 	}

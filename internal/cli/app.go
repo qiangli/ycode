@@ -21,8 +21,13 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/builtin"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
+	"github.com/qiangli/ycode/internal/runtime/lanes"
+	"github.com/qiangli/ycode/internal/runtime/memory"
+	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
+	"github.com/qiangli/ycode/internal/runtime/routing"
 	"github.com/qiangli/ycode/internal/runtime/session"
+	"github.com/qiangli/ycode/internal/runtime/swarm"
 	"github.com/qiangli/ycode/internal/runtime/task"
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/runtime/team"
@@ -61,12 +66,21 @@ type App struct {
 	// Custom agent definitions loaded from YAML config.
 	agentDefs *agentdef.Registry
 
+	// Lane scheduler for concurrency control across main/subagent/cron work.
+	laneScheduler *lanes.Scheduler
+
+	// Memory manager for episodic memory recording in subagents.
+	memoryManager *memory.Manager
+
 	// Session tracking for summary reporting.
 	usageTracker *usage.Tracker
 	sessionStart time.Time
 
 	// Ollama model lister for model discovery (optional).
 	ollamaLister api.OllamaLister
+
+	// Inference router for Tier 2 tool pre-activation and model selection.
+	inferenceRouter *routing.Router
 
 	// OTEL conversation instrumentation (optional).
 	convOTEL  *conversation.OTELConfig
@@ -83,19 +97,21 @@ type App struct {
 
 // AppOptions holds optional configuration for App creation.
 type AppOptions struct {
-	WorkDir        string
-	ConfigDirs     commands.ConfigDirs
-	MemoryDir      string
-	Version        string
-	ProviderKind   string
-	PlanMode       tools.PlanModeController
-	ToolRegistry   *tools.Registry
-	PromptCtx      *prompt.ProjectContext
-	UserConfigPath string
-	Storage        *storage.Manager
-	ConvOTEL       *conversation.OTELConfig
-	OllamaLister   api.OllamaLister
-	AgentDefsDir   string // directory containing custom agent YAML definitions
+	WorkDir         string
+	ConfigDirs      commands.ConfigDirs
+	MemoryDir       string
+	Version         string
+	ProviderKind    string
+	PlanMode        tools.PlanModeController
+	ToolRegistry    *tools.Registry
+	PromptCtx       *prompt.ProjectContext
+	UserConfigPath  string
+	Storage         *storage.Manager
+	ConvOTEL        *conversation.OTELConfig
+	OllamaLister    api.OllamaLister
+	AgentDefsDir    string // directory containing custom agent YAML definitions
+	InferenceRouter *routing.Router
+	MemoryManager   *memory.Manager
 }
 
 // NewApp creates a new app instance.
@@ -117,25 +133,28 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 	}
 
 	app := &App{
-		config:         cfg,
-		provider:       provider,
-		providerKind:   o.ProviderKind,
-		session:        sess,
-		renderer:       renderer,
-		toolRegistry:   o.ToolRegistry,
-		promptCtx:      o.PromptCtx,
-		planMode:       o.PlanMode,
-		stdout:         os.Stdout,
-		version:        o.Version,
-		workDir:        o.WorkDir,
-		userConfigPath: o.UserConfigPath,
-		storage:        o.Storage,
-		usageTracker:   usage.NewTracker(),
-		sessionStart:   time.Now(),
-		convOTEL:       o.ConvOTEL,
-		ollamaLister:   o.OllamaLister,
-		taskRegistry:   task.NewRegistry(),
-		agentPool:      agentpool.New(),
+		config:          cfg,
+		provider:        provider,
+		providerKind:    o.ProviderKind,
+		session:         sess,
+		renderer:        renderer,
+		toolRegistry:    o.ToolRegistry,
+		promptCtx:       o.PromptCtx,
+		planMode:        o.PlanMode,
+		stdout:          os.Stdout,
+		version:         o.Version,
+		workDir:         o.WorkDir,
+		userConfigPath:  o.UserConfigPath,
+		storage:         o.Storage,
+		usageTracker:    usage.NewTracker(),
+		sessionStart:    time.Now(),
+		convOTEL:        o.ConvOTEL,
+		ollamaLister:    o.OllamaLister,
+		inferenceRouter: o.InferenceRouter,
+		memoryManager:   o.MemoryManager,
+		laneScheduler:   lanes.NewScheduler(),
+		taskRegistry:    task.NewRegistry(),
+		agentPool:       agentpool.New(),
 	}
 
 	// Set up command registry.
@@ -200,8 +219,32 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 			MaxLLM:           cfg.Parallel.MaxLLM,
 			MaxAgent:         cfg.Parallel.MaxAgent,
 			AgentPool:        app.agentPool,
+			LaneScheduler:    app.laneScheduler,
+			MemoryManager:    app.memoryManager,
+			SessionID:        sess.ID,
 		})
-		tools.RegisterAgentHandler(app.toolRegistry, app.parentAgentMode, spawner, app.taskRegistry, app.agentDefs)
+		// Wrap spawner with swarm orchestration: detect handoff signals in
+		// agent results and route to the target agent via the Orchestrator.
+		wrappedSpawner := func(ctx context.Context, manifest *tools.AgentManifest) (string, error) {
+			result, err := spawner(ctx, manifest)
+			if err != nil {
+				return result, err
+			}
+			if hr, isHandoff := swarm.DetectHandoff(result); isHandoff && app.agentDefs != nil {
+				slog.Info("swarm: handoff detected",
+					"from", manifest.Type,
+					"to", hr.TargetAgent,
+				)
+				orch := swarm.NewOrchestrator(&swarm.OrchestratorConfig{
+					AgentDefs:   app.agentDefs,
+					Spawner:     spawner,
+					MaxHandoffs: 10,
+				})
+				return orch.Run(ctx, hr.TargetAgent, hr.Message)
+			}
+			return result, nil
+		}
+		tools.RegisterAgentHandler(app.toolRegistry, app.parentAgentMode, wrappedSpawner, app.taskRegistry, app.agentDefs)
 	}
 
 	return app, nil
@@ -235,6 +278,9 @@ func (a *App) conversationRuntime() *conversation.Runtime {
 		if caps.CachingSupported {
 			rt.SetCacheWarmer(api.NewCacheWarmer(a.provider))
 		}
+	}
+	if a.inferenceRouter != nil {
+		rt.SetInferenceRouter(a.inferenceRouter)
 	}
 	// Restore L1 working memory (active topic) from ghost snapshot
 	// if this is a resumed session with prior compaction.
@@ -292,6 +338,18 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 		}
 		fmt.Fprint(a.stdout, output)
 		return nil
+	}
+
+	// Wire a non-interactive permission prompter for one-shot mode.
+	// Without this, tools requiring elevated permissions are silently denied
+	// with a confusing error. The non-interactive prompter denies with a clear
+	// message directing the user to use --dangerously-skip-permissions or
+	// interactive mode.
+	if a.toolRegistry != nil {
+		a.toolRegistry.SetPermissionPrompter(func(_ context.Context, toolName string, requiredMode permission.Mode) (bool, error) {
+			return false, fmt.Errorf("tool %q requires %s permission; use --dangerously-skip-permissions or run in interactive mode to approve",
+				toolName, requiredMode)
+		})
 	}
 
 	rt := a.conversationRuntime()
