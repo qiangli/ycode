@@ -1,10 +1,8 @@
 # AGENTS.md
 
-This file provides guidance to AI coding assistants working on this repository.
-It is tool-agnostic — it applies to Claude Code, OpenCode, Codex, ycode, and any other AI agent.
-CLAUDE.md is a symlink to this file.
+This file provides guidance to AI coding assistants working in this repository.
 
-ycode -- pure Go CLI agent harness for autonomous software development. Go 1.26+, permissive-license dependencies only.
+ycode — pure Go CLI agent harness for autonomous software development. Go 1.26+, permissive-license dependencies only. CLAUDE.md is a symlink to this file.
 
 ## First-Time Setup
 
@@ -16,7 +14,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY for OpenAI-compatible
 ## Build Commands
 
 ```bash
-make build          # full quality gate: tidy -> fmt -> vet -> compile -> test -> verify
+make build          # full quality gate: tidy → fmt → vet → compile → test → verify
 make compile        # quick compile only (bin/ycode)
 make compile-debug  # compile with debug symbols (for profiling/debugging)
 make install        # build + install to ~/bin/ycode (re-signs on macOS)
@@ -57,7 +55,7 @@ make runner-check     # verify runner binary + health check
 
 ## Architecture
 
-Entry: `cmd/ycode/main.go` -> cobra CLI -> REPL (`internal/cli/app.go`) or one-shot mode. Core loop in `internal/runtime/conversation/runtime.go`: assemble request -> send to provider -> dispatch tool calls -> loop until done. Public embedding API: `pkg/ycode/`. Design: `RuntimeContext` (no global state), three-tier config merge, five-layer memory.
+Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one-shot mode. Core loop in `internal/runtime/conversation/runtime.go`: assemble request → send to provider → dispatch tool calls → loop until done. Public embedding API: `pkg/ycode/`. Design: `RuntimeContext` (no global state), three-tier config merge, five-layer memory.
 
 **Key entry points:**
 - Provider layer: `internal/api/` — `Provider` interface (`Send(ctx, *Request) → stream`). Anthropic native + OpenAI-compatible (covers OpenAI, xAI, Gemini, Ollama). Model aliases resolved in `api/provider.go`.
@@ -71,7 +69,7 @@ Entry: `cmd/ycode/main.go` -> cobra CLI -> REPL (`internal/cli/app.go`) or one-s
 
 When the user's message starts with `/<name>`, read `skills/<name>/skill.md` and follow it. Everything after `/<name> ` is `ARGS`. Project skills: `/build`, `/claude`, `/deploy`, `/learn`, `/setup`, `/validate`, `/bench-instructions`. Some skills (`/init`, `/commit`) are embedded in the binary.
 
-## Development Cycle: Build -> Deploy -> Validate
+## Development Cycle: Build → Deploy → Validate
 
 ```bash
 make build                              # full quality gate (must pass before deploy)
@@ -86,21 +84,21 @@ Each step depends on the previous one succeeding. On failure: diagnose, fix sour
 
 ## Conventions
 
-**Layered build system** -- strict three-layer separation. Do not put logic in the Makefile (dependency graph only). Do not put logic in scripts/ (orchestration only). All logic must be in Go.
+**Layered build system** — strict three-layer separation. Do not put logic in the Makefile (dependency graph only). Do not put logic in scripts/ (orchestration only). All logic must be in Go.
 
 **No test logic in bash.** Scripts may invoke `go test` but must not contain assertions, HTTP calls for validation, or result parsing.
 
-**Dependencies** -- never add a dependency with a non-permissive license (GPL, AGPL, SSPL, CPAL). Only MIT, Apache-2.0, BSD, ISC, and MPL-2.0 are allowed.
+**Dependencies** — never add a dependency with a non-permissive license (GPL, AGPL, SSPL, CPAL). Only MIT, Apache-2.0, BSD, ISC, and MPL-2.0 are allowed.
 
-**No global state** -- never use package-level `var` for mutable state or registries. All state belongs on `RuntimeContext` or function parameters.
+**No global state** — never use package-level `var` for mutable state or registries. All state belongs on `RuntimeContext` or function parameters.
 
-**Logging discipline** -- do not add `log.Printf` or `fmt.Println` for debugging. Always use the structured logger from `RuntimeContext`. Never leave debug output on stderr — noisy shutdown logs have been a repeated source of fixes.
+**Logging discipline** — do not add `log.Printf` or `fmt.Println` for debugging. Always use the structured logger from `RuntimeContext`. Never leave debug output on stderr — noisy shutdown logs have been a repeated source of fixes.
 
-**Test isolation** -- always use `t.TempDir()` for test files, never write to the working directory. Always use `testing.Short()` to skip slow tests. Do not add `//go:build integration` tags to unit tests.
+**Test isolation** — always use `t.TempDir()` for test files, never write to the working directory. Always use `testing.Short()` to skip slow tests. Do not add `//go:build integration` tags to unit tests.
 
 **Commit conventions**: stage files by name (never `git add -A` or `git add .`). Only stage your own changes — do not stage pre-existing modifications. Match the repo's prefix style from `git log` (`fix:`, `feat:`, `docs:`).
 
-**Pre-commit checks** -- ALWAYS run `make build` before committing. It runs tidy, fmt, vet, compile, and test in the correct order with `priorart/` excluded. If you need to run steps manually:
+**Pre-commit checks** — ALWAYS run `make build` before committing. It runs tidy, fmt, vet, compile, and test in the correct order with `priorart/` excluded. If you need to run steps manually:
 ```bash
 PACKAGES=$(go list ./... | grep -v '/priorart/')
 go fmt $PACKAGES          # fix formatting
@@ -112,8 +110,8 @@ Never use bare `./...` — it hits read-only `priorart/` packages. All steps mus
 
 ## Directory Boundaries
 
-- **`priorart/`** -- **read-only.** Never modify, create, or delete anything under `priorart/`. Use `$(go list ./... | grep -v '/priorart/')` instead of `./...` for manual Go commands.
-- **`external/`** -- vendored submodules for the ycode build. Do not modify directly; vendor new code with attribution.
+- **`priorart/`** — **read-only.** Never modify, create, or delete anything under `priorart/`. Use `$(go list ./... | grep -v '/priorart/')` instead of `./...` for manual Go commands.
+- **`external/`** — vendored submodules for the ycode build. Do not modify directly; vendor new code with attribution.
 
 ## Evaluation
 
@@ -125,6 +123,6 @@ make eval-contract                     # contract-tier evals (no LLM, determinis
 ## References
 
 Read on demand:
-- [docs/instructions.md](./docs/instructions.md) -- conventions, skill system, build/test/commit rules
-- [docs/usage.md](./docs/usage.md) -- CLI modes, config, tools, workflows
-- [docs/architecture.md](./docs/architecture.md) -- full architecture, design decisions, component details
+- [docs/instructions.md](./docs/instructions.md) — conventions, skill system, build/test/commit rules
+- [docs/usage.md](./docs/usage.md) — CLI modes, config, tools, workflows
+- [docs/architecture.md](./docs/architecture.md) — full architecture, design decisions, component details
