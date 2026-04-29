@@ -59,6 +59,14 @@ make runner-check     # verify runner binary + health check
 
 Entry: `cmd/ycode/main.go` -> cobra CLI -> REPL (`internal/cli/app.go`) or one-shot mode. Core loop in `internal/runtime/conversation/runtime.go`: assemble request -> send to provider -> dispatch tool calls -> loop until done. Public embedding API: `pkg/ycode/`. Design: `RuntimeContext` (no global state), three-tier config merge, five-layer memory.
 
+**Key entry points:**
+- Provider layer: `internal/api/` — `Provider` interface (`Send(ctx, *Request) → stream`). Anthropic native + OpenAI-compatible (covers OpenAI, xAI, Gemini, Ollama). Model aliases resolved in `api/provider.go`.
+- Tool system: `internal/tools/registry.go` — `Registry` maps tool names to `ToolSpec` handlers. Tools are either always-available (sent every request: bash, file ops, search) or deferred (discovered via `ToolSearch`, activated with TTL=8 turns). New tools: add a `RegisterXxxHandlers(r *Registry)` function.
+- Prompt assembly: `internal/runtime/prompt/builder.go` — static sections (cacheable) above a dynamic boundary (environment, git, instructions, memories).
+- Config: `internal/runtime/config/config.go` — merges four files in order: `~/.config/ycode/settings.json` (user) → `<project>/.agents/ycode/settings.json` → `<cwd>/.agents/ycode/settings.json` (local) → `settings.local.json` (gitignored). `Instructions` and `AllowedDirectories` append; all other fields override.
+- Permission modes: ReadOnly (read/search only) → WorkspaceWrite (file modifications within VFS boundaries) → DangerFullAccess (shell, process control, MCP). Each tool declares its required mode in `ToolSpec.RequiredMode`.
+- Container tools (browser automation, sandbox): require podman. Managed in `internal/container/`.
+
 ## Skills
 
 When the user's message starts with `/<name>`, read `skills/<name>/skill.md` and follow it. Everything after `/<name> ` is `ARGS`. Project skills: `/build`, `/claude`, `/deploy`, `/learn`, `/setup`, `/validate`, `/bench-instructions`. Some skills (`/init`, `/commit`) are embedded in the binary.
