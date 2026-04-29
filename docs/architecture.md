@@ -192,31 +192,32 @@ tools := registry.ToolSearch("metrics")
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│ LAYER 1: EPHEMERAL                                         │
+│ LAYER 1: WORKING                                           │
 │ • Session message history (in-memory)                      │
 │ • Conversation context window                              │
 │ • Auto-summarized when token limit approached              │
 ├────────────────────────────────────────────────────────────┤
-│ LAYER 2: SUMMARY                                           │
-│ • Condensed conversation history                           │
-│ • Extracted via LLM with "remember that..." format         │
-│ • Stored in session, recovered on restart                  │
+│ LAYER 2: SHORT-TERM (Episodic)                             │
+│ • JSONL session logs (256KB rotation, 3 backups)           │
+│ • Episodic metadata: agent type, tools, duration, outcome  │
+│ • Indexed on ycode serve startup                           │
 ├────────────────────────────────────────────────────────────┤
-│ LAYER 3: STRUCTURED                                        │
-│ • Explicit user memories ("Remember that...")              │
-│ • Agent-extracted facts ("The test uses...")               │
-│ • Scoped: global, project, or session                      │
-│ • Stored in JSON files (~/.config/ycode/memory/)           │
+│ LAYER 3: LONG-TERM (Compaction)                            │
+│ • LLM-condensed intent summaries in session JSONL          │
+│ • Structured categories: goal, facts, blockers, decisions  │
+│ • Triggered at 100K tokens (CompactionThreshold)           │
 ├────────────────────────────────────────────────────────────┤
-│ LAYER 4: EMBEDDING                                         │
-│ • Vector search for relevant context                       │
-│ • Ollama embedding model (default: nomic-embed-text)       │
-│ • Retrieved via similarity search before each turn         │
+│ LAYER 4: CONTEXTUAL (Procedural)                           │
+│ • CLAUDE.md/AGENTS.md ancestry file discovery              │
+│ • JIT instruction loading when tools access new paths      │
+│ • #import directive with circular-reference detection      │
 ├────────────────────────────────────────────────────────────┤
-│ LAYER 5: ARCHIVAL                                          │
-│ • Full transcript persistence                              │
-│ • Searchable via `search_transcripts` tool                 │
-│ • Historical context for long-term projects                │
+│ LAYER 5: PERSISTENT                                        │
+│ • memory/{name}.md with YAML frontmatter                   │
+│ • 7 types × 4 scopes with dynamic value scoring           │
+│ • RRF fusion across 4 backends + MMR diversity reranking   │
+│ • Entity extraction, user profile, temporal validity       │
+│ • Background dreaming: consolidation every 30 minutes      │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -224,9 +225,14 @@ tools := registry.ToolSearch("metrics")
 
 | Scope | Storage Location | Lifetime | Use Case |
 |-------|-----------------|----------|----------|
-| `global` | `~/.config/ycode/memory/` | Indefinite | User preferences, coding style |
-| `project` | `<project>/.agents/ycode/memory.json` | Project lifetime | Project-specific knowledge |
-| `session` | In-memory + recovery file | Session | Temporary context |
+| `global` | `~/.agents/ycode/memory/` | Indefinite | User preferences, coding style |
+| `project` | `~/.agents/ycode/projects/{hash}/memory/` | Project lifetime | Project-specific knowledge |
+| `team` | (Shared team directory) | Team lifetime | Shared across team members |
+| `user` | (Private user directory) | Indefinite | Private to a single user |
+
+### Retrieval Pipeline
+
+Recall uses Reciprocal Rank Fusion (RRF) across four backends — vector, Bleve FTS, keyword, and entity — with composite scoring (recency + dynamic value) and MMR diversity re-ranking. Entity extraction links file paths, URLs, and Go packages to memories for relationship-aware retrieval. Turn-time injection provides per-turn context-aware memory without invalidating the system prompt cache.
 
 ### Prompt Assembly with Static/Dynamic Boundary
 
@@ -255,7 +261,15 @@ tools := registry.ToolSearch("metrics")
 
 **Implementation:**
 - `internal/runtime/prompt/builder.go` - Builder pattern for sections
-- `internal/runtime/memory/memory.go` - Memory manager
+- `internal/runtime/memory/memory.go` - Manager (Save/Recall/Forget with RRF fusion)
+- `internal/runtime/memory/fusion.go` - RRF and MMR algorithms
+- `internal/runtime/memory/value.go` - Dynamic value scoring and reward propagation
+- `internal/runtime/memory/entity.go` - Entity extraction and linking index
+- `internal/runtime/memory/profile.go` - Structured user profile
+- `internal/runtime/memory/turninjector.go` - Per-turn context-aware injection
+- `internal/runtime/memory/temporal.go` - Temporal validity windows
+- `internal/runtime/memory/dream.go` - Background consolidation with similarity clustering
+- `internal/runtime/memory/reindex.go` - Catch-up indexing on startup
 - `internal/runtime/embedding/` - Vector storage and search
 
 ---

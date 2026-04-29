@@ -71,7 +71,7 @@ Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one
 - Permission modes: ReadOnly (read/search only) → WorkspaceWrite (file modifications within VFS boundaries) → DangerFullAccess (shell, process control, MCP). Each tool declares its required mode in `ToolSpec.RequiredMode`.
 - Container tools (browser automation, sandbox): require podman. Managed in `internal/container/`.
 - Embedded services: Gitea git server (`internal/gitserver/`), Ollama inference runner (`internal/inference/`), SearXNG search (`internal/runtime/searxng/`). Started by `ycode serve`.
-- Memory: five layers — ephemeral (session messages) → summary (LLM-condensed) → structured (explicit facts, scoped global/project/session) → embedding (vector search via chromem-go) → archival (full transcripts). Managed in `internal/runtime/memory/`, persisted via `internal/storage/` (SQLite, Bleve FTS, vector).
+- Memory: five layers — working (context window) → episodic (JSONL sessions) → compaction (LLM summaries) → procedural (AGENTS.md discovery) → persistent (markdown files with YAML frontmatter). 7 types × 4 scopes. Retrieval uses RRF fusion across 4 backends (vector, Bleve, keyword, entity) + MMR diversity re-ranking. Dynamic value scoring with reward backpropagation. Entity extraction and linking. Structured user profile. Turn-time memory injection. Temporal validity windows. Background dreaming with similarity-based consolidation. Managed in `internal/runtime/memory/`, persisted via `internal/storage/` (SQLite, Bleve FTS, vector).
 
 ## Skills
 

@@ -54,29 +54,70 @@ ycode serve startup
 
 ### Memory Types and Scopes
 
-Four memory types (`memory/types.go`): **user** (role, preferences, knowledge), **feedback** (corrections and confirmed approaches), **project** (ongoing work, goals, decisions), **reference** (pointers to external systems).
+Seven memory types (`memory/types.go`): **user** (role, preferences, knowledge), **feedback** (corrections and confirmed approaches), **project** (ongoing work, goals, decisions), **reference** (pointers to external systems), **episodic** (specific agent experiences with temporal context), **procedural** (workflow patterns, decision heuristics), **task** (persistent structured task state).
 
-Two scopes: **global** (`~/.agents/ycode/memory/` — shared across all projects) and **project** (`~/.agents/ycode/projects/{hash}/memory/` — project-specific). Defaults to project scope.
+Four scopes: **global** (`~/.agents/ycode/memory/` — shared across all projects), **project** (`~/.agents/ycode/projects/{hash}/memory/` — project-specific, default), **team** (shared across team members), **user** (private to a single user).
 
-### Search Backends
+### User Profile
 
-Three-tier search with graceful degradation:
+Structured user profile (`memory/profile.go`) with four sections: **BasicInfo** (name, role), **Preferences** (editor, theme), **Expertise** (domains), **WorkPatterns** (TDD, review style). Auto-extracted from conversations and persisted as `_profile.md`. Survives roundtrip through markdown formatting and parsing.
+
+### Search Backends and Retrieval Fusion
+
+Four search backends fused via **Reciprocal Rank Fusion (RRF)** with **MMR diversity re-ranking** (`memory/fusion.go`):
 
 | Backend | Technology | Offline | With Serve | Use Case |
 |---------|-----------|---------|------------|----------|
-| Keyword | Go string matching | Yes | Yes | Fallback, always available |
+| Keyword | Go string matching | Yes | Yes | Always-available signal |
 | Full-text | Bleve v2 (BM25, fuzzy, stemming) | Indexed on disk | Live index | Phrase queries, fuzzy matching |
 | Vector | chromem-go (cosine similarity, GZIP GOBs) | Indexed on disk | Live embeddings | Semantic similarity search |
+| Entity | In-memory entity index (`memory/entity.go`) | Yes | Yes | Entity-based linking and retrieval |
 
-Files: `storage/vector/vector.go`, `storage/search/search.go`, `memory/vectorindex.go`
+**Retrieval pipeline** (replaces prior sequential first-hit-wins approach):
+1. All backends run in parallel on each query
+2. Results fused with RRF (k=60): `score(d) = Σ 1/(k + rank)` across backends — memories appearing in multiple backends get boosted
+3. Composite scoring applied: 50% fused score + 30% recency + 20% dynamic value
+4. Project-scoped memories get 1.1x boost; expired-validity memories get 0.3x penalty
+5. MMR diversity re-ranking (lambda=0.7) promotes topically diverse results
 
-### Temporal Decay and Staleness
+Files: `memory/fusion.go`, `memory/memory.go`, `storage/vector/vector.go`, `storage/search/search.go`, `memory/entity.go`
 
-Logarithmic temporal decay after a 7-day grace period: `score * 1/(1 + days/30)`. Type-stratified staleness thresholds: project facts (30d), reference (90d), user preferences (180d), feedback (365d). Relevance scoring weights: name match (3x), description (2x), content (1x).
+### Entity Extraction and Linking
+
+Rule-based entity extraction (`memory/entity.go`) identifies file paths, URLs, and Go package paths from memory content. Entities are linked to memories via an in-memory `EntityIndex`, enabling queries like "all memories mentioning this file." Entities are cached in the memory's `Entities` frontmatter field for fast reload. Entity search results feed into the RRF fusion pipeline as a fourth signal.
+
+### Turn-Time Memory Injection
+
+`TurnInjector` (`memory/turninjector.go`) provides per-turn context-aware memory injection without system prompt modification (preserving cache). On each turn, it runs a recall query on the user's message and appends relevant memories as a `<memory-context>` block in the message list. Includes dedup (Jaccard >= 0.8 against previous turn) and a configurable character budget (default 1500).
+
+### Dynamic Value Scoring
+
+Memories have a dynamic `ValueScore` (`memory/value.go`) that replaces static `Importance`:
+
+- **Access tracking**: `AccessCount` and `LastAccessedAt` updated on every recall
+- **Reward propagation**: `PropagateReward(mem, reward, alpha=0.3)` adjusts value via exponential moving average — agent can provide explicit feedback via `memory_feedback` tool
+- **Value decay**: `DecayValue(mem, halfLifeDays=30)` applies temporal decay to memories not accessed recently (7-day grace period)
+- **Effective value**: `EffectiveValue()` returns `ValueScore` if set, falls back to `Importance`, defaults to 0.5
+
+### Temporal Decay, Staleness, and Validity Windows
+
+Logarithmic temporal decay after a 7-day grace period: `score * 1/(1 + days/30)`. Type-stratified staleness thresholds: project facts (30d), reference (90d), user preferences (180d), feedback (365d).
+
+**Temporal validity** (`memory/temporal.go`): Memories can carry `ValidFrom`, `ValidUntil`, and `SupersededBy` fields to represent time-bounded facts. Expired memories (past `ValidUntil`) are treated as stale by `IsStale()` regardless of age and receive a 0.3x score penalty during retrieval. `SupersedeMemory()` marks an old memory as replaced by a new one.
 
 ### Background Dreaming
 
-`Dreamer` (`memory/dream.go`): 30-minute background consolidation cycles — stale removal, duplicate merging, temporal decay enforcement. Writes reflection memos to disk; consolidated by Memos service on next serve cycle.
+`Dreamer` (`memory/dream.go`): 30-minute background consolidation cycles with three phases:
+
+1. **Stale removal**: Deletes memories past their type-stratified staleness thresholds or temporal validity windows
+2. **Value decay**: Applies `DecayValue` to infrequently accessed memories, persisting decayed scores
+3. **Similarity-based merging**: Groups memories by type, then clusters within each type using Jaccard word-overlap similarity (threshold 0.5). For each cluster of 2+ similar memories:
+   - **LLM-backed**: Formats a consolidation prompt, parses the response (`ParseConsolidationDecision` in `memory/consolidation.go`) into MERGE/KEEP_BEST/DELETE_REDUNDANT actions, and applies the decision
+   - **Heuristic fallback**: Keeps the memory with highest `EffectiveValue()`; on ties, keeps the newest
+
+### Catch-Up Indexing
+
+`Manager.Reindex()` (`memory/reindex.go`): On startup, scans all memory files via `All()`, rebuilds Bleve FTS indexes via `IndexAll`, and re-links entities for memories with cached entity names. Called during the Prewarm phase alongside instruction file discovery.
 
 ### Memos Tools
 
@@ -365,28 +406,34 @@ Comprehensive taxonomy: **Forms-Functions-Dynamics**.
 
 | Gap | Reference Implementation | Priority | Notes |
 |-----|--------------------------|----------|-------|
-| Catch-up indexing on serve startup | (Designed but not implemented) | **Critical** | Core to file-first architecture: scan for new/modified files, rebuild vector/FTS/Memos indexes |
 | Periodic metric/trace snapshots to disk | (Designed but not implemented) | **High** | Ensures observability data survives service restarts |
 | Tree-sitter repo map | Aider (spatial memory) | **High** | "Spatial memory" of codebase structure; always-in-context function/class signatures |
-| Memory search tool for agent | (vector+bleve exist but no agent-facing tool) | **High** | Agent cannot explicitly search its own persistent memories during reasoning |
 | Session forking/branching | OpenCode (revert-compact) | Medium | "What-if" session exploration with rollback |
 | Skill extraction from sessions | Gemini CLI (MemoryService) | Medium | Auto-extract reusable skills/patterns from completed tasks |
-| Graph-based memory | Graphiti, Mem0g | Low | Temporal knowledge graphs for relational reasoning |
-| RL-driven retrieval | MemRL, Memory-R1 | Low | Q-value scoring instead of pure semantic similarity |
+| Full graph-based memory | Graphiti, Mem0g | Medium | Temporal knowledge graphs for deep relational reasoning (entity index is a lightweight step toward this) |
+| RL-driven retrieval | MemRL, Memory-R1 | Low | Q-value scoring instead of semantic similarity + value feedback |
 
 ### Already Implemented Well
 
 - Agent-requested compaction (`tools/compact_context.go`)
-- Background dreaming/consolidation (`memory/dream.go`, 30-min interval)
+- Background dreaming with similarity-based consolidation (`memory/dream.go`, 30-min interval, Jaccard clustering + LLM decision parsing)
 - 3-layer context defense with observation masking
 - Tool output distillation with disk offload
 - Prompt caching with fingerprinting + cache warming
 - Differential context injection for non-caching providers
-- Persistent file-based memory with types, scopes, temporal decay
-- Multi-backend search (vector + FTS + keyword)
+- Persistent file-based memory with 7 types, 4 scopes, temporal decay, and temporal validity windows
+- **Multi-signal retrieval**: RRF fusion across 4 backends (vector + FTS + keyword + entity) with MMR diversity re-ranking
+- **Dynamic value scoring** with access tracking, reward backpropagation, and temporal value decay
+- **Entity extraction and linking** with rule-based extraction (file paths, URLs, Go packages) and in-memory entity index
+- **Turn-time memory injection** with per-turn context-aware recall and dedup
+- **Structured user profile** with auto-extraction and persistence
+- **Temporal validity windows** (valid_from/valid_until/superseded_by) for fact lifecycle management
+- **Catch-up indexing** on startup (`memory/reindex.go`) — rebuilds Bleve/entity indexes from file state
+- **memory_feedback tool** for explicit agent reward feedback on memory usefulness
 - Memos REST API client + tool handlers (`memos/client.go`, `tools/memos.go`)
 - CJK-aware token estimation
 - Context health monitoring with 4 levels
+- **Benchmark suite** (`memory/benchmark_test.go`) measuring P@K, R@K, NDCG, MRR across 8 query types as regression gate
 
 ## Emerging Standards and Protocols
 
