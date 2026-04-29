@@ -161,7 +161,7 @@ func RegisterGitHubHandlers(r *Registry, client *gh.Client) {
 	})
 
 	r.Register(&ToolSpec{
-		Name: "gh_pr_comment",
+		Name:        "gh_pr_comment",
 		Description: "Add a comment to a GitHub pull request.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
@@ -189,7 +189,7 @@ func RegisterGitHubHandlers(r *Registry, client *gh.Client) {
 	})
 
 	r.Register(&ToolSpec{
-		Name: "gh_issue_list",
+		Name:        "gh_issue_list",
 		Description: "List GitHub issues with optional state and label filters.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
@@ -233,7 +233,7 @@ func RegisterGitHubHandlers(r *Registry, client *gh.Client) {
 	})
 
 	r.Register(&ToolSpec{
-		Name: "gh_issue_get",
+		Name:        "gh_issue_get",
 		Description: "Get details of a GitHub issue including comments.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
@@ -269,7 +269,7 @@ func RegisterGitHubHandlers(r *Registry, client *gh.Client) {
 	})
 
 	r.Register(&ToolSpec{
-		Name: "gh_issue_comment",
+		Name:        "gh_issue_comment",
 		Description: "Add a comment to a GitHub issue.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
@@ -297,7 +297,7 @@ func RegisterGitHubHandlers(r *Registry, client *gh.Client) {
 	})
 
 	r.Register(&ToolSpec{
-		Name: "gh_checks",
+		Name:        "gh_checks",
 		Description: "Get CI check status for a git ref (branch, tag, or SHA).",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
