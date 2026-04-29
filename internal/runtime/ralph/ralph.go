@@ -52,14 +52,19 @@ type CheckFunc func(ctx context.Context) (passed bool, output string, err error)
 // CommitFunc performs a git commit.
 type CommitFunc func(ctx context.Context, message string) error
 
+// IterationCallback is called after each iteration with the iteration number,
+// output, score, and whether the check passed.
+type IterationCallback func(iteration int, output string, score float64, checkPassed bool)
+
 // Controller manages the Ralph loop lifecycle.
 type Controller struct {
-	config *Config
-	step   StepFunc
-	check  CheckFunc
-	commit CommitFunc
-	logger *slog.Logger
-	state  *State
+	config              *Config
+	step                StepFunc
+	check               CheckFunc
+	commit              CommitFunc
+	logger              *slog.Logger
+	state               *State
+	onIterationComplete IterationCallback
 }
 
 // NewController creates a new Ralph loop controller.
@@ -83,6 +88,11 @@ func (c *Controller) SetCommit(fn CommitFunc) { c.commit = fn }
 
 // SetLogger sets the logger.
 func (c *Controller) SetLogger(l *slog.Logger) { c.logger = l }
+
+// SetOnIterationComplete sets a callback invoked after each iteration.
+func (c *Controller) SetOnIterationComplete(fn IterationCallback) {
+	c.onIterationComplete = fn
+}
 
 // GetState returns the current state.
 func (c *Controller) GetState() *State { return c.state }
@@ -203,6 +213,11 @@ func (c *Controller) Run(ctx context.Context) error {
 			} else {
 				c.state.Commits = append(c.state.Commits, msg)
 			}
+		}
+
+		// Notify iteration callback.
+		if c.onIterationComplete != nil {
+			c.onIterationComplete(i, output, score, checkPassed)
 		}
 
 		// End iteration span with attributes.

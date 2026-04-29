@@ -55,7 +55,7 @@ make runner-check     # verify runner binary + health check
 
 ## Architecture
 
-Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one-shot mode. Core loop in `internal/runtime/conversation/runtime.go`: assemble request → send to provider → dispatch tool calls → loop until done. Public embedding API: `pkg/ycode/`. Design: `RuntimeContext` (no global state), three-tier config merge, five-layer memory.
+Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one-shot mode. Core loop in `internal/runtime/conversation/runtime.go`: assemble request → send to provider → dispatch tool calls → loop until done. Public embedding API: `pkg/ycode/`. Design: `RuntimeContext` (no global state), four-tier config merge, five-layer memory.
 
 **Key entry points:**
 - Provider layer: `internal/api/` — `Provider` interface (`Send(ctx, *Request) → stream`). Anthropic native + OpenAI-compatible (covers OpenAI, xAI, Gemini, Ollama). Model aliases resolved in `api/provider.go`.
@@ -64,6 +64,8 @@ Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one
 - Config: `internal/runtime/config/config.go` — merges four files in order: `~/.config/ycode/settings.json` (user) → `<project>/.agents/ycode/settings.json` → `<cwd>/.agents/ycode/settings.json` (local) → `settings.local.json` (gitignored). `Instructions` and `AllowedDirectories` append; all other fields override.
 - Permission modes: ReadOnly (read/search only) → WorkspaceWrite (file modifications within VFS boundaries) → DangerFullAccess (shell, process control, MCP). Each tool declares its required mode in `ToolSpec.RequiredMode`.
 - Container tools (browser automation, sandbox): require podman. Managed in `internal/container/`.
+- Embedded services: Gitea git server (`internal/gitserver/`), Ollama inference runner (`internal/inference/`), SearXNG search (`internal/runtime/searxng/`). Started by `ycode serve`.
+- Memory: five layers — ephemeral (session messages) → summary (LLM-condensed) → structured (explicit facts, scoped global/project/session) → embedding (vector search via chromem-go) → archival (full transcripts). Managed in `internal/runtime/memory/`, persisted via `internal/storage/` (SQLite, Bleve FTS, vector).
 
 ## Skills
 
@@ -118,6 +120,10 @@ Never use bare `./...` — it hits read-only `priorart/` packages. All steps mus
 ```bash
 make eval-agentsmd                     # validate AGENTS.md quality (static, no LLM)
 make eval-contract                     # contract-tier evals (no LLM, deterministic)
+make eval-smoke                        # smoke-tier evals (real LLM, requires provider)
+make eval-behavioral                   # behavioral evals (trajectory analysis)
+make eval-e2e                          # E2E evals (full coding tasks)
+make eval-all-evals                    # all tiers combined
 ```
 
 ## References
@@ -126,3 +132,7 @@ Read on demand:
 - [docs/instructions.md](./docs/instructions.md) — conventions, skill system, build/test/commit rules
 - [docs/usage.md](./docs/usage.md) — CLI modes, config, tools, workflows
 - [docs/architecture.md](./docs/architecture.md) — full architecture, design decisions, component details
+- [docs/memory.md](./docs/memory.md) — five-layer memory system, search backends, temporal decay
+- [docs/swarm.md](./docs/swarm.md) — agent orchestration, YAML definitions, handoff flows
+- [docs/persistence.md](./docs/persistence.md) — storage technology analysis and design decisions
+- [docs/autonomous-loop.md](./docs/autonomous-loop.md) — RESEARCH→PLAN→BUILD→EVALUATE→LEARN loop implementation

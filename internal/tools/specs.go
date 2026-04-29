@@ -446,6 +446,7 @@ func builtinSpecs() []*ToolSpec {
 			RequiredMode: permission.DangerFullAccess,
 			Source:       SourceBuiltin,
 		},
+		swarmRunSpec(),
 	}
 }
 

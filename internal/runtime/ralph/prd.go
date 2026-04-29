@@ -25,6 +25,7 @@ type PRD struct {
 	Feature     string  `json:"feature"`
 	Stories     []Story `json:"userStories"`
 	path        string
+	current     *Story // last story returned by NextStory
 }
 
 // LoadPRD reads a prd.json file.
@@ -67,12 +68,19 @@ func (p *PRD) NextStory() *Story {
 			// Return pointer to the original story.
 			for j := range p.Stories {
 				if p.Stories[j].ID == sorted[i].ID {
-					return &p.Stories[j]
+					p.current = &p.Stories[j]
+					return p.current
 				}
 			}
 		}
 	}
+	p.current = nil
 	return nil
+}
+
+// CurrentStory returns the last story returned by NextStory.
+func (p *PRD) CurrentStory() *Story {
+	return p.current
 }
 
 // UpdateStory marks a story as passing or failing and adds a note.

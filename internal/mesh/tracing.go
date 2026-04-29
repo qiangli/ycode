@@ -26,9 +26,10 @@ func NewTracedAgent(inner MeshAgent) *TracedAgent {
 	}
 }
 
-func (ta *TracedAgent) Name() string  { return ta.inner.Name() }
-func (ta *TracedAgent) Healthy() bool { return ta.inner.Healthy() }
-func (ta *TracedAgent) Stop()         { ta.inner.Stop() }
+func (ta *TracedAgent) Name() string      { return ta.inner.Name() }
+func (ta *TracedAgent) Healthy() bool     { return ta.inner.Healthy() }
+func (ta *TracedAgent) Stop()             { ta.inner.Stop() }
+func (ta *TracedAgent) Unwrap() MeshAgent { return ta.inner }
 
 func (ta *TracedAgent) Start(ctx context.Context) error {
 	_, span := ta.tracer.Start(ctx, "mesh.agent.start",
