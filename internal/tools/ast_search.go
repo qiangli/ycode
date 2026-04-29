@@ -79,13 +79,13 @@ func RegisterASTSearchHandler(r *Registry, deps *ASTSearchDeps) {
 				return searchWithContainer(ctx, containerEngine, workDir, params.Pattern, params.Language, params.Path, params.Rewrite)
 			}
 
-			// Try in-process tree-sitter first.
+			// Try in-process tree-sitter first (available when built with CGO).
 			if treesitter.IsSupported(params.Language) {
 				matches, err := searchWithTreeSitter(ctx, parser, workDir, params.Pattern, params.Language, params.Path)
 				if err == nil {
 					return formatMatches(matches), nil
 				}
-				// Fall through to container on error.
+				// Fall through to container on tree-sitter error (including ErrNoCGO).
 			}
 
 			// Fallback to container.

@@ -1,6 +1,5 @@
-// Package treesitter provides in-process AST parsing and structural
-// code search using tree-sitter grammars. It supports multiple languages
-// and provides pattern-based code matching.
+//go:build cgo
+
 package treesitter
 
 import (

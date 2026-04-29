@@ -1,3 +1,5 @@
+//go:build cgo
+
 package treesitter
 
 import (
@@ -7,35 +9,14 @@ import (
 	sitter "github.com/smacker/go-tree-sitter"
 )
 
-// Tree represents a parsed source file.
+// Tree represents a parsed source file (CGO build).
 type Tree struct {
 	Root   *sitter.Node
 	Source []byte
 	Lang   string
 }
 
-// Match represents a structural code match.
-type Match struct {
-	File        string            `json:"file"`
-	StartLine   int               `json:"start_line"`
-	EndLine     int               `json:"end_line"`
-	StartCol    int               `json:"start_col"`
-	EndCol      int               `json:"end_col"`
-	MatchedCode string            `json:"matched_code"`
-	Captures    map[string]string `json:"captures,omitempty"`
-}
-
-// Symbol represents a top-level code symbol extracted from an AST.
-type Symbol struct {
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`      // func, type, interface, method, class, const, var
-	Signature string `json:"signature"` // human-readable signature
-	File      string `json:"file"`      // relative path
-	Line      int    `json:"line"`
-	Exported  bool   `json:"exported"`
-}
-
-// Parser wraps tree-sitter parsing for multiple languages.
+// Parser wraps tree-sitter parsing for multiple languages (CGO build).
 type Parser struct {
 	parser *sitter.Parser
 }

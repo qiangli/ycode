@@ -1,3 +1,5 @@
+//go:build cgo
+
 package treesitter
 
 import (
@@ -9,16 +11,6 @@ import (
 
 	sitter "github.com/smacker/go-tree-sitter"
 )
-
-// Impact represents a dependency relationship found during impact analysis.
-type Impact struct {
-	Symbol   string `json:"symbol"`   // the affected symbol name
-	File     string `json:"file"`     // file containing the affected symbol
-	Line     int    `json:"line"`     // line number
-	Kind     string `json:"kind"`     // "calls", "called_by", "references"
-	Distance int    `json:"distance"` // hops from the target symbol
-	Context  string `json:"context"`  // surrounding code context
-}
 
 // Analyze performs impact analysis: given a symbol name and file,
 // finds all callers and references across the workspace.
