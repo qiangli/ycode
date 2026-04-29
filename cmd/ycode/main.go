@@ -232,6 +232,7 @@ func newApp() (*cli.App, error) {
 	// Container sandbox: when enabled, bash commands run inside an isolated container
 	// instead of directly on the host. The workspace is bind-mounted read-write.
 	var bashExecutor bash.Executor
+	var containerEngine *container.Engine
 	if cfg.Container != nil && cfg.Container.Enabled {
 		engine, err := container.NewEngine(rootCtx, &container.EngineConfig{
 			SocketPath: cfg.Container.SocketPath,
@@ -270,7 +271,7 @@ func newApp() (*cli.App, error) {
 				sandbox.Remove(rootCtx, true)
 			} else {
 				bashExecutor = &bash.ContainerExecutor{Container: sandbox}
-				tools.SetContainerEngine(engine, cwd)
+				containerEngine = engine
 
 				// Start containerized SearXNG for web search (if enabled).
 				if os.Getenv("YCODE_SEARXNG") == "true" || cfg.Container.Enabled {
@@ -310,7 +311,10 @@ func newApp() (*cli.App, error) {
 	tools.RegisterSearchHandlers(toolReg, v)
 	tools.RegisterSymbolSearchHandler(toolReg)
 	tools.RegisterReferenceHandlers(toolReg)
-	tools.RegisterASTSearchHandler(toolReg)
+	tools.RegisterASTSearchHandler(toolReg, &tools.ASTSearchDeps{
+		WorkDir:         cwd,
+		ContainerEngine: containerEngine,
+	})
 	tools.RegisterVFSHandlers(toolReg, v)
 	tools.RegisterSleepHandler(toolReg)
 	tools.RegisterWebHandlers(toolReg)

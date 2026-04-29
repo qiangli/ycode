@@ -60,7 +60,7 @@ All competitors shell out to ripgrep. None use indexing, structural search, or i
 
 Structured symbol search and impact analysis — no competitor has this.
 
-- **Symbol indexer** (`symbol_indexer.go`): Go symbols via `go/ast`, other languages via regex patterns (Python, JS/TS, Rust, Java, Ruby). Indexed into Bleve `"symbols"` index with name, kind, file, language, signature, line.
+- **Symbol indexer** (`symbol_indexer.go`): Go symbols via `go/ast`, other languages via regex patterns or tree-sitter AST extraction (Python, JS/TS, Rust, Java, Ruby). Indexed into Bleve `"symbols"` index with name, kind, file, language, signature, line.
 - **`symbol_search` tool**: Query symbols by name, kind, language, exported status.
 - **Reference graph** (`refgraph.go`): Bidirectional caller/callee edges from `go/ast`, stored in bbolt KV. Includes `SymbolMatches` for fuzzy lookup.
 - **`find_references`/`find_impact` tools**: "Who calls X?" and "If I change X, what breaks?" with N-level BFS traversal.
@@ -70,8 +70,14 @@ Structured symbol search and impact analysis — no competitor has this.
 
 Queries impossible with regex become trivial with AST patterns.
 
-- **Containerized ast-grep** (`internal/runtime/astgrep/`): `containertool.Tool` pattern with node:22-alpine multi-stage build. Patterns like `func $NAME($$$PARAMS) error` and `if err != nil { return $$$REST }`.
-- **`ast_search` tool**: Pattern, language, path, rewrite parameters. Requires container engine.
+- **In-process tree-sitter** (`internal/runtime/treesitter/`): Native Go bindings via `go-tree-sitter` (CGO). Supports Go, Python, JavaScript, TypeScript, TSX, Rust, Java, C, Ruby. Provides:
+  - `Parser.Parse()` — parse source into AST
+  - `ExtractSymbols()` — language-aware symbol extraction (functions, types, classes, interfaces)
+  - `Search()` — S-expression tree-sitter queries
+  - `SearchText()` — ast-grep-style text patterns (`$VAR`, `$$$VAR` wildcards)
+  - `Analyze()` — impact analysis (find all references to a symbol across workspace)
+- **Containerized ast-grep fallback** (`internal/runtime/astgrep/`): `containertool.Tool` pattern with node:22-alpine multi-stage build. Used when rewrite operations are needed (tree-sitter is read-only).
+- **`ast_search` tool**: Tries in-process tree-sitter first, falls back to container for rewrites or unsupported features. No container required for basic structural search.
 - **Trigram index** (`trigram.go`): Lightweight in-memory + KV-backed implementation. Per-line trigram extraction, intersection queries for regex acceleration when Bleve literal extraction falls back.
 
 ### Future: Semantic Code Search (Not yet implemented)
