@@ -62,7 +62,7 @@ func TestGrepSearch_FindsKnownPatterns(t *testing.T) {
 		name    string
 		pattern string
 		typ     string
-		wantMin int // minimum expected matches
+		wantMin int    // minimum expected matches
 		wantAny string // at least one file path must contain this
 	}{
 		{
@@ -600,7 +600,7 @@ func TestLiteralExtraction_QualityOnRealPatterns(t *testing.T) {
 	// These are patterns an LLM agent would actually use.
 	tests := []struct {
 		pattern     string
-		wantMin     int  // minimum useful literals
+		wantMin     int    // minimum useful literals
 		wantLiteral string // at least one literal must contain this
 	}{
 		{`func\s+Handle`, 1, "Handle"},
@@ -729,9 +729,9 @@ func TestSearchWithFilter_LanguageFilter(t *testing.T) {
 		content string
 		ext     string
 	}{
-		"auth.go":  {content: "func handleAuth() error { return nil }", ext: ".go"},
-		"auth.py":  {content: "def handle_auth():\n    return None", ext: ".py"},
-		"auth.ts":  {content: "function handleAuth(): void {}", ext: ".ts"},
+		"auth.go": {content: "func handleAuth() error { return nil }", ext: ".go"},
+		"auth.py": {content: "def handle_auth():\n    return None", ext: ".py"},
+		"auth.ts": {content: "function handleAuth(): void {}", ext: ".ts"},
 	}
 	for name, f := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(f.content), 0o644); err != nil {

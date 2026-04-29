@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/qiangli/ycode/internal/runtime/bash/shellparse"
 	"github.com/qiangli/ycode/internal/runtime/permission"
 )
 
@@ -80,6 +81,81 @@ func intentPriority(c CommandIntent) int {
 // ClassifyCommand analyzes a command string and returns its most dangerous
 // intent along with a list of reasons for the classification.
 func ClassifyCommand(command string) (CommandIntent, []string) {
+	// Try AST-based classification first for accuracy.
+	nodes, err := shellparse.Parse(command)
+	if err == nil && len(nodes) > 0 {
+		return classifyNodes(nodes)
+	}
+
+	// Fallback to string-based splitting on parse error.
+	return classifyStringBased(command)
+}
+
+// classifyNodes classifies parsed CommandNodes.
+func classifyNodes(nodes []shellparse.CommandNode) (CommandIntent, []string) {
+	maxIntent := ReadOnly
+	var allReasons []string
+
+	for _, node := range nodes {
+		intent, reasons := classifyNode(node)
+		if intentPriority(intent) > intentPriority(maxIntent) {
+			maxIntent = intent
+		}
+		allReasons = append(allReasons, reasons...)
+	}
+
+	return maxIntent, allReasons
+}
+
+// classifyNode classifies a single parsed command node.
+func classifyNode(node shellparse.CommandNode) (CommandIntent, []string) {
+	base := node.Name
+	if base == "" {
+		return ReadOnly, nil
+	}
+
+	// System admin commands.
+	if isSystemAdmin(base) {
+		return SystemAdmin, []string{fmt.Sprintf("%q is a system administration command", base)}
+	}
+
+	// Process management.
+	if isProcessManagement(base) {
+		return ProcessManagement, []string{fmt.Sprintf("%q is a process management command", base)}
+	}
+
+	// Package managers — build a fields-like slice for compatibility.
+	fields := append([]string{base}, node.Args...)
+	if isPackageManager(base, fields) {
+		return PackageManagement, []string{fmt.Sprintf("%q is a package management command", base)}
+	}
+
+	// Destructive commands.
+	rest := strings.Join(node.Args, " ")
+	if intent, reason := checkDestructive(base, fields, rest); intent == Destructive {
+		return Destructive, []string{reason}
+	}
+
+	// Write commands.
+	if isWriteCommand(base) {
+		return Write, []string{fmt.Sprintf("%q modifies the filesystem", base)}
+	}
+
+	// Git operations.
+	if base == "git" && len(node.Args) > 0 {
+		return classifyGit(node.Args)
+	}
+
+	// Network commands.
+	if isNetworkCommand(base) {
+		return Network, []string{fmt.Sprintf("%q is a network command", base)}
+	}
+
+	return ReadOnly, nil
+}
+
+// classifyStringBased is the fallback path using simple string splitting.
+func classifyStringBased(command string) (CommandIntent, []string) {
 	segments := splitCommandSegments(command)
 
 	maxIntent := ReadOnly
@@ -337,6 +413,23 @@ func isNetworkCommand(base string) bool {
 // DetectRedirects returns true if the command contains output redirects
 // (>, >>, >&, 2>) outside of quoted strings.
 func DetectRedirects(command string) bool {
+	// Try AST-based detection first.
+	nodes, err := shellparse.Parse(command)
+	if err == nil {
+		for _, node := range nodes {
+			if len(node.Redirects) > 0 {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Fallback to rune-walking on parse error.
+	return detectRedirectsStringBased(command)
+}
+
+// detectRedirectsStringBased is the fallback redirect detection using rune scanning.
+func detectRedirectsStringBased(command string) bool {
 	inSingle := false
 	inDouble := false
 	runes := []rune(command)
@@ -382,12 +475,67 @@ var sensitivePaths = []string{"/etc/", "/usr/", "/boot/", "/sys/", "/proc/"}
 // DetectDangerousPatterns scans a command for dangerous patterns and returns
 // a list of warning messages.
 func DetectDangerousPatterns(command string) []string {
+	// Try AST-based detection first.
+	nodes, err := shellparse.Parse(command)
+	if err == nil && len(nodes) > 0 {
+		return detectDangerousPatternsAST(nodes)
+	}
+
+	// Fallback to string-based detection.
+	return detectDangerousPatternsStringBased(command)
+}
+
+// detectDangerousPatternsAST uses parsed command nodes for context-aware detection.
+func detectDangerousPatternsAST(nodes []shellparse.CommandNode) []string {
+	var warnings []string
+
+	for _, node := range nodes {
+		// rm -rf / detection — only when "rm" is the actual command.
+		if node.Name == "rm" {
+			for _, arg := range node.Args {
+				if strings.HasPrefix(arg, "-") {
+					continue
+				}
+				if arg == "/" || arg == "/*" || arg == "/." || arg == "/.." {
+					warnings = append(warnings, "command attempts to remove root filesystem")
+				}
+			}
+		}
+
+		// Commands in subshells targeting sensitive paths.
+		if node.InSubshell {
+			allArgs := strings.Join(node.Args, " ")
+			for _, sp := range sensitivePaths {
+				if strings.Contains(allArgs, sp) {
+					warnings = append(warnings, fmt.Sprintf("command substitution targets sensitive path %s", sp))
+					break
+				}
+			}
+		}
+
+		// Any command (not just arguments to echo) targeting sensitive paths.
+		// Only flag for commands that actually write.
+		if isWriteCommand(node.Name) || node.Name == "rm" || destructiveCmds[node.Name] {
+			allArgs := strings.Join(node.Args, " ")
+			for _, sp := range sensitivePaths {
+				if strings.Contains(allArgs, sp) {
+					warnings = append(warnings, fmt.Sprintf("command targets sensitive system path %s", sp))
+					break
+				}
+			}
+		}
+	}
+
+	return warnings
+}
+
+// detectDangerousPatternsStringBased is the fallback using raw string matching.
+func detectDangerousPatternsStringBased(command string) []string {
 	var warnings []string
 
 	// rm -rf / or rm -rf /*
 	lower := strings.ToLower(command)
 	if strings.Contains(lower, "rm") {
-		// Check for rm -rf / or rm -rf /* patterns.
 		segments := splitCommandSegments(command)
 		for _, seg := range segments {
 			fields := strings.Fields(seg)

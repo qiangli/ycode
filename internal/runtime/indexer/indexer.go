@@ -42,10 +42,10 @@ const (
 type Indexer struct {
 	workDir  string
 	search   storage.SearchIndex
-	kv       storage.KVStore      // for tracking file mtimes
-	RefGraph *RefGraph            // optional reference graph for Go files
-	Trigrams *TrigramIndex        // optional trigram index for regex acceleration
-	Inst     *yotel.Instruments   // optional OTEL instruments
+	kv       storage.KVStore    // for tracking file mtimes
+	RefGraph *RefGraph          // optional reference graph for Go files
+	Trigrams *TrigramIndex      // optional trigram index for regex acceleration
+	Inst     *yotel.Instruments // optional OTEL instruments
 }
 
 // New creates a codebase indexer.

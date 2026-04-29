@@ -22,11 +22,11 @@ const imageName = "ycode-astgrep:latest"
 
 // SearchInput is the input to the containerized ast-grep tool.
 type SearchInput struct {
-	Pattern  string   `json:"pattern"`            // ast-grep pattern
-	Language string   `json:"language"`            // language (go, python, typescript, etc.)
-	Paths    []string `json:"paths,omitempty"`     // paths to search (relative to workspace)
-	Rewrite  string   `json:"rewrite,omitempty"`   // optional rewrite pattern
-	JSON     bool     `json:"json"`                // always true for machine-readable output
+	Pattern  string   `json:"pattern"`           // ast-grep pattern
+	Language string   `json:"language"`          // language (go, python, typescript, etc.)
+	Paths    []string `json:"paths,omitempty"`   // paths to search (relative to workspace)
+	Rewrite  string   `json:"rewrite,omitempty"` // optional rewrite pattern
+	JSON     bool     `json:"json"`              // always true for machine-readable output
 }
 
 // SearchMatch is a single match from ast-grep.

@@ -12,9 +12,9 @@ import (
 
 const (
 	refBucket     = "references"
-	callerPrefix  = "callers:"  // callers:pkg.Func -> [caller1, caller2, ...]
-	calleePrefix  = "callees:"  // callees:pkg.Func -> [callee1, callee2, ...]
-	definesPrefix = "defines:"  // defines:Func -> [file1:line, file2:line, ...]
+	callerPrefix  = "callers:" // callers:pkg.Func -> [caller1, caller2, ...]
+	calleePrefix  = "callees:" // callees:pkg.Func -> [callee1, callee2, ...]
+	definesPrefix = "defines:" // defines:Func -> [file1:line, file2:line, ...]
 )
 
 // RefEdge represents a reference from one symbol to another.

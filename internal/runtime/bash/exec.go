@@ -9,6 +9,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/qiangli/ycode/internal/runtime/bash/shellparse"
 )
 
 const (
@@ -46,18 +48,30 @@ var ErrNeedsTTY = fmt.Errorf("command requires interactive terminal access")
 // NeedsTTY returns true if a command is likely to prompt for interactive
 // input (password, confirmation, etc.) and needs full terminal access.
 func NeedsTTY(command string) bool {
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
-		return false
+	// Try AST-based detection for accurate command name extraction.
+	nodes, err := shellparse.Parse(command)
+	if err == nil && len(nodes) > 0 {
+		return needsTTYFromNodes(nodes, command)
 	}
-	base := fields[0]
 
-	// Commands that commonly prompt for passwords or interactive input.
+	// Fallback to string-based detection.
+	return needsTTYStringBased(command)
+}
+
+// needsTTYFromNodes checks parsed command nodes for interactive commands.
+func needsTTYFromNodes(nodes []shellparse.CommandNode, command string) bool {
+	for _, node := range nodes {
+		if checkTTYCommand(node.Name, node.Args, command) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkTTYCommand checks if a single command requires TTY.
+func checkTTYCommand(base string, args []string, command string) bool {
 	switch base {
 	case "ssh", "scp", "sftp":
-		// BatchMode=yes disables all interactive prompts — the command
-		// will fail rather than ask for a password, so it's safe to run
-		// without a TTY (used for connectivity testing, deploy scripts, etc.).
 		if strings.Contains(command, "BatchMode=yes") {
 			return false
 		}
@@ -65,17 +79,64 @@ func NeedsTTY(command string) bool {
 	case "sudo", "su", "passwd":
 		return true
 	case "gcloud":
-		// gcloud auth login, gcloud init
+		if len(args) > 0 && (args[0] == "auth" || args[0] == "init") {
+			return true
+		}
+	case "az":
+		if len(args) > 0 && args[0] == "login" {
+			return true
+		}
+	case "aws":
+		if len(args) > 0 && (args[0] == "sso" || args[0] == "configure") {
+			return true
+		}
+	case "docker":
+		if len(args) > 0 && args[0] == "login" {
+			return true
+		}
+	case "gh":
+		if len(args) > 0 && args[0] == "auth" {
+			return true
+		}
+	case "npm":
+		if len(args) > 0 && args[0] == "login" {
+			return true
+		}
+	case "mysql", "psql", "mongo", "mongosh", "redis-cli":
+		return true
+	case "ftp", "telnet":
+		return true
+	case "vi", "vim", "nvim", "nano", "emacs", "pico", "less", "more":
+		return true
+	}
+	return false
+}
+
+// needsTTYStringBased is the fallback using simple string parsing.
+func needsTTYStringBased(command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return false
+	}
+	base := fields[0]
+
+	switch base {
+	case "ssh", "scp", "sftp":
+		if strings.Contains(command, "BatchMode=yes") {
+			return false
+		}
+		return true
+	case "sudo", "su", "passwd":
+		return true
+	case "gcloud":
 		if len(fields) > 1 && (fields[1] == "auth" || fields[1] == "init") {
 			return true
 		}
 	case "az":
-		// az login
 		if len(fields) > 1 && fields[1] == "login" {
 			return true
 		}
 	case "aws":
-		// aws sso login, aws configure
 		if len(fields) > 1 && (fields[1] == "sso" || fields[1] == "configure") {
 			return true
 		}

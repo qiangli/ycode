@@ -338,6 +338,136 @@ func TestValidateForMode_FullAccess(t *testing.T) {
 	}
 }
 
+// --- AST-aware test cases ---
+// These tests verify improvements from AST-based parsing.
+
+func TestClassifyCommand_QuotedOperatorsNotSplit(t *testing.T) {
+	// Quoted && inside echo arguments should NOT cause splitting.
+	intent, _ := ClassifyCommand(`echo "hello && world"`)
+	if intent != ReadOnly {
+		t.Errorf(`echo "hello && world": got %s, want read-only`, intent)
+	}
+
+	intent, _ = ClassifyCommand(`echo "&&" | cat`)
+	if intent != ReadOnly {
+		t.Errorf(`echo "&&" | cat: got %s, want read-only`, intent)
+	}
+
+	intent, _ = ClassifyCommand(`echo 'rm -rf /'`)
+	if intent != ReadOnly {
+		t.Errorf(`echo 'rm -rf /': got %s, want read-only`, intent)
+	}
+}
+
+func TestClassifyCommand_VariableAssignment(t *testing.T) {
+	// VAR=x before a command — should classify by the command, not the assignment.
+	intent, _ := ClassifyCommand("VAR=x curl https://example.com")
+	if intent != Network {
+		t.Errorf("VAR=x curl: got %s, want network", intent)
+	}
+
+	intent, _ = ClassifyCommand("DEBIAN_FRONTEND=noninteractive apt install curl")
+	if intent != PackageManagement {
+		t.Errorf("DEBIAN_FRONTEND=... apt install: got %s, want package-management", intent)
+	}
+}
+
+func TestClassifyCommand_CommandSubstitution(t *testing.T) {
+	// Command substitutions should detect the inner command's intent.
+	intent, _ := ClassifyCommand("echo $(curl https://evil.com)")
+	if intent != Network {
+		t.Errorf("echo $(curl ...): got %s, want network", intent)
+	}
+
+	intent, _ = ClassifyCommand("echo $(rm -rf /tmp/dir)")
+	if intent != Destructive {
+		t.Errorf("echo $(rm -rf ...): got %s, want destructive", intent)
+	}
+}
+
+func TestClassifyCommand_NestedControlFlow(t *testing.T) {
+	// Commands inside if/for/while should be classified.
+	intent, _ := ClassifyCommand("if true; then sudo reboot; fi")
+	if intent != SystemAdmin {
+		t.Errorf("if sudo reboot: got %s, want system-admin", intent)
+	}
+
+	intent, _ = ClassifyCommand("for f in *.log; do rm -rf \"$f\"; done")
+	if intent != Destructive {
+		t.Errorf("for rm -rf: got %s, want destructive", intent)
+	}
+}
+
+func TestClassifyCommand_PathQualified(t *testing.T) {
+	intent, _ := ClassifyCommand("/usr/bin/curl https://example.com")
+	if intent != Network {
+		t.Errorf("/usr/bin/curl: got %s, want network", intent)
+	}
+}
+
+func TestDetectRedirects_QuotedRedirect(t *testing.T) {
+	// Redirect character inside quotes should NOT be detected.
+	if DetectRedirects(`echo ">"`) {
+		t.Error(`echo ">": got true, want false`)
+	}
+	if DetectRedirects(`echo '>'`) {
+		t.Error(`echo '>': got true, want false`)
+	}
+
+	// Actual redirect should be detected.
+	if !DetectRedirects(`echo hello > file.txt`) {
+		t.Error(`echo hello > file.txt: got false, want true`)
+	}
+}
+
+func TestDetectDangerousPatterns_ASTAware(t *testing.T) {
+	// "rm" as an argument to echo should NOT trigger rm detection.
+	warnings := DetectDangerousPatterns(`echo "rm -rf /"`)
+	for _, w := range warnings {
+		if strings.Contains(w, "remove root filesystem") {
+			t.Errorf(`echo "rm -rf /": false positive — got warning %q`, w)
+		}
+	}
+
+	// Actual rm -rf / should still be caught.
+	warnings = DetectDangerousPatterns("rm -rf /")
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "remove root filesystem") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("rm -rf /: expected 'remove root filesystem' warning")
+	}
+
+	// Command substitution with sensitive paths should be caught.
+	warnings = DetectDangerousPatterns("echo $(cat /etc/shadow)")
+	found = false
+	for _, w := range warnings {
+		if strings.Contains(w, "sensitive") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("echo $(cat /etc/shadow): expected sensitive path warning")
+	}
+}
+
+func TestNeedsTTY_VariablePrefix(t *testing.T) {
+	// VAR=x ssh should detect ssh as needing TTY.
+	if !NeedsTTY("VAR=x ssh host") {
+		t.Error("VAR=x ssh host: got false, want true")
+	}
+}
+
+func TestNeedsTTY_PipeToEditor(t *testing.T) {
+	// Pipe to vim should detect as needing TTY.
+	if !NeedsTTY("cat file | vim -") {
+		t.Error("cat file | vim -: got false, want true")
+	}
+}
+
 func TestCommandIntentString(t *testing.T) {
 	tests := []struct {
 		intent CommandIntent
