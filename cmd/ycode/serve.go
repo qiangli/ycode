@@ -524,7 +524,6 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 			AppName:  gitServerCfg.AppName,
 			HTTPOnly: gitServerCfg.HTTPOnly,
 			Token:    gitServerCfg.Token,
-			SubPath:  "/git/",
 		}, filepath.Join(dataDir, "gitea"))
 		mgr.AddComponent(gitComp)
 	}

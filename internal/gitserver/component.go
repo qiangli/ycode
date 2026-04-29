@@ -28,7 +28,6 @@ type ComponentConfig struct {
 	AppName  string `json:"appName,omitempty"`
 	HTTPOnly bool   `json:"httpOnly,omitempty"`
 	Token    string `json:"token,omitempty"`
-	SubPath  string `json:"-"` // URL sub-path for reverse proxy (e.g. "/git/"), set by serve
 }
 
 // gitOTELState holds OTEL instruments for the git server.
@@ -60,7 +59,6 @@ func (g *GitServerComponent) Start(ctx context.Context) error {
 		AppName:  g.cfg.AppName,
 		HTTPOnly: g.cfg.HTTPOnly,
 		Token:    g.cfg.Token,
-		SubPath:  g.cfg.SubPath,
 	})
 	if err != nil {
 		return fmt.Errorf("gitserver: init: %w", err)
@@ -101,10 +99,13 @@ func (g *GitServerComponent) Healthy() bool {
 	return g.healthy.Load() && g.server != nil && g.server.Healthy()
 }
 
-// HTTPHandler returns nil — Gitea is accessed via reverse proxy (Port())
-// so the proxy preserves the /git/ path prefix that Gitea expects.
+// HTTPHandler returns the Gitea HTTP handler for in-process mounting.
+// The proxy strips the /git/ prefix before forwarding to this handler.
 func (g *GitServerComponent) HTTPHandler() http.Handler {
-	return nil
+	if g.server == nil {
+		return nil
+	}
+	return g.server.HTTPHandler()
 }
 
 // Port returns the server's HTTP port.

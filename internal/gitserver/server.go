@@ -30,7 +30,6 @@ type ServerConfig struct {
 	AppName  string // display name (default: "ycode Git")
 	HTTPOnly bool   // disable SSH access (default: true)
 	Token    string // admin API token
-	SubPath  string // URL sub-path when behind a reverse proxy (e.g. "/git")
 }
 
 // NewServer creates a git server instance.
@@ -129,17 +128,11 @@ func (s *Server) writeConfig() error {
 	dbPath := filepath.Join(s.dataDir, "gitea.db")
 	repoRoot := filepath.Join(s.dataDir, "repositories")
 
-	subPath := s.cfg.SubPath
-	if subPath == "" {
-		subPath = "/"
-	}
-
 	ini := fmt.Sprintf(`[server]
 HTTP_ADDR = 127.0.0.1
 DOMAIN    = localhost
 APP_NAME  = %s
 OFFLINE_MODE = true
-ROOT_URL  = http://localhost%s
 
 [database]
 DB_TYPE = sqlite3
@@ -172,7 +165,7 @@ DISABLE = %t
 
 [api]
 ENABLE_SWAGGER = false
-`, s.cfg.AppName, subPath, dbPath, repoRoot,
+`, s.cfg.AppName, dbPath, repoRoot,
 		filepath.Join(s.dataDir, "log"),
 		s.cfg.HTTPOnly,
 	)
