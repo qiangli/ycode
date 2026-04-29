@@ -115,6 +115,65 @@ func (h *GiteaMCPHandler) ListTools() []mcp.Tool {
 				"required": ["owner", "repo", "number"]
 			}`),
 		},
+		// Issue management
+		{
+			Name:        "create_issue",
+			Description: "Create an issue in a repository. Use to track bugs, capability gaps, or improvement tasks.",
+			InputSchema: mustMCPJSON(`{
+				"type": "object",
+				"properties": {
+					"owner": {"type": "string", "description": "Repository owner"},
+					"repo": {"type": "string", "description": "Repository name"},
+					"title": {"type": "string", "description": "Issue title"},
+					"body": {"type": "string", "description": "Issue body (markdown)"},
+					"labels": {"type": "array", "items": {"type": "string"}, "description": "Label names to apply"}
+				},
+				"required": ["owner", "repo", "title"]
+			}`),
+		},
+		{
+			Name:        "list_issues",
+			Description: "List issues in a repository. Filter by state and labels to find capability gaps or tasks.",
+			InputSchema: mustMCPJSON(`{
+				"type": "object",
+				"properties": {
+					"owner": {"type": "string", "description": "Repository owner"},
+					"repo": {"type": "string", "description": "Repository name"},
+					"state": {"type": "string", "enum": ["open", "closed", "all"], "description": "Issue state filter (default: open)"},
+					"labels": {"type": "array", "items": {"type": "string"}, "description": "Filter by label names"}
+				},
+				"required": ["owner", "repo"]
+			}`),
+		},
+		{
+			Name:        "get_issue",
+			Description: "Get a single issue by number, including its full body and labels.",
+			InputSchema: mustMCPJSON(`{
+				"type": "object",
+				"properties": {
+					"owner": {"type": "string", "description": "Repository owner"},
+					"repo": {"type": "string", "description": "Repository name"},
+					"number": {"type": "integer", "description": "Issue number"}
+				},
+				"required": ["owner", "repo", "number"]
+			}`),
+		},
+		{
+			Name:        "update_issue",
+			Description: "Update an issue's title, body, or state. Use to close resolved capability gaps.",
+			InputSchema: mustMCPJSON(`{
+				"type": "object",
+				"properties": {
+					"owner": {"type": "string", "description": "Repository owner"},
+					"repo": {"type": "string", "description": "Repository name"},
+					"number": {"type": "integer", "description": "Issue number"},
+					"title": {"type": "string", "description": "New title (optional)"},
+					"body": {"type": "string", "description": "New body (optional)"},
+					"state": {"type": "string", "enum": ["open", "closed"], "description": "New state (optional)"}
+				},
+				"required": ["owner", "repo", "number"]
+			}`),
+		},
 	}
 }
 
@@ -142,6 +201,14 @@ func (h *GiteaMCPHandler) HandleToolCall(ctx context.Context, name string, input
 		return h.handleListPRs(ctx, input)
 	case "merge_pull_request":
 		return h.handleMergePR(ctx, input)
+	case "create_issue":
+		return h.handleCreateIssue(ctx, input)
+	case "list_issues":
+		return h.handleListIssues(ctx, input)
+	case "get_issue":
+		return h.handleGetIssue(ctx, input)
+	case "update_issue":
+		return h.handleUpdateIssue(ctx, input)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
@@ -281,6 +348,111 @@ func (h *GiteaMCPHandler) handleMergePR(ctx context.Context, input json.RawMessa
 		method = "merge"
 	}
 	return fmt.Sprintf("Merged PR #%d via %s", p.Number, method), nil
+}
+
+func (h *GiteaMCPHandler) handleCreateIssue(ctx context.Context, input json.RawMessage) (string, error) {
+	var p struct {
+		Owner  string   `json:"owner"`
+		Repo   string   `json:"repo"`
+		Title  string   `json:"title"`
+		Body   string   `json:"body"`
+		Labels []string `json:"labels"`
+	}
+	if err := json.Unmarshal(input, &p); err != nil {
+		return "", err
+	}
+	issue, err := h.client.CreateIssue(ctx, p.Owner, p.Repo, p.Title, p.Body, p.Labels)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Created issue #%d: %s\nURL: %s", issue.Number, issue.Title, issue.HTMLURL), nil
+}
+
+func (h *GiteaMCPHandler) handleListIssues(ctx context.Context, input json.RawMessage) (string, error) {
+	var p struct {
+		Owner  string   `json:"owner"`
+		Repo   string   `json:"repo"`
+		State  string   `json:"state"`
+		Labels []string `json:"labels"`
+	}
+	if err := json.Unmarshal(input, &p); err != nil {
+		return "", err
+	}
+	if p.State == "" {
+		p.State = "open"
+	}
+	issues, err := h.client.ListIssues(ctx, p.Owner, p.Repo, p.State, p.Labels)
+	if err != nil {
+		return "", err
+	}
+	if len(issues) == 0 {
+		return fmt.Sprintf("(no %s issues)", p.State), nil
+	}
+	var lines []string
+	for _, i := range issues {
+		labelNames := make([]string, len(i.Labels))
+		for j, l := range i.Labels {
+			labelNames[j] = l.Name
+		}
+		labelStr := ""
+		if len(labelNames) > 0 {
+			labelStr = " [" + strings.Join(labelNames, ", ") + "]"
+		}
+		lines = append(lines, fmt.Sprintf("- #%d %s [%s]%s  %s", i.Number, i.Title, i.State, labelStr, i.HTMLURL))
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+func (h *GiteaMCPHandler) handleGetIssue(ctx context.Context, input json.RawMessage) (string, error) {
+	var p struct {
+		Owner  string `json:"owner"`
+		Repo   string `json:"repo"`
+		Number int64  `json:"number"`
+	}
+	if err := json.Unmarshal(input, &p); err != nil {
+		return "", err
+	}
+	issue, err := h.client.GetIssue(ctx, p.Owner, p.Repo, p.Number)
+	if err != nil {
+		return "", err
+	}
+	labelNames := make([]string, len(issue.Labels))
+	for j, l := range issue.Labels {
+		labelNames[j] = l.Name
+	}
+	return fmt.Sprintf("#%d %s [%s]\nLabels: %s\nURL: %s\n\n%s",
+		issue.Number, issue.Title, issue.State,
+		strings.Join(labelNames, ", "),
+		issue.HTMLURL, issue.Body), nil
+}
+
+func (h *GiteaMCPHandler) handleUpdateIssue(ctx context.Context, input json.RawMessage) (string, error) {
+	var p struct {
+		Owner  string `json:"owner"`
+		Repo   string `json:"repo"`
+		Number int64  `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+		State  string `json:"state"`
+	}
+	if err := json.Unmarshal(input, &p); err != nil {
+		return "", err
+	}
+	updates := map[string]any{}
+	if p.Title != "" {
+		updates["title"] = p.Title
+	}
+	if p.Body != "" {
+		updates["body"] = p.Body
+	}
+	if p.State != "" {
+		updates["state"] = p.State
+	}
+	issue, err := h.client.UpdateIssue(ctx, p.Owner, p.Repo, p.Number, updates)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Updated issue #%d: %s [%s]", issue.Number, issue.Title, issue.State), nil
 }
 
 // mustMCPJSON parses a JSON string or panics — for inline schema literals.

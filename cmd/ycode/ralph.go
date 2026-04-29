@@ -206,7 +206,7 @@ func newRalphDeps(cmd *cobra.Command) (*ralph.RuntimeDeps, error) {
 	tools.RegisterSkillHandler(toolReg)
 	tools.SetMemoryManager(memManager)
 	tools.RegisterMemoryHandlers(toolReg)
-	tools.RegisterGitHandlers(toolReg, cwd)
+	tools.RegisterGitHandlers(toolReg, &tools.GitToolsDeps{WorkDir: cwd})
 	tools.RegisterNotebookHandler(toolReg, v)
 
 	// Set permission mode to full access for autonomous operation.

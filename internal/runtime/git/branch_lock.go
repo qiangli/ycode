@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -15,30 +16,33 @@ type BranchLockCollision struct {
 // DetectBranchCollision checks if the current branch has diverged from remote
 // or if another process is working on it.
 func DetectBranchCollision(dir string) (*BranchLockCollision, error) {
+	return DetectBranchCollisionWith(context.Background(), dir, defaultExec)
+}
+
+// DetectBranchCollisionWith checks branch collision using the provided GitExec.
+func DetectBranchCollisionWith(ctx context.Context, dir string, ge *GitExec) (*BranchLockCollision, error) {
 	// Get current branch.
-	branch, err := runGitOutput(dir, "rev-parse", "--abbrev-ref", "HEAD")
+	branch, err := ge.RunOutput(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return nil, fmt.Errorf("get current branch: %w", err)
 	}
-	branch = strings.TrimSpace(branch)
 
 	// Check if tracking a remote.
-	upstream, err := runGitOutput(dir, "rev-parse", "--abbrev-ref", branch+"@{upstream}")
+	upstream, err := ge.RunOutput(ctx, dir, "rev-parse", "--abbrev-ref", branch+"@{upstream}")
 	if err != nil {
 		return nil, nil // no upstream, no collision possible
 	}
-	upstream = strings.TrimSpace(upstream)
 
 	// Fetch to ensure we have latest.
-	_ = runGit(dir, "fetch", "--quiet")
+	_ = ge.RunCheck(ctx, dir, "fetch", "--quiet")
 
 	// Check divergence.
-	aheadBehind, err := runGitOutput(dir, "rev-list", "--left-right", "--count", branch+"..."+upstream)
+	aheadBehind, err := ge.RunOutput(ctx, dir, "rev-list", "--left-right", "--count", branch+"..."+upstream)
 	if err != nil {
 		return nil, nil
 	}
 
-	parts := strings.Fields(strings.TrimSpace(aheadBehind))
+	parts := strings.Fields(aheadBehind)
 	if len(parts) != 2 {
 		return nil, nil
 	}

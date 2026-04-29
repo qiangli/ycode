@@ -329,7 +329,7 @@ func newApp() (*cli.App, error) {
 	tools.RegisterModeHandlers(toolReg, planMode)
 	tools.RegisterConfigHandler(toolReg, cfg)
 	tools.RegisterSemanticSearchHandler(toolReg)
-	tools.RegisterGitHandlers(toolReg, cwd)
+	tools.RegisterGitHandlers(toolReg, &tools.GitToolsDeps{WorkDir: cwd})
 	tools.RegisterGitServerHandlers(toolReg)
 	tools.RegisterTestRunnerHandler(toolReg, cwd)
 

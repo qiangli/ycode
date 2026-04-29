@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"strings"
+
+	"github.com/qiangli/ycode/internal/runtime/git"
 )
 
 // WorkspaceMode determines how a workspace is mounted for an agent.
@@ -29,6 +30,9 @@ type WorkspaceInfo struct {
 	RepoDir  string // original repo directory
 	ReadOnly bool   // mount as read-only
 }
+
+// ge is used for git operations in workspace management.
+var ge = git.NewGitExec(nil)
 
 // PrepareWorkspace sets up an isolated workspace for an agent.
 func PrepareWorkspace(ctx context.Context, repoDir, agentID string, mode WorkspaceMode) (*WorkspaceInfo, error) {
@@ -84,20 +88,19 @@ func MergeWorktree(ctx context.Context, info *WorkspaceInfo, baseBranch string) 
 	}
 
 	// Check if the agent branch has any commits ahead of base.
-	out, err := exec.CommandContext(ctx, "git", "-C", info.RepoDir,
-		"log", "--oneline", baseBranch+".."+info.Branch).CombinedOutput()
-	if err != nil || strings.TrimSpace(string(out)) == "" {
+	out, err := ge.Run(ctx, info.RepoDir, "log", "--oneline", baseBranch+".."+info.Branch)
+	if err != nil || strings.TrimSpace(out) == "" {
 		slog.Info("gitserver: no changes to merge", "branch", info.Branch)
 		return nil
 	}
 
 	// Merge agent branch into base.
-	cmd := exec.CommandContext(ctx, "git", "-C", info.RepoDir,
+	mergeOut, err := ge.Run(ctx, info.RepoDir,
 		"merge", "--no-ff", "-m",
 		fmt.Sprintf("Merge agent branch %s", info.Branch),
 		info.Branch)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("merge %s into %s: %w\n%s", info.Branch, baseBranch, err, string(out))
+	if err != nil {
+		return fmt.Errorf("merge %s into %s: %w\n%s", info.Branch, baseBranch, err, mergeOut)
 	}
 
 	slog.Info("gitserver: merged agent branch", "branch", info.Branch, "into", baseBranch)
@@ -106,20 +109,18 @@ func MergeWorktree(ctx context.Context, info *WorkspaceInfo, baseBranch string) 
 
 // createWorktree creates a git worktree at the given path on a new branch.
 func createWorktree(ctx context.Context, repoDir, worktreePath, branch string) error {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoDir,
-		"worktree", "add", "-b", branch, worktreePath)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git worktree add: %w\n%s", err, string(out))
+	_, err := ge.Run(ctx, repoDir, "worktree", "add", "-b", branch, worktreePath)
+	if err != nil {
+		return fmt.Errorf("git worktree add: %w", err)
 	}
 	return nil
 }
 
 // removeWorktree removes a git worktree.
 func removeWorktree(ctx context.Context, repoDir, worktreePath string) error {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoDir,
-		"worktree", "remove", "--force", worktreePath)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git worktree remove: %w\n%s", err, string(out))
+	_, err := ge.Run(ctx, repoDir, "worktree", "remove", "--force", worktreePath)
+	if err != nil {
+		return fmt.Errorf("git worktree remove: %w", err)
 	}
 	return nil
 }

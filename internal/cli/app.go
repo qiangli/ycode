@@ -7,7 +7,6 @@ import (
 	"log"
 	"log/slog"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -21,6 +20,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/builtin"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
+	"github.com/qiangli/ycode/internal/runtime/git"
 	"github.com/qiangli/ycode/internal/runtime/lanes"
 	"github.com/qiangli/ycode/internal/runtime/memory"
 	"github.com/qiangli/ycode/internal/runtime/permission"
@@ -696,22 +696,18 @@ func (a *App) RetryTurn() (string, error) {
 
 // RevertFiles reverts uncommitted file changes using git checkout.
 func (a *App) RevertFiles() (string, error) {
-	cmd := exec.Command("git", "diff", "--stat")
-	cmd.Dir = a.workDir
-	out, err := cmd.Output()
+	ge := git.NewGitExec(nil)
+	out, err := ge.RunOutput(context.Background(), a.workDir, "diff", "--stat")
 	if err != nil {
 		return "", fmt.Errorf("git diff failed: %w", err)
 	}
-	if len(strings.TrimSpace(string(out))) == 0 {
+	if out == "" {
 		return "No uncommitted changes to revert.", nil
 	}
 
-	// Show what will be reverted.
-	stats := strings.TrimSpace(string(out))
+	stats := out
 
-	cmd = exec.Command("git", "checkout", ".")
-	cmd.Dir = a.workDir
-	if err := cmd.Run(); err != nil {
+	if err := ge.RunCheck(context.Background(), a.workDir, "checkout", "."); err != nil {
 		return "", fmt.Errorf("git checkout failed: %w", err)
 	}
 

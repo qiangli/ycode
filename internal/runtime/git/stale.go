@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -24,44 +25,47 @@ type StaleBase struct {
 
 // DetectStaleBase checks if the current branch needs rebasing on its base.
 func DetectStaleBase(dir string) (*StaleBase, error) {
-	currentBranch, err := runGitOutput(dir, "rev-parse", "--abbrev-ref", "HEAD")
+	return DetectStaleBaseWith(context.Background(), dir, defaultExec)
+}
+
+// DetectStaleBaseWith checks stale base using the provided GitExec.
+func DetectStaleBaseWith(ctx context.Context, dir string, ge *GitExec) (*StaleBase, error) {
+	currentBranch, err := ge.RunOutput(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return nil, fmt.Errorf("get branch: %w", err)
 	}
-	currentBranch = strings.TrimSpace(currentBranch)
 
-	baseBranch := detectMainBranch(dir)
+	baseBranch := detectMainBranchWith(ctx, dir, ge)
 	if currentBranch == baseBranch {
 		return nil, nil // on base branch, not stale
 	}
 
 	// Find merge base.
-	mergeBase, err := runGitOutput(dir, "merge-base", currentBranch, baseBranch)
+	mergeBase, err := ge.RunOutput(ctx, dir, "merge-base", currentBranch, baseBranch)
 	if err != nil {
 		return nil, nil
 	}
-	mergeBase = strings.TrimSpace(mergeBase)
 
 	// Count commits on base since merge point.
-	countStr, err := runGitOutput(dir, "rev-list", "--count", mergeBase+".."+baseBranch)
+	countStr, err := ge.RunOutput(ctx, dir, "rev-list", "--count", mergeBase+".."+baseBranch)
 	if err != nil {
 		return nil, nil
 	}
 
 	count := 0
-	fmt.Sscanf(strings.TrimSpace(countStr), "%d", &count)
+	fmt.Sscanf(countStr, "%d", &count)
 
 	if count == 0 {
 		return nil, nil // up to date
 	}
 
 	// Get merge base date.
-	dateStr, err := runGitOutput(dir, "log", "-1", "--format=%ci", mergeBase)
+	dateStr, err := ge.RunOutput(ctx, dir, "log", "-1", "--format=%ci", mergeBase)
 	if err != nil {
 		return nil, nil
 	}
 
-	mergeDate, err := time.Parse("2006-01-02 15:04:05 -0700", strings.TrimSpace(dateStr))
+	mergeDate, err := time.Parse("2006-01-02 15:04:05 -0700", dateStr)
 	if err != nil {
 		return nil, nil
 	}
@@ -76,14 +80,19 @@ func DetectStaleBase(dir string) (*StaleBase, error) {
 
 // DetectStaleBranches finds branches that haven't had commits recently.
 func DetectStaleBranches(dir string, maxAge time.Duration) ([]StaleBranch, error) {
-	output, err := runGitOutput(dir, "for-each-ref", "--sort=-committerdate",
+	return DetectStaleBranchesWith(context.Background(), dir, defaultExec, maxAge)
+}
+
+// DetectStaleBranchesWith finds stale branches using the provided GitExec.
+func DetectStaleBranchesWith(ctx context.Context, dir string, ge *GitExec, maxAge time.Duration) ([]StaleBranch, error) {
+	output, err := ge.RunOutput(ctx, dir, "for-each-ref", "--sort=-committerdate",
 		"--format=%(refname:short)|%(committerdate:iso)|%(authorname)", "refs/heads/")
 	if err != nil {
 		return nil, fmt.Errorf("list branches: %w", err)
 	}
 
 	var stale []StaleBranch
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		if line == "" {
 			continue
 		}
@@ -93,10 +102,10 @@ func DetectStaleBranches(dir string, maxAge time.Duration) ([]StaleBranch, error
 		}
 
 		name := parts[0]
-		dateStr := parts[1]
+		dateStr := strings.TrimSpace(parts[1])
 		author := parts[2]
 
-		commitDate, err := time.Parse("2006-01-02 15:04:05 -0700", strings.TrimSpace(dateStr))
+		commitDate, err := time.Parse("2006-01-02 15:04:05 -0700", dateStr)
 		if err != nil {
 			continue
 		}

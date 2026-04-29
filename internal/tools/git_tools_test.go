@@ -45,7 +45,7 @@ func TestGitStatusHandler(t *testing.T) {
 	dir := setupGitRepo(t)
 	r := NewRegistry()
 	RegisterBuiltins(r)
-	RegisterGitHandlers(r, dir)
+	RegisterGitHandlers(r, &GitToolsDeps{WorkDir: dir})
 
 	spec, ok := r.Get("git_status")
 	if !ok {
@@ -66,7 +66,7 @@ func TestGitLogHandler(t *testing.T) {
 	dir := setupGitRepo(t)
 	r := NewRegistry()
 	RegisterBuiltins(r)
-	RegisterGitHandlers(r, dir)
+	RegisterGitHandlers(r, &GitToolsDeps{WorkDir: dir})
 
 	spec, ok := r.Get("git_log")
 	if !ok {
@@ -86,7 +86,7 @@ func TestGitCommitHandler(t *testing.T) {
 	dir := setupGitRepo(t)
 	r := NewRegistry()
 	RegisterBuiltins(r)
-	RegisterGitHandlers(r, dir)
+	RegisterGitHandlers(r, &GitToolsDeps{WorkDir: dir})
 
 	// Create a new file to commit.
 	if err := os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello\n"), 0o644); err != nil {
@@ -112,7 +112,7 @@ func TestGitBranchHandler(t *testing.T) {
 	dir := setupGitRepo(t)
 	r := NewRegistry()
 	RegisterBuiltins(r)
-	RegisterGitHandlers(r, dir)
+	RegisterGitHandlers(r, &GitToolsDeps{WorkDir: dir})
 
 	spec, ok := r.Get("git_branch")
 	if !ok {
@@ -146,7 +146,7 @@ func TestGitStashHandler(t *testing.T) {
 	dir := setupGitRepo(t)
 	r := NewRegistry()
 	RegisterBuiltins(r)
-	RegisterGitHandlers(r, dir)
+	RegisterGitHandlers(r, &GitToolsDeps{WorkDir: dir})
 
 	// Create a modification to stash.
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# modified\n"), 0o644); err != nil {

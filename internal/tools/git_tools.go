@@ -4,39 +4,52 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/qiangli/ycode/internal/runtime/git"
 )
 
 // maxGitOutput is the maximum output size for git commands (50 KB).
 const maxGitOutput = 50 * 1024
 
-// RegisterGitHandlers registers all git operation tool handlers.
-func RegisterGitHandlers(r *Registry, workDir string) {
-	RegisterGitDiffHandler(r, workDir)
-	registerGitStatusHandler(r, workDir)
-	registerGitLogHandler(r, workDir)
-	registerGitCommitHandler(r, workDir)
-	registerGitBranchHandler(r, workDir)
-	registerGitStashHandler(r, workDir)
+// GitToolsDeps holds dependencies for git tool handlers.
+type GitToolsDeps struct {
+	WorkDir string
+	GitExec *git.GitExec
 }
 
-func registerGitStatusHandler(r *Registry, workDir string) {
+// RegisterGitHandlers registers all git operation tool handlers.
+func RegisterGitHandlers(r *Registry, deps *GitToolsDeps) {
+	workDir := ""
+	var ge *git.GitExec
+	if deps != nil {
+		workDir = deps.WorkDir
+		ge = deps.GitExec
+	}
+	if ge == nil {
+		ge = git.NewGitExec(nil) // direct exec fallback
+	}
+
+	RegisterGitDiffHandler(r, workDir, ge)
+	registerGitStatusHandler(r, workDir, ge)
+	registerGitLogHandler(r, workDir, ge)
+	registerGitCommitHandler(r, workDir, ge)
+	registerGitBranchHandler(r, workDir, ge)
+	registerGitStashHandler(r, workDir, ge)
+}
+
+func registerGitStatusHandler(r *Registry, workDir string, ge *git.GitExec) {
 	spec, ok := r.Get("git_status")
 	if !ok {
 		return
 	}
 	spec.Handler = func(ctx context.Context, input json.RawMessage) (string, error) {
-		args := []string{"--no-optional-locks", "status", "--short", "--branch"}
-
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = workDir
-		out, err := cmd.CombinedOutput()
-		if err != nil && len(out) == 0 {
+		out, err := ge.Run(ctx, workDir, "--no-optional-locks", "status", "--short", "--branch")
+		if err != nil {
 			return "", fmt.Errorf("git status: %w", err)
 		}
-		result := strings.TrimRight(string(out), "\n")
+		result := strings.TrimRight(out, "\n")
 		if result == "" {
 			return "(clean working tree)", nil
 		}
@@ -44,7 +57,7 @@ func registerGitStatusHandler(r *Registry, workDir string) {
 	}
 }
 
-func registerGitLogHandler(r *Registry, workDir string) {
+func registerGitLogHandler(r *Registry, workDir string, ge *git.GitExec) {
 	spec, ok := r.Get("git_log")
 	if !ok {
 		return
@@ -87,13 +100,11 @@ func registerGitLogHandler(r *Registry, workDir string) {
 			args = append(args, "--", params.Path)
 		}
 
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = workDir
-		out, err := cmd.CombinedOutput()
-		if err != nil && len(out) == 0 {
+		out, err := ge.Run(ctx, workDir, args...)
+		if err != nil {
 			return "", fmt.Errorf("git log: %w", err)
 		}
-		result := strings.TrimRight(string(out), "\n")
+		result := strings.TrimRight(out, "\n")
 		if result == "" {
 			return "(no commits)", nil
 		}
@@ -101,7 +112,7 @@ func registerGitLogHandler(r *Registry, workDir string) {
 	}
 }
 
-func registerGitCommitHandler(r *Registry, workDir string) {
+func registerGitCommitHandler(r *Registry, workDir string, ge *git.GitExec) {
 	spec, ok := r.Get("git_commit")
 	if !ok {
 		return
@@ -122,10 +133,8 @@ func registerGitCommitHandler(r *Registry, workDir string) {
 		// Stage files if specified.
 		if len(params.Files) > 0 {
 			addArgs := append([]string{"add"}, params.Files...)
-			cmd := exec.CommandContext(ctx, "git", addArgs...)
-			cmd.Dir = workDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return "", fmt.Errorf("git add: %s: %w", string(out), err)
+			if _, err := ge.Run(ctx, workDir, addArgs...); err != nil {
+				return "", fmt.Errorf("git add: %w", err)
 			}
 		}
 
@@ -136,17 +145,15 @@ func registerGitCommitHandler(r *Registry, workDir string) {
 		}
 		commitArgs = append(commitArgs, "-m", params.Message)
 
-		cmd := exec.CommandContext(ctx, "git", commitArgs...)
-		cmd.Dir = workDir
-		out, err := cmd.CombinedOutput()
+		out, err := ge.Run(ctx, workDir, commitArgs...)
 		if err != nil {
-			return "", fmt.Errorf("git commit: %s: %w", strings.TrimSpace(string(out)), err)
+			return "", fmt.Errorf("git commit: %w", err)
 		}
-		return strings.TrimRight(string(out), "\n"), nil
+		return strings.TrimRight(out, "\n"), nil
 	}
 }
 
-func registerGitBranchHandler(r *Registry, workDir string) {
+func registerGitBranchHandler(r *Registry, workDir string, ge *git.GitExec) {
 	spec, ok := r.Get("git_branch")
 	if !ok {
 		return
@@ -192,13 +199,11 @@ func registerGitBranchHandler(r *Registry, workDir string) {
 			return "", fmt.Errorf("unknown branch action: %s", action)
 		}
 
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = workDir
-		out, err := cmd.CombinedOutput()
+		out, err := ge.Run(ctx, workDir, args...)
 		if err != nil {
-			return "", fmt.Errorf("git branch %s: %s: %w", action, strings.TrimSpace(string(out)), err)
+			return "", fmt.Errorf("git branch %s: %w", action, err)
 		}
-		result := strings.TrimRight(string(out), "\n")
+		result := strings.TrimRight(out, "\n")
 		if result == "" && action == "create" {
 			return fmt.Sprintf("Branch '%s' created", params.Name), nil
 		}
@@ -206,7 +211,7 @@ func registerGitBranchHandler(r *Registry, workDir string) {
 	}
 }
 
-func registerGitStashHandler(r *Registry, workDir string) {
+func registerGitStashHandler(r *Registry, workDir string, ge *git.GitExec) {
 	spec, ok := r.Get("git_stash")
 	if !ok {
 		return
@@ -245,13 +250,11 @@ func registerGitStashHandler(r *Registry, workDir string) {
 			return "", fmt.Errorf("unknown stash action: %s", action)
 		}
 
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = workDir
-		out, err := cmd.CombinedOutput()
+		out, err := ge.Run(ctx, workDir, args...)
 		if err != nil {
-			return "", fmt.Errorf("git stash %s: %s: %w", action, strings.TrimSpace(string(out)), err)
+			return "", fmt.Errorf("git stash %s: %w", action, err)
 		}
-		result := strings.TrimRight(string(out), "\n")
+		result := strings.TrimRight(out, "\n")
 		if result == "" {
 			return fmt.Sprintf("stash %s completed", action), nil
 		}

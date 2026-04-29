@@ -1,11 +1,13 @@
 package agentsmd
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/qiangli/ycode/internal/runtime/git"
 )
 
 // CommitConvention represents a convention mined from git history.
@@ -149,17 +151,15 @@ func mineFixPatterns(projectRoot string, maxCommits int) ([]CommitConvention, er
 }
 
 func mineHotspots(projectRoot string, maxCommits int) ([]CommitConvention, error) {
-	cmd := exec.Command("git", "log", fmt.Sprintf("-%d", maxCommits),
+	ge := git.NewGitExec(nil)
+	rawOut, err := ge.Run(context.Background(), projectRoot, "log", fmt.Sprintf("-%d", maxCommits),
 		"--name-only", "--format=")
-	cmd.Dir = projectRoot
-	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
-
 	// Count directory-level changes.
 	dirCounts := make(map[string]int)
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(rawOut, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -235,12 +235,6 @@ func mineCommitPrefixes(projectRoot string, maxCommits int) ([]CommitConvention,
 }
 
 func gitLog(projectRoot string, maxCommits int) (string, error) {
-	cmd := exec.Command("git", "log", fmt.Sprintf("-%d", maxCommits),
-		"--format=%s")
-	cmd.Dir = projectRoot
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
+	ge := git.NewGitExec(nil)
+	return ge.Run(context.Background(), projectRoot, "log", fmt.Sprintf("-%d", maxCommits), "--format=%s")
 }

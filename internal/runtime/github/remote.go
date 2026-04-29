@@ -4,10 +4,12 @@
 package github
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
+
+	"github.com/qiangli/ycode/internal/runtime/git"
 )
 
 var (
@@ -18,14 +20,12 @@ var (
 // DetectRepo parses the git remote URL to extract the GitHub owner and repo.
 // It checks the "origin" remote first.
 func DetectRepo(gitDir string) (owner, repo string, err error) {
-	cmd := exec.Command("git", "-C", gitDir, "remote", "get-url", "origin")
-	out, err := cmd.Output()
+	ge := git.NewGitExec(nil)
+	url, err := ge.RunOutput(context.Background(), gitDir, "remote", "get-url", "origin")
 	if err != nil {
 		return "", "", fmt.Errorf("git remote get-url origin: %w", err)
 	}
-
-	url := strings.TrimSpace(string(out))
-	return ParseRemoteURL(url)
+	return ParseRemoteURL(strings.TrimSpace(url))
 }
 
 // ParseRemoteURL extracts owner/repo from a GitHub remote URL.

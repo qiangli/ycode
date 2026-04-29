@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/qiangli/ycode/internal/runtime/git"
 )
 
 const (
@@ -40,11 +41,17 @@ Reply only with the one-line commit message, without any additional text, explan
 type CommitGenerator struct {
 	chain   *ModelChain
 	workDir string
+	ge      *git.GitExec
 }
 
 // NewCommitGenerator creates a CommitGenerator.
 func NewCommitGenerator(chain *ModelChain, workDir string) *CommitGenerator {
-	return &CommitGenerator{chain: chain, workDir: workDir}
+	return &CommitGenerator{chain: chain, workDir: workDir, ge: git.NewGitExec(nil)}
+}
+
+// NewCommitGeneratorWith creates a CommitGenerator with a specific GitExec.
+func NewCommitGeneratorWith(chain *ModelChain, workDir string, ge *git.GitExec) *CommitGenerator {
+	return &CommitGenerator{chain: chain, workDir: workDir, ge: ge}
 }
 
 // CommitRequest controls what to commit and how.
@@ -355,10 +362,7 @@ func (cg *CommitGenerator) stageFiles(files []string) error {
 
 // git runs a git command in the working directory and returns combined output.
 func (cg *CommitGenerator) git(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = cg.workDir
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return cg.ge.Run(context.Background(), cg.workDir, args...)
 }
 
 // FormatResult produces a human-readable summary of the commit result.

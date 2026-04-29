@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/qiangli/ycode/internal/runtime/git"
 )
 
 // NewBashCheckFunc creates a CheckFunc that runs a shell command and reports
@@ -25,27 +27,33 @@ func NewBashCheckFunc(command string) CheckFunc {
 // NewGitCommitFunc creates a CommitFunc that stages changed files by name and commits.
 // It avoids "git add -A" per project conventions.
 func NewGitCommitFunc(workDir string) CommitFunc {
+	ge := git.NewGitExec(nil)
+	return NewGitCommitFuncWith(workDir, ge)
+}
+
+// NewGitCommitFuncWith creates a CommitFunc using the provided GitExec.
+func NewGitCommitFuncWith(workDir string, ge *git.GitExec) CommitFunc {
 	return func(ctx context.Context, message string) error {
 		// Get list of modified/added files (not untracked).
-		out, err := exec.CommandContext(ctx, "git", "-C", workDir, "diff", "--name-only").CombinedOutput()
+		out, err := ge.Run(ctx, workDir, "diff", "--name-only")
 		if err != nil {
 			return fmt.Errorf("git diff: %s", out)
 		}
-		files := splitNonEmpty(string(out))
+		files := splitNonEmpty(out)
 
 		// Also get staged files.
-		stagedOut, err := exec.CommandContext(ctx, "git", "-C", workDir, "diff", "--cached", "--name-only").CombinedOutput()
+		stagedOut, err := ge.Run(ctx, workDir, "diff", "--cached", "--name-only")
 		if err != nil {
 			return fmt.Errorf("git diff --cached: %s", stagedOut)
 		}
-		files = append(files, splitNonEmpty(string(stagedOut))...)
+		files = append(files, splitNonEmpty(stagedOut)...)
 
 		// Get untracked files.
-		untrackedOut, err := exec.CommandContext(ctx, "git", "-C", workDir, "ls-files", "--others", "--exclude-standard").CombinedOutput()
+		untrackedOut, err := ge.Run(ctx, workDir, "ls-files", "--others", "--exclude-standard")
 		if err != nil {
 			return fmt.Errorf("git ls-files: %s", untrackedOut)
 		}
-		files = append(files, splitNonEmpty(string(untrackedOut))...)
+		files = append(files, splitNonEmpty(untrackedOut)...)
 
 		if len(files) == 0 {
 			return nil // Nothing to commit.
@@ -62,16 +70,14 @@ func NewGitCommitFunc(workDir string) CommitFunc {
 		}
 
 		// Stage files by name.
-		args := append([]string{"-C", workDir, "add", "--"}, unique...)
-		out, err = exec.CommandContext(ctx, "git", args...).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("git add: %s", out)
+		args := append([]string{"add", "--"}, unique...)
+		if _, err = ge.Run(ctx, workDir, args...); err != nil {
+			return fmt.Errorf("git add: %w", err)
 		}
 
 		// Commit.
-		out, err = exec.CommandContext(ctx, "git", "-C", workDir, "commit", "-m", message).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("git commit: %s", out)
+		if _, err = ge.Run(ctx, workDir, "commit", "-m", message); err != nil {
+			return fmt.Errorf("git commit: %w", err)
 		}
 
 		return nil

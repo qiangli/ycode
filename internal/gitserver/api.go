@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -59,6 +60,24 @@ type PullRequest struct {
 		Ref   string `json:"ref"`
 	} `json:"base"`
 	HTMLURL string `json:"html_url"`
+}
+
+// Issue represents a Gitea issue.
+type Issue struct {
+	ID      int64   `json:"id"`
+	Number  int64   `json:"number"`
+	Title   string  `json:"title"`
+	Body    string  `json:"body"`
+	State   string  `json:"state"`
+	Labels  []Label `json:"labels"`
+	HTMLURL string  `json:"html_url"`
+}
+
+// Label represents a Gitea label.
+type Label struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
 }
 
 // CreateRepo creates a new repository.
@@ -143,6 +162,72 @@ func (c *Client) ListPRs(ctx context.Context, owner, repo, state string) ([]Pull
 	return prs, nil
 }
 
+// CreateIssue creates an issue in a repository.
+func (c *Client) CreateIssue(ctx context.Context, owner, repo, title, body string, labels []string) (*Issue, error) {
+	payload := map[string]any{
+		"title": title,
+		"body":  body,
+	}
+	if len(labels) > 0 {
+		// Gitea accepts label IDs, but also supports label names via the
+		// "labels" field when using the create issue endpoint with names.
+		// We pass label names and let the caller resolve IDs if needed.
+		payload["labels"] = labels
+	}
+	var issue Issue
+	if err := c.post(ctx, fmt.Sprintf("/api/v1/repos/%s/%s/issues", owner, repo), payload, &issue); err != nil {
+		return nil, err
+	}
+	return &issue, nil
+}
+
+// ListIssues lists issues in a repository, filtered by state and labels.
+func (c *Client) ListIssues(ctx context.Context, owner, repo, state string, labels []string) ([]Issue, error) {
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/issues?type=issues", owner, repo)
+	if state != "" {
+		path += "&state=" + state
+	}
+	if len(labels) > 0 {
+		path += "&labels=" + strings.Join(labels, ",")
+	}
+	var issues []Issue
+	if err := c.get(ctx, path, &issues); err != nil {
+		return nil, err
+	}
+	return issues, nil
+}
+
+// GetIssue gets a single issue by number.
+func (c *Client) GetIssue(ctx context.Context, owner, repo string, number int64) (*Issue, error) {
+	var issue Issue
+	if err := c.get(ctx, fmt.Sprintf("/api/v1/repos/%s/%s/issues/%d", owner, repo, number), &issue); err != nil {
+		return nil, err
+	}
+	return &issue, nil
+}
+
+// UpdateIssue updates an issue's fields (title, body, state).
+func (c *Client) UpdateIssue(ctx context.Context, owner, repo string, number int64, updates map[string]any) (*Issue, error) {
+	var issue Issue
+	if err := c.patch(ctx, fmt.Sprintf("/api/v1/repos/%s/%s/issues/%d", owner, repo, number), updates, &issue); err != nil {
+		return nil, err
+	}
+	return &issue, nil
+}
+
+// CreateLabel creates a label in a repository.
+func (c *Client) CreateLabel(ctx context.Context, owner, repo, name, color string) (*Label, error) {
+	body := map[string]any{
+		"name":  name,
+		"color": "#" + color,
+	}
+	var label Label
+	if err := c.post(ctx, fmt.Sprintf("/api/v1/repos/%s/%s/labels", owner, repo), body, &label); err != nil {
+		return nil, err
+	}
+	return &label, nil
+}
+
 // HTTP helpers.
 
 func (c *Client) get(ctx context.Context, path string, result any) error {
@@ -159,6 +244,19 @@ func (c *Client) post(ctx context.Context, path string, body any, result any) er
 		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+path, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return c.doRequest(req, result)
+}
+
+func (c *Client) patch(ctx context.Context, path string, body any, result any) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, "PATCH", c.baseURL+path, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
