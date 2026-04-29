@@ -2,7 +2,8 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 # sqlite + sqlite_unlock_notify: required for embedded Gitea (in-process git server).
-TAGS := -tags "sqlite,sqlite_unlock_notify"
+# bindata: embeds Gitea's locale, template, and public asset files into the binary.
+TAGS := -tags "sqlite,sqlite_unlock_notify,bindata"
 PACKAGES := $(shell go list ./... | grep -v '/priorart/')
 
 # Deploy / validate defaults
@@ -27,6 +28,11 @@ init: ## Initialize submodules, fetch plugins, and prepare embedded assets
 	@git submodule update --recursive 2>&1 | grep -v '^From \|^Submodule path\| \* branch' || true
 	@./scripts/fetch-perses-plugins.sh
 	@./scripts/gzip-embeds.sh
+	@echo "Generating Gitea bindata..."
+	@cd external/gitea && go run build/generate-bindata.go options modules/options/bindata.dat 2>&1
+	@cd external/gitea && go run build/generate-bindata.go templates modules/templates/bindata.dat 2>&1
+	@cd external/gitea && go run build/generate-bindata.go public modules/public/bindata.dat 2>&1
+	@cd external/gitea && go run build/generate-bindata.go modules/migration/schemas modules/migration/bindata.dat 2>&1
 
 sync: ## Pull latest changes for all submodules (skips on conflict)
 	@./scripts/sync-submodules.sh
@@ -43,7 +49,7 @@ compile: ## Compile the ycode binary to bin/ (no checks)
 	go build -trimpath $(TAGS) $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 
 compile-full: ## Compile with embedded podman + runner (single binary, all-in-one)
-	go build -trimpath -tags "sqlite,sqlite_unlock_notify,embed_podman,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata,embed_podman,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
 	@echo "Built single binary with embedded podman + runner: bin/ycode"
 
@@ -166,7 +172,7 @@ vfkit-embed: ## Compress vfkit binary for embedding into ycode (macOS only)
 	@./scripts/embed-vfkit.sh
 
 build-single: podman-embed vfkit-embed runner-build-thin ## Build single self-contained ycode binary
-	go build -trimpath -tags "sqlite,sqlite_unlock_notify,embed_podman,embed_vfkit,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata,embed_podman,embed_vfkit,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
 	@echo ""
 	@echo "=== Single binary ready: bin/ycode ==="
