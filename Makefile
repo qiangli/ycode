@@ -1,6 +1,8 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)"
+# sqlite + sqlite_unlock_notify: required for embedded Gitea (in-process git server).
+TAGS := -tags "sqlite,sqlite_unlock_notify"
 PACKAGES := $(shell go list ./... | grep -v '/priorart/')
 
 # Deploy / validate defaults
@@ -38,15 +40,15 @@ priorart-sync: ## Pull latest changes for all priorart repos
 # ─── Build ──────────────────────────────────────────────────────────────────
 
 compile: ## Compile the ycode binary to bin/ (no checks)
-	go build -trimpath $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	go build -trimpath $(TAGS) $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 
 compile-full: ## Compile with embedded podman + runner (single binary, all-in-one)
-	go build -trimpath -tags "embed_podman,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	go build -trimpath -tags "sqlite,sqlite_unlock_notify,embed_podman,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
 	@echo "Built single binary with embedded podman + runner: bin/ycode"
 
 compile-debug: ## Compile with debug symbols (for profiling/debugging)
-	go build -trimpath -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/ycode ./cmd/ycode/
+	go build -trimpath $(TAGS) -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/ycode ./cmd/ycode/
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
 
 build: ## Build with full quality gate: tidy → fmt → vet → compile → test → verify
@@ -127,21 +129,21 @@ all: build ## Full quality gate (alias for build)
 cross: dist/ycode-linux-amd64 dist/ycode-linux-arm64 dist/ycode-darwin-amd64 dist/ycode-darwin-arm64 dist/ycode-windows-amd64.exe ## Cross-compile for all platforms
 
 dist/ycode-linux-amd64:
-	GOOS=linux GOARCH=amd64 go build -trimpath $(LDFLAGS) -o $@ ./cmd/ycode/
+	GOOS=linux GOARCH=amd64 go build -trimpath $(TAGS) $(LDFLAGS) -o $@ ./cmd/ycode/
 
 dist/ycode-linux-arm64:
-	GOOS=linux GOARCH=arm64 go build -trimpath $(LDFLAGS) -o $@ ./cmd/ycode/
+	GOOS=linux GOARCH=arm64 go build -trimpath $(TAGS) $(LDFLAGS) -o $@ ./cmd/ycode/
 
 dist/ycode-darwin-amd64:
-	GOOS=darwin GOARCH=amd64 go build -trimpath $(LDFLAGS) -o $@ ./cmd/ycode/
+	GOOS=darwin GOARCH=amd64 go build -trimpath $(TAGS) $(LDFLAGS) -o $@ ./cmd/ycode/
 	@codesign -f -s - $@ 2>/dev/null || true
 
 dist/ycode-darwin-arm64:
-	GOOS=darwin GOARCH=arm64 go build -trimpath $(LDFLAGS) -o $@ ./cmd/ycode/
+	GOOS=darwin GOARCH=arm64 go build -trimpath $(TAGS) $(LDFLAGS) -o $@ ./cmd/ycode/
 	@codesign -f -s - $@ 2>/dev/null || true
 
 dist/ycode-windows-amd64.exe:
-	GOOS=windows GOARCH=amd64 go build -trimpath $(LDFLAGS) -o $@ ./cmd/ycode/
+	GOOS=windows GOARCH=amd64 go build -trimpath $(TAGS) $(LDFLAGS) -o $@ ./cmd/ycode/
 
 # ─── Inference Runner ──────────────────────────────────────────────────────
 
@@ -164,7 +166,7 @@ vfkit-embed: ## Compress vfkit binary for embedding into ycode (macOS only)
 	@./scripts/embed-vfkit.sh
 
 build-single: podman-embed vfkit-embed runner-build-thin ## Build single self-contained ycode binary
-	go build -trimpath -tags "embed_podman,embed_vfkit,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	go build -trimpath -tags "sqlite,sqlite_unlock_notify,embed_podman,embed_vfkit,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
 	@echo ""
 	@echo "=== Single binary ready: bin/ycode ==="
