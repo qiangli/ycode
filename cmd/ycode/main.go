@@ -23,6 +23,7 @@ import (
 	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/runtime/bash"
+	"github.com/qiangli/ycode/internal/runtime/browseruse"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/embedding"
@@ -35,6 +36,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/repomap"
+	"github.com/qiangli/ycode/internal/runtime/searxng"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/vfs"
 	"github.com/qiangli/ycode/internal/selfheal"
@@ -263,6 +265,22 @@ func newApp() (*cli.App, error) {
 			} else {
 				bashExecutor = &bash.ContainerExecutor{Container: sandbox}
 				tools.SetContainerEngine(engine, cwd)
+
+				// Start containerized SearXNG for web search (if enabled).
+				if os.Getenv("YCODE_SEARXNG") == "true" || cfg.Container.Enabled {
+					searxngSvc := searxng.NewService(engine, instanceID, cfg.Container.Network)
+					if err := searxngSvc.Start(rootCtx); err != nil {
+						slog.Warn("searxng: failed to start, web search will use other providers", "error", err)
+					} else {
+						tools.SetSearXNGProvider(tools.NewSearXNGContainerProvider(searxngSvc))
+						defer searxngSvc.Stop(context.Background())
+					}
+				}
+
+				// Start containerized browser-use for browser automation.
+				browserSvc := browseruse.NewService(engine, instanceID, cfg.Container.Network, nil)
+				tools.SetBrowserService(browserSvc)
+
 				slog.Info("container sandbox active", "container", sandbox.Name, "image", image)
 				// Clean up sandbox on shutdown.
 				defer func() {
@@ -290,6 +308,7 @@ func newApp() (*cli.App, error) {
 	tools.RegisterVFSHandlers(toolReg, v)
 	tools.RegisterSleepHandler(toolReg)
 	tools.RegisterWebHandlers(toolReg)
+	tools.RegisterBrowserHandlers(toolReg)
 	tools.RegisterToolSearchHandler(toolReg)
 	tools.RegisterSkillHandler(toolReg)
 	tools.RegisterMemosHandlers(toolReg)

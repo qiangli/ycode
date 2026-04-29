@@ -134,14 +134,14 @@ func builtinSpecs() []*ToolSpec {
 		// Deferred tools
 		{
 			Name:         "WebFetch",
-			Description:  "Fetch a URL and convert HTML to text.",
+			Description:  "Fetch a URL and extract readable content as Markdown. Supports output_format (markdown/text/html/metadata_only) and max_length parameters.",
 			InputSchema:  mustJSON(webFetchSchema),
 			RequiredMode: permission.ReadOnly,
 			Source:       SourceBuiltin,
 		},
 		{
 			Name:         "WebSearch",
-			Description:  "Search the web and return results.",
+			Description:  "Search the web and return structured results. Automatically selects the best available search provider (Brave, Tavily, SearXNG, or DuckDuckGo).",
 			InputSchema:  mustJSON(webSearchSchema),
 			RequiredMode: permission.ReadOnly,
 			Source:       SourceBuiltin,
@@ -558,9 +558,11 @@ var (
 		"type": "object",
 		"properties": {
 			"url": {"type": "string", "description": "URL to fetch"},
-			"prompt": {"type": "string", "description": "Question to answer about the page content"}
-		},
-		"required": ["url"]
+			"prompt": {"type": "string", "description": "Question to focus extraction on"},
+			"output_format": {"type": "string", "enum": ["markdown", "text", "html", "metadata_only"], "description": "Output format (default: markdown)"},
+			"max_length": {"type": "integer", "description": "Maximum output length in characters (default: 32768)"},
+			"click_link": {"type": "integer", "description": "Follow a numbered link from the previous fetch result (e.g., 1, 2, 3). Use instead of url to navigate links."}
+		}
 	}`
 
 	webSearchSchema = `{

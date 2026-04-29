@@ -24,18 +24,45 @@ func RegisterWebHandlers(r *Registry) {
 
 func handleWebFetch(ctx context.Context, input json.RawMessage) (string, error) {
 	var params struct {
-		URL    string `json:"url"`
-		Prompt string `json:"prompt,omitempty"`
+		URL          string `json:"url"`
+		Prompt       string `json:"prompt,omitempty"`
+		OutputFormat string `json:"output_format,omitempty"`
+		MaxLength    int    `json:"max_length,omitempty"`
+		ClickLink    int    `json:"click_link,omitempty"`
 	}
 	if err := json.Unmarshal(input, &params); err != nil {
 		return "", fmt.Errorf("parse WebFetch input: %w", err)
+	}
+
+	// Text browser fallback: click_link resolves a link from the previous fetch.
+	if params.ClickLink > 0 {
+		link, ok := lookupLink(params.ClickLink)
+		if !ok {
+			return "", fmt.Errorf("link [%d] not found (use WebFetch with a URL first)", params.ClickLink)
+		}
+		params.URL = link.Href
+	}
+
+	if params.URL == "" {
+		return "", fmt.Errorf("url is required (or use click_link to follow a link from the previous page)")
 	}
 
 	if err := netutil.ValidateURL(params.URL); err != nil {
 		return "", fmt.Errorf("SSRF protection: %w", err)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			if err := netutil.ValidateURL(req.URL.String()); err != nil {
+				return fmt.Errorf("SSRF protection on redirect: %w", err)
+			}
+			return nil
+		},
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, params.URL, nil)
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
@@ -48,16 +75,14 @@ func handleWebFetch(ctx context.Context, input json.RawMessage) (string, error) 
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 100*1024)) // 100KB limit
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
 	if err != nil {
 		return "", fmt.Errorf("read response: %w", err)
 	}
 
-	text := stripHTML(string(body))
-
-	// Truncate to reasonable size.
-	if len(text) > 8192 {
-		text = text[:8192] + "\n... (truncated)"
+	text, err := extractContent(string(body), params.URL, params.OutputFormat, params.MaxLength)
+	if err != nil {
+		return "", fmt.Errorf("extract content: %w", err)
 	}
 
 	return text, nil
@@ -72,32 +97,16 @@ func handleWebSearch(ctx context.Context, input json.RawMessage) (string, error)
 		return "", fmt.Errorf("parse WebSearch input: %w", err)
 	}
 
-	// Simple DuckDuckGo HTML search.
-	client := &http.Client{Timeout: 15 * time.Second}
-	url := fmt.Sprintf("https://html.duckduckgo.com/html/?q=%s", params.Query)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("User-Agent", "ycode/1.0")
-
-	resp, err := client.Do(req)
+	resp, err := searchWithFallback(ctx, params.Query, params.MaxResults)
 	if err != nil {
 		return "", fmt.Errorf("search: %w", err)
 	}
-	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 100*1024))
+	out, err := json.MarshalIndent(resp, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("read response: %w", err)
+		return "", fmt.Errorf("marshal results: %w", err)
 	}
-
-	text := stripHTML(string(body))
-	if len(text) > 4096 {
-		text = text[:4096] + "\n... (truncated)"
-	}
-
-	return text, nil
+	return string(out), nil
 }
 
 // stripHTML does a basic HTML to text conversion.

@@ -17,6 +17,8 @@ replace code.gitea.io/gitea => ./external/gitea
 
 require (
 	code.gitea.io/gitea v1.26.1
+	codeberg.org/readeck/go-readability/v2 v2.1.1
+	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.0
 	github.com/VictoriaMetrics/VictoriaLogs v0.0.0-20260218111324-95b48d57d032
 	github.com/VictoriaMetrics/VictoriaMetrics v1.140.1-0.20260414051809-8a20ccf21db7
 	github.com/blevesearch/bleve/v2 v2.5.7
@@ -72,9 +74,11 @@ require (
 	go.podman.io/buildah v1.42.1-0.20260421143840-0acb6b8cca85
 	go.podman.io/common v0.67.2-0.20260423135811-cbaa5f41e643
 	go.podman.io/podman/v6 v6.0.0-20260424181651-a8c36318565d
+	golang.org/x/net v0.53.0
 	google.golang.org/grpc v1.80.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.48.2
+	mvdan.cc/sh/v3 v3.13.1
 )
 
 require (
@@ -98,6 +102,7 @@ require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.45.0 // indirect
 	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5 // indirect
 	github.com/IBM/sarama v1.47.0 // indirect
+	github.com/JohannesKaufmann/dom v0.2.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
 	github.com/PaesslerAG/gval v1.2.4 // indirect
@@ -114,12 +119,14 @@ require (
 	github.com/alecthomas/participle/v2 v2.1.4 // indirect
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
 	github.com/andybalholm/brotli v1.2.1 // indirect
+	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/antchfx/xmlquery v1.5.1 // indirect
 	github.com/antchfx/xpath v1.3.6 // indirect
 	github.com/antithesishq/antithesis-sdk-go v0.6.0-default-no-op // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/apache/cassandra-gocql-driver/v2 v2.1.0 // indirect
 	github.com/apache/thrift v0.22.0 // indirect
+	github.com/araddon/dateparse v0.0.0-20210429162001-6b43995a97de // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
@@ -269,6 +276,7 @@ require (
 	github.com/go-openapi/swag/typeutils v0.25.5 // indirect
 	github.com/go-openapi/swag/yamlutils v0.25.5 // indirect
 	github.com/go-openapi/validate v0.25.2 // indirect
+	github.com/go-shiori/dom v0.0.0-20230515143342-73569d674e1c // indirect
 	github.com/go-sql-driver/mysql v1.9.3 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
@@ -276,6 +284,7 @@ require (
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/gogo/googleapis v1.4.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
@@ -650,7 +659,6 @@ require (
 	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/mod v0.35.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
