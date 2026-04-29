@@ -108,6 +108,42 @@ func (lm *LifecycleManager) GetHealth(name string) (*ServerHealth, bool) {
 	return h, ok
 }
 
+// StartAll connects to all registered MCP servers in parallel.
+func (lm *LifecycleManager) StartAll(ctx context.Context) []ServerHealth {
+	lm.registry.mu.RLock()
+	names := make([]string, 0, len(lm.registry.clients))
+	for name := range lm.registry.clients {
+		names = append(names, name)
+	}
+	lm.registry.mu.RUnlock()
+
+	type result struct {
+		health ServerHealth
+	}
+	results := make(chan result, len(names))
+
+	var wg sync.WaitGroup
+	for _, name := range names {
+		wg.Add(1)
+		go func(n string) {
+			defer wg.Done()
+			h := lm.checkServer(ctx, n)
+			results <- result{health: h}
+		}(name)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var healths []ServerHealth
+	for r := range results {
+		healths = append(healths, r.health)
+	}
+	return healths
+}
+
 // Report returns a formatted health report.
 func (lm *LifecycleManager) Report() string {
 	lm.mu.RLock()

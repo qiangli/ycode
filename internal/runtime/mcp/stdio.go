@@ -2,21 +2,25 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // StdioTransport communicates with an MCP server via stdin/stdout.
 type StdioTransport struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout io.ReadCloser
-	reader *bufio.Reader
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	stdout    io.ReadCloser
+	reader    *bufio.Reader
+	stderrBuf *bytes.Buffer
 
 	mu     sync.Mutex
 	nextID atomic.Int64
@@ -53,10 +57,10 @@ func (e *JSONRPCError) Error() string {
 func NewStdioTransport(command string, args []string, env map[string]string) (*StdioTransport, error) {
 	cmd := exec.Command(command, args...)
 
-	if len(env) > 0 {
-		for k, v := range env {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-		}
+	// Inherit the current environment, then overlay custom env vars.
+	cmd.Env = os.Environ()
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
 
 	stdin, err := cmd.StdinPipe()
@@ -69,11 +73,16 @@ func NewStdioTransport(command string, args []string, env map[string]string) (*S
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 
+	// Capture stderr for diagnostics.
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
 	return &StdioTransport{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: stdout,
-		reader: bufio.NewReader(stdout),
+		cmd:       cmd,
+		stdin:     stdin,
+		stdout:    stdout,
+		reader:    bufio.NewReader(stdout),
+		stderrBuf: &stderrBuf,
 	}, nil
 }
 
@@ -157,12 +166,59 @@ func (t *StdioTransport) readResponse(resp *JSONRPCResponse) error {
 	return json.Unmarshal(body, resp)
 }
 
-// Close shuts down the transport and kills the process.
+// Notify sends a JSON-RPC notification (no response expected).
+func (t *StdioTransport) Notify(ctx context.Context, method string, params any) error {
+	req := JSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  method,
+		Params:  params,
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal notification: %w", err)
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
+	if _, err := io.WriteString(t.stdin, header); err != nil {
+		return fmt.Errorf("write notification header: %w", err)
+	}
+	if _, err := t.stdin.Write(data); err != nil {
+		return fmt.Errorf("write notification body: %w", err)
+	}
+	return nil
+}
+
+// Stderr returns any captured stderr output from the server process.
+func (t *StdioTransport) Stderr() string {
+	if t.stderrBuf == nil {
+		return ""
+	}
+	return t.stderrBuf.String()
+}
+
+// Close shuts down the transport gracefully. It closes stdin to signal
+// the server, waits briefly for exit, then kills if needed.
 func (t *StdioTransport) Close() error {
 	t.stdin.Close()
-	t.stdout.Close()
+
 	if t.cmd.Process != nil {
-		return t.cmd.Process.Kill()
+		// Give the server 2 seconds to exit gracefully.
+		done := make(chan error, 1)
+		go func() { done <- t.cmd.Wait() }()
+
+		select {
+		case <-done:
+			// Process exited cleanly.
+		case <-time.After(2 * time.Second):
+			_ = t.cmd.Process.Kill()
+			<-done
+		}
 	}
+
+	t.stdout.Close()
 	return nil
 }
