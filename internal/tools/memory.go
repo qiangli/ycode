@@ -18,7 +18,7 @@ func SetMemoryManager(m *memory.Manager) {
 }
 
 // RegisterMemoryHandlers wires up the memory_save, memory_recall,
-// and memory_forget tool handlers.
+// memory_forget, and memory_feedback tool handlers.
 func RegisterMemoryHandlers(r *Registry) {
 	if spec, ok := r.Get("memory_save"); ok {
 		spec.Handler = handleMemorySave
@@ -28,6 +28,9 @@ func RegisterMemoryHandlers(r *Registry) {
 	}
 	if spec, ok := r.Get("memory_forget"); ok {
 		spec.Handler = handleMemoryForget
+	}
+	if spec, ok := r.Get("memory_feedback"); ok {
+		spec.Handler = handleMemoryFeedback
 	}
 }
 
@@ -137,4 +140,39 @@ func handleMemoryForget(_ context.Context, input json.RawMessage) (string, error
 	}
 
 	return fmt.Sprintf("Memory %q forgotten.", params.Name), nil
+}
+
+func handleMemoryFeedback(_ context.Context, input json.RawMessage) (string, error) {
+	if err := checkMemoryManager(); err != nil {
+		return "", err
+	}
+
+	var params struct {
+		Name   string  `json:"name"`
+		Reward float64 `json:"reward"` // 0.0-1.0
+		Reason string  `json:"reason"`
+	}
+	if err := json.Unmarshal(input, &params); err != nil {
+		return "", fmt.Errorf("parse memory_feedback input: %w", err)
+	}
+	if params.Name == "" {
+		return "", fmt.Errorf("name is required")
+	}
+
+	all, err := memManager.All()
+	if err != nil {
+		return "", err
+	}
+
+	for _, mem := range all {
+		if mem.Name == params.Name {
+			memory.PropagateReward(mem, params.Reward, memory.DefaultRewardAlpha)
+			if err := memManager.Save(mem); err != nil {
+				return "", fmt.Errorf("save feedback: %w", err)
+			}
+			return fmt.Sprintf("Memory %q value updated to %.4f (reward: %.2f).", params.Name, mem.ValueScore, params.Reward), nil
+		}
+	}
+
+	return "", fmt.Errorf("memory %q not found", params.Name)
 }

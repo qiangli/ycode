@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -20,6 +21,7 @@ type Manager struct {
 
 	bleveSearcher  *BleveSearcher  // optional Bleve full-text search
 	vectorSearcher *VectorSearcher // optional vector semantic search
+	entityIndex    *EntityIndex    // optional entity extraction and linking
 	provider       MemoryProvider  // optional pluggable provider (supplements stores)
 }
 
@@ -103,6 +105,16 @@ func (m *Manager) Save(mem *Memory) error {
 		m.bleveSearcher.IndexMemory(mem)
 	}
 
+	// Extract and link entities (Phase 4).
+	if m.entityIndex != nil {
+		entities := ExtractEntities(mem.Content)
+		mem.Entities = make([]string, 0, len(entities))
+		for _, e := range entities {
+			m.entityIndex.Link(e, mem.Name)
+			mem.Entities = append(mem.Entities, e.Name)
+		}
+	}
+
 	// Notify the pluggable provider if one is attached.
 	if m.provider != nil {
 		if err := m.provider.OnMemoryWrite(context.Background(), mem); err != nil {
@@ -114,7 +126,8 @@ func (m *Manager) Save(mem *Memory) error {
 }
 
 // Recall retrieves memories matching a query from all scopes.
-// Project-scoped memories are ranked higher than global ones.
+// Uses Reciprocal Rank Fusion (RRF) across all available search backends,
+// applies composite scoring (recency + importance), then MMR diversity re-ranking.
 func (m *Manager) Recall(query string, maxResults int) ([]SearchResult, error) {
 	ctx := context.Background()
 	tracer := otel.Tracer("ycode.memory")
@@ -136,67 +149,82 @@ func (m *Manager) Recall(query string, maxResults int) ([]SearchResult, error) {
 		memByName[mem.Name] = mem
 	}
 
-	// Collect results from all available search backends.
-	var results []SearchResult
-	seen := make(map[string]bool)
+	// Collect results from all available backends in parallel.
+	resultSets := make(map[string][]SearchResult)
 
-	// Vector search (semantic similarity).
 	if m.vectorSearcher != nil {
-		vectorResults := m.vectorSearcher.Search(query, maxResults)
-		for _, r := range vectorResults {
-			if !seen[r.Memory.Name] {
-				seen[r.Memory.Name] = true
-				if full, ok := memByName[r.Memory.Name]; ok {
-					r.Memory = full
-				}
-				results = append(results, r)
+		vectorResults := m.vectorSearcher.Search(query, maxResults*2)
+		for i := range vectorResults {
+			if full, ok := memByName[vectorResults[i].Memory.Name]; ok {
+				vectorResults[i].Memory = full
 			}
+			vectorResults[i].Source = "vector"
+		}
+		if len(vectorResults) > 0 {
+			resultSets["vector"] = vectorResults
 		}
 	}
 
-	// Bleve search (full-text keyword matching).
 	if m.bleveSearcher != nil {
 		bleveResults := m.bleveSearcher.Search(query, maxResults*2)
-		for _, r := range bleveResults {
-			if !seen[r.Memory.Name] {
-				seen[r.Memory.Name] = true
-				if full, ok := memByName[r.Memory.Name]; ok {
-					r.Memory = full
-				}
-				results = append(results, r)
+		for i := range bleveResults {
+			if full, ok := memByName[bleveResults[i].Memory.Name]; ok {
+				bleveResults[i].Memory = full
 			}
+			bleveResults[i].Source = "bleve"
+		}
+		if len(bleveResults) > 0 {
+			resultSets["bleve"] = bleveResults
 		}
 	}
 
-	// Fall back to keyword matching if no search backends are available.
-	if m.vectorSearcher == nil && m.bleveSearcher == nil {
-		results = Search(memories, query, maxResults*2)
+	// Entity-based retrieval (Phase 4 integration point).
+	if m.entityIndex != nil {
+		entityResults := m.entityIndex.SearchMemories(query, memByName, maxResults*2)
+		if len(entityResults) > 0 {
+			resultSets["entity"] = entityResults
+		}
 	}
 
-	// Apply composite scoring (semantic similarity + recency + importance).
+	// Always run keyword search as a signal (not just fallback).
+	keywordResults := Search(memories, query, maxResults*2)
+	for i := range keywordResults {
+		keywordResults[i].Source = "keyword"
+	}
+	if len(keywordResults) > 0 {
+		resultSets["keyword"] = keywordResults
+	}
+
+	// Fuse results with RRF.
+	fusionWeights := DefaultFusionWeights()
+	results := ReciprocalRankFusion(resultSets, fusionWeights.RRFk)
+
+	// Apply composite scoring on top of fused scores.
 	weights := DefaultWeights()
 	for i := range results {
 		results[i].Score = CompositeScore(
-			results[i].Score,             // semantic similarity
-			results[i].Memory.UpdatedAt,  // recency
-			results[i].Memory.Importance, // importance
+			results[i].Score,                   // fused RRF score
+			results[i].Memory.UpdatedAt,        // recency
+			results[i].Memory.EffectiveValue(), // dynamic value (Phase 2)
 			weights,
 		)
 		// Project-scoped memories get a slight boost.
 		if results[i].Memory.EffectiveScope() == ScopeProject {
 			results[i].Score *= 1.1
 		}
+		// Memories past their validity window get a penalty (Phase 6).
+		if results[i].Memory.ValidUntil != nil && time.Now().After(*results[i].Memory.ValidUntil) {
+			results[i].Score *= 0.3
+		}
 	}
 
-	// Re-sort after scope boost.
+	// Re-sort after composite scoring.
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Score > results[j].Score
 	})
 
-	// Trim to requested count.
-	if len(results) > maxResults {
-		results = results[:maxResults]
-	}
+	// MMR diversity re-ranking.
+	results = MMRRerank(results, fusionWeights.MMRLambda, maxResults)
 
 	span.SetAttributes(
 		attribute.Int("memory.results_count", len(results)),
@@ -226,6 +254,9 @@ func (m *Manager) Forget(name string) error {
 			}
 			if m.bleveSearcher != nil {
 				m.bleveSearcher.RemoveMemory(name)
+			}
+			if m.entityIndex != nil {
+				m.entityIndex.Unlink(name)
 			}
 			return m.index.RemoveEntry(filename)
 		}

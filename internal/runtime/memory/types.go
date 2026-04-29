@@ -40,6 +40,20 @@ type Memory struct {
 	Importance  float64 `json:"importance,omitempty"` // 0.0-1.0, used in composite recall scoring (default 0.5)
 	ScopePath   string  `json:"scope_path,omitempty"` // hierarchical scope path, e.g., "team/backend"
 
+	// Dynamic value scoring (Phase 2).
+	AccessCount    int       `json:"access_count,omitempty"`     // times this memory has been recalled
+	LastAccessedAt time.Time `json:"last_accessed_at,omitempty"` // last recall time
+	ValueScore     float64   `json:"value_score,omitempty"`      // dynamic score, starts at Importance, adjusted by feedback
+	Tags           []string  `json:"tags,omitempty"`             // free-form tags
+
+	// Entity linking (Phase 4).
+	Entities []string `json:"entities,omitempty"` // cached extracted entity names
+
+	// Temporal validity (Phase 6).
+	ValidFrom    *time.Time `json:"valid_from,omitempty"`
+	ValidUntil   *time.Time `json:"valid_until,omitempty"`
+	SupersededBy string     `json:"superseded_by,omitempty"` // name of the memory that replaced this one
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -58,4 +72,7 @@ type Frontmatter struct {
 	Description string `yaml:"description"`
 	Type        Type   `yaml:"type"`
 	Scope       Scope  `yaml:"scope,omitempty"`
+	Tags        string `yaml:"tags,omitempty"` // comma-separated
+	ValueScore  string `yaml:"value_score,omitempty"`
+	AccessCount string `yaml:"access_count,omitempty"`
 }

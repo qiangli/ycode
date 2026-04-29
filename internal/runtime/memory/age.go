@@ -10,8 +10,14 @@ var StalenessThresholds = map[Type]time.Duration{
 	TypeFeedback:  365 * 24 * time.Hour, // 1 year
 }
 
-// IsStale checks if a memory has exceeded its staleness threshold.
+// IsStale checks if a memory has exceeded its staleness threshold
+// or is past its temporal validity window.
 func IsStale(mem *Memory) bool {
+	// A memory with a ValidUntil in the past is always stale.
+	if mem.ValidUntil != nil && time.Now().After(*mem.ValidUntil) {
+		return true
+	}
+
 	threshold, ok := StalenessThresholds[mem.Type]
 	if !ok {
 		threshold = 90 * 24 * time.Hour // default 90 days

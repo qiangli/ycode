@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -61,7 +60,7 @@ func (d *Dreamer) Start(ctx context.Context) error {
 func (d *Dreamer) consolidate() error {
 	memories, err := d.manager.All()
 	if err != nil {
-		return fmt.Errorf("list memories: %w", err)
+		return err
 	}
 
 	if len(memories) == 0 {
@@ -70,20 +69,33 @@ func (d *Dreamer) consolidate() error {
 
 	d.logger.Info("dream: consolidating memories", "count", len(memories))
 
-	// Remove stale memories.
+	// Phase 1: Remove stale memories.
 	removed := 0
+	var surviving []*Memory
 	for _, mem := range memories {
 		if IsStale(mem) {
 			if err := d.manager.Forget(mem.Name); err != nil {
 				d.logger.Warn("dream: failed to remove stale memory", "name", mem.Name, "error", err)
+				surviving = append(surviving, mem)
 				continue
 			}
 			removed++
+		} else {
+			surviving = append(surviving, mem)
 		}
 	}
 
-	// Merge similar project memories.
-	merged := d.mergeSimilar(memories)
+	// Phase 2: Decay value scores on infrequently accessed memories.
+	for _, mem := range surviving {
+		oldValue := mem.EffectiveValue()
+		DecayValue(mem, 30)
+		if mem.ValueScore != oldValue && mem.ValueScore > 0 {
+			_ = d.manager.Save(mem) // persist decayed value
+		}
+	}
+
+	// Phase 3: Merge similar memories (grouped by type).
+	merged := d.mergeSimilar(surviving)
 
 	d.logger.Info("dream: consolidation complete",
 		"removed_stale", removed,
@@ -92,64 +104,175 @@ func (d *Dreamer) consolidate() error {
 	return nil
 }
 
-// mergeSimilar finds and merges project memories with similar descriptions.
+// mergeSimilar finds and merges similar memories within each type.
 func (d *Dreamer) mergeSimilar(memories []*Memory) int {
 	merged := 0
-	// Build clusters of similar memories keyed by normalized description.
-	clusters := make(map[string][]*Memory)
-	var order []string
 
+	// Group by type first — only merge within the same type.
+	byType := make(map[Type][]*Memory)
 	for _, mem := range memories {
-		if mem.Type != TypeProject {
-			continue
-		}
-		key := normalizeDescription(mem.Description)
-		if _, ok := clusters[key]; !ok {
-			order = append(order, key)
-		}
-		clusters[key] = append(clusters[key], mem)
+		byType[mem.Type] = append(byType[mem.Type], mem)
 	}
 
-	for _, key := range order {
-		cluster := clusters[key]
-		if len(cluster) < 2 {
+	for _, typeMems := range byType {
+		if len(typeMems) < 2 {
 			continue
 		}
 
-		// Try LLM-backed consolidation if available.
-		if d.ConsolidationFunc != nil {
-			slog.Info("memory.consolidation.start",
-				"cluster_size", len(cluster),
-			)
-			prompt := FormatConsolidationPrompt(cluster)
-			decision, err := d.ConsolidationFunc(prompt)
-			if err == nil {
-				slog.Info("memory.consolidation.decision",
-					"decision", decision,
-					"cluster_size", len(cluster),
-				)
-				// Parse and apply decision.
-				// For now, log the decision — full parsing can be added later.
-				d.logger.Info("consolidation decision", "decision", decision)
+		clusters := clusterBySimilarity(typeMems, 0.5)
+		for _, cluster := range clusters {
+			if len(cluster.Members) < 2 {
+				continue
 			}
-		}
 
-		// Fall back to simple recency-based merge.
-		var newest *Memory
-		for _, mem := range cluster {
-			if newest == nil || mem.UpdatedAt.After(newest.UpdatedAt) {
-				newest = mem
-			}
-		}
-		for _, mem := range cluster {
-			if mem != newest {
-				_ = d.manager.Forget(mem.Name)
-				merged++
-			}
+			decision := d.decideCluster(cluster)
+			count := d.applyDecision(cluster, decision)
+			merged += count
 		}
 	}
 
 	return merged
+}
+
+// clusterBySimilarity groups memories by word-overlap Jaccard similarity.
+// threshold is the minimum similarity to join a cluster (0.0-1.0).
+func clusterBySimilarity(memories []*Memory, threshold float64) []MemoryCluster {
+	assigned := make([]bool, len(memories))
+	var clusters []MemoryCluster
+
+	for i := 0; i < len(memories); i++ {
+		if assigned[i] {
+			continue
+		}
+
+		cluster := MemoryCluster{
+			Key:     memories[i].Name,
+			Members: []*Memory{memories[i]},
+		}
+		assigned[i] = true
+
+		wordsI := memoryWords(memories[i])
+		for j := i + 1; j < len(memories); j++ {
+			if assigned[j] {
+				continue
+			}
+			wordsJ := memoryWords(memories[j])
+			sim := jaccardSimilarity(wordsI, wordsJ)
+			if sim >= threshold {
+				cluster.Members = append(cluster.Members, memories[j])
+				cluster.Similarity += sim
+				assigned[j] = true
+			}
+		}
+
+		if len(cluster.Members) > 1 {
+			cluster.Similarity /= float64(len(cluster.Members) - 1)
+			clusters = append(clusters, cluster)
+		}
+	}
+
+	return clusters
+}
+
+// decideCluster determines what to do with a cluster of similar memories.
+func (d *Dreamer) decideCluster(cluster MemoryCluster) ConsolidationDecision {
+	// Try LLM-backed consolidation if available.
+	if d.ConsolidationFunc != nil {
+		prompt := FormatConsolidationPrompt(cluster.Members)
+		response, err := d.ConsolidationFunc(prompt)
+		if err == nil {
+			decision := ParseConsolidationDecision(response)
+			d.logger.Info("dream: LLM consolidation decision",
+				"action", decision.Action,
+				"cluster_size", len(cluster.Members),
+			)
+			return decision
+		}
+		d.logger.Warn("dream: LLM consolidation failed, using heuristic", "error", err)
+	}
+
+	// Heuristic fallback: keep the best by value score.
+	return ConsolidationDecision{Action: "keep_best"}
+}
+
+// applyDecision executes a consolidation decision on a cluster.
+// Returns the number of memories removed.
+func (d *Dreamer) applyDecision(cluster MemoryCluster, decision ConsolidationDecision) int {
+	removed := 0
+
+	switch decision.Action {
+	case "merge":
+		if decision.Result == "" {
+			// No merged content provided — fall through to keep_best.
+			return d.applyDecision(cluster, ConsolidationDecision{Action: "keep_best"})
+		}
+
+		// Keep the first member as the merged survivor.
+		survivor := cluster.Members[0]
+		survivor.Content = decision.Result
+		_ = d.manager.Save(survivor)
+
+		// Remove all others.
+		for _, mem := range cluster.Members[1:] {
+			if err := d.manager.Forget(mem.Name); err != nil {
+				d.logger.Warn("dream: merge cleanup failed", "name", mem.Name, "error", err)
+				continue
+			}
+			removed++
+		}
+
+	case "keep_best":
+		// Find the member with highest EffectiveValue.
+		var best *Memory
+		for _, mem := range cluster.Members {
+			if best == nil || mem.EffectiveValue() > best.EffectiveValue() {
+				best = mem
+			}
+		}
+		// If values are tied, prefer newest.
+		if best == nil {
+			best = cluster.Members[0]
+		}
+		for _, mem := range cluster.Members {
+			if mem == best {
+				continue
+			}
+			// If values are equal, keep the newer one.
+			if mem.EffectiveValue() == best.EffectiveValue() && mem.UpdatedAt.After(best.UpdatedAt) {
+				if err := d.manager.Forget(best.Name); err == nil {
+					removed++
+				}
+				best = mem
+				continue
+			}
+			if err := d.manager.Forget(mem.Name); err != nil {
+				d.logger.Warn("dream: keep_best cleanup failed", "name", mem.Name, "error", err)
+				continue
+			}
+			removed++
+		}
+
+	case "delete_redundant":
+		// Keep newest, remove the rest.
+		var newest *Memory
+		for _, mem := range cluster.Members {
+			if newest == nil || mem.UpdatedAt.After(newest.UpdatedAt) {
+				newest = mem
+			}
+		}
+		for _, mem := range cluster.Members {
+			if mem == newest {
+				continue
+			}
+			if err := d.manager.Forget(mem.Name); err != nil {
+				d.logger.Warn("dream: delete_redundant cleanup failed", "name", mem.Name, "error", err)
+				continue
+			}
+			removed++
+		}
+	}
+
+	return removed
 }
 
 // normalizeDescription creates a rough key for similarity matching.

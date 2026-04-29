@@ -17,13 +17,14 @@ func DefaultWeights() ScoringWeights {
 	return ScoringWeights{Semantic: 0.5, Recency: 0.3, Importance: 0.2}
 }
 
-// CompositeScore computes a weighted score combining similarity, recency, and importance.
-func CompositeScore(similarity float64, updatedAt time.Time, importance float64, weights ScoringWeights) float64 {
+// CompositeScore computes a weighted score combining similarity, recency, and value.
+// The value parameter should come from Memory.EffectiveValue() for dynamic scoring.
+func CompositeScore(similarity float64, updatedAt time.Time, value float64, weights ScoringWeights) float64 {
 	recency := RecencyDecay(updatedAt, 30*24*time.Hour) // 30-day half-life
-	if importance <= 0 {
-		importance = 0.5 // default importance
+	if value <= 0 {
+		value = 0.5 // default
 	}
-	return weights.Semantic*similarity + weights.Recency*recency + weights.Importance*importance
+	return weights.Semantic*similarity + weights.Recency*recency + weights.Importance*value
 }
 
 // RecencyDecay returns a value in [0,1] based on exponential decay.

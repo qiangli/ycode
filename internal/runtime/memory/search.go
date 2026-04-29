@@ -9,6 +9,7 @@ import (
 type SearchResult struct {
 	Memory *Memory
 	Score  float64
+	Source string // which search backend produced this result (e.g., "vector", "bleve", "keyword", "entity")
 }
 
 // Search finds memories relevant to a query.

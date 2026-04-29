@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,27 @@ func (s *Store) Save(mem *Memory) error {
 	fmt.Fprintf(&b, "type: %s\n", mem.Type)
 	if mem.Scope != "" {
 		fmt.Fprintf(&b, "scope: %s\n", mem.Scope)
+	}
+	if len(mem.Tags) > 0 {
+		fmt.Fprintf(&b, "tags: %s\n", strings.Join(mem.Tags, ","))
+	}
+	if mem.ValueScore != 0 {
+		fmt.Fprintf(&b, "value_score: %.4f\n", mem.ValueScore)
+	}
+	if mem.AccessCount > 0 {
+		fmt.Fprintf(&b, "access_count: %d\n", mem.AccessCount)
+	}
+	if len(mem.Entities) > 0 {
+		fmt.Fprintf(&b, "entities: %s\n", strings.Join(mem.Entities, ","))
+	}
+	if mem.ValidFrom != nil {
+		fmt.Fprintf(&b, "valid_from: %s\n", mem.ValidFrom.Format(time.RFC3339))
+	}
+	if mem.ValidUntil != nil {
+		fmt.Fprintf(&b, "valid_until: %s\n", mem.ValidUntil.Format(time.RFC3339))
+	}
+	if mem.SupersededBy != "" {
+		fmt.Fprintf(&b, "superseded_by: %s\n", mem.SupersededBy)
 	}
 	b.WriteString("---\n\n")
 	b.WriteString(mem.Content)
@@ -132,6 +154,32 @@ func parseFrontmatter(data string) *Memory {
 			mem.Type = Type(strings.TrimSpace(value))
 		case "scope":
 			mem.Scope = Scope(strings.TrimSpace(value))
+		case "tags":
+			if v := strings.TrimSpace(value); v != "" {
+				mem.Tags = strings.Split(v, ",")
+			}
+		case "value_score":
+			if v, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil {
+				mem.ValueScore = v
+			}
+		case "access_count":
+			if v, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+				mem.AccessCount = v
+			}
+		case "entities":
+			if v := strings.TrimSpace(value); v != "" {
+				mem.Entities = strings.Split(v, ",")
+			}
+		case "valid_from":
+			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(value)); err == nil {
+				mem.ValidFrom = &t
+			}
+		case "valid_until":
+			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(value)); err == nil {
+				mem.ValidUntil = &t
+			}
+		case "superseded_by":
+			mem.SupersededBy = strings.TrimSpace(value)
 		}
 	}
 
