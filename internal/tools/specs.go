@@ -323,6 +323,43 @@ func builtinSpecs() []*ToolSpec {
 			Source:       SourceBuiltin,
 		},
 
+		// Git server — embedded Gitea for agent collaboration
+		{
+			Name:         "GitServerRepoList",
+			Description:  "List repositories on the embedded git server. Returns repo names, descriptions, and clone URLs. Use to discover shared repos for agent collaboration.",
+			InputSchema:  mustJSON(gitServerRepoListSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "GitServerRepoCreate",
+			Description:  "Create a new repository on the embedded git server. Use when agents need a shared repo for collaboration, code review, or branch-based workflows.",
+			InputSchema:  mustJSON(gitServerRepoCreateSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "GitServerWorktreeCreate",
+			Description:  "Create an isolated git worktree for an agent. Each agent gets its own branch and working directory, enabling parallel work without conflicts. Use before starting any file modifications in a multi-agent workflow.",
+			InputSchema:  mustJSON(gitServerWorktreeCreateSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "GitServerWorktreeMerge",
+			Description:  "Merge an agent's worktree branch back to the base branch. Use after an agent completes its work to integrate changes. Performs a no-fast-forward merge to preserve the agent's commit history.",
+			InputSchema:  mustJSON(gitServerWorktreeMergeSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "GitServerWorktreeCleanup",
+			Description:  "Remove an agent's worktree and clean up its branch. Use after merging or when abandoning work. Safe to call multiple times.",
+			InputSchema:  mustJSON(gitServerWorktreeCleanupSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+
 		// Memory — persistent cross-session agent memory
 		{
 			Name:         "memory_save",
@@ -911,6 +948,52 @@ var (
 			}
 		},
 		"required": ["query_type"]
+	}`
+
+	gitServerRepoListSchema = `{
+		"type": "object",
+		"properties": {
+			"limit": {"type": "integer", "description": "Maximum repos to return (default: 50)"}
+		}
+	}`
+
+	gitServerRepoCreateSchema = `{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string", "description": "Repository name (lowercase, no spaces)"},
+			"description": {"type": "string", "description": "Short description of the repository's purpose"},
+			"auto_init": {"type": "boolean", "description": "Initialize with a README (default: true)"}
+		},
+		"required": ["name"]
+	}`
+
+	gitServerWorktreeCreateSchema = `{
+		"type": "object",
+		"properties": {
+			"repo_dir": {"type": "string", "description": "Path to the git repository to create a worktree from"},
+			"agent_id": {"type": "string", "description": "Unique agent identifier (used for branch naming: agent/<id>)"}
+		},
+		"required": ["repo_dir", "agent_id"]
+	}`
+
+	gitServerWorktreeMergeSchema = `{
+		"type": "object",
+		"properties": {
+			"repo_dir": {"type": "string", "description": "Original repository directory"},
+			"worktree_path": {"type": "string", "description": "Path to the worktree (returned by GitServerWorktreeCreate)"},
+			"branch": {"type": "string", "description": "Agent branch name (returned by GitServerWorktreeCreate)"},
+			"base_branch": {"type": "string", "description": "Branch to merge into (e.g. 'main')"}
+		},
+		"required": ["repo_dir", "branch", "base_branch"]
+	}`
+
+	gitServerWorktreeCleanupSchema = `{
+		"type": "object",
+		"properties": {
+			"repo_dir": {"type": "string", "description": "Original repository directory"},
+			"worktree_path": {"type": "string", "description": "Path to the worktree to remove"}
+		},
+		"required": ["repo_dir", "worktree_path"]
 	}`
 
 	runTestsSchema = `{

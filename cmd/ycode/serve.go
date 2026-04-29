@@ -16,6 +16,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/collector"
 	"github.com/qiangli/ycode/internal/container"
+	"github.com/qiangli/ycode/internal/gitserver"
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/observability/dashboards"
@@ -27,6 +28,10 @@ var (
 	servePort   int
 	serveDetach bool
 )
+
+// overrideGitServerURL is set by runAllServices to communicate the embedded
+// Gitea URL to buildPromptContext (which runs later inside newApp).
+var overrideGitServerURL string
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
@@ -253,6 +258,24 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		fmt.Printf("Memos at           http://127.0.0.1:%d/memos/\n", port)
 	}
 
+	// Wire Git server client for agent collaboration tools.
+	if stack.gitServer != nil && stack.gitServer.Healthy() {
+		giteaClient := gitserver.NewClient(stack.gitServer.BaseURL(), fullCfg.GitServer.Token)
+		tools.SetGitServer(giteaClient)
+		overrideGitServerURL = fmt.Sprintf("http://127.0.0.1:%d/git/", port)
+		fmt.Printf("Git server at      %s\n", overrideGitServerURL)
+
+		// Gitea MCP — expose git server API via MCP protocol for external AI agents.
+		giteaMCPHandler := gitserver.NewGiteaMCPHandler(giteaClient)
+		giteaMCPHTTP := observability.NewMCPHTTPHandler(giteaMCPHandler)
+		giteaMCPComp := gitserver.NewGiteaMCPComponent(giteaMCPHTTP)
+		if err := mgr.AddLateComponent(ctx, giteaMCPComp); err != nil {
+			slog.Warn("Gitea MCP not available", "error", err)
+		} else {
+			fmt.Printf("Gitea MCP at       http://127.0.0.1:%d/gitea-mcp/\n", port)
+		}
+	}
+
 	// 2. Build API/WebSocket + NATS (may take time or fail if no API key).
 	var api *apiStack
 	if !serveNoAPI || !serveNoNATS {
@@ -381,6 +404,7 @@ type stackComponents struct {
 	memos         *observability.MemosComponent
 	ollama        *inference.OllamaComponent
 	containers    *container.ContainerComponent
+	gitServer     *gitserver.GitServerComponent
 	collectorAddr string // actual gRPC address of the embedded collector (e.g. "127.0.0.1:54321")
 }
 
@@ -491,11 +515,25 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 		mgr.AddComponent(containerComp)
 	}
 
+	// Git server — embedded Gitea for agent coordination (optional).
+	var gitComp *gitserver.GitServerComponent
+	if gitServerCfg != nil && gitServerCfg.Enabled {
+		gitComp = gitserver.NewGitServerComponent(&gitserver.ComponentConfig{
+			Enabled:  gitServerCfg.Enabled,
+			DataDir:  gitServerCfg.DataDir,
+			AppName:  gitServerCfg.AppName,
+			HTTPOnly: gitServerCfg.HTTPOnly,
+			Token:    gitServerCfg.Token,
+		}, filepath.Join(dataDir, "gitea"))
+		mgr.AddComponent(gitComp)
+	}
+
 	return &stackComponents{
 		mgr:           mgr,
 		memos:         memosComp,
 		ollama:        ollamaComp,
 		containers:    containerComp,
+		gitServer:     gitComp,
 		collectorAddr: coll.GRPCAddr(),
 	}, nil
 }

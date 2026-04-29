@@ -194,6 +194,10 @@ func GitSection(ctx *ProjectContext) string {
 		}
 	}
 
+	if ctx.GitServerURL != "" {
+		s += fmt.Sprintf("\n- Git server: %s (embedded Gitea — use GitServer* tools for agent collaboration, branch isolation, and code review)", ctx.GitServerURL)
+	}
+
 	return s
 }
 

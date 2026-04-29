@@ -229,6 +229,10 @@ func DefaultConfig() *Config {
 			PersistTraces:    true,
 			PersistMetrics:   true,
 		},
+		GitServer: &GitServerConfig{
+			Enabled:  true, // On by default — agents use Gitea for branch isolation and collaboration.
+			HTTPOnly: true,
+		},
 	}
 }
 

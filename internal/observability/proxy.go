@@ -230,7 +230,7 @@ color:rgba(255,255,255,0.4);font-size:14px}
 	}
 
 	// Endpoints that are not browsable (POST-only APIs, etc.) are hidden from the landing page.
-	hiddenTiles := map[string]bool{"/pulse/": true}
+	hiddenTiles := map[string]bool{"/pulse/": true, "/gitea-mcp/": true}
 
 	p.mu.RLock()
 	allPrefixes := make([]string, 0, len(p.routes)+len(p.handlers))

@@ -326,6 +326,7 @@ func newApp() (*cli.App, error) {
 	tools.RegisterConfigHandler(toolReg, cfg)
 	tools.RegisterSemanticSearchHandler(toolReg)
 	tools.RegisterGitHandlers(toolReg, cwd)
+	tools.RegisterGitServerHandlers(toolReg)
 	tools.RegisterTestRunnerHandler(toolReg, cwd)
 
 	// LSP: auto-detect available language servers and register them.
@@ -608,6 +609,11 @@ func buildPromptContext(workDir, model string, configInstructions []string, memM
 	// Fallback: use workDir as project root if not a git repo.
 	if ctx.ProjectRoot == "" {
 		ctx.ProjectRoot = workDir
+	}
+
+	// Git server URL (set by serve command when Gitea is running).
+	if overrideGitServerURL != "" {
+		ctx.GitServerURL = overrideGitServerURL
 	}
 
 	// Discover instruction files, load memories, and generate repo map concurrently.
