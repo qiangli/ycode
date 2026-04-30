@@ -216,7 +216,9 @@ tools := registry.ToolSearch("metrics")
 │ • memory/{name}.md with YAML frontmatter                   │
 │ • 7 types × 4 scopes with dynamic value scoring           │
 │ • RRF fusion across 4 backends + MMR diversity reranking   │
-│ • Entity extraction, user profile, temporal validity       │
+│ • Entity extraction, temporal validity                     │
+│ • Persona: confidence-scored user model (knowledge,        │
+│   communication style, behavior, observations)             │
 │ • Background dreaming: consolidation every 30 minutes      │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -233,6 +235,10 @@ tools := registry.ToolSearch("metrics")
 ### Retrieval Pipeline
 
 Recall uses Reciprocal Rank Fusion (RRF) across four backends — vector, Bleve FTS, keyword, and entity — with composite scoring (recency + dynamic value) and MMR diversity re-ranking. Entity extraction links file paths, URLs, and Go packages to memories for relationship-aware retrieval. Turn-time injection provides per-turn context-aware memory without invalidating the system prompt cache.
+
+### Persona System
+
+A confidence-scored user model (`memory/persona*.go`) infers user identity from environment signals (git user, platform, shell) and passively observes behavioral patterns per turn (message length, question frequency, technical density, corrections, intent). The persona carries five dimensions: knowledge map, communication style, behavior profile, interaction summary, and ephemeral session context. Confidence scales prompt injection linearly (400-char budget). Personas evolve via exponential moving average (α=0.2) at session end and are consolidated during dreaming cycles. Stored as `_persona_{id}.md` in the global memory store. Config: `PersonaEnabled` (default true).
 
 ### Prompt Assembly with Static/Dynamic Boundary
 
@@ -253,6 +259,7 @@ Recall uses Reciprocal Rank Fusion (RRF) across four backends — vector, Bleve 
 │ [DYNAMIC - Per-request]                                     │
 │ • Environment state (git status, recent files)              │
 │ • Relevant memories (via embedding search)                  │
+│ • Persona context (confidence-scaled user directives)       │
 │ • Active deferred tools                                     │
 │ • Session summary                                           │
 │ • Diagnostics (if any)                                      │
@@ -265,6 +272,8 @@ Recall uses Reciprocal Rank Fusion (RRF) across four backends — vector, Bleve 
 - `internal/runtime/memory/fusion.go` - RRF and MMR algorithms
 - `internal/runtime/memory/value.go` - Dynamic value scoring and reward propagation
 - `internal/runtime/memory/entity.go` - Entity extraction and linking index
+- `internal/runtime/memory/persona.go` - Persona model and session context
+- `internal/runtime/prompt/persona.go` - Persona prompt section rendering
 - `internal/runtime/memory/profile.go` - Structured user profile
 - `internal/runtime/memory/turninjector.go` - Per-turn context-aware injection
 - `internal/runtime/memory/temporal.go` - Temporal validity windows

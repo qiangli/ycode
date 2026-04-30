@@ -58,9 +58,66 @@ Seven memory types (`memory/types.go`): **user** (role, preferences, knowledge),
 
 Four scopes: **global** (`~/.agents/ycode/memory/` — shared across all projects), **project** (`~/.agents/ycode/projects/{hash}/memory/` — project-specific, default), **team** (shared across team members), **user** (private to a single user).
 
-### User Profile
+### User Profile (Legacy)
 
-Structured user profile (`memory/profile.go`) with four sections: **BasicInfo** (name, role), **Preferences** (editor, theme), **Expertise** (domains), **WorkPatterns** (TDD, review style). Auto-extracted from conversations and persisted as `_profile.md`. Survives roundtrip through markdown formatting and parsing.
+Structured user profile (`memory/profile.go`) with four sections: **BasicInfo** (name, role), **Preferences** (editor, theme), **Expertise** (domains), **WorkPatterns** (TDD, review style). Persisted as `_profile.md`. Superseded by the Persona system (see below) — existing profiles are automatically migrated on first persona resolution.
+
+### Persona System
+
+The persona system (`memory/persona.go`, `memory/persona_store.go`, `memory/persona_resolver.go`, `memory/persona_observer.go`, `memory/persona_session.go`) provides a rich, confidence-scored user model that replaces the flat UserProfile.
+
+**Core model** — `Persona` carries five dimensions:
+
+| Dimension | Type | Fields | Purpose |
+|-----------|------|--------|---------|
+| Knowledge | `KnowledgeMap` | Domains (name, level, confidence, evidence count, last demonstrated) | Track what the user knows and at what depth |
+| Communication | `CommunicationStyle` | Verbosity [0-1], Formality [0-1], JustDoIt, AsksClarify, Confidence | How the user prefers to be addressed |
+| Behavior | `BehaviorProfile` | ReviewsDiffs, PrefersTDD, ToolApprovalRate, CorrectionFreq, QuestionToCommand | Workflow patterns |
+| Interactions | `InteractionSummary` | TotalSessions, TotalTurns, Observations (max 20) | Distilled cross-session insights |
+| SessionContext | `SessionContext` | DetectedRole, DetectedMood, SignalHistory (ring buffer of 20) | Ephemeral per-session state (not persisted) |
+
+All numeric behavioral fields use `float64` in [0,1], initialized at 0.5 (maximum uncertainty), drifting toward extremes only with evidence.
+
+**Identity resolution** — `PersonaResolver` uses weighted environment signals for soft identity matching rather than requiring authentication:
+
+| Signal | Weight | Rationale |
+|--------|--------|-----------|
+| Git username | 0.35 | Strongest single signal |
+| Git email | 0.30 | Strong, often unique |
+| Home directory | 0.15 | Different users = different homes |
+| Platform | 0.10 | Weak but confirming |
+| Shell | 0.05 | Very weak |
+| Hostname | 0.05 | Confirms same machine |
+
+Thresholds: score >= 0.6 → full personalization; 0.3–0.6 → cautious; < 0.3 → create new persona. Confidence directly scales how much persona context is injected into the system prompt (linear scaling of a 400-char budget).
+
+**Signal observation** — `ObserveTurn()` is a stateless, pure function that extracts behavioral signals per turn with zero API cost:
+- Message length (word count) → verbosity signal
+- Question frequency (? chars + question-word prefixes) → communication style
+- Technical vocabulary density (ratio against curated term set) → expertise signal
+- Correction detection (pattern matching: "no, I meant", "that's wrong", etc.)
+- Intent detection (keyword clusters → debugging/learning/architecting/reviewing)
+
+**Session-end evolution** — `UpdatePersonaFromSession()` applies exponential moving average (α=0.2) to persistent fields:
+```
+persona.Communication.Verbosity = 0.2 * sessionAvg + 0.8 * persona.Communication.Verbosity
+```
+This slow adaptation respects history while incorporating new signals.
+
+**Prompt integration** — `PersonaSection()` renders persona context as actionable LLM directives (not raw data), placed between Memory and ActiveTopic in the system prompt:
+```
+# User context
+This user is an advanced Go developer experienced with CLI tooling.
+Communication: prefers terse, direct responses.
+Current session: debugging mode (focused).
+Known: Prefers table-driven tests. No CGO. Structured logging.
+```
+
+**Storage** — Personas are persisted as `_persona_{id}.md` in the global memory store (`~/.agents/ycode/memory/`), using the same YAML frontmatter + markdown body pattern as regular memories. The ID is a SHA-256 hash of the strongest identity signals (git user + email + home dir).
+
+**Dreamer integration** — Phase 4 of the 30-minute consolidation cycle handles persona maintenance: knowledge domain confidence decay for domains not demonstrated in 60+ days, and observation merging via Jaccard clustering.
+
+Files: `memory/persona.go`, `memory/persona_store.go`, `memory/persona_observer.go`, `memory/persona_resolver.go`, `memory/persona_session.go`, `prompt/persona.go`
 
 ### Search Backends and Retrieval Fusion
 
@@ -107,13 +164,14 @@ Logarithmic temporal decay after a 7-day grace period: `score * 1/(1 + days/30)`
 
 ### Background Dreaming
 
-`Dreamer` (`memory/dream.go`): 30-minute background consolidation cycles with three phases:
+`Dreamer` (`memory/dream.go`): 30-minute background consolidation cycles with four phases:
 
 1. **Stale removal**: Deletes memories past their type-stratified staleness thresholds or temporal validity windows
 2. **Value decay**: Applies `DecayValue` to infrequently accessed memories, persisting decayed scores
 3. **Similarity-based merging**: Groups memories by type, then clusters within each type using Jaccard word-overlap similarity (threshold 0.5). For each cluster of 2+ similar memories:
    - **LLM-backed**: Formats a consolidation prompt, parses the response (`ParseConsolidationDecision` in `memory/consolidation.go`) into MERGE/KEEP_BEST/DELETE_REDUNDANT actions, and applies the decision
    - **Heuristic fallback**: Keeps the memory with highest `EffectiveValue()`; on ties, keeps the newest
+4. **Persona consolidation**: Decays knowledge domain confidence for domains not demonstrated in 60+ days (0.8x per cycle), and merges redundant persona observations using Jaccard clustering (threshold 0.5), keeping the highest-confidence observation per cluster
 
 ### Catch-Up Indexing
 

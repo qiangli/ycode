@@ -608,6 +608,208 @@ func TestBenchmark_OverallQualityMinimums(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// Persona Benchmarks
+// =============================================================================
+
+// TestBenchmark_PersonaObserverConsistency verifies that the signal observer
+// produces consistent, deterministic results across identical inputs.
+func TestBenchmark_PersonaObserverConsistency(t *testing.T) {
+	messages := []string{
+		"fix the nil pointer error in the handler",
+		"how does the goroutine scheduler work? explain please",
+		"should we refactor this to a microservice pattern",
+		"review the PR changes, the diff looks good",
+		"deploy the container to kubernetes staging cluster",
+	}
+
+	for _, msg := range messages {
+		sig1 := ObserveTurn(msg, nil, 0)
+		sig2 := ObserveTurn(msg, nil, 0)
+
+		if sig1.MessageLength != sig2.MessageLength {
+			t.Errorf("non-deterministic MessageLength for %q", msg)
+		}
+		if sig1.QuestionCount != sig2.QuestionCount {
+			t.Errorf("non-deterministic QuestionCount for %q", msg)
+		}
+		if sig1.TechnicalDensity != sig2.TechnicalDensity {
+			t.Errorf("non-deterministic TechnicalDensity for %q", msg)
+		}
+		if sig1.DetectedIntent != sig2.DetectedIntent {
+			t.Errorf("non-deterministic DetectedIntent for %q", msg)
+		}
+		if sig1.Corrections != sig2.Corrections {
+			t.Errorf("non-deterministic Corrections for %q", msg)
+		}
+	}
+}
+
+// TestBenchmark_PersonaEMAConvergence verifies that the EMA-based session
+// update converges toward extreme values over multiple sessions.
+func TestBenchmark_PersonaEMAConvergence(t *testing.T) {
+	env := &EnvironmentSignals{Platform: "darwin", GitUserName: "bench"}
+	p := NewPersona("bench-ema", env)
+
+	// Simulate 10 sessions of very short messages (verbosity should converge toward 0).
+	for session := range 10 {
+		p.SessionContext = NewSessionContext()
+		for turn := range 8 {
+			p.SessionContext.Update(SessionSignal{
+				TurnNumber:     turn,
+				MessageLength:  3, // very terse
+				QuestionCount:  0,
+				ToolApprovals:  1,
+				DetectedIntent: "debugging",
+				Timestamp:      time.Now().Add(time.Duration(session*8+turn) * time.Minute),
+			})
+		}
+		UpdatePersonaFromSession(p)
+	}
+
+	// After 10 sessions of terse messages, verbosity should be well below 0.3.
+	if p.Communication.Verbosity >= 0.3 {
+		t.Errorf("after 10 terse sessions, Verbosity = %.4f, want < 0.3", p.Communication.Verbosity)
+	}
+
+	// Tool approval rate should be near 1.0.
+	if p.Behavior.ToolApprovalRate < 0.8 {
+		t.Errorf("after 10 sessions of approvals, ToolApprovalRate = %.4f, want >= 0.8", p.Behavior.ToolApprovalRate)
+	}
+
+	// Session count should be tracked.
+	if p.Interactions.TotalSessions != 10 {
+		t.Errorf("TotalSessions = %d, want 10", p.Interactions.TotalSessions)
+	}
+}
+
+// TestBenchmark_PersonaStorageRoundtripPerformance benchmarks persona save/load
+// to catch performance regressions in the YAML/markdown serialization.
+func TestBenchmark_PersonaStorageRoundtripPerformance(t *testing.T) {
+	store, _ := NewStore(t.TempDir())
+	env := &EnvironmentSignals{
+		Platform: "darwin", Shell: "zsh", GitUserName: "perf",
+		GitEmail: "perf@example.com", HomeDir: "/Users/perf", Hostname: "bench",
+	}
+
+	p := NewPersona("perf-test", env)
+	// Fill with realistic data.
+	for _, domain := range []string{"Go", "Python", "Rust", "TypeScript"} {
+		p.Knowledge.AddOrUpdateDomain(domain, LevelAdvanced, 0.8)
+	}
+	p.Communication.Verbosity = 0.3
+	p.Communication.Confidence = 0.9
+	p.Behavior.PrefersTDD = 0.8
+	p.Interactions.TotalSessions = 50
+	p.Interactions.TotalTurns = 2000
+	for i := range MaxObservations {
+		p.Interactions.AddObservation(PersonaObservation{
+			Text:       "Observation number " + string(rune('A'+i%26)),
+			Category:   "preference",
+			Confidence: 0.5 + float64(i)*0.02,
+			ObservedAt: time.Now(),
+			Source:     "inferred",
+		})
+	}
+
+	// Save and load 50 times — should be fast.
+	start := time.Now()
+	iterations := 50
+	for range iterations {
+		if err := SavePersona(store, p); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+		loaded, err := LoadPersona(store, "perf-test")
+		if err != nil || loaded == nil {
+			t.Fatalf("load: %v (nil: %v)", err, loaded == nil)
+		}
+	}
+	elapsed := time.Since(start)
+
+	// 50 roundtrips should complete in under 2 seconds.
+	if elapsed > 2*time.Second {
+		t.Errorf("50 persona roundtrips took %v, want < 2s", elapsed)
+	}
+	t.Logf("50 persona save/load roundtrips: %v (%.1f ms/op)", elapsed, float64(elapsed.Milliseconds())/float64(iterations))
+}
+
+// TestBenchmark_PersonaResolverMatchAccuracy validates that the environment
+// matching produces correct confidence scores for known scenarios.
+func TestBenchmark_PersonaResolverMatchAccuracy(t *testing.T) {
+	store, _ := NewStore(t.TempDir())
+
+	base := &EnvironmentSignals{
+		Platform:    "darwin",
+		Shell:       "zsh",
+		GitUserName: "alice",
+		GitEmail:    "alice@example.com",
+		HomeDir:     "/Users/alice",
+		Hostname:    "macbook",
+	}
+	p := NewPersona("match-test", base)
+	if err := SavePersona(store, p); err != nil {
+		t.Fatal(err)
+	}
+
+	scenarios := []struct {
+		name    string
+		env     *EnvironmentSignals
+		wantMin float64
+		wantMax float64
+	}{
+		{
+			name:    "exact match",
+			env:     base,
+			wantMin: 0.95,
+			wantMax: 1.01,
+		},
+		{
+			name: "same user different machine",
+			env: &EnvironmentSignals{
+				Platform: "linux", Shell: "bash",
+				GitUserName: "alice", GitEmail: "alice@example.com",
+				HomeDir: "/home/alice", Hostname: "server",
+			},
+			wantMin: 0.60,
+			wantMax: 0.70,
+		},
+		{
+			name: "only username matches",
+			env: &EnvironmentSignals{
+				Platform: "linux", Shell: "fish",
+				GitUserName: "alice",
+				HomeDir:     "/home/different", Hostname: "other",
+			},
+			wantMin: 0.30,
+			wantMax: 0.40,
+		},
+		{
+			name: "completely different user",
+			env: &EnvironmentSignals{
+				Platform: "windows", Shell: "powershell",
+				GitUserName: "bob", GitEmail: "bob@example.com",
+				HomeDir: "C:\\Users\\bob", Hostname: "desktop",
+			},
+			wantMin: 0.49, // new persona gets default 0.5 confidence
+			wantMax: 0.51,
+		},
+	}
+
+	resolver := NewPersonaResolver(store, nil)
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			resolved, err := resolver.Resolve(sc.env)
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if resolved.Confidence < sc.wantMin || resolved.Confidence > sc.wantMax {
+				t.Errorf("confidence = %.4f, want [%.2f, %.2f]",
+					resolved.Confidence, sc.wantMin, sc.wantMax)
+			}
+		})
+	}
+}
+
 // timePtr is a helper to create *time.Time for test data.
 func timePtr(t time.Time) *time.Time {
 	return &t
