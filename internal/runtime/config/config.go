@@ -21,6 +21,7 @@ type Config struct {
 	AutoMemoryEnabled  bool `json:"autoMemoryEnabled,omitempty"`
 	AutoDreamEnabled   bool `json:"autoDreamEnabled,omitempty"`
 	AutoCompactEnabled bool `json:"autoCompactEnabled,omitempty"`
+	PersonaEnabled     bool `json:"personaEnabled,omitempty"` // tailored user experience via persona
 
 	// Session settings
 	SessionDir string `json:"sessionDir,omitempty"`
@@ -216,6 +217,7 @@ func DefaultConfig() *Config {
 		MaxTokens:          8192,
 		PermissionMode:     "ask",
 		AutoCompactEnabled: true,
+		PersonaEnabled:     true,
 		Parallel: ParallelConfig{
 			Enabled:     true,
 			MaxStandard: 8,

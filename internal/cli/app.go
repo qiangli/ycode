@@ -72,6 +72,10 @@ type App struct {
 	// Memory manager for episodic memory recording in subagents.
 	memoryManager *memory.Manager
 
+	// Persona resolver for tailored user experience (lazily initialized).
+	personaResolver *memory.PersonaResolver
+	currentPersona  *memory.Persona
+
 	// Session tracking for summary reporting.
 	usageTracker *usage.Tracker
 	sessionStart time.Time
@@ -282,6 +286,17 @@ func (a *App) conversationRuntime() *conversation.Runtime {
 	if a.inferenceRouter != nil {
 		rt.SetInferenceRouter(a.inferenceRouter)
 	}
+	// Wire persona for tailored user experience.
+	if a.config.PersonaEnabled {
+		if a.currentPersona != nil {
+			rt.SetPersona(a.currentPersona)
+		} else if a.memoryManager != nil {
+			a.resolvePersona()
+			if a.currentPersona != nil {
+				rt.SetPersona(a.currentPersona)
+			}
+		}
+	}
 	// Restore L1 working memory (active topic) from ghost snapshot
 	// if this is a resumed session with prior compaction.
 	rt.RestoreTopicFromGhost()
@@ -289,6 +304,62 @@ func (a *App) conversationRuntime() *conversation.Runtime {
 	// so the agent has warm-start context about what happened previously.
 	rt.RestoreSessionDiagnostics()
 	return rt
+}
+
+// resolvePersona lazily initializes the persona resolver and resolves the
+// current user's persona from environment signals.
+func (a *App) resolvePersona() {
+	if a.personaResolver == nil {
+		globalStore := a.memoryManager.GlobalStore()
+		if globalStore == nil {
+			return
+		}
+		a.personaResolver = memory.NewPersonaResolver(globalStore, nil)
+	}
+
+	env := a.collectEnvironmentSignals()
+	p, err := a.personaResolver.Resolve(env)
+	if err != nil {
+		slog.Debug("persona resolve", "error", err)
+		return
+	}
+	a.currentPersona = p
+}
+
+// collectEnvironmentSignals gathers environment hints for persona matching.
+func (a *App) collectEnvironmentSignals() *memory.EnvironmentSignals {
+	env := &memory.EnvironmentSignals{
+		Platform: a.promptCtx.Platform,
+		Shell:    a.promptCtx.Shell,
+	}
+
+	// Git user info from prompt context.
+	if a.promptCtx.GitUser != "" {
+		env.GitUserName = a.promptCtx.GitUser
+	}
+
+	// Git email from git config (best effort).
+	if email := gitConfigEmail(a.workDir); email != "" {
+		env.GitEmail = email
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		env.HomeDir = home
+	}
+	if hostname, err := os.Hostname(); err == nil {
+		env.Hostname = hostname
+	}
+
+	return env
+}
+
+// gitConfigEmail reads the user.email from git config (best effort).
+func gitConfigEmail(dir string) string {
+	out, err := git.NewGitExec(nil).RunOutput(context.Background(), dir, "config", "user.email")
+	if err != nil {
+		return ""
+	}
+	return out
 }
 
 // maxToolIterations is the maximum number of tool-use round-trips per turn.
@@ -827,6 +898,16 @@ func (a *App) RegisterCleanup(fn func()) {
 }
 
 func (a *App) Close() error {
+	// Persist persona updates from the session.
+	if a.currentPersona != nil && a.memoryManager != nil {
+		memory.UpdatePersonaFromSession(a.currentPersona)
+		if store := a.memoryManager.GlobalStore(); store != nil {
+			if err := memory.SavePersona(store, a.currentPersona); err != nil {
+				slog.Debug("persona save on close", "error", err)
+			}
+		}
+	}
+
 	// Run cleanup functions in reverse order (LIFO).
 	// rootCancel runs here, signaling background goroutines to stop.
 	for i := len(a.cleanupFuncs) - 1; i >= 0; i-- {

@@ -97,11 +97,93 @@ func (d *Dreamer) consolidate() error {
 	// Phase 3: Merge similar memories (grouped by type).
 	merged := d.mergeSimilar(surviving)
 
+	// Phase 4: Consolidate persona observations.
+	d.consolidatePersona()
+
 	d.logger.Info("dream: consolidation complete",
 		"removed_stale", removed,
 		"merged", merged)
 
 	return nil
+}
+
+// consolidatePersona prunes and merges persona observations,
+// and decays knowledge domain confidence for stale domains.
+func (d *Dreamer) consolidatePersona() {
+	if d.manager.globalStore == nil {
+		return
+	}
+
+	personas, err := ListPersonas(d.manager.globalStore)
+	if err != nil || len(personas) == 0 {
+		return
+	}
+
+	for _, p := range personas {
+		changed := false
+
+		// Decay knowledge domains not demonstrated in 60+ days.
+		if p.Knowledge != nil {
+			cutoff := time.Now().AddDate(0, 0, -60)
+			for i := range p.Knowledge.Domains {
+				d := &p.Knowledge.Domains[i]
+				if !d.LastDemonstrated.IsZero() && d.LastDemonstrated.Before(cutoff) {
+					d.Confidence *= 0.8 // gradual decay
+					changed = true
+				}
+			}
+		}
+
+		// Merge redundant observations using Jaccard similarity.
+		if p.Interactions != nil && len(p.Interactions.Observations) > 1 {
+			merged := mergeObservations(p.Interactions.Observations, 0.5)
+			if len(merged) < len(p.Interactions.Observations) {
+				p.Interactions.Observations = merged
+				changed = true
+			}
+		}
+
+		if changed {
+			if err := SavePersona(d.manager.globalStore, p); err != nil {
+				d.logger.Warn("dream: persona save failed", "id", p.ID, "error", err)
+			}
+		}
+	}
+}
+
+// mergeObservations clusters similar observations and keeps the highest-confidence one from each cluster.
+func mergeObservations(observations []PersonaObservation, threshold float64) []PersonaObservation {
+	if len(observations) <= 1 {
+		return observations
+	}
+
+	assigned := make([]bool, len(observations))
+	var result []PersonaObservation
+
+	for i := range observations {
+		if assigned[i] {
+			continue
+		}
+		assigned[i] = true
+		best := observations[i]
+
+		wordsI := wordSet(observations[i].Text)
+		for j := i + 1; j < len(observations); j++ {
+			if assigned[j] {
+				continue
+			}
+			wordsJ := wordSet(observations[j].Text)
+			if jaccardSimilarity(wordsI, wordsJ) >= threshold {
+				assigned[j] = true
+				if observations[j].Confidence > best.Confidence {
+					best = observations[j]
+				}
+			}
+		}
+		result = append(result, best)
+	}
+
+	return result
 }
 
 // mergeSimilar finds and merges similar memories within each type.

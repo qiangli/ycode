@@ -15,6 +15,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/config"
+	"github.com/qiangli/ycode/internal/runtime/memory"
 	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/routing"
@@ -94,6 +95,10 @@ type Runtime struct {
 	// Optional streaming event callback. Called for each text/thinking delta
 	// and tool call event as they arrive from the LLM provider.
 	onEvent func(eventType string, data map[string]any)
+
+	// Persona — resolved user model for tailored responses.
+	// Updated per-turn with behavioral signals from the observer.
+	currentPersona *memory.Persona
 }
 
 // NewRuntime creates a new conversation runtime.
@@ -187,6 +192,16 @@ func (r *Runtime) SetCacheWarmer(cw *api.CacheWarmer) {
 // via a lightweight LLM call (local Ollama or cheap remote model).
 func (r *Runtime) SetInferenceRouter(router *routing.Router) {
 	r.inferenceRouter = router
+}
+
+// SetPersona sets the resolved persona for tailored responses.
+// When set, persona signals are collected per-turn and the persona
+// context is injected into the system prompt.
+func (r *Runtime) SetPersona(p *memory.Persona) {
+	r.currentPersona = p
+	if r.promptCtx != nil {
+		r.promptCtx.Persona = p
+	}
 }
 
 // SetMode sets the agent mode for this runtime ("build", "plan", or "explore").
@@ -320,6 +335,14 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 			r.topicTracker.Update(userMsg)
 		}
 		r.promptCtx.ActiveTopic = r.topicTracker.CurrentTopic()
+	}
+
+	// Persona: observe behavioral signals from the user's message.
+	if r.currentPersona != nil && r.currentPersona.SessionContext != nil {
+		if userMsg := lastUserText(messages); userMsg != "" {
+			sig := memory.ObserveTurn(userMsg, nil, r.turnCount)
+			r.currentPersona.SessionContext.Update(sig)
+		}
 	}
 
 	// Collect runtime diagnostics for the system prompt.

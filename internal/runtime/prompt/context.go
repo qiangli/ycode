@@ -48,6 +48,7 @@ type ProjectContext struct {
 	Diagnostics   *DiagnosticsInfo `json:"diagnostics,omitempty"`    // runtime diagnostics for system prompt
 	RepoMapText   string           `json:"repo_map_text,omitempty"`  // pre-rendered repo map for system prompt
 	GitServerURL  string           `json:"git_server_url,omitempty"` // embedded Gitea URL for agent collaboration
+	Persona       *memory.Persona  `json:"persona,omitempty"`        // resolved user persona for tailored responses
 }
 
 // ContextFile is a discovered instruction file (e.g., CLAUDE.md).
