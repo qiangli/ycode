@@ -1,0 +1,58 @@
+# Benchmark: ycode vs Claude Code
+#
+# Head-to-head with explicit model selection (claude-sonnet-4).
+# Both tools must be installed and in PATH.
+#
+# Usage:
+#   aperio benchmark evals/specs/ycode-vs-claude.yaml
+#   aperio benchmark evals/specs/ycode-vs-claude.yaml --runs 5 --format all
+
+name: "ycode-vs-claude-code"
+description: "Head-to-head: ycode vs Claude Code (claude-sonnet-4)"
+runs: 3
+parallel: false
+output_dir: "evals/results/ycode-vs-claude"
+
+task:
+  query: |
+    Create a Go package called 'calculator' in the current directory with:
+    1. A Calculator struct with methods Add, Subtract, Multiply, Divide
+    2. Divide should return an error for division by zero
+    3. Comprehensive table-driven tests in calculator_test.go
+    4. All tests must pass
+  working_dir: "/tmp/aperio-eval-workspace"
+  setup_cmd: "rm -rf /tmp/aperio-eval-workspace && mkdir -p /tmp/aperio-eval-workspace && cd /tmp/aperio-eval-workspace && git init && go mod init calculator"
+  cleanup_cmd: "rm -rf /tmp/aperio-eval-workspace"
+  timeout: "5m"
+  validation:
+    - type: command
+      value: "cd /tmp/aperio-eval-workspace && go test ./..."
+    - type: file_exists
+      value: "calculator.go"
+    - type: file_exists
+      value: "calculator_test.go"
+    - type: command
+      value: "cd /tmp/aperio-eval-workspace && go vet ./..."
+
+tools:
+  - name: ycode
+    command: ["ycode", "prompt", "--model", "claude-sonnet-4", "{{.Query}}"]
+    mode: source
+    go_tracer: dlv
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: claude-code
+    command: ["claude", "--model", "sonnet", "-p", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+pricing:
+  claude-sonnet-4:
+    input: 0.003
+    output: 0.015

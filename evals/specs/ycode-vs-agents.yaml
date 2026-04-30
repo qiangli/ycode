@@ -1,0 +1,97 @@
+# Benchmark: ycode vs opencode, aider, codex, gemini-cli
+#
+# Each tool uses its best model via explicit flags.
+# Tools not in PATH are skipped gracefully.
+#
+# Prerequisites:
+#   ycode:     installed (Go)
+#   opencode:  npm install -g opencode
+#   aider:     pip install aider-chat
+#   codex:     npm install -g @openai/codex
+#   gemini:    npm install -g @google/gemini-cli
+#
+# Usage:
+#   aperio benchmark evals/specs/ycode-vs-agents.yaml
+#   aperio benchmark evals/specs/ycode-vs-agents.yaml --runs 3 --format html
+
+name: "ycode-vs-coding-agents"
+description: "Compare ycode against opencode, aider, codex, gemini-cli (explicit models)"
+runs: 2
+parallel: false
+output_dir: "evals/results/ycode-vs-agents"
+
+task:
+  query: |
+    In the current directory, create a Python file called 'text_utils.py' with:
+    1. A function 'word_count(text: str) -> dict[str, int]' that counts word frequencies
+    2. A function 'most_common(text: str, n: int = 5) -> list[tuple[str, int]]' returning top-n words
+    3. Handle edge cases: empty string, punctuation stripping, case-insensitive
+    4. Create 'test_text_utils.py' with pytest tests covering all edge cases
+    5. All tests must pass
+  working_dir: "/tmp/aperio-eval-workspace"
+  setup_cmd: "rm -rf /tmp/aperio-eval-workspace && mkdir -p /tmp/aperio-eval-workspace && cd /tmp/aperio-eval-workspace && git init"
+  cleanup_cmd: "rm -rf /tmp/aperio-eval-workspace"
+  timeout: "5m"
+  validation:
+    - type: command
+      value: "cd /tmp/aperio-eval-workspace && python3 -m pytest test_text_utils.py -v"
+    - type: file_exists
+      value: "text_utils.py"
+    - type: file_exists
+      value: "test_text_utils.py"
+
+tools:
+  - name: ycode
+    command: ["ycode", "prompt", "--model", "claude-sonnet-4", "{{.Query}}"]
+    mode: source
+    go_tracer: dlv
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: opencode
+    command: ["opencode", "run", "-m", "anthropic/claude-sonnet-4", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: aider
+    command: ["aider", "--model", "claude-3.5-sonnet", "--yes-always", "--no-auto-commits", "--message", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: codex
+    command: ["codex", "-m", "o4-mini", "--approval-mode", "full-auto", "{{.Query}}"]
+    mode: blackbox
+    env:
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+    targets:
+      - "api.openai.com"
+
+  - name: gemini-cli
+    command: ["gemini", "--model", "gemini-2.5-pro", "-p", "{{.Query}}"]
+    mode: blackbox
+    env:
+      GOOGLE_API_KEY: "${GOOGLE_API_KEY}"
+    targets:
+      - "generativelanguage.googleapis.com"
+
+pricing:
+  claude-sonnet-4:
+    input: 0.003
+    output: 0.015
+  claude-3.5-sonnet:
+    input: 0.003
+    output: 0.015
+  o4-mini:
+    input: 0.0011
+    output: 0.0044
+  gemini-2.5-pro:
+    input: 0.00125
+    output: 0.01

@@ -33,6 +33,7 @@ debug/
 tmp/
 priorart/
 reference/
+evals/results/
 #
 .agents/
 

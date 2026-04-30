@@ -1,0 +1,66 @@
+# Benchmark: ycode vs aider
+#
+# Both use Claude Sonnet via explicit model flags.
+# aider must be installed: pip install aider-chat
+#
+# Usage:
+#   aperio benchmark evals/specs/ycode-vs-aider.yaml
+
+name: "ycode-vs-aider"
+description: "Head-to-head: ycode vs aider (claude-sonnet-4)"
+runs: 3
+parallel: false
+output_dir: "evals/results/ycode-vs-aider"
+
+task:
+  query: |
+    Create a Go package in the current directory with:
+    1. A 'stack.go' file implementing a generic Stack[T any] using a slice
+    2. Methods: Push, Pop (returns value and bool), Peek, Len, IsEmpty
+    3. A 'queue.go' file implementing a generic Queue[T any]
+    4. Methods: Enqueue, Dequeue (returns value and bool), Front, Len, IsEmpty
+    5. 'stack_test.go' and 'queue_test.go' with table-driven tests
+    6. All tests must pass with 'go test ./...'
+  working_dir: "/tmp/aperio-eval-workspace"
+  setup_cmd: "rm -rf /tmp/aperio-eval-workspace && mkdir -p /tmp/aperio-eval-workspace && cd /tmp/aperio-eval-workspace && git init && go mod init collections"
+  cleanup_cmd: "rm -rf /tmp/aperio-eval-workspace"
+  timeout: "5m"
+  validation:
+    - type: command
+      value: "cd /tmp/aperio-eval-workspace && go test ./... -v"
+    - type: file_exists
+      value: "stack.go"
+    - type: file_exists
+      value: "queue.go"
+    - type: file_exists
+      value: "stack_test.go"
+    - type: file_exists
+      value: "queue_test.go"
+    - type: command
+      value: "cd /tmp/aperio-eval-workspace && go vet ./..."
+
+tools:
+  - name: ycode
+    command: ["ycode", "prompt", "--model", "claude-sonnet-4", "{{.Query}}"]
+    mode: source
+    go_tracer: dlv
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: aider
+    command: ["aider", "--model", "claude-3.5-sonnet", "--yes-always", "--no-auto-commits", "--message", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+pricing:
+  claude-sonnet-4:
+    input: 0.003
+    output: 0.015
+  claude-3.5-sonnet:
+    input: 0.003
+    output: 0.015

@@ -1,0 +1,170 @@
+# Benchmark: ycode vs ALL agent tools in priorart/
+#
+# Comprehensive comparison with explicit model flags for every tool.
+# Tools not in PATH are skipped gracefully — the benchmark continues.
+#
+# Agent tools from priorart/:
+#   aider        (Python)   --model claude-3.5-sonnet
+#   opencode     (Node.js)  -m anthropic/claude-sonnet-4
+#   codex        (Rust/TS)  -m o4-mini
+#   gemini-cli   (Node.js)  --model gemini-2.5-pro
+#   openclaw     (Node/TS)  --model sonnet
+#   openhands    (Python)   LLM_MODEL env var
+#   hermes-agent (Python)   --model claude-3.5-sonnet
+#   gsd-2        (Node.js)  --model claude-3.5-sonnet
+#   mini-swe-agent (Python) --model gpt-4o
+#   claude-code  (binary)   --model sonnet
+#
+# Non-agent tools excluded: ast-grep, cs, zoekt (search), mem0/zep (memory),
+#   camel/crewai (orchestration), terminal-bench (benchmark), atropos (RL)
+#
+# Usage:
+#   aperio benchmark evals/specs/ycode-vs-all-priorart.yaml
+#   aperio benchmark evals/specs/ycode-vs-all-priorart.yaml --runs 1 --format all
+
+name: "ycode-vs-all-priorart"
+description: "Comprehensive benchmark: ycode vs all priorart agents (explicit models)"
+runs: 1
+parallel: false
+output_dir: "evals/results/ycode-vs-all"
+
+task:
+  query: |
+    Create a file called 'linked_list.py' implementing a singly linked list with:
+    1. A Node class with 'value' and 'next' attributes
+    2. A LinkedList class with methods: append, prepend, delete, find, reverse, to_list
+    3. Proper __len__ and __repr__ methods
+    4. Create 'test_linked_list.py' with comprehensive pytest tests
+    5. All tests must pass
+  working_dir: "/tmp/aperio-eval-workspace"
+  setup_cmd: "rm -rf /tmp/aperio-eval-workspace && mkdir -p /tmp/aperio-eval-workspace && cd /tmp/aperio-eval-workspace && git init"
+  cleanup_cmd: "rm -rf /tmp/aperio-eval-workspace"
+  timeout: "10m"
+  validation:
+    - type: command
+      value: "cd /tmp/aperio-eval-workspace && python3 -m pytest test_linked_list.py -v"
+    - type: file_exists
+      value: "linked_list.py"
+    - type: file_exists
+      value: "test_linked_list.py"
+
+tools:
+  # === PRIMARY: ycode (source-traced, Claude Sonnet 4) ===
+  - name: ycode
+    command: ["ycode", "prompt", "--model", "claude-sonnet-4", "{{.Query}}"]
+    mode: source
+    go_tracer: dlv
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  # === INSTALLED AGENTS ===
+  - name: claude-code
+    command: ["claude", "--model", "sonnet", "-p", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: opencode
+    command: ["opencode", "run", "-m", "anthropic/claude-sonnet-4", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  # === PRIORART: Python agents ===
+  - name: aider
+    command: ["aider", "--model", "claude-3.5-sonnet", "--yes-always", "--no-auto-commits", "--message", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: openhands
+    command: ["python3", "-m", "openhands.core.main", "-t", "{{.Query}}"]
+    mode: blackbox
+    env:
+      LLM_MODEL: "claude-sonnet-4"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: hermes-agent
+    command: ["hermes", "--model", "claude-3.5-sonnet", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: mini-swe-agent
+    command: ["python3", "-m", "minisweagent", "--model", "gpt-4o", "{{.Query}}"]
+    mode: blackbox
+    env:
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+    targets:
+      - "api.openai.com"
+
+  # === PRIORART: Node/TypeScript agents ===
+  - name: codex
+    command: ["codex", "-m", "o4-mini", "--approval-mode", "full-auto", "{{.Query}}"]
+    mode: blackbox
+    env:
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+    targets:
+      - "api.openai.com"
+
+  - name: gemini-cli
+    command: ["gemini", "--model", "gemini-2.5-pro", "-p", "{{.Query}}"]
+    mode: blackbox
+    env:
+      GOOGLE_API_KEY: "${GOOGLE_API_KEY}"
+    targets:
+      - "generativelanguage.googleapis.com"
+
+  - name: openclaw
+    command: ["claw", "--model", "sonnet", "-p", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: gsd
+    command: ["gsd", "--model", "claude-3.5-sonnet", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+pricing:
+  claude-sonnet-4:
+    input: 0.003
+    output: 0.015
+  claude-3.5-sonnet:
+    input: 0.003
+    output: 0.015
+  claude-3-haiku:
+    input: 0.00025
+    output: 0.00125
+  gpt-4o:
+    input: 0.005
+    output: 0.015
+  gpt-4o-mini:
+    input: 0.00015
+    output: 0.0006
+  o4-mini:
+    input: 0.0011
+    output: 0.0044
+  gemini-2.5-pro:
+    input: 0.00125
+    output: 0.01
+  gemini-2.0-flash:
+    input: 0.0001
+    output: 0.0004
