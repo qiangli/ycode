@@ -853,6 +853,23 @@ Embedded Ollama runner:
 
 Policy (from AGENTS.md): Only MIT, Apache-2.0, BSD, ISC, and MPL-2.0 are allowed. All dependencies comply.
 
+### Security: External Telemetry in Third-Party Libraries
+
+Audit of vendored dependencies for phone-home behavior, telemetry, or data exfiltration to external services:
+
+| Source | Endpoint | Data Sent | Triggered by ycode? | Status |
+|--------|----------|-----------|---------------------|--------|
+| Ollama update checker | `https://ollama.com/api/update` | OS, arch, version, device ID | **No** — ycode does not import `app/updater` | Safe |
+| Ollama web search | `https://ollama.com/api/web_search` | Search queries | **No** — ycode uses its own SearXNG/DuckDuckGo | Safe |
+| Ollama web fetch | `https://ollama.com/api/web_fetch` | URLs | **No** — ycode uses its own web fetch tool | Safe |
+| Ollama registry | `https://ollama.com/api/tags` | HTTP GET (model list) | **Yes** — `internal/inference/ui.go:92` proxies for web UI | Low risk (read-only, no user data) |
+| Gitea update checker | `https://dl.gitea.com/gitea/version.json` | HTTP GET | **No** — ycode does not start Gitea's cron tasks | Safe |
+| Gitea metrics | Prometheus-compatible `/metrics` endpoint | Internal metrics | **No** — only exposed if explicitly enabled | Safe |
+
+**Summary:** No vendored dependency sends telemetry or user data to external services in ycode's integration. The Ollama cloud features (update check, web search, web fetch) exist in vendored code but are not wired into ycode's execution paths. The only external call is a read-only model registry proxy for the web UI (no user data transmitted).
+
+**ycode's own telemetry:** Controlled via `cmd/ycode/otel.go` — exports to local files (`~/.agents/ycode/otel/`) by default, with optional gRPC export to a user-configured collector. No data leaves the machine unless explicitly configured.
+
 ---
 
 ## Extension Points
