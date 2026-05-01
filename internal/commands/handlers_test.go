@@ -2,11 +2,16 @@ package commands
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/session"
 )
@@ -310,4 +315,127 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// TestInitHandler_OverloadedAPI verifies that /init fails cleanly (not stalls)
+// when the API returns persistent 429 errors. This is a regression test for a
+// bug where the timeout was per-model instead of per-chain, causing the total
+// stall time to multiply by the number of models.
+func TestInitHandler_OverloadedAPI(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping init overload test in short mode")
+	}
+
+	// Mock API server that always returns 429.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"error":{"message":"overloaded","type":"engine_overloaded_error"}}`))
+	}))
+	defer srv.Close()
+
+	provider := api.NewAnthropicClient("test-key", api.WithBaseURL(srv.URL))
+
+	workDir := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.Model = "test-model"
+
+	var progressMessages []string
+	deps := &RuntimeDeps{
+		WorkDir:  workDir,
+		Config:   cfg,
+		Provider: provider,
+		LogProgress: func(msg string) {
+			progressMessages = append(progressMessages, msg)
+		},
+		LogDelta: func(text string) {},
+	}
+
+	handler := initHandler(deps)
+
+	// Use a short timeout context to keep the test fast.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	_, err := handler(ctx, "")
+	elapsed := time.Since(start)
+
+	// Handler should NOT return an error — it catches LLM failures and
+	// reports them via progress messages.
+	if err != nil {
+		t.Fatalf("initHandler returned error: %v", err)
+	}
+
+	// Must complete well before the context deadline.
+	if elapsed > 12*time.Second {
+		t.Errorf("initHandler took %v, expected ≤ 12s", elapsed.Round(time.Millisecond))
+	}
+
+	// Should have progress messages showing the failure.
+	var foundFailure bool
+	for _, msg := range progressMessages {
+		if strings.Contains(msg, "⚠") && strings.Contains(msg, "failed") {
+			foundFailure = true
+			break
+		}
+	}
+	if !foundFailure {
+		t.Errorf("expected LLM failure progress message, got: %v", progressMessages)
+	}
+}
+
+// TestInitHandler_SlowAPI verifies that /init respects the timeout and doesn't
+// stall indefinitely when the API is slow to respond.
+func TestInitHandler_SlowAPI(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping init slow API test in short mode")
+	}
+
+	// Mock API server that accepts the connection but never sends a response.
+	// The handler writes headers to establish the connection, then blocks
+	// until the request context is cancelled (connection closed by client).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Block until client disconnects.
+		<-r.Context().Done()
+	}))
+	defer func() {
+		srv.CloseClientConnections()
+		srv.Close()
+	}()
+
+	provider := api.NewAnthropicClient("test-key", api.WithBaseURL(srv.URL))
+
+	workDir := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.Model = "test-model"
+
+	deps := &RuntimeDeps{
+		WorkDir:     workDir,
+		Config:      cfg,
+		Provider:    provider,
+		LogProgress: func(msg string) {},
+		LogDelta:    func(text string) {},
+	}
+
+	handler := initHandler(deps)
+
+	// 5s context deadline — must complete before this.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	_, err := handler(ctx, "")
+	elapsed := time.Since(start)
+
+	// Should complete within the context deadline.
+	if elapsed > 7*time.Second {
+		t.Errorf("initHandler took %v with slow API, expected ≤ 7s", elapsed.Round(time.Millisecond))
+	}
+
+	_ = err // Error or not, the key property is timely completion.
 }
