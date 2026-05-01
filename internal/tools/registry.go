@@ -271,7 +271,7 @@ func (r *Registry) AlwaysAvailable() []*ToolSpec {
 	defer r.mu.RUnlock()
 	var specs []*ToolSpec
 	for _, spec := range r.tools {
-		if spec.AlwaysAvailable {
+		if spec.AlwaysAvailable && !spec.Disabled {
 			specs = append(specs, spec)
 		}
 	}
@@ -281,12 +281,13 @@ func (r *Registry) AlwaysAvailable() []*ToolSpec {
 
 // AlwaysAvailableForMode returns always-available tools filtered by permission mode.
 // In plan mode (ReadOnly), tools requiring WorkspaceWrite or higher are excluded.
+// Disabled tools are excluded.
 func (r *Registry) AlwaysAvailableForMode(mode permission.Mode) []*ToolSpec {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var specs []*ToolSpec
 	for _, spec := range r.tools {
-		if spec.AlwaysAvailable && mode.Allows(spec.RequiredMode) {
+		if spec.AlwaysAvailable && !spec.Disabled && mode.Allows(spec.RequiredMode) {
 			specs = append(specs, spec)
 		}
 	}
@@ -295,12 +296,13 @@ func (r *Registry) AlwaysAvailableForMode(mode permission.Mode) []*ToolSpec {
 }
 
 // Deferred returns tool specs that are loaded on demand.
+// Disabled tools are excluded.
 func (r *Registry) Deferred() []*ToolSpec {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var specs []*ToolSpec
 	for _, spec := range r.tools {
-		if !spec.AlwaysAvailable {
+		if !spec.AlwaysAvailable && !spec.Disabled {
 			specs = append(specs, spec)
 		}
 	}

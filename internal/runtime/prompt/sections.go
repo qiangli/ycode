@@ -126,17 +126,66 @@ func EnvironmentSection(ctx *ProjectContext) string {
 	if ctx.OSVersion != "" {
 		platform += " " + ctx.OSVersion
 	}
+	if ctx.SysInfo != nil && ctx.SysInfo.Arch != "" {
+		platform += "/" + ctx.SysInfo.Arch
+	}
 	items = append(items, fmt.Sprintf("Platform: %s", platform))
 
 	if ctx.Shell != "" {
 		items = append(items, fmt.Sprintf("Shell: %s", ctx.Shell))
 	}
 
-	s := "# Environment context\n"
-	for _, item := range items {
-		s += " - " + item + "\n"
+	// System context from sysinfo detection.
+	if sys := ctx.SysInfo; sys != nil {
+		// Environment type.
+		switch {
+		case sys.IsCI:
+			items = append(items, "Environment: CI (automated, no interactive prompts)")
+		case sys.IsContainer:
+			env := "Environment: container"
+			if sys.ContainerRT != "" {
+				env += " (" + sys.ContainerRT + ")"
+			}
+			if sys.IsPrivileged {
+				env += ", privileged"
+			} else {
+				env += ", unprivileged (no nested containers)"
+			}
+			items = append(items, env)
+		case sys.IsWSL:
+			items = append(items, "Environment: WSL (Windows Subsystem for Linux)")
+		case sys.IsCloud:
+			env := "Environment: cloud"
+			if sys.CloudProvider != "" {
+				env += " (" + sys.CloudProvider + ")"
+			}
+			items = append(items, env)
+		}
+
+		// Network.
+		if !sys.HasInternet {
+			items = append(items, "Network: air-gapped (no internet — web tools unavailable)")
+		}
+
+		// Container engine.
+		if !sys.CanRunContainers {
+			items = append(items, "Container engine: unavailable (browser automation disabled)")
+		}
+
+		// Resources.
+		if sys.MemoryMB > 0 {
+			items = append(items, fmt.Sprintf("Memory: %d MB, CPUs: %d", sys.MemoryMB, sys.NumCPU))
+		}
 	}
-	return strings.TrimRight(s, "\n")
+
+	var b strings.Builder
+	b.WriteString("# Environment context\n")
+	for _, item := range items {
+		b.WriteString(" - ")
+		b.WriteString(item)
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // maxProjectGitDiffChars caps the git diff in the project section to prevent

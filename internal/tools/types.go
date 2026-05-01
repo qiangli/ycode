@@ -39,6 +39,7 @@ type ToolSpec struct {
 	Handler         ToolFunc        `json:"-"`
 	AlwaysAvailable bool            `json:"-"` // sent in every request vs deferred
 	Category        ToolCategory    `json:"-"` // concurrency scheduling category
+	Disabled        bool            `json:"-"` // disabled by system context (e.g., no internet → WebSearch disabled)
 }
 
 // RuntimeToolDefinition is the API-facing tool definition.

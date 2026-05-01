@@ -1,6 +1,9 @@
 package prompt
 
-import "github.com/qiangli/ycode/internal/runtime/memory"
+import (
+	"github.com/qiangli/ycode/internal/runtime/memory"
+	"github.com/qiangli/ycode/internal/runtime/sysinfo"
+)
 
 // DegradedTool describes a tool with a success rate below the quality threshold.
 type DegradedTool struct {
@@ -25,30 +28,31 @@ type DiagnosticsInfo struct {
 
 // ProjectContext holds metadata about the current project.
 type ProjectContext struct {
-	WorkDir       string           `json:"work_dir"`
-	ProjectRoot   string           `json:"project_root,omitempty"` // git root or WorkDir; upper bound for JIT discovery
-	CurrentDate   string           `json:"current_date,omitempty"`
-	IsGitRepo     bool             `json:"is_git_repo"`
-	GitBranch     string           `json:"git_branch,omitempty"`
-	MainBranch    string           `json:"main_branch,omitempty"`
-	GitUser       string           `json:"git_user,omitempty"`
-	RecentCommits []string         `json:"recent_commits,omitempty"`
-	GitStatus     string           `json:"git_status,omitempty"`
-	GitDiff       string           `json:"git_diff,omitempty"`
-	StagedFiles   []string         `json:"staged_files,omitempty"`
-	Platform      string           `json:"platform"`
-	Shell         string           `json:"shell"`
-	OSVersion     string           `json:"os_version,omitempty"`
-	Model         string           `json:"model,omitempty"`
-	ContextFiles  []ContextFile    `json:"context_files,omitempty"`
-	AllowedDirs   []string         `json:"allowed_dirs,omitempty"`
-	ActiveTopic   string           `json:"active_topic,omitempty"` // current high-level task focus
-	Personality   string           `json:"personality,omitempty"`  // builtin personality name (e.g., "pirate", "stern")
-	Memories      []*memory.Memory `json:"memories,omitempty"`
-	Diagnostics   *DiagnosticsInfo `json:"diagnostics,omitempty"`    // runtime diagnostics for system prompt
-	RepoMapText   string           `json:"repo_map_text,omitempty"`  // pre-rendered repo map for system prompt
-	GitServerURL  string           `json:"git_server_url,omitempty"` // embedded Gitea URL for agent collaboration
-	Persona       *memory.Persona  `json:"persona,omitempty"`        // resolved user persona for tailored responses
+	WorkDir       string                 `json:"work_dir"`
+	ProjectRoot   string                 `json:"project_root,omitempty"` // git root or WorkDir; upper bound for JIT discovery
+	CurrentDate   string                 `json:"current_date,omitempty"`
+	IsGitRepo     bool                   `json:"is_git_repo"`
+	GitBranch     string                 `json:"git_branch,omitempty"`
+	MainBranch    string                 `json:"main_branch,omitempty"`
+	GitUser       string                 `json:"git_user,omitempty"`
+	RecentCommits []string               `json:"recent_commits,omitempty"`
+	GitStatus     string                 `json:"git_status,omitempty"`
+	GitDiff       string                 `json:"git_diff,omitempty"`
+	StagedFiles   []string               `json:"staged_files,omitempty"`
+	Platform      string                 `json:"platform"`
+	Shell         string                 `json:"shell"`
+	OSVersion     string                 `json:"os_version,omitempty"`
+	Model         string                 `json:"model,omitempty"`
+	ContextFiles  []ContextFile          `json:"context_files,omitempty"`
+	AllowedDirs   []string               `json:"allowed_dirs,omitempty"`
+	ActiveTopic   string                 `json:"active_topic,omitempty"` // current high-level task focus
+	Personality   string                 `json:"personality,omitempty"`  // builtin personality name (e.g., "pirate", "stern")
+	Memories      []*memory.Memory       `json:"memories,omitempty"`
+	Diagnostics   *DiagnosticsInfo       `json:"diagnostics,omitempty"`    // runtime diagnostics for system prompt
+	RepoMapText   string                 `json:"repo_map_text,omitempty"`  // pre-rendered repo map for system prompt
+	GitServerURL  string                 `json:"git_server_url,omitempty"` // embedded Gitea URL for agent collaboration
+	Persona       *memory.Persona        `json:"persona,omitempty"`        // resolved user persona for tailored responses
+	SysInfo       *sysinfo.SystemContext `json:"sys_info,omitempty"`       // detected system capabilities
 }
 
 // ContextFile is a discovered instruction file (e.g., CLAUDE.md).
