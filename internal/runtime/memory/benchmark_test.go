@@ -593,18 +593,19 @@ func TestBenchmark_OverallQualityMinimums(t *testing.T) {
 	metrics := runBenchmark(t, mgr, dataset, 5)
 	t.Logf("Full system: %s", metrics)
 
-	// Minimum quality thresholds (established from initial measurements).
-	if metrics.MeanPrecision < 0.15 {
-		t.Errorf("MeanPrecision %f below minimum 0.15", metrics.MeanPrecision)
+	// Minimum quality thresholds — calibrated at 80% of measured values
+	// (P@5=0.52, R@5=0.81, NDCG=0.77, MRR=0.90 as of 2026-05-01).
+	if metrics.MeanPrecision < 0.40 {
+		t.Errorf("MeanPrecision %f below minimum 0.40", metrics.MeanPrecision)
 	}
-	if metrics.MeanRecall < 0.15 {
-		t.Errorf("MeanRecall %f below minimum 0.15", metrics.MeanRecall)
+	if metrics.MeanRecall < 0.65 {
+		t.Errorf("MeanRecall %f below minimum 0.65", metrics.MeanRecall)
 	}
-	if metrics.MeanNDCG < 0.15 {
-		t.Errorf("MeanNDCG %f below minimum 0.15", metrics.MeanNDCG)
+	if metrics.MeanNDCG < 0.60 {
+		t.Errorf("MeanNDCG %f below minimum 0.60", metrics.MeanNDCG)
 	}
-	if metrics.MeanMRR < 0.20 {
-		t.Errorf("MeanMRR %f below minimum 0.20", metrics.MeanMRR)
+	if metrics.MeanMRR < 0.70 {
+		t.Errorf("MeanMRR %f below minimum 0.70", metrics.MeanMRR)
 	}
 }
 

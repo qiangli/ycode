@@ -1,0 +1,114 @@
+{
+  "memories": [
+    {"name": "auth-oauth2", "description": "OAuth2 authentication setup", "type": "project", "content": "We use OAuth2 with PKCE flow via Auth0. Callback: /api/auth/callback. Scopes: openid, profile, email."},
+    {"name": "auth-session", "description": "Session management configuration", "type": "reference", "content": "Sessions stored in Redis with 24h TTL. Refresh tokens rotate on use. Secure cookie with SameSite=Strict."},
+    {"name": "auth-rbac", "description": "Role-based access control design", "type": "reference", "content": "Three roles: viewer (read-only), editor (create/update), admin (full access). Roles stored in JWT claims."},
+    {"name": "auth-bug-refresh", "description": "Token refresh race condition fix", "type": "feedback", "content": "Token refresh had race when multiple tabs open. Fixed with mutex. Do not use optimistic locking for tokens."},
+    {"name": "auth-mfa", "description": "Multi-factor authentication plan", "type": "project", "content": "MFA via TOTP (Google Authenticator). Planned for Q3. Backup codes stored hashed in user profile."},
+
+    {"name": "deploy-prod", "description": "Production deployment configuration", "type": "project", "content": "Deploy target: staging-3. Use make deploy HOST=staging PORT=58080. Rolling updates with 2-pod minimum."},
+    {"name": "deploy-rollback", "description": "Rollback procedure", "type": "procedural", "content": "If deploy fails: 1) Check pod logs 2) Run make rollback 3) Notify #ops Slack channel 4) File incident."},
+    {"name": "deploy-freeze", "description": "Code freeze for release", "type": "project", "content": "Merge freeze starts 2026-05-01 for mobile release branch. No non-critical PRs after that date."},
+    {"name": "deploy-canary", "description": "Canary deployment strategy", "type": "reference", "content": "10% traffic to canary pod for 30 minutes. Auto-rollback if error rate exceeds 1% or p99 latency > 500ms."},
+    {"name": "deploy-secrets", "description": "Secret management for deployments", "type": "procedural", "content": "Secrets in Vault. Reference via VAULT_ADDR. Never commit secrets to git. Rotate quarterly."},
+
+    {"name": "db-sessions-schema", "description": "Sessions table schema", "type": "reference", "content": "Sessions: id UUID PK, user_id UUID FK, created_at TIMESTAMPTZ, metadata JSONB. Index on user_id, created_at."},
+    {"name": "db-migration-v2", "description": "Pending migration for v2", "type": "project", "content": "Migration 0042: add value_score FLOAT DEFAULT 0.5, access_count INT DEFAULT 0, entities TEXT[]."},
+    {"name": "db-perf-queries", "description": "Slow query optimization notes", "type": "feedback", "content": "Use EXPLAIN ANALYZE before adding indexes. The sessions join was slow because of missing index on metadata->>'type'."},
+    {"name": "db-backup", "description": "Database backup procedure", "type": "procedural", "content": "Daily pg_dump at 03:00 UTC. Retained 30 days. Monthly snapshot to S3 Glacier. Test restore quarterly."},
+    {"name": "db-connection-pool", "description": "Connection pool settings", "type": "reference", "content": "Max connections: 25. Idle timeout: 5 minutes. Use pgbouncer in transaction mode for connection pooling."},
+
+    {"name": "api-endpoints", "description": "REST API endpoint list", "type": "reference", "content": "GET /api/health, POST /api/auth/login, GET /api/memories, POST /api/memories/search, DELETE /api/memories/:id."},
+    {"name": "api-rate-limit", "description": "API rate limiting", "type": "project", "content": "Rate limit: 100 req/min per user. Burst: 20. Token bucket algorithm. Redis-backed sliding window."},
+    {"name": "api-versioning", "description": "API versioning strategy", "type": "reference", "content": "URL-based versioning: /api/v1/, /api/v2/. Breaking changes require new version. Old versions supported 12 months."},
+    {"name": "api-error-format", "description": "API error response format", "type": "feedback", "content": "Errors must include code, message, and request_id. Never expose stack traces in production. Use RFC 7807."},
+    {"name": "api-pagination", "description": "API pagination approach", "type": "reference", "content": "Cursor-based pagination for lists. Use opaque cursor tokens. Default page size 50, max 200."},
+
+    {"name": "memory-architecture", "description": "Five-layer memory system", "type": "reference", "content": "L1 working (context window), L2 episodic (JSONL), L3 compaction (summaries), L4 procedural (AGENTS.md), L5 persistent (markdown+YAML)."},
+    {"name": "memory-scoring", "description": "Composite scoring formula", "type": "reference", "content": "Score = 0.5*semantic + 0.3*recency + 0.2*importance. Recency: exponential decay, 30-day half-life."},
+    {"name": "memory-search", "description": "Multi-backend retrieval", "type": "reference", "content": "Four backends: keyword (BM25-like), Bleve FTS, chromem-go vectors, entity linking. Fused via RRF k=60."},
+    {"name": "memory-consolidation", "description": "Background memory merging", "type": "reference", "content": "Dreamer runs every 30 minutes. Prunes stale memories, decays values, merges duplicates by Jaccard > 0.5."},
+    {"name": "memory-persona", "description": "User modeling system", "type": "reference", "content": "Persona tracks 5 dimensions: knowledge domains, communication style, behavior, interactions, session context."},
+
+    {"name": "testing-tdd", "description": "User prefers TDD workflow", "type": "feedback", "content": "Always write tests first. Integration tests must hit real database, not mocks. Got burned with mock divergence."},
+    {"name": "testing-coverage", "description": "Test coverage requirements", "type": "project", "content": "Minimum 80% line coverage for new packages. Critical paths (auth, payment) require 95%. Use go test -cover."},
+    {"name": "testing-fixtures", "description": "Test data management", "type": "procedural", "content": "Use t.TempDir() for test files. Embed fixtures via testdata/. Never write to working directory. Cleanup is automatic."},
+    {"name": "testing-integration", "description": "Integration test conventions", "type": "reference", "content": "Integration tests use build tag: //go:build integration. Run with: go test -tags integration. Skip in CI fast lane."},
+    {"name": "testing-flaky", "description": "Flaky test policy", "type": "feedback", "content": "Flaky tests must be fixed within 48 hours or quarantined. Use t.Flaky() annotation. Never retry-loop in tests."},
+
+    {"name": "infra-kubernetes", "description": "Kubernetes cluster config", "type": "reference", "content": "GKE cluster: 3 nodes, n2-standard-4. Namespace per environment. Istio service mesh for mTLS."},
+    {"name": "infra-monitoring", "description": "Monitoring stack", "type": "reference", "content": "Prometheus + Grafana. Alertmanager to PagerDuty. Key dashboards: api-latency, pod-health, memory-usage."},
+    {"name": "infra-logging", "description": "Centralized logging", "type": "reference", "content": "Structured JSON logs to stdout. Fluentd ships to Elasticsearch. Kibana for search. Retain 90 days."},
+    {"name": "infra-cdn", "description": "CDN configuration", "type": "reference", "content": "CloudFront for static assets. Cache TTL: 1 hour for API, 1 day for static. Invalidation via deploy script."},
+    {"name": "infra-cost", "description": "Infrastructure cost tracking", "type": "project", "content": "Monthly cloud spend: ~$4,200. Biggest items: GKE ($1,800), RDS ($900), CloudFront ($400). Target: reduce 15%."},
+
+    {"name": "user-editor-vim", "description": "User prefers neovim", "type": "user", "content": "Uses neovim with custom config. LSPs: Go (gopls), Rust (rust-analyzer), TypeScript. Prefers modal editing."},
+    {"name": "user-timezone", "description": "User timezone and availability", "type": "user", "content": "Pacific Time (UTC-7). Available 9am-6pm. Prefers async communication. Do not schedule before 10am."},
+    {"name": "user-review-style", "description": "Code review preferences", "type": "user", "content": "Prefers concise PR descriptions. Dislikes excessive comments in code. Values clean git history (squash merges)."},
+
+    {"name": "ci-pipeline", "description": "CI/CD pipeline configuration", "type": "reference", "content": "GitHub Actions. Jobs: lint, test, build, deploy-staging, deploy-prod. Deploy-prod requires manual approval."},
+    {"name": "ci-caching", "description": "CI build caching strategy", "type": "procedural", "content": "Cache Go modules (~/.cache/go-mod). Cache build output (bin/). Key on go.sum hash. Saves ~3 min per build."},
+
+    {"name": "perf-baseline", "description": "Performance baseline metrics", "type": "project", "content": "API p50: 12ms, p99: 85ms. Memory recall p50: 3ms, p99: 25ms. Target: p99 < 100ms for all endpoints."},
+    {"name": "perf-profiling", "description": "Profiling workflow", "type": "procedural", "content": "Use go tool pprof for CPU/memory. Compile with -debug for symbols. Profile in staging, never production."},
+
+    {"name": "security-audit", "description": "Latest security audit findings", "type": "project", "content": "Q1 audit: no critical findings. Medium: upgrade jwt-go to v5. Low: add CSP headers. Due by end of Q2."},
+    {"name": "security-deps", "description": "Dependency security policy", "type": "feedback", "content": "Only MIT, Apache-2.0, BSD, ISC, MPL-2.0 licenses allowed. Run license audit monthly. No GPL dependencies."},
+
+    {"name": "team-onboarding", "description": "New team member setup", "type": "procedural", "content": "1) Clone repo 2) make init 3) Set API keys 4) make build 5) Read AGENTS.md. Takes ~30 minutes."},
+    {"name": "team-standup", "description": "Daily standup format", "type": "project", "content": "Async standups in #engineering Slack at 10am PT. Format: yesterday/today/blockers. Keep under 3 sentences."},
+
+    {"name": "old-deploy-staging2", "description": "Old staging-2 deployment (superseded)", "type": "project", "content": "Deploy target: staging-2. Use make deploy HOST=staging-2. This config is no longer active.",
+     "valid_until": "2026-03-01T00:00:00Z", "superseded_by": "deploy-prod"},
+    {"name": "old-api-v1-only", "description": "API was v1 only (superseded)", "type": "reference", "content": "API only supports v1. No versioning needed. Single endpoint namespace.",
+     "valid_until": "2026-02-01T00:00:00Z", "superseded_by": "api-versioning"},
+    {"name": "old-testing-mocks", "description": "Old testing approach with mocks (superseded)", "type": "feedback", "content": "Use mocks for database in all tests. Fast and reliable. Mock all external dependencies.",
+     "valid_until": "2026-01-15T00:00:00Z", "superseded_by": "testing-tdd"},
+
+    {"name": "go-error-handling", "description": "Go error handling conventions", "type": "feedback", "content": "Wrap errors with fmt.Errorf and %w. Check errors immediately. Never use panic for control flow."},
+    {"name": "go-concurrency", "description": "Concurrency patterns", "type": "reference", "content": "Use errgroup for fan-out. Context for cancellation. Channel direction in signatures. No bare goroutines."},
+    {"name": "go-logging", "description": "Logging standards", "type": "feedback", "content": "Use slog structured logger. No log.Printf or fmt.Println for debugging. Log at Info for ops, Debug for dev."},
+
+    {"name": "frontend-react", "description": "Frontend framework choice", "type": "reference", "content": "React 19 with TypeScript. Vite for build. TanStack Query for data fetching. Tailwind CSS."},
+    {"name": "frontend-testing", "description": "Frontend test strategy", "type": "reference", "content": "Vitest for unit tests. Playwright for E2E. React Testing Library for components. No enzyme."},
+
+    {"name": "incident-2026-03", "description": "March 2026 outage post-mortem", "type": "project", "content": "Root cause: connection pool exhaustion from leaked connections in error path. Fix: defer conn.Close() in all handlers. Duration: 45 min."},
+    {"name": "incident-response", "description": "Incident response procedure", "type": "procedural", "content": "1) Acknowledge in PagerDuty 2) Join #incident Slack 3) Identify scope 4) Mitigate 5) Post-mortem within 48h."}
+  ],
+
+  "queries": [
+    {"query": "how to set up OAuth authentication", "relevant": ["auth-oauth2", "auth-session"], "category": "single_hop"},
+    {"query": "what is the API rate limit", "relevant": ["api-rate-limit"], "category": "single_hop"},
+    {"query": "database backup schedule", "relevant": ["db-backup"], "category": "single_hop"},
+    {"query": "how to run integration tests", "relevant": ["testing-integration", "testing-fixtures"], "category": "single_hop"},
+    {"query": "kubernetes cluster configuration", "relevant": ["infra-kubernetes"], "category": "single_hop"},
+    {"query": "user editor preferences", "relevant": ["user-editor-vim"], "category": "single_hop"},
+    {"query": "CI pipeline setup", "relevant": ["ci-pipeline", "ci-caching"], "category": "single_hop"},
+    {"query": "Go error handling conventions", "relevant": ["go-error-handling"], "category": "single_hop"},
+    {"query": "monitoring and alerting stack", "relevant": ["infra-monitoring"], "category": "single_hop"},
+    {"query": "new team member setup process", "relevant": ["team-onboarding"], "category": "single_hop"},
+
+    {"query": "how does authentication work end to end including session storage", "relevant": ["auth-oauth2", "auth-session", "auth-rbac"], "category": "multi_hop"},
+    {"query": "what is the full deployment process including rollback and secrets", "relevant": ["deploy-prod", "deploy-rollback", "deploy-secrets"], "category": "multi_hop"},
+    {"query": "database performance: slow queries and connection pooling", "relevant": ["db-perf-queries", "db-connection-pool"], "category": "multi_hop"},
+    {"query": "memory system retrieval and scoring pipeline", "relevant": ["memory-search", "memory-scoring", "memory-architecture"], "category": "multi_hop"},
+    {"query": "testing strategy: TDD workflow with integration tests", "relevant": ["testing-tdd", "testing-integration", "testing-fixtures"], "category": "multi_hop"},
+    {"query": "API design: versioning, pagination, and error handling", "relevant": ["api-versioning", "api-pagination", "api-error-format"], "category": "multi_hop"},
+    {"query": "security: dependency policy and audit findings", "relevant": ["security-deps", "security-audit"], "category": "multi_hop"},
+    {"query": "infrastructure costs and optimization targets", "relevant": ["infra-cost", "infra-cdn", "infra-kubernetes"], "category": "multi_hop"},
+
+    {"query": "what is the current deployment target", "relevant": ["deploy-prod"], "irrelevant": ["old-deploy-staging2"], "category": "temporal"},
+    {"query": "current API versioning approach", "relevant": ["api-versioning"], "irrelevant": ["old-api-v1-only"], "category": "temporal"},
+    {"query": "current testing approach for database tests", "relevant": ["testing-tdd"], "irrelevant": ["old-testing-mocks"], "category": "temporal"},
+    {"query": "latest deployment configuration and target", "relevant": ["deploy-prod", "deploy-canary"], "irrelevant": ["old-deploy-staging2"], "category": "temporal"},
+    {"query": "what changed in the testing approach", "relevant": ["testing-tdd", "testing-flaky"], "irrelevant": ["old-testing-mocks"], "category": "temporal"},
+    {"query": "current API design standards", "relevant": ["api-versioning", "api-error-format"], "irrelevant": ["old-api-v1-only"], "category": "temporal"},
+
+    {"query": "how to cook pasta carbonara", "relevant": [], "irrelevant": ["api-endpoints", "deploy-prod"], "category": "adversarial"},
+    {"query": "weather forecast for tomorrow", "relevant": [], "irrelevant": ["infra-monitoring", "user-timezone"], "category": "adversarial"},
+    {"query": "stock market trading strategies", "relevant": [], "irrelevant": ["infra-cost", "perf-baseline"], "category": "adversarial"},
+    {"query": "best hiking trails in Yosemite", "relevant": [], "irrelevant": ["infra-kubernetes", "team-standup"], "category": "adversarial"},
+    {"query": "how to train a neural network from scratch", "relevant": [], "irrelevant": ["memory-architecture", "memory-scoring"], "category": "adversarial"},
+    {"query": "piano chord progressions for jazz", "relevant": [], "irrelevant": ["go-concurrency", "frontend-react"], "category": "adversarial"}
+  ]
+}

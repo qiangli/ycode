@@ -14,7 +14,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL
 
-.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-all-evals
+.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
 
 .DEFAULT_GOAL := help
 
@@ -111,6 +111,23 @@ eval-e2e: ## Run E2E evals (full coding tasks, requires provider)
 	go test -tags eval_e2e -count=1 -timeout 45m ./internal/eval/e2e/...
 
 eval-all-evals: eval-contract eval-smoke eval-behavioral eval-e2e ## Run all eval tiers
+
+# ─── Memory Benchmarks ───────────────────────────────────────────────────────
+
+bench-memory: ## Memory retrieval quality benchmarks (no LLM, fast)
+	go test -run TestBenchmark -v -count=1 ./internal/runtime/memory/...
+
+bench-memory-quality: ## Comprehensive memory quality (large corpus, context metrics)
+	go test -run 'TestBenchmark_Quality|TestContextMetrics' -v -count=1 -timeout 2m ./internal/runtime/memory/...
+
+bench-memory-competitive: ## Competitive benchmark (LoCoMo subset, fusion ablation, latency)
+	go test -run TestCompetitive -v -count=1 -timeout 5m ./internal/runtime/memory/...
+
+bench-memory-latency: ## Memory and storage operation latency benchmarks
+	go test -bench BenchmarkRecall -benchmem -count=3 ./internal/runtime/memory/...
+	go test -bench 'BenchmarkBleve|BenchmarkVector' -benchmem -count=3 ./internal/storage/...
+
+bench-memory-all: bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency ## All memory benchmarks
 
 vet: ## Run static analysis
 	go vet $(PACKAGES)

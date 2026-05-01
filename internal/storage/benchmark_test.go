@@ -3,12 +3,14 @@ package storage_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/qiangli/ycode/internal/storage"
 	"github.com/qiangli/ycode/internal/storage/kv"
 	"github.com/qiangli/ycode/internal/storage/search"
 	"github.com/qiangli/ycode/internal/storage/sqlite"
+	"github.com/qiangli/ycode/internal/storage/vector"
 )
 
 // BenchmarkKVPut measures bbolt write throughput.
@@ -184,6 +186,82 @@ func BenchmarkBleveSearch(b *testing.B) {
 	for b.Loop() {
 		if _, err := s.Search(ctx, "bench", "authentication gateway", 10); err != nil {
 			b.Fatalf("Search: %v", err)
+		}
+	}
+}
+
+// deterministicEmbedding generates a simple deterministic embedding from a seed.
+// Not semantically meaningful, but sufficient for benchmarking storage throughput.
+func deterministicEmbedding(seed int, dims int) []float32 {
+	emb := make([]float32, dims)
+	for i := range emb {
+		emb[i] = float32(math.Sin(float64(seed*17+i*31))) * 0.5
+	}
+	return emb
+}
+
+// BenchmarkVectorAdd measures vector store insert throughput with pre-computed embeddings.
+func BenchmarkVectorAdd(b *testing.B) {
+	dir := b.TempDir()
+	s, err := vector.Open(dir)
+	if err != nil {
+		b.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	dims := 128
+
+	i := 0
+	b.ResetTimer()
+	for b.Loop() {
+		doc := storage.VectorDocument{
+			Document: storage.Document{
+				ID:      fmt.Sprintf("doc-%d", i),
+				Content: fmt.Sprintf("Function %d handles authentication and authorization", i),
+			},
+			Embedding: deterministicEmbedding(i, dims),
+		}
+		if err := s.AddDocuments(ctx, "bench", []storage.VectorDocument{doc}); err != nil {
+			b.Fatalf("AddDocuments: %v", err)
+		}
+		i++
+	}
+}
+
+// BenchmarkVectorQuery measures vector store query throughput.
+func BenchmarkVectorQuery(b *testing.B) {
+	dir := b.TempDir()
+	s, err := vector.Open(dir)
+	if err != nil {
+		b.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	dims := 128
+
+	// Seed data.
+	docs := make([]storage.VectorDocument, 500)
+	for i := range docs {
+		docs[i] = storage.VectorDocument{
+			Document: storage.Document{
+				ID:      fmt.Sprintf("doc-%d", i),
+				Content: fmt.Sprintf("Function %d handles authentication and authorization", i),
+			},
+			Embedding: deterministicEmbedding(i, dims),
+		}
+	}
+	if err := s.AddDocuments(ctx, "bench", docs); err != nil {
+		b.Fatalf("AddDocuments: %v", err)
+	}
+
+	queryEmb := deterministicEmbedding(42, dims)
+
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := s.Query(ctx, "bench", queryEmb, 10); err != nil {
+			b.Fatalf("Query: %v", err)
 		}
 	}
 }
