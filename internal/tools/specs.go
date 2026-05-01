@@ -717,6 +717,16 @@ func builtinSpecs() []*ToolSpec {
 			Source:       SourceBuiltin,
 		},
 
+		// Parallel agent execution
+		{
+			Name:         "ParallelAgents",
+			Description:  "Run multiple subagents in parallel and return their combined results. Use for independent tasks like exploring different parts of a codebase, researching multiple topics, or running parallel analysis. Each agent gets its own context and tool access. Maximum 10 agents.",
+			InputSchema:  mustJSON(parallelAgentsSchema),
+			RequiredMode: permission.DangerFullAccess,
+			Source:       SourceBuiltin,
+			Category:     CategoryAgent,
+		},
+
 		// Document reading — PDF, DOCX, XLSX, PPTX, CSV
 		{
 			Name:         "read_document",
@@ -1624,6 +1634,31 @@ var (
 			"glob": {"type": "string", "description": "Optional file glob pattern to scope the rule"}
 		},
 		"required": ["name", "content"]
+	}`
+
+	// Parallel agents schema
+	parallelAgentsSchema = `{
+		"type": "object",
+		"properties": {
+			"agents": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"description": {"type": "string", "description": "Short description of the agent's task"},
+						"prompt": {"type": "string", "description": "Detailed task prompt for the agent"},
+						"agent_type": {"type": "string", "enum": ["Explore", "Plan", "Verification", "general-purpose"], "description": "Agent type (default: general-purpose)"},
+						"model": {"type": "string", "description": "Optional model override for this agent"}
+					},
+					"required": ["description", "prompt"]
+				},
+				"description": "Array of agent tasks to run in parallel (max 10)",
+				"minItems": 1,
+				"maxItems": 10
+			},
+			"timeout": {"type": "integer", "description": "Timeout in milliseconds for all agents to complete (default: 300000 = 5 min)"}
+		},
+		"required": ["agents"]
 	}`
 
 	// Document reading schema

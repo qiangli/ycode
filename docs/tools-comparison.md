@@ -220,7 +220,7 @@ Prior-art column lists which projects have the tool (abbreviated): **ai**=aider,
 |------|:-----:|-----------|-------------|
 | Create team | ✓ `TeamCreate` | cc | Create team of parallel sub-agents |
 | Delete team | ✓ `TeamDelete` | cc | Delete team and stop its tasks |
-| Use subagents (parallel) | ✗ | cl | Run up to 5 in-process subagents in parallel |
+| Run parallel subagents | ✓ `ParallelAgents` | cl, cx | Run up to 10 subagents concurrently, return combined results |
 
 ### Task Management
 
@@ -412,7 +412,7 @@ Prior-art column lists which projects have the tool (abbreviated): **ai**=aider,
 | Notebook | 2 | 4 |
 | Observability | 3 | 0 |
 | Config/Session | 2 | 2 |
-| **Total** | **~131** | **~107 unique** |
+| **Total** | **~132** | **~107 unique** |
 
 ### ycode Unique Strengths (not in any prior art)
 
