@@ -1,0 +1,64 @@
+# Benchmark: SWE-Bench (adapter-driven)
+#
+# Runs SWE-Bench tasks via the swe-bench adapter. Each task is a real GitHub
+# issue that the tool must resolve by producing a patch.
+#
+# Prerequisites:
+#   - Download SWE-Bench dataset:
+#       mkdir -p evals/data/swe-bench
+#       wget -O evals/data/swe-bench/swe-bench-verified.json \
+#         https://raw.githubusercontent.com/princeton-nlp/SWE-bench/main/swebench/versioned/swe-bench-verified.json
+#   - ycode installed
+#   - claude-code installed (or whichever tools you want to compare)
+#
+# Usage:
+#   aperio benchmark evals/specs/swe-bench.yaml
+#   aperio benchmark evals/specs/swe-bench.yaml --runs 1 --pass-k 1
+#   aperio benchmark evals/specs/swe-bench.yaml --format all --save-baseline evals/baselines/swe-bench.json
+
+name: "swe-bench-verified"
+description: "SWE-Bench Verified: resolve real GitHub issues (first 20 tasks)"
+runs: 1
+parallel: false
+output_dir: "evals/results/swe-bench"
+pass_k: [1]
+
+adapter:
+  name: swe-bench
+  variant: verified
+  data_dir: "evals/data/swe-bench"
+  filter:
+    limit: 20
+
+tools:
+  - name: ycode
+    command: ["ycode", "prompt", "--model", "claude-sonnet-4", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: claude-code
+    command: ["claude", "--model", "sonnet", "-p", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: aider
+    command: ["aider", "--model", "claude-3.5-sonnet", "--yes-always", "--no-auto-commits", "--message", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+pricing:
+  claude-sonnet-4:
+    input: 0.003
+    output: 0.015
+  claude-3.5-sonnet:
+    input: 0.003
+    output: 0.015

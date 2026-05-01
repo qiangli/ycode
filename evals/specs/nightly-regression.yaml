@@ -1,0 +1,78 @@
+# Benchmark: Nightly Regression
+#
+# Designed for CI/CD: runs a standard task 5 times per tool, computes pass@k,
+# and checks for regressions against a saved baseline. Exits non-zero if any
+# metric regresses beyond thresholds.
+#
+# Workflow:
+#   1. First run — establish baseline:
+#        aperio benchmark evals/specs/nightly-regression.yaml \
+#          --save-baseline evals/baselines/nightly.json
+#   2. Subsequent runs — check for regressions:
+#        aperio benchmark evals/specs/nightly-regression.yaml --regression
+#
+# Trust filter (60/80 rule, from Gemini CLI's eval pattern):
+#   - Tasks passing < 60% of trials are too flaky to trust
+#   - Tasks passing > 80% are "always passes" (baseline sanity)
+#   - Only tasks in the 60-80% window are meaningful for detecting change
+#
+# Usage in CI:
+#   aperio benchmark evals/specs/nightly-regression.yaml --regression --format json
+
+name: "nightly-regression"
+description: "Nightly regression check: 5 trials with pass@k and baseline comparison"
+runs: 5
+parallel: false
+output_dir: "evals/results/nightly"
+pass_k: [1, 3, 5]
+
+regression:
+  mode: nightly
+  baseline_path: "evals/baselines/nightly.json"
+  fail_on_regression: true
+  trust_filter:
+    min_pass_rate: 0.6
+    max_pass_rate: 0.8
+
+task:
+  query: |
+    Create a Python file called 'matrix.py' in the current directory with:
+    1. A Matrix class supporting addition, multiplication, transpose, determinant (2x2 and 3x3)
+    2. Constructor takes list of lists, validates rectangular shape
+    3. Implement __repr__, __eq__, __add__, __mul__ (matrix multiply)
+    4. Class methods: identity(n), zeros(rows, cols)
+    5. Create 'test_matrix.py' with pytest tests covering all operations and edge cases
+    6. All tests must pass
+  working_dir: "/tmp/aperio-eval-workspace"
+  setup_cmd: "rm -rf /tmp/aperio-eval-workspace && mkdir -p /tmp/aperio-eval-workspace && cd /tmp/aperio-eval-workspace && git init"
+  cleanup_cmd: "rm -rf /tmp/aperio-eval-workspace"
+  timeout: "5m"
+  validation:
+    - type: command
+      value: "cd /tmp/aperio-eval-workspace && python3 -m pytest test_matrix.py -v"
+    - type: file_exists
+      value: "matrix.py"
+    - type: file_exists
+      value: "test_matrix.py"
+
+tools:
+  - name: ycode
+    command: ["ycode", "prompt", "--model", "claude-sonnet-4", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: claude-code
+    command: ["claude", "--model", "sonnet", "-p", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+pricing:
+  claude-sonnet-4:
+    input: 0.003
+    output: 0.015

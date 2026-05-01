@@ -1,0 +1,76 @@
+# Benchmark: Docker-sandboxed execution
+#
+# Runs tools inside Docker containers for safe, isolated evaluation.
+# Useful when benchmarking untrusted tools or tasks that modify system state.
+#
+# The Docker config maps the workspace as a volume and passes through
+# API keys and proxy settings. The container is removed after each run.
+#
+# Prerequisites:
+#   - Docker installed and running
+#   - Build or pull the sandbox image:
+#       docker build -t aperio/sandbox:latest -f evals/Dockerfile.sandbox .
+#     Or use a standard image with dev tools pre-installed.
+#
+# Usage:
+#   aperio benchmark evals/specs/docker-sandboxed.yaml
+#   aperio benchmark evals/specs/docker-sandboxed.yaml --runs 3 --pass-k 1,3
+
+name: "docker-sandboxed"
+description: "Docker-isolated benchmark: tools run in containers"
+runs: 3
+parallel: false
+output_dir: "evals/results/docker-sandboxed"
+pass_k: [1, 3]
+
+docker:
+  enabled: true
+  image: "python:3.12-slim"
+  memory: "4g"
+  timeout: "10m"
+  network: host
+
+task:
+  query: |
+    Create a Python file called 'csv_analyzer.py' in the current directory with:
+    1. A function 'read_csv(path: str) -> list[dict]' that reads CSV files
+    2. A function 'summarize(data: list[dict], column: str) -> dict' returning min, max, mean, median, count
+    3. A function 'filter_rows(data: list[dict], column: str, predicate: Callable) -> list[dict]'
+    4. Handle edge cases: missing values, non-numeric columns, empty files
+    5. Create 'test_csv_analyzer.py' with pytest tests using tempfile for test data
+    6. All tests must pass
+  working_dir: "/workspace"
+  setup_cmd: "pip install pytest -q"
+  timeout: "5m"
+  validation:
+    - type: command
+      value: "cd /workspace && python3 -m pytest test_csv_analyzer.py -v"
+    - type: file_exists
+      value: "csv_analyzer.py"
+    - type: file_exists
+      value: "test_csv_analyzer.py"
+
+tools:
+  - name: ycode
+    command: ["ycode", "prompt", "--model", "claude-sonnet-4", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: aider
+    command: ["pip", "install", "aider-chat", "-q", "&&", "aider", "--model", "claude-3.5-sonnet", "--yes-always", "--no-auto-commits", "--message", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+pricing:
+  claude-sonnet-4:
+    input: 0.003
+    output: 0.015
+  claude-3.5-sonnet:
+    input: 0.003
+    output: 0.015

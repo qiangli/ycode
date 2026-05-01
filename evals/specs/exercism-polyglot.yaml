@@ -1,0 +1,70 @@
+# Benchmark: Exercism Polyglot (adapter-driven)
+#
+# Runs Exercism exercises across multiple languages via the exercism adapter.
+# Each exercise provides a problem description; the tool must produce code
+# that passes the exercise's test suite.
+#
+# Prerequisites:
+#   - Clone Exercism tracks into evals/data/exercism/:
+#       mkdir -p evals/data/exercism
+#       git clone --depth 1 https://github.com/exercism/python.git evals/data/exercism/python
+#       git clone --depth 1 https://github.com/exercism/go.git evals/data/exercism/go
+#       git clone --depth 1 https://github.com/exercism/javascript.git evals/data/exercism/javascript
+#       git clone --depth 1 https://github.com/exercism/rust.git evals/data/exercism/rust
+#   - ycode and comparison tools installed
+#
+# Usage:
+#   aperio benchmark evals/specs/exercism-polyglot.yaml
+#   aperio benchmark evals/specs/exercism-polyglot.yaml --runs 3 --pass-k 1,3
+#   aperio benchmark list-tasks --adapter exercism --languages python,go --limit 50
+
+name: "exercism-polyglot"
+description: "Exercism Polyglot: coding exercises across Python, Go, JS, Rust (first 10 per language)"
+runs: 3
+parallel: false
+output_dir: "evals/results/exercism-polyglot"
+pass_k: [1, 3]
+
+adapter:
+  name: exercism
+  data_dir: "evals/data/exercism"
+  filter:
+    limit: 40
+    languages:
+      - python
+      - go
+      - javascript
+      - rust
+
+tools:
+  - name: ycode
+    command: ["ycode", "prompt", "--model", "claude-sonnet-4", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: aider
+    command: ["aider", "--model", "claude-3.5-sonnet", "--yes-always", "--no-auto-commits", "--message", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: claude-code
+    command: ["claude", "--model", "sonnet", "-p", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+pricing:
+  claude-sonnet-4:
+    input: 0.003
+    output: 0.015
+  claude-3.5-sonnet:
+    input: 0.003
+    output: 0.015

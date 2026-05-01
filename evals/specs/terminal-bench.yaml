@@ -1,0 +1,70 @@
+# Benchmark: Terminal-Bench (adapter-driven)
+#
+# Runs tasks from the Terminal-Bench dataset (~100 terminal tasks spanning
+# system setup, ML training, code generation, Git workflows, and security).
+#
+# Prerequisites:
+#   - Download Terminal-Bench dataset:
+#       mkdir -p evals/data/terminal-bench
+#       wget -O evals/data/terminal-bench/tasks.json \
+#         https://raw.githubusercontent.com/terminal-bench/terminal-bench/main/tasks.json
+#   - Docker installed (many tasks require container isolation)
+#   - ycode and comparison tools installed
+#
+# Usage:
+#   aperio benchmark evals/specs/terminal-bench.yaml
+#   aperio benchmark evals/specs/terminal-bench.yaml --runs 1 --pass-k 1
+#   aperio benchmark list-tasks --adapter terminal-bench --limit 20
+
+name: "terminal-bench"
+description: "Terminal-Bench: terminal tasks with Docker isolation (first 15 tasks)"
+runs: 1
+parallel: false
+output_dir: "evals/results/terminal-bench"
+pass_k: [1]
+
+adapter:
+  name: terminal-bench
+  data_dir: "evals/data/terminal-bench"
+  filter:
+    limit: 15
+
+docker:
+  enabled: true
+  image: "ubuntu:24.04"
+  memory: "4g"
+  timeout: "10m"
+  network: host
+
+tools:
+  - name: ycode
+    command: ["ycode", "prompt", "--model", "claude-sonnet-4", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: claude-code
+    command: ["claude", "--model", "sonnet", "-p", "{{.Query}}"]
+    mode: blackbox
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    targets:
+      - "api.anthropic.com"
+
+  - name: codex
+    command: ["codex", "-m", "o4-mini", "--approval-mode", "full-auto", "{{.Query}}"]
+    mode: blackbox
+    env:
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+    targets:
+      - "api.openai.com"
+
+pricing:
+  claude-sonnet-4:
+    input: 0.003
+    output: 0.015
+  o4-mini:
+    input: 0.0011
+    output: 0.0044
