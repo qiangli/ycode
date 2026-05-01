@@ -35,11 +35,34 @@ func NewGitDef() *ToolDef {
 			"reset":    nativeReset,
 			"show":     nativeShow,
 			"stash":    nativeStash,
-			// Phase 3: Complex commands (mostly ErrNotImplemented)
+			// Phase 3: Complex commands
 			"worktree":     nativeWorktree,
 			"merge":        nativeMerge,
+			"tag":          nativeTag,
+			"fetch":        nativeFetch,
+			"grep":         nativeGrep,
+			"ls-files":     nativeLsFiles,
+			"blame":        nativeBlame,
 			"for-each-ref": nativeForEachRef,
 			"remote":       nativeRemote,
+			// Tier 2: Server/write operations
+			"push":         nativePush,
+			"cherry-pick":  nativeCherryPick,
+			"rebase":       nativeRebase,
+			"apply":        nativeApply,
+			"format-patch": nativeFormatPatch,
+			"rm":           nativeRm,
+			// Tier 3: Plumbing commands
+			"cat-file":     nativeCatFile,
+			"hash-object":  nativeHashObject,
+			"read-tree":    nativeReadTree,
+			"write-tree":   nativeWriteTree,
+			"commit-tree":  nativeCommitTree,
+			"symbolic-ref": nativeSymbolicRef,
+			"update-ref":   nativeUpdateRef,
+			"diff-tree":    nativeDiffTree,
+			"ls-tree":      nativeLsTree,
+			"show-ref":     nativeShowRef,
 		},
 	}
 }

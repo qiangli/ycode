@@ -319,13 +319,55 @@ func TestNativeStash_ReturnsNotImplemented(t *testing.T) {
 	}
 }
 
-func TestNativeMerge_ReturnsNotImplemented(t *testing.T) {
+func TestNativeMerge_FastForward(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping in short mode")
 	}
-	_, err := nativeMerge(context.Background(), "", nil)
-	if err != ErrNotImplemented {
-		t.Errorf("expected ErrNotImplemented, got %v", err)
+	dir := setupTestRepo(t)
+
+	// Create a feature branch and add a commit
+	repo, _ := git.PlainOpen(dir)
+	wt, _ := repo.Worktree()
+
+	err := wt.Checkout(&git.CheckoutOptions{
+		Branch: "refs/heads/feature",
+		Create: true,
+	})
+	if err != nil {
+		t.Fatalf("checkout: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("feature\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	wt.Add("feature.txt")
+	wt.Commit("feature commit", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "t@t.com", When: time.Now()},
+	})
+
+	// Switch back to master
+	err = wt.Checkout(&git.CheckoutOptions{
+		Branch: "refs/heads/master",
+	})
+	if err != nil {
+		t.Fatalf("checkout master: %v", err)
+	}
+
+	// Merge feature into master (fast-forward)
+	result, err := nativeMerge(context.Background(), dir, []string{"feature"})
+	if err != nil {
+		t.Fatalf("merge error: %v", err)
+	}
+	if !strings.Contains(result.Stdout, "Fast-forward") {
+		t.Errorf("expected fast-forward in output, got %q", result.Stdout)
+	}
+	if result.Tier != TierNative {
+		t.Errorf("expected TierNative, got %v", result.Tier)
+	}
+
+	// Verify feature.txt exists after merge
+	if _, err := os.Stat(filepath.Join(dir, "feature.txt")); os.IsNotExist(err) {
+		t.Error("feature.txt should exist after merge")
 	}
 }
 
@@ -544,5 +586,201 @@ func TestNativeMergeBase(t *testing.T) {
 	got := strings.TrimSpace(result.Stdout)
 	if got != baseHash {
 		t.Errorf("got %q, want %q", got, baseHash)
+	}
+}
+
+func TestNativeTag(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+	dir := setupTestRepo(t)
+
+	// Create a lightweight tag
+	result, err := nativeTag(context.Background(), dir, []string{"v1.0"})
+	if err != nil {
+		t.Fatalf("create tag: %v", err)
+	}
+	if result.Tier != TierNative {
+		t.Errorf("expected TierNative, got %v", result.Tier)
+	}
+
+	// List tags
+	result, err = nativeTag(context.Background(), dir, nil)
+	if err != nil {
+		t.Fatalf("list tags: %v", err)
+	}
+	if !strings.Contains(result.Stdout, "v1.0") {
+		t.Errorf("expected 'v1.0' in tag list, got %q", result.Stdout)
+	}
+
+	// Create annotated tag
+	result, err = nativeTag(context.Background(), dir, []string{"-a", "v2.0", "-m", "release 2.0"})
+	if err != nil {
+		t.Fatalf("create annotated tag: %v", err)
+	}
+
+	// List all tags
+	result, err = nativeTag(context.Background(), dir, nil)
+	if err != nil {
+		t.Fatalf("list tags: %v", err)
+	}
+	if !strings.Contains(result.Stdout, "v2.0") {
+		t.Errorf("expected 'v2.0' in tag list, got %q", result.Stdout)
+	}
+
+	// Delete tag
+	result, err = nativeTag(context.Background(), dir, []string{"-d", "v1.0"})
+	if err != nil {
+		t.Fatalf("delete tag: %v", err)
+	}
+	if !strings.Contains(result.Stdout, "Deleted") {
+		t.Errorf("expected 'Deleted' in output, got %q", result.Stdout)
+	}
+
+	// Verify deleted
+	result, err = nativeTag(context.Background(), dir, nil)
+	if err != nil {
+		t.Fatalf("list tags: %v", err)
+	}
+	if strings.Contains(result.Stdout, "v1.0") {
+		t.Errorf("tag 'v1.0' should have been deleted, got %q", result.Stdout)
+	}
+}
+
+func TestNativeFetch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+	dir := setupTestRepo(t)
+
+	// Add a remote
+	repo, _ := git.PlainOpen(dir)
+	_, err := repo.CreateRemote(&config.RemoteConfig{
+		Name: "origin",
+		URLs: []string{dir}, // point to self for testing
+	})
+	if err != nil {
+		t.Fatalf("create remote: %v", err)
+	}
+
+	// Fetch from origin — should succeed (already up to date)
+	result, err := nativeFetch(context.Background(), dir, nil)
+	if err != nil {
+		t.Fatalf("fetch error: %v", err)
+	}
+	if result.Tier != TierNative {
+		t.Errorf("expected TierNative, got %v", result.Tier)
+	}
+}
+
+func TestNativeGrep(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+	dir := setupTestRepo(t)
+
+	// Search for "hello" in tracked files
+	result, err := nativeGrep(context.Background(), dir, []string{"hello"})
+	if err != nil {
+		t.Fatalf("grep error: %v", err)
+	}
+	if !strings.Contains(result.Stdout, "hello.txt:1:hello world") {
+		t.Errorf("expected match in output, got %q", result.Stdout)
+	}
+
+	// Case insensitive search
+	result, err = nativeGrep(context.Background(), dir, []string{"-i", "HELLO"})
+	if err != nil {
+		t.Fatalf("grep -i error: %v", err)
+	}
+	if !strings.Contains(result.Stdout, "hello.txt") {
+		t.Errorf("expected match for case insensitive, got %q", result.Stdout)
+	}
+
+	// Files only
+	result, err = nativeGrep(context.Background(), dir, []string{"-l", "hello"})
+	if err != nil {
+		t.Fatalf("grep -l error: %v", err)
+	}
+	if strings.TrimSpace(result.Stdout) != "hello.txt" {
+		t.Errorf("expected just filename, got %q", result.Stdout)
+	}
+
+	// No match
+	result, err = nativeGrep(context.Background(), dir, []string{"nonexistent_pattern_xyz"})
+	if err != nil {
+		t.Fatalf("grep no match error: %v", err)
+	}
+	if result.ExitCode != 1 {
+		t.Errorf("expected exit code 1 for no match, got %d", result.ExitCode)
+	}
+}
+
+func TestNativeLsFiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+	dir := setupTestRepo(t)
+
+	// List tracked files
+	result, err := nativeLsFiles(context.Background(), dir, nil)
+	if err != nil {
+		t.Fatalf("ls-files error: %v", err)
+	}
+	if !strings.Contains(result.Stdout, "hello.txt") {
+		t.Errorf("expected 'hello.txt' in output, got %q", result.Stdout)
+	}
+
+	// Create an untracked file
+	if err := os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("new\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// --others should show untracked
+	result, err = nativeLsFiles(context.Background(), dir, []string{"--others"})
+	if err != nil {
+		t.Fatalf("ls-files --others error: %v", err)
+	}
+	if !strings.Contains(result.Stdout, "untracked.txt") {
+		t.Errorf("expected 'untracked.txt' in --others output, got %q", result.Stdout)
+	}
+
+	// Modify tracked file and check --modified
+	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("modified\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	result, err = nativeLsFiles(context.Background(), dir, []string{"--modified"})
+	if err != nil {
+		t.Fatalf("ls-files --modified error: %v", err)
+	}
+	if !strings.Contains(result.Stdout, "hello.txt") {
+		t.Errorf("expected 'hello.txt' in --modified output, got %q", result.Stdout)
+	}
+}
+
+func TestNativeBlame(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+	dir := setupTestRepo(t)
+
+	result, err := nativeBlame(context.Background(), dir, []string{"hello.txt"})
+	if err != nil {
+		t.Fatalf("blame error: %v", err)
+	}
+	if result.Tier != TierNative {
+		t.Errorf("expected TierNative, got %v", result.Tier)
+	}
+	// Should contain author email (from Line.Author field)
+	if !strings.Contains(result.Stdout, "test@example.com") {
+		t.Errorf("expected author in blame output, got %q", result.Stdout)
+	}
+	// Should contain line content
+	if !strings.Contains(result.Stdout, "hello world") {
+		t.Errorf("expected file content in blame output, got %q", result.Stdout)
+	}
+	// Should contain line number
+	if !strings.Contains(result.Stdout, "1)") {
+		t.Errorf("expected line number in blame output, got %q", result.Stdout)
 	}
 }

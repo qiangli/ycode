@@ -343,6 +343,13 @@ func builtinSpecs() []*ToolSpec {
 			RequiredMode: permission.ReadOnly,
 			Source:       SourceBuiltin,
 		},
+		{
+			Name:         "git_grep",
+			Description:  "Search tracked files in git repository for a pattern. Returns matching lines with file paths and line numbers.",
+			InputSchema:  mustJSON(gitGrepSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
 
 		// Git server — embedded Gitea for agent collaboration
 		{
@@ -866,6 +873,17 @@ var (
 			"revision": {"type": "string", "description": "Commit hash or reference to inspect"}
 		},
 		"required": ["revision"]
+	}`
+
+	gitGrepSchema = `{
+		"type": "object",
+		"properties": {
+			"pattern": {"type": "string", "description": "Search pattern to match against tracked file contents"},
+			"case_insensitive": {"type": "boolean", "description": "Case insensitive search"},
+			"files_only": {"type": "boolean", "description": "Show only filenames of matching files"},
+			"path": {"type": "string", "description": "Limit search to files under this path"}
+		},
+		"required": ["pattern"]
 	}`
 
 	memosStoreSchema = `{

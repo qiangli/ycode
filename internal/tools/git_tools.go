@@ -40,6 +40,54 @@ func RegisterGitHandlers(r *Registry, deps *GitToolsDeps) {
 	registerGitAddHandler(r, workDir, ge)
 	registerGitResetHandler(r, workDir, ge)
 	registerGitShowHandler(r, workDir, ge)
+	registerGitGrepHandler(r, workDir, ge)
+}
+
+func registerGitGrepHandler(r *Registry, workDir string, ge *git.GitExec) {
+	spec, ok := r.Get("git_grep")
+	if !ok {
+		return
+	}
+	spec.Handler = func(ctx context.Context, input json.RawMessage) (string, error) {
+		var params struct {
+			Pattern         string `json:"pattern"`
+			CaseInsensitive bool   `json:"case_insensitive"`
+			FilesOnly       bool   `json:"files_only"`
+			Path            string `json:"path"`
+		}
+		if err := json.Unmarshal(input, &params); err != nil {
+			return "", fmt.Errorf("parse git_grep input: %w", err)
+		}
+		if params.Pattern == "" {
+			return "", fmt.Errorf("pattern is required")
+		}
+
+		args := []string{"grep", "-n"}
+		if params.CaseInsensitive {
+			args = append(args, "-i")
+		}
+		if params.FilesOnly {
+			args = append(args, "-l")
+		}
+		args = append(args, params.Pattern)
+		if params.Path != "" {
+			args = append(args, "--", params.Path)
+		}
+
+		out, err := ge.Run(ctx, workDir, args...)
+		if err != nil {
+			// git grep exits 1 when no matches found
+			if strings.Contains(err.Error(), "exit status 1") {
+				return "(no matches)", nil
+			}
+			return "", fmt.Errorf("git grep: %w", err)
+		}
+		result := strings.TrimRight(out, "\n")
+		if result == "" {
+			return "(no matches)", nil
+		}
+		return truncateOutput(result), nil
+	}
 }
 
 func registerGitStatusHandler(r *Registry, workDir string, ge *git.GitExec) {
