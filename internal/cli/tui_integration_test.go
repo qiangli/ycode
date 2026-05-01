@@ -1090,5 +1090,122 @@ func ansiStripManual(s string) string {
 	return b.String()
 }
 
+// --- Log Entry Display (regression: log output must never corrupt input area) ---
+
+// TestTUI_LogEntry_AppearsInViewport verifies that log messages routed through
+// the TUI handler appear in the viewport output, not on raw stderr.
+func TestTUI_LogEntry_AppearsInViewport(t *testing.T) {
+	m := newTestTUIModel(t)
+
+	updated, _ := m.Update(logEntryMsg{text: "routing decision"})
+	m = updated.(*TUIModel)
+
+	assertOutputContains(t, m, "routing decision")
+}
+
+// TestTUI_LogEntry_DoesNotCorruptTextarea verifies that log messages never
+// bleed into the textarea (input area). This is a regression test for the bug
+// where slog output written to stderr corrupted the bubbletea alt-screen.
+func TestTUI_LogEntry_DoesNotCorruptTextarea(t *testing.T) {
+	m := newTestTUIModel(t)
+
+	// Pre-fill the textarea with user input.
+	m.textarea.SetValue("my command")
+
+	// Simulate multiple log entries arriving (as from background goroutines).
+	msgs := []logEntryMsg{
+		{text: "[+0.1s] routing decision"},
+		{text: "[+0.3s] ⚠ classification failed: context deadline exceeded"},
+		{text: "[+1.2s] ✗ provider error: connection refused"},
+	}
+	for _, msg := range msgs {
+		updated, _ := m.Update(msg)
+		m = updated.(*TUIModel)
+	}
+
+	// Textarea must be unchanged.
+	if got := m.textarea.Value(); got != "my command" {
+		t.Errorf("textarea corrupted by log entries: got %q, want %q", got, "my command")
+	}
+
+	// All log lines must appear in the viewport output.
+	assertOutputContains(t, m, "routing decision")
+	assertOutputContains(t, m, "classification failed")
+	assertOutputContains(t, m, "provider error")
+}
+
+// TestTUI_LogEntry_WhileWorking verifies that log entries arriving during an
+// active agent turn appear in the viewport without disrupting the working state.
+func TestTUI_LogEntry_WhileWorking(t *testing.T) {
+	m := newTestTUIModel(t)
+
+	// Simulate working state.
+	m.working = true
+	m.workCancel = func() {}
+
+	updated, _ := m.Update(logEntryMsg{text: "[+2.5s] tool classification result"})
+	m = updated.(*TUIModel)
+
+	assertState(t, m, true, false, false) // still working
+	assertOutputContains(t, m, "tool classification result")
+}
+
+// TestTUI_LogEntry_InterleavedWithStream verifies that log entries interleaved
+// with streaming content do not corrupt either the stream output or the input.
+func TestTUI_LogEntry_InterleavedWithStream(t *testing.T) {
+	m := newTestTUIModel(t)
+	m.working = true
+	m.workCancel = func() {}
+
+	// Simulate stream delta → log entry → stream delta sequence.
+	steps := []tea.Msg{
+		streamDeltaMsg{EventType: "text.delta", Text: "Hello "},
+		logEntryMsg{text: "[+0.5s] memory consolidation complete"},
+		streamDeltaMsg{EventType: "text.delta", Text: "world"},
+	}
+	for _, msg := range steps {
+		updated, _ := m.Update(msg)
+		m = updated.(*TUIModel)
+	}
+
+	output := modelOutput(m)
+	if !strings.Contains(output, "Hello ") || !strings.Contains(output, "world") {
+		t.Errorf("stream content corrupted: %s", output)
+	}
+	if !strings.Contains(output, "memory consolidation complete") {
+		t.Errorf("log entry missing from output: %s", output)
+	}
+
+	// Textarea must remain empty.
+	if got := m.textarea.Value(); got != "" {
+		t.Errorf("textarea corrupted: got %q", got)
+	}
+}
+
+// TestTUI_LogEntry_ViewRendersSafely verifies that View() produces valid output
+// after log entries are injected — no panics, no layout corruption.
+func TestTUI_LogEntry_ViewRendersSafely(t *testing.T) {
+	m := newTestTUIModel(t)
+
+	// Inject log entries with various content lengths.
+	entries := []string{
+		"short",
+		strings.Repeat("a]b[c", 50), // ANSI-hostile characters
+		"",                          // empty message
+		"line1\nline2\nline3",       // embedded newlines
+		strings.Repeat("x", 500),    // exceeds viewport width
+	}
+	for _, text := range entries {
+		updated, _ := m.Update(logEntryMsg{text: text})
+		m = updated.(*TUIModel)
+	}
+
+	// View must not panic and must contain the textarea placeholder.
+	view := m.View()
+	if !strings.Contains(view, "Type a message") {
+		t.Errorf("textarea placeholder missing from view after log entries:\n%s", view)
+	}
+}
+
 // Ensure context import is used.
 var _ = context.Background

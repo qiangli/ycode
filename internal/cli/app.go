@@ -827,12 +827,11 @@ func (a *App) NextTurnIndex() int {
 // RunInteractiveWithClient starts the interactive TUI with an optional client
 // for event-driven messaging via the service layer and bus.
 func (a *App) RunInteractiveWithClient(ctx context.Context, cl agentClient) error {
-	suppressLogOutput()
-
 	m := NewTUIModel(a)
 	m.cl = cl
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	m.SetProgram(p)
+	suppressLogOutput(p)
 
 	if a.toolRegistry != nil {
 		prompter := NewTUIPrompter(p)
@@ -853,11 +852,10 @@ func (a *App) RunInteractiveWithClient(ctx context.Context, cl agentClient) erro
 
 // RunInteractive starts the interactive TUI.
 func (a *App) RunInteractive(ctx context.Context) error {
-	suppressLogOutput()
-
 	m := NewTUIModel(a)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	m.SetProgram(p)
+	suppressLogOutput(p)
 
 	// Wire TUI-based permission prompter and TTY executor into the tool
 	// registry so that tools can ask for permission and run interactive
@@ -881,11 +879,16 @@ func (a *App) RunInteractive(ctx context.Context) error {
 	return nil
 }
 
-// suppressLogOutput silences all log output that could corrupt the bubbletea
-// alt-screen display: slog (application logs), the standard log package, and
-// gRPC's internal logger (which writes connection errors directly to stderr).
-func suppressLogOutput() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+// suppressLogOutput redirects all log output away from stderr to prevent
+// corruption of the bubbletea alt-screen display. When a tea.Program is
+// provided, log entries are routed through the TUI viewport with formatted
+// elapsed time and level indicators. Otherwise, logs are silenced entirely.
+func suppressLogOutput(program *tea.Program) {
+	if program != nil {
+		slog.SetDefault(slog.New(newTUILogHandler(program, slog.LevelInfo)))
+	} else {
+		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}
 	log.SetOutput(io.Discard)
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, io.Discard, io.Discard))
 }

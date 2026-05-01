@@ -62,9 +62,8 @@ type Router struct {
 	weights    Weights
 	budgets    map[TaskType]TaskBudget
 
-	stats  StatsProvider
-	load   LoadProvider
-	logger *slog.Logger
+	stats StatsProvider
+	load  LoadProvider
 }
 
 // Option configures a Router.
@@ -96,7 +95,6 @@ func NewRouter(opts ...Option) *Router {
 		candidates: make(map[TaskType][]Candidate),
 		weights:    DefaultWeights(),
 		budgets:    DefaultTaskBudgets(),
-		logger:     slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -163,7 +161,7 @@ func (r *Router) Route(ctx context.Context, task TaskType) *ScoredCandidate {
 	}
 
 	if best != nil {
-		r.logger.Info("routing decision",
+		slog.Info("routing decision",
 			"task", task,
 			"model", best.Model,
 			"local", best.IsLocal,

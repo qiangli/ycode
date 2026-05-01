@@ -111,9 +111,12 @@ type TUIModel struct {
 	sideQueryCount int // for numbering /btw output sections
 }
 
-// tuiLogger is a dedicated logger for TUI state transitions.
-// All entries include the component=tui attribute for filtering.
-var tuiLogger = slog.Default().With("component", "tui")
+// tuiLog logs a TUI state transition at debug level.
+// Uses slog.Default() at call time rather than capturing a reference,
+// so it respects the TUI log handler installed by suppressLogOutput.
+func tuiLog(msg string, args ...any) {
+	slog.Debug(msg, append([]any{"component", "tui"}, args...)...)
+}
 
 // otelInst returns the OTEL instruments if available, nil otherwise.
 func (m *TUIModel) otelInst() *yotel.Instruments {
@@ -133,7 +136,7 @@ func (m *TUIModel) logState(event string, extra ...any) {
 		"pauseRequested", m.pauseRequested,
 	}
 	args = append(args, extra...)
-	tuiLogger.Debug("tui.state", args...)
+	tuiLog("tui.state", args...)
 }
 
 // debugState returns a diagnostic snapshot of the TUI state machine.
@@ -310,6 +313,11 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case logEntryMsg:
+		// Show formatted log entry in the viewport.
+		m.appendOutput(msg.text + "\n")
+		return m, nil
+
 	case progressMsg:
 		// Show progress message during command execution.
 		m.appendOutput(msg.message + "\n")
@@ -557,7 +565,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.pausedCalls) > 0 {
 					// Pending tool calls: defer context injection until after
 					// tool results to preserve tool_use → tool_result adjacency.
-					tuiLogger.Debug("tui.pause.context_deferred",
+					tuiLog("tui.pause.context_deferred",
 						"pending_tools", len(m.pausedCalls),
 						"deferred_count", len(m.pausedContext)+1,
 					)
@@ -688,7 +696,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							attribute.String("error_type", "turn_failure"),
 						))
 				}
-				tuiLogger.Error("tui.turn_error",
+				slog.Error("tui.turn_error",
 					"error", msg.Err.Error(),
 					"session", m.app.session.ID,
 				)
@@ -819,7 +827,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pausedMessages = m.turnMessages
 			m.pausedCalls = result.ToolCalls
 			m.midTurnCh = nil
-			tuiLogger.Info("tui.pause",
+			slog.Info("tui.pause",
 				"trigger", "turn_boundary",
 				"pending_tools", len(result.ToolCalls),
 				"session", m.app.session.ID,
@@ -845,7 +853,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pausedMessages = msg.Messages
 		m.pausedCalls = msg.Calls
 		m.midTurnCh = nil
-		tuiLogger.Info("tui.pause",
+		slog.Info("tui.pause",
 			"trigger", "mid_tool_execution",
 			"pending_tools", len(msg.Calls),
 			"session", m.app.session.ID,
@@ -1523,7 +1531,7 @@ func (m *TUIModel) resumeAgentTurn() tea.Cmd {
 	m.paused = false
 	m.pauseRequested = false
 	m.midTurnCh = make(chan string, 8)
-	tuiLogger.Info("tui.resume",
+	slog.Info("tui.resume",
 		"pause_duration_ms", pauseDur.Milliseconds(),
 		"pending_tools", len(m.pausedCalls),
 		"deferred_context", len(m.pausedContext),

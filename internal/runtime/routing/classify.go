@@ -4,16 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/qiangli/ycode/internal/api"
 )
 
 const (
-	// classifyTimeout is the maximum time for a classification call.
-	classifyTimeout = 3 * time.Second
-
 	// classifyMaxTokens caps the output to minimize latency.
 	classifyMaxTokens = 64
 
@@ -55,13 +52,10 @@ func (r *Router) ClassifyTools(ctx context.Context, userMessage string) []string
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, classifyTimeout)
-	defer cancel()
-
-	// Make a single-shot LLM call.
+	// Make a single-shot LLM call. The caller owns the timeout context.
 	response, err := singleShot(ctx, best.Provider, best.Model, classifySystemPrompt, userMessage, classifyMaxTokens)
 	if err != nil {
-		r.logger.Warn("tool classification failed", "model", best.Model, "error", err)
+		slog.Warn("tool classification failed", "model", best.Model, "error", err)
 		return nil
 	}
 
@@ -83,7 +77,7 @@ func (r *Router) ClassifyTools(ctx context.Context, userMessage string) []string
 		}
 	}
 
-	r.logger.Info("tool classification result",
+	slog.Info("tool classification result",
 		"model", best.Model,
 		"categories", categories,
 		"tools", len(toolNames),
