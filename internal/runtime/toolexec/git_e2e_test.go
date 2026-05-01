@@ -229,8 +229,8 @@ func TestE2E_GrepWorkflow(t *testing.T) {
 
 	// Add multiple files
 	files := map[string]string{
-		"main.go":     "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n",
-		"util.go":     "package main\n\nfunc helper() string {\n\treturn \"hello world\"\n}\n",
+		"main.go":      "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n",
+		"util.go":      "package main\n\nfunc helper() string {\n\treturn \"hello world\"\n}\n",
 		"test_data.go": "package main\n\nvar data = []string{\"foo\", \"bar\"}\n",
 	}
 
