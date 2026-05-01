@@ -1,5 +1,3 @@
-//go:build cgo
-
 package treesitter
 
 import (
@@ -7,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/odvcencio/gotreesitter"
 )
 
 // Search performs a structural search on the given source code using
@@ -29,17 +27,16 @@ func Search(ctx context.Context, parser *Parser, source []byte, lang, pattern, f
 		return nil, fmt.Errorf("unsupported language: %s", lang)
 	}
 
-	q, err := sitter.NewQuery([]byte(pattern), language)
+	q, err := gotreesitter.NewQuery(pattern, language)
 	if err != nil {
 		return nil, fmt.Errorf("compile query: %w", err)
 	}
 
-	qc := sitter.NewQueryCursor()
-	qc.Exec(q, tree.Root)
+	cursor := q.Exec(tree.Root, language, source)
 
 	var matches []Match
 	for {
-		m, ok := qc.NextMatch()
+		m, ok := cursor.NextMatch()
 		if !ok {
 			break
 		}
@@ -50,8 +47,7 @@ func Search(ctx context.Context, parser *Parser, source []byte, lang, pattern, f
 
 			captures := make(map[string]string)
 			for _, c := range m.Captures {
-				captureName := q.CaptureNameForId(c.Index)
-				captures[captureName] = nodeText(c.Node, source)
+				captures[c.Name] = nodeText(c.Node, source)
 			}
 
 			matches = append(matches, Match{
@@ -88,7 +84,7 @@ func SearchText(ctx context.Context, parser *Parser, source []byte, lang, patter
 
 	// Simple text-based matching: walk the AST and compare node text.
 	var matches []Match
-	WalkNodes(tree.Root, func(node *sitter.Node) bool {
+	WalkNodes(tree.Root, tree.language, func(node *gotreesitter.Node) bool {
 		text := nodeText(node, source)
 		if matchPattern(text, pattern) {
 			matches = append(matches, Match{

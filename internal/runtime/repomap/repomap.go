@@ -18,8 +18,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/qiangli/ycode/internal/container"
 )
 
 // MaxTokenBudget is the default maximum token budget for the repo map.
@@ -64,9 +62,10 @@ type Options struct {
 	// ChatContextFiles are files currently in the conversation context.
 	// These get a 50x ranking boost (Aider-inspired personalization).
 	ChatContextFiles []string
-	// ContainerEngine is the optional container engine for tree-sitter parsing.
-	// When nil, non-Go files are skipped with a warning.
-	ContainerEngine any // *container.Engine — uses any to avoid import cycle
+	// ContainerEngine is unused but kept for API compatibility.
+	// Tree-sitter parsing now uses the pure Go implementation directly.
+	// Deprecated: this field is ignored.
+	ContainerEngine any
 }
 
 // DefaultOptions returns sensible defaults for repo map generation.
@@ -146,15 +145,11 @@ func Generate(root string, opts *Options) (*RepoMap, error) {
 		})
 	}
 
-	// Parse non-Go files via containerized tree-sitter (requires container engine).
+	// Parse non-Go files via in-process tree-sitter (pure Go, no CGO/container needed).
 	if len(tsFiles) > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		var eng *container.Engine
-		if opts.ContainerEngine != nil {
-			eng, _ = opts.ContainerEngine.(*container.Engine)
-		}
-		tsSymbols, err := parseFilesWithTreeSitter(ctx, root, tsFiles, eng)
+		tsSymbols, err := parseFilesWithTreeSitter(ctx, tsFiles)
 		if err != nil {
 			// Tree-sitter failure is non-fatal — log and continue with Go-only map.
 			slog.Warn("tree-sitter parsing unavailable, repo map will include Go files only", "error", err)

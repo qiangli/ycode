@@ -1,50 +1,60 @@
-//go:build cgo
-
 package treesitter
 
 import (
 	"context"
 	"fmt"
 
-	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/odvcencio/gotreesitter"
 )
 
-// Tree represents a parsed source file (CGO build).
+// Tree represents a parsed source file.
 type Tree struct {
-	Root   *sitter.Node
-	Source []byte
-	Lang   string
+	Root     *gotreesitter.Node
+	Source   []byte
+	Lang     string
+	language *gotreesitter.Language // kept for node operations that require it
 }
 
-// Parser wraps tree-sitter parsing for multiple languages (CGO build).
+// Parser wraps tree-sitter parsing for multiple languages.
 type Parser struct {
-	parser *sitter.Parser
+	parsers map[string]*gotreesitter.Parser
 }
 
 // NewParser creates a new tree-sitter parser.
 func NewParser() *Parser {
 	return &Parser{
-		parser: sitter.NewParser(),
+		parsers: make(map[string]*gotreesitter.Parser),
 	}
 }
 
+// getParser returns a cached parser for the given language, creating one if needed.
+func (p *Parser) getParser(lang string, language *gotreesitter.Language) *gotreesitter.Parser {
+	if parser, ok := p.parsers[lang]; ok {
+		return parser
+	}
+	parser := gotreesitter.NewParser(language)
+	p.parsers[lang] = parser
+	return parser
+}
+
 // Parse parses source code in the given language and returns the AST.
-func (p *Parser) Parse(ctx context.Context, source []byte, lang string) (*Tree, error) {
+func (p *Parser) Parse(_ context.Context, source []byte, lang string) (*Tree, error) {
 	language := GetLanguage(lang)
 	if language == nil {
 		return nil, fmt.Errorf("unsupported language: %s", lang)
 	}
 
-	p.parser.SetLanguage(language)
-	tree, err := p.parser.ParseCtx(ctx, nil, source)
+	parser := p.getParser(lang, language)
+	tree, err := parser.Parse(source)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", lang, err)
 	}
 
 	return &Tree{
-		Root:   tree.RootNode(),
-		Source: source,
-		Lang:   lang,
+		Root:     tree.RootNode(),
+		Source:   source,
+		Lang:     lang,
+		language: language,
 	}, nil
 }
 
@@ -77,21 +87,21 @@ func ExtractSymbols(tree *Tree, file string) []Symbol {
 }
 
 // WalkNodes calls fn for every node in the tree (depth-first).
-func WalkNodes(node *sitter.Node, fn func(*sitter.Node) bool) {
+func WalkNodes(node *gotreesitter.Node, lang *gotreesitter.Language, fn func(*gotreesitter.Node) bool) {
 	if node == nil {
 		return
 	}
 	if !fn(node) {
 		return
 	}
-	for i := 0; i < int(node.ChildCount()); i++ {
-		WalkNodes(node.Child(i), fn)
+	for i := 0; i < node.ChildCount(); i++ {
+		WalkNodes(node.Child(i), lang, fn)
 	}
 }
 
 // nodeText extracts the source text for a node.
-func nodeText(node *sitter.Node, source []byte) string {
-	return node.Content(source)
+func nodeText(node *gotreesitter.Node, source []byte) string {
+	return node.Text(source)
 }
 
 // --- Language-specific symbol extractors ---
@@ -99,12 +109,13 @@ func nodeText(node *sitter.Node, source []byte) string {
 func extractGoSymbols(tree *Tree, file string) []Symbol {
 	var symbols []Symbol
 	root := tree.Root
+	lang := tree.language
 
-	for i := 0; i < int(root.ChildCount()); i++ {
+	for i := 0; i < root.ChildCount(); i++ {
 		child := root.Child(i)
-		switch child.Type() {
+		switch child.Type(lang) {
 		case "function_declaration":
-			name := findChild(child, "name")
+			name := child.ChildByFieldName("name", lang)
 			if name != nil {
 				symbols = append(symbols, Symbol{
 					Name:      nodeText(name, tree.Source),
@@ -116,7 +127,7 @@ func extractGoSymbols(tree *Tree, file string) []Symbol {
 				})
 			}
 		case "method_declaration":
-			name := findChild(child, "name")
+			name := child.ChildByFieldName("name", lang)
 			if name != nil {
 				symbols = append(symbols, Symbol{
 					Name:      nodeText(name, tree.Source),
@@ -128,14 +139,14 @@ func extractGoSymbols(tree *Tree, file string) []Symbol {
 				})
 			}
 		case "type_declaration":
-			for j := 0; j < int(child.ChildCount()); j++ {
+			for j := 0; j < child.ChildCount(); j++ {
 				spec := child.Child(j)
-				if spec.Type() == "type_spec" {
-					name := findChild(spec, "name")
+				if spec.Type(lang) == "type_spec" {
+					name := spec.ChildByFieldName("name", lang)
 					if name != nil {
 						kind := "type"
-						typeNode := findChild(spec, "type")
-						if typeNode != nil && typeNode.Type() == "interface_type" {
+						typeNode := spec.ChildByFieldName("type", lang)
+						if typeNode != nil && typeNode.Type(lang) == "interface_type" {
 							kind = "interface"
 						}
 						symbols = append(symbols, Symbol{
@@ -157,12 +168,13 @@ func extractGoSymbols(tree *Tree, file string) []Symbol {
 func extractPythonSymbols(tree *Tree, file string) []Symbol {
 	var symbols []Symbol
 	root := tree.Root
+	lang := tree.language
 
-	for i := 0; i < int(root.ChildCount()); i++ {
+	for i := 0; i < root.ChildCount(); i++ {
 		child := root.Child(i)
-		switch child.Type() {
+		switch child.Type(lang) {
 		case "function_definition":
-			name := findChild(child, "name")
+			name := child.ChildByFieldName("name", lang)
 			if name != nil {
 				n := nodeText(name, tree.Source)
 				symbols = append(symbols, Symbol{
@@ -175,7 +187,7 @@ func extractPythonSymbols(tree *Tree, file string) []Symbol {
 				})
 			}
 		case "class_definition":
-			name := findChild(child, "name")
+			name := child.ChildByFieldName("name", lang)
 			if name != nil {
 				n := nodeText(name, tree.Source)
 				symbols = append(symbols, Symbol{
@@ -194,10 +206,11 @@ func extractPythonSymbols(tree *Tree, file string) []Symbol {
 
 func extractJSSymbols(tree *Tree, file string) []Symbol {
 	var symbols []Symbol
-	WalkNodes(tree.Root, func(node *sitter.Node) bool {
-		switch node.Type() {
+	lang := tree.language
+	WalkNodes(tree.Root, lang, func(node *gotreesitter.Node) bool {
+		switch node.Type(lang) {
 		case "function_declaration":
-			name := findChild(node, "name")
+			name := node.ChildByFieldName("name", lang)
 			if name != nil {
 				symbols = append(symbols, Symbol{
 					Name:      nodeText(name, tree.Source),
@@ -210,7 +223,7 @@ func extractJSSymbols(tree *Tree, file string) []Symbol {
 			}
 			return false
 		case "class_declaration":
-			name := findChild(node, "name")
+			name := node.ChildByFieldName("name", lang)
 			if name != nil {
 				symbols = append(symbols, Symbol{
 					Name:      nodeText(name, tree.Source),
@@ -230,12 +243,13 @@ func extractJSSymbols(tree *Tree, file string) []Symbol {
 
 func extractTSSymbols(tree *Tree, file string) []Symbol {
 	symbols := extractJSSymbols(tree, file)
+	lang := tree.language
 
 	// Also look for TypeScript-specific declarations.
-	WalkNodes(tree.Root, func(node *sitter.Node) bool {
-		switch node.Type() {
+	WalkNodes(tree.Root, lang, func(node *gotreesitter.Node) bool {
+		switch node.Type(lang) {
 		case "interface_declaration":
-			name := findChild(node, "name")
+			name := node.ChildByFieldName("name", lang)
 			if name != nil {
 				symbols = append(symbols, Symbol{
 					Name:      nodeText(name, tree.Source),
@@ -248,7 +262,7 @@ func extractTSSymbols(tree *Tree, file string) []Symbol {
 			}
 			return false
 		case "type_alias_declaration":
-			name := findChild(node, "name")
+			name := node.ChildByFieldName("name", lang)
 			if name != nil {
 				symbols = append(symbols, Symbol{
 					Name:      nodeText(name, tree.Source),
@@ -269,12 +283,13 @@ func extractTSSymbols(tree *Tree, file string) []Symbol {
 func extractRustSymbols(tree *Tree, file string) []Symbol {
 	var symbols []Symbol
 	root := tree.Root
+	lang := tree.language
 
-	for i := 0; i < int(root.ChildCount()); i++ {
+	for i := 0; i < root.ChildCount(); i++ {
 		child := root.Child(i)
-		switch child.Type() {
+		switch child.Type(lang) {
 		case "function_item":
-			name := findChild(child, "name")
+			name := child.ChildByFieldName("name", lang)
 			if name != nil {
 				n := nodeText(name, tree.Source)
 				symbols = append(symbols, Symbol{
@@ -283,11 +298,11 @@ func extractRustSymbols(tree *Tree, file string) []Symbol {
 					Signature: "fn " + n,
 					File:      file,
 					Line:      int(child.StartPoint().Row) + 1,
-					Exported:  hasVisibilityModifier(child, tree.Source),
+					Exported:  hasVisibilityModifier(child, lang),
 				})
 			}
 		case "struct_item":
-			name := findChild(child, "name")
+			name := child.ChildByFieldName("name", lang)
 			if name != nil {
 				n := nodeText(name, tree.Source)
 				symbols = append(symbols, Symbol{
@@ -296,11 +311,11 @@ func extractRustSymbols(tree *Tree, file string) []Symbol {
 					Signature: "struct " + n,
 					File:      file,
 					Line:      int(child.StartPoint().Row) + 1,
-					Exported:  hasVisibilityModifier(child, tree.Source),
+					Exported:  hasVisibilityModifier(child, lang),
 				})
 			}
 		case "enum_item":
-			name := findChild(child, "name")
+			name := child.ChildByFieldName("name", lang)
 			if name != nil {
 				n := nodeText(name, tree.Source)
 				symbols = append(symbols, Symbol{
@@ -309,11 +324,11 @@ func extractRustSymbols(tree *Tree, file string) []Symbol {
 					Signature: "enum " + n,
 					File:      file,
 					Line:      int(child.StartPoint().Row) + 1,
-					Exported:  hasVisibilityModifier(child, tree.Source),
+					Exported:  hasVisibilityModifier(child, lang),
 				})
 			}
 		case "trait_item":
-			name := findChild(child, "name")
+			name := child.ChildByFieldName("name", lang)
 			if name != nil {
 				n := nodeText(name, tree.Source)
 				symbols = append(symbols, Symbol{
@@ -322,11 +337,11 @@ func extractRustSymbols(tree *Tree, file string) []Symbol {
 					Signature: "trait " + n,
 					File:      file,
 					Line:      int(child.StartPoint().Row) + 1,
-					Exported:  hasVisibilityModifier(child, tree.Source),
+					Exported:  hasVisibilityModifier(child, lang),
 				})
 			}
 		case "impl_item":
-			name := findChild(child, "type")
+			name := child.ChildByFieldName("type", lang)
 			if name != nil {
 				symbols = append(symbols, Symbol{
 					Name:      nodeText(name, tree.Source),
@@ -344,10 +359,11 @@ func extractRustSymbols(tree *Tree, file string) []Symbol {
 
 func extractJavaSymbols(tree *Tree, file string) []Symbol {
 	var symbols []Symbol
-	WalkNodes(tree.Root, func(node *sitter.Node) bool {
-		switch node.Type() {
+	lang := tree.language
+	WalkNodes(tree.Root, lang, func(node *gotreesitter.Node) bool {
+		switch node.Type(lang) {
 		case "class_declaration":
-			name := findChild(node, "name")
+			name := node.ChildByFieldName("name", lang)
 			if name != nil {
 				symbols = append(symbols, Symbol{
 					Name:      nodeText(name, tree.Source),
@@ -360,7 +376,7 @@ func extractJavaSymbols(tree *Tree, file string) []Symbol {
 			}
 			return false
 		case "interface_declaration":
-			name := findChild(node, "name")
+			name := node.ChildByFieldName("name", lang)
 			if name != nil {
 				symbols = append(symbols, Symbol{
 					Name:      nodeText(name, tree.Source),
@@ -373,7 +389,7 @@ func extractJavaSymbols(tree *Tree, file string) []Symbol {
 			}
 			return false
 		case "enum_declaration":
-			name := findChild(node, "name")
+			name := node.ChildByFieldName("name", lang)
 			if name != nil {
 				symbols = append(symbols, Symbol{
 					Name:      nodeText(name, tree.Source),
@@ -393,10 +409,11 @@ func extractJavaSymbols(tree *Tree, file string) []Symbol {
 
 func extractRubySymbols(tree *Tree, file string) []Symbol {
 	var symbols []Symbol
-	WalkNodes(tree.Root, func(node *sitter.Node) bool {
-		switch node.Type() {
+	lang := tree.language
+	WalkNodes(tree.Root, lang, func(node *gotreesitter.Node) bool {
+		switch node.Type(lang) {
 		case "method":
-			name := findChild(node, "name")
+			name := node.ChildByFieldName("name", lang)
 			if name != nil {
 				n := nodeText(name, tree.Source)
 				symbols = append(symbols, Symbol{
@@ -410,7 +427,7 @@ func extractRubySymbols(tree *Tree, file string) []Symbol {
 			}
 			return false
 		case "class":
-			name := findChild(node, "name")
+			name := node.ChildByFieldName("name", lang)
 			if name != nil {
 				symbols = append(symbols, Symbol{
 					Name:      nodeText(name, tree.Source),
@@ -423,7 +440,7 @@ func extractRubySymbols(tree *Tree, file string) []Symbol {
 			}
 			return false
 		case "module":
-			name := findChild(node, "name")
+			name := node.ChildByFieldName("name", lang)
 			if name != nil {
 				symbols = append(symbols, Symbol{
 					Name:      nodeText(name, tree.Source),
@@ -448,10 +465,6 @@ func extractGenericSymbols(tree *Tree, file string) []Symbol {
 
 // --- Helpers ---
 
-func findChild(node *sitter.Node, fieldName string) *sitter.Node {
-	return node.ChildByFieldName(fieldName)
-}
-
 func isUpperFirst(s string) bool {
 	if s == "" {
 		return false
@@ -463,10 +476,10 @@ func startsWithUnderscore(s string) bool {
 	return len(s) > 0 && s[0] == '_'
 }
 
-func hasVisibilityModifier(node *sitter.Node, source []byte) bool {
-	for i := 0; i < int(node.ChildCount()); i++ {
+func hasVisibilityModifier(node *gotreesitter.Node, lang *gotreesitter.Language) bool {
+	for i := 0; i < node.ChildCount(); i++ {
 		child := node.Child(i)
-		if child.Type() == "visibility_modifier" {
+		if child.Type(lang) == "visibility_modifier" {
 			return true
 		}
 	}

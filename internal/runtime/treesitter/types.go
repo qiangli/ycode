@@ -2,17 +2,9 @@
 // code search using tree-sitter grammars. It supports multiple languages
 // and provides pattern-based code matching.
 //
-// When built with CGO_ENABLED=1 (the default on native platforms),
-// tree-sitter grammars are linked in-process for fast, accurate parsing.
-// When built with CGO_ENABLED=0 (cross-compilation), all functions
-// return ErrNoCGO and callers should fall back to containerized ast-grep.
+// Uses the pure Go tree-sitter implementation (gotreesitter), which
+// requires no CGO and works on all platforms including cross-compilation.
 package treesitter
-
-import "errors"
-
-// ErrNoCGO is returned by all tree-sitter functions when built without CGO.
-// Callers should fall back to containerized ast-grep or other search methods.
-var ErrNoCGO = errors.New("tree-sitter requires CGO (build with CGO_ENABLED=1)")
 
 // Match represents a structural code match.
 type Match struct {

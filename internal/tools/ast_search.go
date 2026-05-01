@@ -85,7 +85,7 @@ func RegisterASTSearchHandler(r *Registry, deps *ASTSearchDeps) {
 				if err == nil {
 					return formatMatches(matches), nil
 				}
-				// Fall through to container on tree-sitter error (including ErrNoCGO).
+				// Fall through to container on tree-sitter error.
 			}
 
 			// Fallback to container.

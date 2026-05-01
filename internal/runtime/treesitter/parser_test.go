@@ -1,5 +1,3 @@
-//go:build cgo
-
 package treesitter
 
 import (

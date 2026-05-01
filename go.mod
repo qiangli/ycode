@@ -45,6 +45,7 @@ require (
 	github.com/jaegertracing/jaeger v0.0.0-00010101000000-000000000000
 	github.com/nats-io/nats-server/v2 v2.12.6
 	github.com/nats-io/nats.go v1.50.0
+	github.com/odvcencio/gotreesitter v0.15.3
 	github.com/ollama/ollama v0.21.2
 	github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusexporter v0.150.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver v0.149.0
@@ -55,7 +56,6 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common v0.67.5
 	github.com/prometheus/prometheus v0.311.2
-	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/spf13/cobra v1.10.2
 	go.etcd.io/bbolt v1.4.3
 	go.opentelemetry.io/collector/component v1.56.0

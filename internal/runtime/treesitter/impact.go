@@ -1,5 +1,3 @@
-//go:build cgo
-
 package treesitter
 
 import (
@@ -9,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/odvcencio/gotreesitter"
 )
 
 // Analyze performs impact analysis: given a symbol name and file,
@@ -62,12 +60,12 @@ func Analyze(ctx context.Context, parser *Parser, symbol, targetFile, workspaceR
 		}
 
 		// Walk the AST looking for identifiers matching the symbol name.
-		WalkNodes(tree.Root, func(node *sitter.Node) bool {
-			if node.Type() == "identifier" || node.Type() == "type_identifier" {
+		WalkNodes(tree.Root, tree.language, func(node *gotreesitter.Node) bool {
+			if node.Type(tree.language) == "identifier" || node.Type(tree.language) == "type_identifier" {
 				text := nodeText(node, source)
 				if text == symbol {
 					// Find the containing function/method for context.
-					contextStr := findContainingFunction(node, source)
+					contextStr := findContainingFunction(node, tree.language, source)
 
 					impacts = append(impacts, Impact{
 						Symbol:   symbol,
@@ -92,13 +90,13 @@ func Analyze(ctx context.Context, parser *Parser, symbol, targetFile, workspaceR
 }
 
 // findContainingFunction walks up the AST to find the enclosing function.
-func findContainingFunction(node *sitter.Node, source []byte) string {
+func findContainingFunction(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte) string {
 	current := node.Parent()
 	for current != nil {
-		switch current.Type() {
+		switch current.Type(lang) {
 		case "function_declaration", "method_declaration", "function_definition",
 			"function_item", "method":
-			name := current.ChildByFieldName("name")
+			name := current.ChildByFieldName("name", lang)
 			if name != nil {
 				return fmt.Sprintf("in %s()", nodeText(name, source))
 			}

@@ -2,94 +2,50 @@ package repomap
 
 import (
 	"context"
-	"path/filepath"
+	"os"
 	"strings"
 
-	"github.com/qiangli/ycode/internal/container"
-	"github.com/qiangli/ycode/internal/runtime/containertool"
+	"github.com/qiangli/ycode/internal/runtime/treesitter"
 )
 
-const treesitterImage = "ycode-treesitter:latest"
-
-// treesitterInputFile is the input format for the containerized parser.
-type treesitterInputFile struct {
-	Path string `json:"path"` // path inside container (/workspace/...)
-	Rel  string `json:"rel"`  // relative path for output
-	Lang string `json:"lang"` // language name
-}
-
-type treesitterInput struct {
-	Files []treesitterInputFile `json:"files"`
-}
-
-// treesitterSymbol matches the JSON output from the container.
-type treesitterSymbol struct {
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Signature string `json:"signature,omitempty"`
-	File      string `json:"file"`
-	Line      int    `json:"line"`
-	Exported  bool   `json:"exported"`
-}
-
-// newTreeSitterTool creates the container tool for tree-sitter parsing.
-func newTreeSitterTool(workspaceRoot string, engine *container.Engine) *containertool.Tool {
-	return &containertool.Tool{
-		Name:       "treesitter",
-		Image:      treesitterImage,
-		Dockerfile: treesitterDockerfile,
-		Sources: map[string]string{
-			"main.go": treesitterMainGo,
-			"go.mod":  treesitterGoMod,
-			"go.sum":  "", // populated by go mod download inside the build
-		},
-		Mounts: []containertool.Mount{
-			{Source: workspaceRoot, Target: "/workspace", ReadOnly: true},
-		},
-		Engine: engine,
-	}
-}
-
-// parseFilesWithTreeSitter runs the containerized parser on non-Go source files.
-func parseFilesWithTreeSitter(ctx context.Context, root string, files []fileInfo, engine *container.Engine) ([]Symbol, error) {
+// parseFilesWithTreeSitter parses non-Go source files using the in-process
+// pure Go tree-sitter implementation. No container or CGO required.
+func parseFilesWithTreeSitter(ctx context.Context, files []fileInfo) ([]Symbol, error) {
 	if len(files) == 0 {
 		return nil, nil
 	}
 
-	tool := newTreeSitterTool(root, engine)
+	parser := treesitter.NewParser()
+	var allSymbols []Symbol
 
-	// Build input manifest.
-	var input treesitterInput
 	for _, f := range files {
-		input.Files = append(input.Files, treesitterInputFile{
-			Path: filepath.Join("/workspace", f.rel),
-			Rel:  f.rel,
-			Lang: f.lang,
-		})
-	}
+		src, err := os.ReadFile(f.path)
+		if err != nil {
+			continue // skip unreadable files
+		}
 
-	var tsSymbols []treesitterSymbol
-	if err := tool.RunJSON(ctx, input, &tsSymbols); err != nil {
-		return nil, err
-	}
+		tree, err := parser.Parse(ctx, src, f.lang)
+		if err != nil {
+			continue // skip unparseable files
+		}
 
-	// Convert to repomap.Symbol.
-	symbols := make([]Symbol, len(tsSymbols))
-	for i, ts := range tsSymbols {
-		symbols[i] = Symbol{
-			Name:      ts.Name,
-			Kind:      ts.Kind,
-			Signature: ts.Signature,
-			File:      ts.File,
-			Line:      ts.Line,
-			Exported:  ts.Exported,
+		tsSymbols := treesitter.ExtractSymbols(tree, f.rel)
+		for _, ts := range tsSymbols {
+			allSymbols = append(allSymbols, Symbol{
+				Name:      ts.Name,
+				Kind:      ts.Kind,
+				Signature: ts.Signature,
+				File:      ts.File,
+				Line:      ts.Line,
+				Exported:  ts.Exported,
+			})
 		}
 	}
 
-	return symbols, nil
+	return allSymbols, nil
 }
 
-// fileInfo is used to pass file metadata to the container parser.
+// fileInfo holds metadata for a source file to parse.
 type fileInfo struct {
 	path string // absolute path on host
 	rel  string // relative to repo root
