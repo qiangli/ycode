@@ -53,6 +53,36 @@ var intentToolBundles = map[string][]string{
 
 	// Scheduling.
 	"cron": {"CronCreate", "CronList", "CronDelete"},
+
+	// Planning and orchestration — activate when users describe complex tasks.
+	"plan":        {"UpdatePlan", "ListPlan", "SetGoal", "EnterPlanMode"},
+	"decompose":   {"UpdatePlan", "ParallelAgents", "SetGoal"},
+	"break down":  {"UpdatePlan", "ParallelAgents", "SetGoal"},
+	"parallel":    {"ParallelAgents", "UpdatePlan"},
+	"concurrent":  {"ParallelAgents", "UpdatePlan"},
+	"in parallel": {"ParallelAgents", "UpdatePlan"},
+	"subtask":     {"UpdatePlan", "ParallelAgents"},
+	"milestone":   {"UpdatePlan", "SetGoal", "ListPlan"},
+	"roadmap":     {"UpdatePlan", "SetGoal", "ListPlan"},
+	"goal":        {"SetGoal", "GetGoal", "UpdatePlan"},
+	"implement":   {"UpdatePlan", "SetTaskStatus"},
+	"refactor":    {"UpdatePlan", "SetTaskStatus"},
+	"architect":   {"UpdatePlan", "SetGoal", "EnterPlanMode"},
+
+	// Document reading.
+	"pdf":         {"read_document"},
+	"docx":        {"read_document"},
+	"xlsx":        {"read_document"},
+	"excel":       {"read_document"},
+	"word":        {"read_document"},
+	"powerpoint":  {"read_document"},
+	"pptx":        {"read_document"},
+	"spreadsheet": {"read_document"},
+
+	// Agent orchestration.
+	"subagent": {"ParallelAgents", "AgentList", "AgentWait"},
+	"agent":    {"AgentList", "AgentWait", "AgentClose"},
+	"worker":   {"WorkerCreate", "WorkerGet", "WorkerTerminate"},
 }
 
 // stopWords are common English words filtered from user messages before

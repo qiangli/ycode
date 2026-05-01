@@ -87,12 +87,12 @@ func TestAlwaysAvailable_CoreCount(t *testing.T) {
 	RegisterBuiltins(r)
 
 	always := r.AlwaysAvailable()
-	// Should be 8: bash, read_file, write_file, edit_file, glob_search, grep_search, Skill, ToolSearch
-	if len(always) != 8 {
+	// Should be 9: bash, read_file, write_file, edit_file, glob_search, grep_search, Skill, ToolSearch, Agent
+	if len(always) != 9 {
 		names := make([]string, len(always))
 		for i, s := range always {
 			names[i] = s.Name
 		}
-		t.Errorf("expected 8 always-available tools, got %d: %v", len(always), names)
+		t.Errorf("expected 9 always-available tools, got %d: %v", len(always), names)
 	}
 }

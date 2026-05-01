@@ -66,10 +66,22 @@ func TasksSection() string {
  - For large files, use read_file with offset and limit instead of reading the entire file.
  - Use read_multiple_files to batch-read several small files in one call instead of sequential read_file calls.
 
+# Parallel execution
+For complex multi-step tasks, use the Agent tool to spawn subagents for independent work:
+ - Launch multiple Agent calls with run_in_background=true to run them concurrently.
+ - Use agent_type "Explore" for read-only codebase research (multiple in parallel is ideal).
+ - Use agent_type "Plan" for designing implementation approaches.
+ - Use agent_type "general-purpose" for tasks that require writing code.
+ - For maximum parallelism, send multiple Agent tool calls in a single response.
+ - Use ToolSearch to discover ParallelAgents (runs multiple agents concurrently in one call),
+   UpdatePlan (create a step-by-step plan with statuses), and AgentList/AgentWait/AgentClose
+   for managing background agents.
+
 # Additional tools
 Beyond the core tools, additional capabilities are available on demand via ToolSearch.
-Categories: persistent memory (save/recall/forget), metrics analysis (query_metrics),
-context management, code intelligence, task tracking, and agent delegation.
+Categories: persistent memory (save/recall/forget), document reading (PDF, DOCX, XLSX),
+metrics analysis (query_metrics), context management, code intelligence, task tracking,
+planning (UpdatePlan, SetGoal), and agent orchestration (ParallelAgents, AgentList).
 Use ToolSearch to discover and load these tools when needed.
 
 # Standard commands
