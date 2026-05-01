@@ -139,10 +139,55 @@ func (r *Runtime) preActivateTools(userMessage string) int {
 		total += r.preActivateByClassification(userMessage)
 	}
 
+	// Post-step: Co-occurrence expansion.
+	// After all tiers activate tools, expand using learned co-occurrence clusters.
+	// If tool A was activated and historically A→B,C, also activate B and C.
+	if total > 0 {
+		total += r.expandByCoOccurrence()
+	}
+
 	if total > 0 {
 		r.logger.Info("tool pre-activation", "total", total)
 	}
 	return total
+}
+
+// expandByCoOccurrence expands the set of activated tools using learned
+// co-occurrence clusters. For each already-activated tool, adds tools that
+// frequently follow it in historical sessions. Terminal tools (tools that
+// are typically the last tool used) do not trigger expansion.
+func (r *Runtime) expandByCoOccurrence() int {
+	if r.coOccurrence == nil {
+		return 0
+	}
+
+	// Snapshot the currently activated tools to avoid modifying during iteration.
+	var triggers []string
+	for name := range r.activatedTools {
+		triggers = append(triggers, name)
+	}
+
+	activated := 0
+	for _, trigger := range triggers {
+		// Skip terminal tools — they don't lead to other tools.
+		if r.coOccurrence.IsTerminal(trigger) {
+			continue
+		}
+
+		followers := r.coOccurrence.CoActivate(trigger, 3)
+		for _, follower := range followers {
+			if _, exists := r.activatedTools[follower]; exists {
+				continue
+			}
+			if _, ok := r.registry.Get(follower); !ok {
+				continue
+			}
+			r.activatedTools[follower] = r.turnCount
+			activated++
+			r.logger.Debug("co-occurrence expansion", "trigger", trigger, "activated", follower)
+		}
+	}
+	return activated
 }
 
 // preActivateBySemantic is Tier 1c: vector-based semantic tool matching.

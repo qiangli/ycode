@@ -89,6 +89,9 @@ type Runtime struct {
 	// Optional smart tool router for semantic pre-activation (Tier 1c).
 	smartRouter *tools.SmartRouter
 
+	// Optional co-occurrence tracker for cluster-based tool expansion.
+	coOccurrence *tools.CoOccurrence
+
 	// Prompt cache tracking — detects cache hits/misses/breaks for observability.
 	promptCache *api.PromptCache
 
@@ -200,6 +203,11 @@ func (r *Runtime) SetInferenceRouter(router *routing.Router) {
 // SetSmartRouter sets the semantic tool router for Tier 1c pre-activation.
 func (r *Runtime) SetSmartRouter(sr *tools.SmartRouter) {
 	r.smartRouter = sr
+}
+
+// SetCoOccurrence sets the co-occurrence tracker for cluster-based tool expansion.
+func (r *Runtime) SetCoOccurrence(co *tools.CoOccurrence) {
+	r.coOccurrence = co
 }
 
 // SetPersona sets the resolved persona for tailored responses.
