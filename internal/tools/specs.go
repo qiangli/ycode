@@ -808,7 +808,9 @@ var (
 			"author": {"type": "string", "description": "Filter by author name or email"},
 			"since": {"type": "string", "description": "Show commits since date (e.g., '2024-01-01', '1 week ago')"},
 			"until": {"type": "string", "description": "Show commits until date (e.g., '2024-12-31', '1 day ago')"},
-			"diff": {"type": "string", "description": "Show diff against a branch or commit (e.g., 'main..HEAD')"}
+			"diff": {"type": "string", "description": "Show diff against a branch or commit (e.g., 'main..HEAD')"},
+			"grep": {"type": "string", "description": "Search for commits that add or remove text matching this string (-G flag)"},
+			"follow": {"type": "boolean", "description": "Track file renames when filtering by path (--follow)"}
 		}
 	}`
 

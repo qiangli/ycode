@@ -74,6 +74,8 @@ func registerGitLogHandler(r *Registry, workDir string, ge *git.GitExec) {
 			Since   string `json:"since"`
 			Until   string `json:"until"`
 			Diff    string `json:"diff"`
+			Grep    string `json:"grep"`
+			Follow  bool   `json:"follow"`
 		}
 		if err := json.Unmarshal(input, &params); err != nil {
 			return "", fmt.Errorf("parse git_log input: %w", err)
@@ -99,6 +101,12 @@ func registerGitLogHandler(r *Registry, workDir string, ge *git.GitExec) {
 		}
 		if params.Until != "" {
 			args = append(args, "--until="+params.Until)
+		}
+		if params.Grep != "" {
+			args = append(args, "-G"+params.Grep)
+		}
+		if params.Follow {
+			args = append(args, "--follow")
 		}
 		if params.Diff != "" {
 			args = append(args, params.Diff)
