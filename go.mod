@@ -13,6 +13,8 @@ replace github.com/ollama/ollama => ./external/ollama
 
 replace go.podman.io/podman/v6 => ./external/podman
 
+replace mvdan.cc/sh/v3 => ./external/sh
+
 replace code.gitea.io/gitea => ./external/gitea
 
 // Gitea transitive dep fixes — Go doesn't propagate replace directives from

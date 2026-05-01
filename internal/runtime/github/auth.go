@@ -4,10 +4,11 @@ import (
 	"context"
 	"net/http"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strings"
 
 	ghlib "github.com/google/go-github/v84/github"
+	"gopkg.in/yaml.v3"
 )
 
 // NewClient creates an authenticated GitHub client. It tries auth sources
@@ -44,14 +45,41 @@ func resolveToken() string {
 		return token
 	}
 
-	// 3. GitHub CLI fallback.
-	out, err := exec.Command("gh", "auth", "token").Output()
-	if err == nil {
-		token := strings.TrimSpace(string(out))
-		if token != "" {
-			return token
-		}
+	// 3. Read gh CLI config file directly (no external binary needed).
+	if token := readGHConfigToken(); token != "" {
+		return token
 	}
 
+	return ""
+}
+
+// readGHConfigToken reads the GitHub auth token from the gh CLI config file
+// at ~/.config/gh/hosts.yml (or $GH_CONFIG_DIR/hosts.yml).
+func readGHConfigToken() string {
+	configDir := os.Getenv("GH_CONFIG_DIR")
+	if configDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		configDir = filepath.Join(home, ".config", "gh")
+	}
+
+	data, err := os.ReadFile(filepath.Join(configDir, "hosts.yml"))
+	if err != nil {
+		return ""
+	}
+
+	// hosts.yml structure: map of hostname → {oauth_token, user, ...}
+	var hosts map[string]struct {
+		OAuthToken string `yaml:"oauth_token"`
+	}
+	if err := yaml.Unmarshal(data, &hosts); err != nil {
+		return ""
+	}
+
+	if host, ok := hosts["github.com"]; ok {
+		return strings.TrimSpace(host.OAuthToken)
+	}
 	return ""
 }
