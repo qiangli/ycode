@@ -111,13 +111,14 @@ var stopWords = map[string]bool{
 	"need": true, "want": true, "like": true, "make": true, "get": true,
 }
 
-// preActivateTools runs the three-tier pre-activation pipeline:
+// preActivateTools runs the four-tier pre-activation pipeline:
 //
 //	Tier 1a: High-precision keyword matching (< 0.1ms)
 //	Tier 1b: SearchTools() scoring with stop-word filter (< 1ms)
+//	Tier 1c: Semantic vector similarity via SmartRouter (< 50ms if indexed)
 //	Tier 2:  LLM classification via InferenceRouter (200-500ms, $0 if local)
 //
-// Tier 2 only runs if Tiers 1a+1b activated zero tools AND an InferenceRouter
+// Tier 2 only runs if all earlier tiers activated zero tools AND an InferenceRouter
 // is available. Returns the total number of tools activated across all tiers.
 func (r *Runtime) preActivateTools(userMessage string) int {
 	if userMessage == "" {
@@ -130,7 +131,10 @@ func (r *Runtime) preActivateTools(userMessage string) int {
 	// Tier 1b: SearchTools scoring against tool names and descriptions.
 	total += r.preActivateByScoring(userMessage)
 
-	// Tier 2: LLM classification — only if Tiers 1a+1b found nothing.
+	// Tier 1c: Semantic vector similarity via SmartRouter.
+	total += r.preActivateBySemantic(userMessage)
+
+	// Tier 2: LLM classification — only if all earlier tiers found nothing.
 	if total == 0 {
 		total += r.preActivateByClassification(userMessage)
 	}
@@ -139,6 +143,37 @@ func (r *Runtime) preActivateTools(userMessage string) int {
 		r.logger.Info("tool pre-activation", "total", total)
 	}
 	return total
+}
+
+// preActivateBySemantic is Tier 1c: vector-based semantic tool matching.
+// Uses the SmartRouter to find tools whose descriptions are semantically
+// similar to the user message, boosted by user preference signals.
+func (r *Runtime) preActivateBySemantic(userMessage string) int {
+	if r.smartRouter == nil {
+		return 0
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	toolNames := r.smartRouter.SelectTools(ctx, r.registry, userMessage, 5)
+	if len(toolNames) == 0 {
+		return 0
+	}
+
+	activated := 0
+	for _, name := range toolNames {
+		if _, exists := r.activatedTools[name]; exists {
+			continue
+		}
+		if _, ok := r.registry.Get(name); !ok {
+			continue
+		}
+		r.activatedTools[name] = r.turnCount
+		activated++
+		r.logger.Debug("pre-activated tool by semantic match", "tool", name)
+	}
+	return activated
 }
 
 // preActivateByKeyword is Tier 1a: high-precision keyword matching.

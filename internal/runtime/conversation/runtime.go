@@ -86,6 +86,9 @@ type Runtime struct {
 	// Used by Tier 2 tool pre-activation (LLM classification).
 	inferenceRouter *routing.Router
 
+	// Optional smart tool router for semantic pre-activation (Tier 1c).
+	smartRouter *tools.SmartRouter
+
 	// Prompt cache tracking — detects cache hits/misses/breaks for observability.
 	promptCache *api.PromptCache
 
@@ -192,6 +195,11 @@ func (r *Runtime) SetCacheWarmer(cw *api.CacheWarmer) {
 // via a lightweight LLM call (local Ollama or cheap remote model).
 func (r *Runtime) SetInferenceRouter(router *routing.Router) {
 	r.inferenceRouter = router
+}
+
+// SetSmartRouter sets the semantic tool router for Tier 1c pre-activation.
+func (r *Runtime) SetSmartRouter(sr *tools.SmartRouter) {
+	r.smartRouter = sr
 }
 
 // SetPersona sets the resolved persona for tailored responses.
