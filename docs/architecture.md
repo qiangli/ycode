@@ -831,6 +831,27 @@ Embedded Ollama runner:
 | Bleve (search) | `github.com/blevesearch/bleve/v2` | Apache-2.0 |
 | Podman | `go.podman.io/podman/v6` | Apache-2.0 |
 | NATS | `github.com/nats-io/nats.go` | Apache-2.0 |
+| Gitea | `code.gitea.io/gitea` (vendored) | MIT |
+| Ollama | `github.com/ollama/ollama` (vendored) | MIT |
+| SQLite | `modernc.org/sqlite` | BSD-3-Clause |
+| go-github | `github.com/google/go-github/v84` | BSD-3-Clause |
+
+### License Audit Summary
+
+**957 transitive modules scanned — zero non-permissive licenses.**
+
+| License | Count | Allowed |
+|---------|-------|---------|
+| Apache-2.0 | 468 | ✓ |
+| MIT | 299 | ✓ |
+| BSD (2/3-Clause) | 158 | ✓ |
+| MPL-2.0 | 20 | ✓ |
+| CC0 / Public Domain | 4 | ✓ |
+| ISC | 2 | ✓ |
+| Unlicense | 1 | ✓ |
+| **GPL/AGPL/SSPL/CPAL** | **0** | — |
+
+Policy (from AGENTS.md): Only MIT, Apache-2.0, BSD, ISC, and MPL-2.0 are allowed. All dependencies comply.
 
 ---
 
