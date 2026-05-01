@@ -119,6 +119,7 @@ func nativeLog(_ context.Context, dir string, args []string) (*Result, error) {
 	limit := 0
 	oneline := false
 	formatStr := ""
+	var sinceTime, untilTime *time.Time
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--oneline":
@@ -137,13 +138,38 @@ func nativeLog(_ context.Context, dir string, args []string) (*Result, error) {
 		case args[i] == "--format" && i+1 < len(args):
 			i++
 			formatStr = args[i]
+		case strings.HasPrefix(args[i], "--since="):
+			val := strings.TrimPrefix(args[i], "--since=")
+			if t, err := parseGitDate(val); err == nil {
+				sinceTime = &t
+			} else {
+				return nil, ErrNotImplemented
+			}
+		case strings.HasPrefix(args[i], "--until="):
+			val := strings.TrimPrefix(args[i], "--until=")
+			if t, err := parseGitDate(val); err == nil {
+				untilTime = &t
+			} else {
+				return nil, ErrNotImplemented
+			}
+		case strings.HasPrefix(args[i], "--date="):
+			// Accept --date= flag (formatting hint) — ignore for native
+		case strings.HasPrefix(args[i], "--author="):
+			// Author filter — fall through to host git for now
+			return nil, ErrNotImplemented
 		default:
-			// Unsupported flags (e.g., path specs, --since, etc.)
+			// Unsupported flags (e.g., path specs)
 			return nil, ErrNotImplemented
 		}
 	}
 
 	logOpts := &git.LogOptions{}
+	if sinceTime != nil {
+		logOpts.Since = sinceTime
+	}
+	if untilTime != nil {
+		logOpts.Until = untilTime
+	}
 	iter, err := repo.Log(logOpts)
 	if err != nil {
 		return nil, ErrNotImplemented
@@ -518,7 +544,117 @@ func nativeBranch(_ context.Context, dir string, args []string) (*Result, error)
 		return nil, ErrNotImplemented
 	}
 
-	// No args or -v: list branches
+	// Parse list flags
+	listRemote := false
+	listAll := false
+	verbose := false
+	containsRef := ""
+	nonFlagArgs := []string{}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-v":
+			verbose = true
+		case "-r":
+			listRemote = true
+		case "-a":
+			listAll = true
+		case "--contains":
+			if i+1 < len(args) {
+				i++
+				containsRef = args[i]
+			} else {
+				return nil, ErrNotImplemented
+			}
+		default:
+			if strings.HasPrefix(args[i], "--contains=") {
+				containsRef = strings.TrimPrefix(args[i], "--contains=")
+			} else if strings.HasPrefix(args[i], "-") && args[i] != "-D" && args[i] != "-d" {
+				nonFlagArgs = append(nonFlagArgs, args[i])
+			} else {
+				nonFlagArgs = append(nonFlagArgs, args[i])
+			}
+		}
+	}
+	_ = verbose
+
+	// Listing mode: no non-flag args, or only -v/-r/-a/--contains
+	isListMode := len(nonFlagArgs) == 0 || (len(args) > 0 && (args[0] == "-v" || args[0] == "-r" || args[0] == "-a"))
+
+	if isListMode && (len(nonFlagArgs) == 0) {
+		head, _ := repo.Head()
+
+		// Resolve --contains commit hash if specified
+		var containsHash *plumbing.Hash
+		if containsRef != "" {
+			h, err := repo.ResolveRevision(plumbing.Revision(containsRef))
+			if err != nil {
+				return &Result{
+					Stderr:   fmt.Sprintf("error: no such commit '%s'\n", containsRef),
+					ExitCode: 129,
+					Tier:     TierNative,
+				}, nil
+			}
+			containsHash = h
+		}
+
+		var b strings.Builder
+
+		// List local branches
+		if !listRemote {
+			refs, err := repo.Branches()
+			if err != nil {
+				return nil, ErrNotImplemented
+			}
+			err = refs.ForEach(func(ref *plumbing.Reference) error {
+				if containsHash != nil {
+					if !branchContainsCommit(repo, ref.Hash(), *containsHash) {
+						return nil
+					}
+				}
+				name := ref.Name().Short()
+				if head != nil && ref.Name() == head.Name() {
+					b.WriteString("* ")
+				} else {
+					b.WriteString("  ")
+				}
+				b.WriteString(name)
+				b.WriteByte('\n')
+				return nil
+			})
+			if err != nil {
+				return nil, ErrNotImplemented
+			}
+		}
+
+		// List remote branches
+		if listRemote || listAll {
+			allRefs, err := repo.References()
+			if err != nil {
+				return nil, ErrNotImplemented
+			}
+			err = allRefs.ForEach(func(ref *plumbing.Reference) error {
+				if !ref.Name().IsRemote() {
+					return nil
+				}
+				if containsHash != nil {
+					if !branchContainsCommit(repo, ref.Hash(), *containsHash) {
+						return nil
+					}
+				}
+				b.WriteString("  ")
+				b.WriteString(ref.Name().Short())
+				b.WriteByte('\n')
+				return nil
+			})
+			if err != nil {
+				return nil, ErrNotImplemented
+			}
+		}
+
+		return &Result{Stdout: b.String(), Tier: TierNative}, nil
+	}
+
+	// No args or -v: list branches (original simple path)
 	if len(args) == 0 || (len(args) == 1 && args[0] == "-v") {
 		head, _ := repo.Head()
 		refs, err := repo.Branches()
@@ -672,6 +808,167 @@ func nativeForEachRef(_ context.Context, _ string, _ []string) (*Result, error) 
 	return nil, ErrNotImplemented
 }
 
+func nativeReset(_ context.Context, dir string, args []string) (*Result, error) {
+	repo, err := openRepo(dir)
+	if err != nil {
+		return nil, ErrNotImplemented
+	}
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		return nil, ErrNotImplemented
+	}
+
+	// Check for specific file paths after "--"
+	var files []string
+	dashDash := false
+	for _, arg := range args {
+		if arg == "--" {
+			dashDash = true
+			continue
+		}
+		if arg == "HEAD" {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return nil, ErrNotImplemented
+		}
+		if dashDash {
+			files = append(files, arg)
+		}
+	}
+
+	if len(files) > 0 {
+		// Reset specific files: re-read HEAD tree and update index entries
+		head, err := repo.Head()
+		if err != nil {
+			return nil, ErrNotImplemented
+		}
+		commit, err := repo.CommitObject(head.Hash())
+		if err != nil {
+			return nil, ErrNotImplemented
+		}
+		tree, err := commit.Tree()
+		if err != nil {
+			return nil, ErrNotImplemented
+		}
+
+		// Get status first to determine which files are staged
+		status, err := wt.Status()
+		if err != nil {
+			return nil, ErrNotImplemented
+		}
+
+		for _, file := range files {
+			fs := status.File(file)
+			if fs.Staging == git.Unmodified {
+				continue
+			}
+			// Check if file exists in HEAD tree
+			_, err := tree.File(file)
+			if err != nil {
+				// File doesn't exist in HEAD — remove from index
+				// This is equivalent to git reset HEAD -- <newfile>
+				// go-git doesn't have a direct "unstage" API, fall through
+				return nil, ErrNotImplemented
+			}
+			// File exists in HEAD: re-add from worktree to reset staging
+			// Actually, go-git's worktree doesn't have a reset-file API
+			// Fall through to host git for this case
+			return nil, ErrNotImplemented
+		}
+		return &Result{Stdout: "", Tier: TierNative}, nil
+	}
+
+	// No specific files: mixed reset to HEAD (unstage everything)
+	head, err := repo.Head()
+	if err != nil {
+		return nil, ErrNotImplemented
+	}
+	err = wt.Reset(&git.ResetOptions{
+		Mode:   git.MixedReset,
+		Commit: head.Hash(),
+	})
+	if err != nil {
+		return nil, ErrNotImplemented
+	}
+
+	return &Result{Stdout: "", Tier: TierNative}, nil
+}
+
+func nativeShow(_ context.Context, dir string, args []string) (*Result, error) {
+	if len(args) == 0 {
+		return nil, ErrNotImplemented
+	}
+
+	repo, err := openRepo(dir)
+	if err != nil {
+		return nil, ErrNotImplemented
+	}
+
+	// Resolve revision
+	revision := args[0]
+	hash, err := repo.ResolveRevision(plumbing.Revision(revision))
+	if err != nil {
+		return nil, ErrNotImplemented
+	}
+
+	commit, err := repo.CommitObject(*hash)
+	if err != nil {
+		return nil, ErrNotImplemented
+	}
+
+	var b strings.Builder
+	b.WriteString("commit ")
+	b.WriteString(commit.Hash.String())
+	b.WriteByte('\n')
+	b.WriteString("Author: ")
+	b.WriteString(commit.Author.Name)
+	b.WriteString(" <")
+	b.WriteString(commit.Author.Email)
+	b.WriteString(">\n")
+	b.WriteString("Date:   ")
+	b.WriteString(commit.Author.When.Format("Mon Jan 2 15:04:05 2006 -0700"))
+	b.WriteString("\n\n    ")
+	b.WriteString(strings.TrimRight(commit.Message, "\n"))
+	b.WriteString("\n\n")
+
+	// Generate patch
+	var parentTree *object.Tree
+	if commit.NumParents() > 0 {
+		parent, err := commit.Parent(0)
+		if err == nil {
+			parentTree, _ = parent.Tree()
+		}
+	}
+
+	commitTree, err := commit.Tree()
+	if err != nil {
+		// Return header without patch
+		return &Result{Stdout: b.String(), Tier: TierNative}, nil
+	}
+
+	if parentTree == nil {
+		// Root commit: diff against empty tree
+		parentTree = &object.Tree{}
+	}
+
+	changes, err := parentTree.Diff(commitTree)
+	if err != nil {
+		// Return header without patch
+		return &Result{Stdout: b.String(), Tier: TierNative}, nil
+	}
+
+	patch, err := changes.Patch()
+	if err != nil {
+		return &Result{Stdout: b.String(), Tier: TierNative}, nil
+	}
+
+	b.WriteString(patch.String())
+
+	return &Result{Stdout: b.String(), Tier: TierNative}, nil
+}
+
 func nativeStash(_ context.Context, _ string, _ []string) (*Result, error) {
 	return nil, ErrNotImplemented
 }
@@ -682,4 +979,49 @@ func nativeWorktree(_ context.Context, _ string, _ []string) (*Result, error) {
 
 func nativeMerge(_ context.Context, _ string, _ []string) (*Result, error) {
 	return nil, ErrNotImplemented
+}
+
+// parseGitDate attempts to parse a date string in common git formats.
+// Dates without explicit timezone are interpreted in the local timezone,
+// matching git's default behavior.
+func parseGitDate(s string) (time.Time, error) {
+	formats := []string{
+		"2006-01-02",
+		"2006-01-02T15:04:05",
+		"Jan 2 2006",
+		"2 Jan 2006",
+	}
+	// Try local timezone first (matches git behavior)
+	for _, f := range formats {
+		if t, err := time.ParseInLocation(f, s, time.Local); err == nil {
+			return t, nil
+		}
+	}
+	// Try RFC3339 which includes timezone
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("unsupported date format: %s", s)
+}
+
+// branchContainsCommit checks if the branch tip is an ancestor of (or equal to)
+// the given commit, meaning the branch contains that commit in its history.
+func branchContainsCommit(repo *git.Repository, branchTip, target plumbing.Hash) bool {
+	if branchTip == target {
+		return true
+	}
+	// Walk backwards from branchTip looking for target
+	iter, err := repo.Log(&git.LogOptions{From: branchTip})
+	if err != nil {
+		return false
+	}
+	found := false
+	_ = iter.ForEach(func(c *object.Commit) error {
+		if c.Hash == target {
+			found = true
+			return fmt.Errorf("stop")
+		}
+		return nil
+	})
+	return found
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -325,6 +326,182 @@ func TestNativeMerge_ReturnsNotImplemented(t *testing.T) {
 	_, err := nativeMerge(context.Background(), "", nil)
 	if err != ErrNotImplemented {
 		t.Errorf("expected ErrNotImplemented, got %v", err)
+	}
+}
+
+func TestNativeReset(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+	dir := setupTestRepo(t)
+
+	// Create and stage a new file
+	newFile := filepath.Join(dir, "staged.txt")
+	if err := os.WriteFile(newFile, []byte("staged content\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	repo, _ := git.PlainOpen(dir)
+	wt, _ := repo.Worktree()
+	if _, err := wt.Add("staged.txt"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	// Verify it's staged (Added = 65 = 'A')
+	status, _ := wt.Status()
+	if status.File("staged.txt").Staging != git.Added {
+		t.Fatalf("file should be staged (Added) before reset, got %v", status.File("staged.txt").Staging)
+	}
+
+	// Reset (unstage all)
+	result, err := nativeReset(context.Background(), dir, []string{"HEAD"})
+	if err != nil {
+		t.Fatalf("reset error: %v", err)
+	}
+	if result.Tier != TierNative {
+		t.Errorf("expected TierNative, got %v", result.Tier)
+	}
+
+	// Verify file is no longer staged as Added.
+	// After reset, a newly added file (not in HEAD) becomes untracked ('?').
+	status, _ = wt.Status()
+	fs := status.File("staged.txt")
+	if fs.Staging == git.Added {
+		t.Errorf("file should not be staged as Added after reset, got staging=%v", fs.Staging)
+	}
+}
+
+func TestNativeShow(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+	dir := setupTestRepo(t)
+
+	// Get HEAD hash
+	repo, _ := git.PlainOpen(dir)
+	head, _ := repo.Head()
+	hash := head.Hash().String()
+
+	result, err := nativeShow(context.Background(), dir, []string{hash})
+	if err != nil {
+		t.Fatalf("show error: %v", err)
+	}
+	if !strings.Contains(result.Stdout, "commit "+hash) {
+		t.Errorf("expected commit hash in output, got %q", result.Stdout)
+	}
+	if !strings.Contains(result.Stdout, "Author: Test User") {
+		t.Errorf("expected author in output, got %q", result.Stdout)
+	}
+	if !strings.Contains(result.Stdout, "initial commit") {
+		t.Errorf("expected commit message in output, got %q", result.Stdout)
+	}
+	// Should include the patch for the initial commit
+	if !strings.Contains(result.Stdout, "hello") {
+		t.Errorf("expected patch content in output, got %q", result.Stdout)
+	}
+}
+
+func TestNativeLogSince(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+	dir := t.TempDir()
+
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+
+	wt, _ := repo.Worktree()
+
+	// Create an old commit (2 days ago)
+	oldFile := filepath.Join(dir, "old.txt")
+	if err := os.WriteFile(oldFile, []byte("old\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	wt.Add("old.txt")
+	oldTime := time.Now().Add(-48 * time.Hour)
+	wt.Commit("old commit", &git.CommitOptions{
+		Author:    &object.Signature{Name: "Test", Email: "t@t.com", When: oldTime},
+		Committer: &object.Signature{Name: "Test", Email: "t@t.com", When: oldTime},
+	})
+
+	// Create a recent commit (now)
+	newFile := filepath.Join(dir, "new.txt")
+	if err := os.WriteFile(newFile, []byte("new\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	wt.Add("new.txt")
+	now := time.Now()
+	wt.Commit("recent commit", &git.CommitOptions{
+		Author:    &object.Signature{Name: "Test", Email: "t@t.com", When: now},
+		Committer: &object.Signature{Name: "Test", Email: "t@t.com", When: now},
+	})
+
+	// Log with --since=1 day ago (should only show recent commit)
+	sinceDate := time.Now().Add(-24 * time.Hour).Format("2006-01-02")
+	result, err := nativeLog(context.Background(), dir, []string{"--oneline", "--since=" + sinceDate})
+	if err != nil {
+		t.Fatalf("log error: %v", err)
+	}
+	if !strings.Contains(result.Stdout, "recent commit") {
+		t.Errorf("expected 'recent commit' in output, got %q", result.Stdout)
+	}
+	if strings.Contains(result.Stdout, "old commit") {
+		t.Errorf("should not contain 'old commit', got %q", result.Stdout)
+	}
+}
+
+func TestNativeBranchListAll(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+	dir := setupTestRepo(t)
+
+	// Create a second branch
+	repo, _ := git.PlainOpen(dir)
+	head, _ := repo.Head()
+	ref := plumbing.NewHashReference(plumbing.NewBranchReferenceName("feature"), head.Hash())
+	_ = repo.Storer.SetReference(ref)
+
+	// List with -a (all branches)
+	result, err := nativeBranch(context.Background(), dir, []string{"-a"})
+	if err != nil {
+		t.Fatalf("branch -a error: %v", err)
+	}
+	if !strings.Contains(result.Stdout, "master") {
+		t.Errorf("expected 'master' in output, got %q", result.Stdout)
+	}
+	if !strings.Contains(result.Stdout, "feature") {
+		t.Errorf("expected 'feature' in output, got %q", result.Stdout)
+	}
+}
+
+func TestNativeBranchContains(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+	dir := setupTestRepo(t)
+
+	// Get HEAD hash (the initial commit)
+	repo, _ := git.PlainOpen(dir)
+	head, _ := repo.Head()
+	commitHash := head.Hash().String()[:7]
+
+	// Create a second branch at HEAD
+	ref := plumbing.NewHashReference(plumbing.NewBranchReferenceName("feature"), head.Hash())
+	_ = repo.Storer.SetReference(ref)
+
+	// --contains should show both branches
+	result, err := nativeBranch(context.Background(), dir, []string{"--contains", commitHash})
+	if err != nil {
+		t.Fatalf("branch --contains error: %v", err)
+	}
+	if !strings.Contains(result.Stdout, "master") {
+		t.Errorf("expected 'master' in output, got %q", result.Stdout)
+	}
+	if !strings.Contains(result.Stdout, "feature") {
+		t.Errorf("expected 'feature' in output, got %q", result.Stdout)
 	}
 }
 

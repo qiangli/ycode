@@ -20,11 +20,12 @@ func RegisterGitDiffHandler(r *Registry, workDir string, ge *git.GitExec) {
 	}
 	spec.Handler = func(ctx context.Context, input json.RawMessage) (string, error) {
 		var params struct {
-			Staged      bool   `json:"staged"`
-			Path        string `json:"path"`
-			CommitRange string `json:"commit_range"`
-			MergeBase   bool   `json:"merge_base"`
-			BaseBranch  string `json:"base_branch"`
+			Staged       bool   `json:"staged"`
+			Path         string `json:"path"`
+			CommitRange  string `json:"commit_range"`
+			MergeBase    bool   `json:"merge_base"`
+			BaseBranch   string `json:"base_branch"`
+			ContextLines *int   `json:"context_lines"`
 		}
 		if err := json.Unmarshal(input, &params); err != nil {
 			return "", fmt.Errorf("parse view_diff input: %w", err)
@@ -32,16 +33,16 @@ func RegisterGitDiffHandler(r *Registry, workDir string, ge *git.GitExec) {
 
 		// If merge_base is requested, compute diff from merge base.
 		if params.MergeBase {
-			return viewDiffMergeBase(ctx, ge, workDir, params.BaseBranch, params.Path)
+			return viewDiffMergeBase(ctx, ge, workDir, params.BaseBranch, params.Path, params.ContextLines)
 		}
 
-		return viewDiff(ctx, ge, workDir, params.Staged, params.Path, params.CommitRange)
+		return viewDiff(ctx, ge, workDir, params.Staged, params.Path, params.CommitRange, params.ContextLines)
 	}
 }
 
 // viewDiffMergeBase shows the diff from the merge base of the current branch
 // against a base branch (defaults to main/master).
-func viewDiffMergeBase(ctx context.Context, ge *git.GitExec, workDir, baseBranch, path string) (string, error) {
+func viewDiffMergeBase(ctx context.Context, ge *git.GitExec, workDir, baseBranch, path string, contextLines *int) (string, error) {
 	if baseBranch == "" {
 		baseBranch = detectBaseBranch(ctx, ge, workDir)
 	}
@@ -53,7 +54,11 @@ func viewDiffMergeBase(ctx context.Context, ge *git.GitExec, workDir, baseBranch
 	}
 
 	// Run diff from merge base.
-	args := []string{"diff", base + "..HEAD"}
+	args := []string{"diff"}
+	if contextLines != nil {
+		args = append(args, fmt.Sprintf("--unified=%d", *contextLines))
+	}
+	args = append(args, base+"..HEAD")
 	if path != "" {
 		args = append(args, "--", path)
 	}
@@ -84,9 +89,12 @@ func detectBaseBranch(ctx context.Context, ge *git.GitExec, workDir string) stri
 }
 
 // viewDiff runs git diff with the specified options and returns the output.
-func viewDiff(ctx context.Context, ge *git.GitExec, workDir string, staged bool, path, commitRange string) (string, error) {
+func viewDiff(ctx context.Context, ge *git.GitExec, workDir string, staged bool, path, commitRange string, contextLines *int) (string, error) {
 	args := []string{"diff"}
 
+	if contextLines != nil {
+		args = append(args, fmt.Sprintf("--unified=%d", *contextLines))
+	}
 	if staged {
 		args = append(args, "--cached")
 	}

@@ -37,6 +37,9 @@ func RegisterGitHandlers(r *Registry, deps *GitToolsDeps) {
 	registerGitCommitHandler(r, workDir, ge)
 	registerGitBranchHandler(r, workDir, ge)
 	registerGitStashHandler(r, workDir, ge)
+	registerGitAddHandler(r, workDir, ge)
+	registerGitResetHandler(r, workDir, ge)
+	registerGitShowHandler(r, workDir, ge)
 }
 
 func registerGitStatusHandler(r *Registry, workDir string, ge *git.GitExec) {
@@ -69,6 +72,7 @@ func registerGitLogHandler(r *Registry, workDir string, ge *git.GitExec) {
 			Path    string `json:"path"`
 			Author  string `json:"author"`
 			Since   string `json:"since"`
+			Until   string `json:"until"`
 			Diff    string `json:"diff"`
 		}
 		if err := json.Unmarshal(input, &params); err != nil {
@@ -92,6 +96,9 @@ func registerGitLogHandler(r *Registry, workDir string, ge *git.GitExec) {
 		}
 		if params.Since != "" {
 			args = append(args, "--since="+params.Since)
+		}
+		if params.Until != "" {
+			args = append(args, "--until="+params.Until)
 		}
 		if params.Diff != "" {
 			args = append(args, params.Diff)
@@ -163,6 +170,9 @@ func registerGitBranchHandler(r *Registry, workDir string, ge *git.GitExec) {
 			Action     string `json:"action"`
 			Name       string `json:"name"`
 			StartPoint string `json:"start_point"`
+			Remote     bool   `json:"remote"`
+			All        bool   `json:"all"`
+			Contains   string `json:"contains"`
 		}
 		if err := json.Unmarshal(input, &params); err != nil {
 			return "", fmt.Errorf("parse git_branch input: %w", err)
@@ -177,6 +187,14 @@ func registerGitBranchHandler(r *Registry, workDir string, ge *git.GitExec) {
 		switch action {
 		case "list":
 			args = []string{"branch", "-v"}
+			if params.All {
+				args = append(args, "-a")
+			} else if params.Remote {
+				args = append(args, "-r")
+			}
+			if params.Contains != "" {
+				args = append(args, "--contains", params.Contains)
+			}
 		case "create":
 			if params.Name == "" {
 				return "", fmt.Errorf("branch name is required for create")
@@ -259,6 +277,99 @@ func registerGitStashHandler(r *Registry, workDir string, ge *git.GitExec) {
 			return fmt.Sprintf("stash %s completed", action), nil
 		}
 		return truncateOutput(result), nil
+	}
+}
+
+func registerGitAddHandler(r *Registry, workDir string, ge *git.GitExec) {
+	spec, ok := r.Get("git_add")
+	if !ok {
+		return
+	}
+	spec.Handler = func(ctx context.Context, input json.RawMessage) (string, error) {
+		var params struct {
+			Files []string `json:"files"`
+			All   bool     `json:"all"`
+		}
+		if err := json.Unmarshal(input, &params); err != nil {
+			return "", fmt.Errorf("parse git_add input: %w", err)
+		}
+
+		var args []string
+		if params.All {
+			args = []string{"add", "-A"}
+		} else if len(params.Files) > 0 {
+			args = append([]string{"add", "--"}, params.Files...)
+		} else {
+			return "", fmt.Errorf("either 'files' or 'all' must be specified")
+		}
+
+		out, err := ge.Run(ctx, workDir, args...)
+		if err != nil {
+			return "", fmt.Errorf("git add: %w", err)
+		}
+		result := strings.TrimRight(out, "\n")
+		if result == "" {
+			return "files staged successfully", nil
+		}
+		return result, nil
+	}
+}
+
+func registerGitResetHandler(r *Registry, workDir string, ge *git.GitExec) {
+	spec, ok := r.Get("git_reset")
+	if !ok {
+		return
+	}
+	spec.Handler = func(ctx context.Context, input json.RawMessage) (string, error) {
+		var params struct {
+			Files []string `json:"files"`
+		}
+		if err := json.Unmarshal(input, &params); err != nil {
+			return "", fmt.Errorf("parse git_reset input: %w", err)
+		}
+
+		var args []string
+		if len(params.Files) > 0 {
+			args = append([]string{"reset", "HEAD", "--"}, params.Files...)
+		} else {
+			args = []string{"reset", "HEAD"}
+		}
+
+		out, err := ge.Run(ctx, workDir, args...)
+		if err != nil {
+			return "", fmt.Errorf("git reset: %w", err)
+		}
+		result := strings.TrimRight(out, "\n")
+		if result == "" {
+			return "unstaged successfully", nil
+		}
+		return result, nil
+	}
+}
+
+func registerGitShowHandler(r *Registry, workDir string, ge *git.GitExec) {
+	spec, ok := r.Get("git_show")
+	if !ok {
+		return
+	}
+	spec.Handler = func(ctx context.Context, input json.RawMessage) (string, error) {
+		var params struct {
+			Revision string `json:"revision"`
+		}
+		if err := json.Unmarshal(input, &params); err != nil {
+			return "", fmt.Errorf("parse git_show input: %w", err)
+		}
+		if params.Revision == "" {
+			return "", fmt.Errorf("revision is required")
+		}
+
+		args := []string{"show", params.Revision}
+
+		out, err := ge.Run(ctx, workDir, args...)
+		if err != nil {
+			return "", fmt.Errorf("git show: %w", err)
+		}
+		return truncateOutput(strings.TrimRight(out, "\n")), nil
 	}
 }
 

@@ -32,6 +32,8 @@ func NewGitDef() *ToolDef {
 			"commit":   nativeCommit,
 			"branch":   nativeBranch,
 			"checkout": nativeCheckout,
+			"reset":    nativeReset,
+			"show":     nativeShow,
 			"stash":    nativeStash,
 			// Phase 3: Complex commands (mostly ErrNotImplemented)
 			"worktree":     nativeWorktree,

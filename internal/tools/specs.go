@@ -322,6 +322,27 @@ func builtinSpecs() []*ToolSpec {
 			RequiredMode: permission.WorkspaceWrite,
 			Source:       SourceBuiltin,
 		},
+		{
+			Name:         "git_add",
+			Description:  "Stage file changes for the next commit. Can stage specific files or all changes.",
+			InputSchema:  mustJSON(gitAddSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "git_reset",
+			Description:  "Unstage files from the index. Removes files from staging without changing the working tree.",
+			InputSchema:  mustJSON(gitResetSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "git_show",
+			Description:  "Show details of a commit including message, author, date, and patch.",
+			InputSchema:  mustJSON(gitShowSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
 
 		// Git server — embedded Gitea for agent collaboration
 		{
@@ -766,7 +787,8 @@ var (
 			"path": {"type": "string", "description": "Limit diff to specific file or directory"},
 			"commit_range": {"type": "string", "description": "Commit range (e.g., 'HEAD~3..HEAD', 'main..feature')"},
 			"merge_base": {"type": "boolean", "description": "Diff from the merge base of current branch against base_branch (accurate PR diff)"},
-			"base_branch": {"type": "string", "description": "Base branch for merge_base diff (default: main or master)"}
+			"base_branch": {"type": "string", "description": "Base branch for merge_base diff (default: main or master)"},
+			"context_lines": {"type": "integer", "description": "Number of context lines around changes (default: 3)"}
 		}
 	}`
 
@@ -785,6 +807,7 @@ var (
 			"path": {"type": "string", "description": "Limit to commits affecting this path"},
 			"author": {"type": "string", "description": "Filter by author name or email"},
 			"since": {"type": "string", "description": "Show commits since date (e.g., '2024-01-01', '1 week ago')"},
+			"until": {"type": "string", "description": "Show commits until date (e.g., '2024-12-31', '1 day ago')"},
 			"diff": {"type": "string", "description": "Show diff against a branch or commit (e.g., 'main..HEAD')"}
 		}
 	}`
@@ -804,7 +827,10 @@ var (
 		"properties": {
 			"action": {"type": "string", "enum": ["list", "create", "switch", "delete"], "description": "Branch operation to perform (default: list)"},
 			"name": {"type": "string", "description": "Branch name (required for create, switch, delete)"},
-			"start_point": {"type": "string", "description": "Starting point for new branch (default: HEAD)"}
+			"start_point": {"type": "string", "description": "Starting point for new branch (default: HEAD)"},
+			"remote": {"type": "boolean", "description": "List remote-tracking branches (-r flag, for action=list)"},
+			"all": {"type": "boolean", "description": "List all branches including remote-tracking (-a flag, for action=list)"},
+			"contains": {"type": "string", "description": "Only list branches containing the specified commit (for action=list)"}
 		}
 	}`
 
@@ -815,6 +841,29 @@ var (
 			"message": {"type": "string", "description": "Stash message (for push)"},
 			"index": {"type": "integer", "description": "Stash index (for pop, drop, show; default 0)"}
 		}
+	}`
+
+	gitAddSchema = `{
+		"type": "object",
+		"properties": {
+			"files": {"type": "array", "items": {"type": "string"}, "description": "File paths to stage"},
+			"all": {"type": "boolean", "description": "Stage all changes (git add -A)"}
+		}
+	}`
+
+	gitResetSchema = `{
+		"type": "object",
+		"properties": {
+			"files": {"type": "array", "items": {"type": "string"}, "description": "Files to unstage (empty = unstage all)"}
+		}
+	}`
+
+	gitShowSchema = `{
+		"type": "object",
+		"properties": {
+			"revision": {"type": "string", "description": "Commit hash or reference to inspect"}
+		},
+		"required": ["revision"]
 	}`
 
 	memosStoreSchema = `{
