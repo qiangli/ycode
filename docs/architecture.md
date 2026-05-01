@@ -755,15 +755,29 @@ Three clear levels with no exceptions:
 - Plan mode is infectious
 - VFS enforces boundaries regardless of mode
 
-### 5. Container-First Architecture
+### 5. Zero External Binary Dependencies
+
+ycode requires no external binaries at runtime for its core agent loop:
+
+- **Shell execution:** In-process interpreter via vendored `mvdan.cc/sh` (with pipeline fd fix)
+- **Git operations:** 31 native go-git NativeFuncs with 3-tier fallback (native → host git → container)
+- **Tree-sitter parsing:** Pure Go `gotreesitter` library (no CGO)
+- **GitHub auth:** Reads `~/.config/gh/hosts.yml` directly (no `gh` CLI)
+
+Graceful degradation for the embedded git server (Gitea):
+- If `git` binary found on PATH → Gitea runs in-process
+- If `git` not found → Gitea starts inside a podman container (Alpine + git)
+
+### 6. Container-First Architecture
 
 Heavy dependencies isolated in containers:
 - Browser automation
-- AST analysis tools
+- AST analysis tools (rewrites only — search is native)
 - Sandbox execution
+- Embedded git server (fallback when no host git)
 - Keeps binary small, dependencies minimal
 
-### 6. Local-First LLM Support
+### 7. Local-First LLM Support
 
 Embedded Ollama runner:
 - No external dependencies for local inference
@@ -772,11 +786,45 @@ Embedded Ollama runner:
 
 ---
 
-## Dependencies
+## Runtime Dependencies
+
+### Required Services
+
+| Service | Purpose | Fallback |
+|---------|---------|----------|
+| LLM API (Anthropic/OpenAI) | Inference | Local Ollama |
+
+### Optional External Binaries (graceful degradation)
+
+| Binary | Purpose | When needed | Fallback |
+|--------|---------|-------------|----------|
+| `git` | Gitea server operations | Only if gitserver enabled | Container with git |
+| `sh` | Interactive TTY commands | Only for `NeedsTTY()` commands | None (TTY commands skipped) |
+| `script` | TTY output capture | macOS/Linux interactive mode | Direct sh without capture |
+| `codesign` | Sign extracted binaries | macOS only | Ignored on failure |
+| `open`/`xdg-open` | Open browser for OAuth | Login flow only | Prints URL to terminal |
+| Test runners (`go`, `pytest`, `npx`, `cargo`) | Run user tests | Only when user invokes test tool | Error message |
+
+### Not Required
+
+| Was required | Replaced by | Since |
+|-------------|-------------|-------|
+| `bash` | In-process mvdan/sh interpreter | This release |
+| `git` (for agent ops) | 31 native go-git NativeFuncs | This release |
+| `gh` CLI | Direct YAML config file read | This release |
+| CGO (tree-sitter) | Pure Go gotreesitter | This release |
+| Container (repomap parsing) | Native tree-sitter | This release |
+
+---
+
+## Go Library Dependencies
 
 | Component | Import Path | License |
 |-----------|-------------|---------|
 | Anthropic SDK | `github.com/anthropics/anthropic-sdk-go` | MIT |
+| go-git | `github.com/go-git/go-git/v5` | Apache-2.0 |
+| gotreesitter | `github.com/odvcencio/gotreesitter` | MIT |
+| mvdan/sh | `mvdan.cc/sh/v3` (vendored with fix) | BSD-3-Clause |
 | OpenTelemetry | `go.opentelemetry.io/otel/*` | Apache-2.0 |
 | Bubble Tea (TUI) | `github.com/charmbracelet/bubbletea` | MIT |
 | Cobra (CLI) | `github.com/spf13/cobra` | Apache-2.0 |
