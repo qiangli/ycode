@@ -475,6 +475,247 @@ func builtinSpecs() []*ToolSpec {
 			Source:       SourceBuiltin,
 		},
 		swarmRunSpec(),
+
+		// Phase 1a: MCP tools (handlers in mcp_tools.go)
+		{
+			Name:         "MCP",
+			Description:  "Call a tool provided by a connected MCP server. Specify the server name and tool name.",
+			InputSchema:  mustJSON(mcpSchema),
+			RequiredMode: permission.DangerFullAccess,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "ListMcpResources",
+			Description:  "List resources available from connected MCP servers.",
+			InputSchema:  mustJSON(listMcpResourcesSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "ReadMcpResource",
+			Description:  "Read a specific resource from an MCP server by URI.",
+			InputSchema:  mustJSON(readMcpResourceSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "McpAuth",
+			Description:  "Authenticate with an MCP server that requires credentials.",
+			InputSchema:  mustJSON(mcpAuthSchema),
+			RequiredMode: permission.DangerFullAccess,
+			Source:       SourceBuiltin,
+		},
+
+		// Phase 1b: Team and Cron tools (handlers in team.go)
+		{
+			Name:         "TeamCreate",
+			Description:  "Create a team of sub-agents for parallel task execution.",
+			InputSchema:  mustJSON(teamCreateSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+			Category:     CategoryAgent,
+		},
+		{
+			Name:         "TeamDelete",
+			Description:  "Delete a team and stop all its running tasks.",
+			InputSchema:  mustJSON(teamDeleteSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+			Category:     CategoryAgent,
+		},
+		{
+			Name:         "CronCreate",
+			Description:  "Create a scheduled recurring task with a cron expression.",
+			InputSchema:  mustJSON(cronCreateSchema),
+			RequiredMode: permission.DangerFullAccess,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "CronDelete",
+			Description:  "Delete a scheduled recurring task by ID.",
+			InputSchema:  mustJSON(cronDeleteSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "CronList",
+			Description:  "List all scheduled recurring tasks.",
+			InputSchema:  mustJSON(cronListSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
+		// Phase 1c: Worker tools (handlers in worker.go)
+		{
+			Name:         "WorkerCreate",
+			Description:  "Create a coding worker boot session.",
+			InputSchema:  mustJSON(workerCreateSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+			Category:     CategoryAgent,
+		},
+		{
+			Name:         "WorkerGet",
+			Description:  "Get the current state and details of a worker.",
+			InputSchema:  mustJSON(workerIDSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "WorkerObserve",
+			Description:  "Feed a terminal snapshot into worker boot detection.",
+			InputSchema:  mustJSON(workerObserveSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "WorkerResolveTrust",
+			Description:  "Resolve a detected trust prompt so worker boot can continue.",
+			InputSchema:  mustJSON(workerIDSchema),
+			RequiredMode: permission.DangerFullAccess,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "WorkerAwaitReady",
+			Description:  "Wait until a worker reaches the ready-for-prompt state.",
+			InputSchema:  mustJSON(workerIDSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "WorkerSendPrompt",
+			Description:  "Send a task prompt to a worker that has reached ready state.",
+			InputSchema:  mustJSON(workerSendPromptSchema),
+			RequiredMode: permission.DangerFullAccess,
+			Source:       SourceBuiltin,
+			Category:     CategoryAgent,
+		},
+		{
+			Name:         "WorkerRestart",
+			Description:  "Restart worker boot after a failed or stale startup.",
+			InputSchema:  mustJSON(workerIDSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "WorkerTerminate",
+			Description:  "Terminate a worker and mark its lane as finished.",
+			InputSchema:  mustJSON(workerIDSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "WorkerObserveCompletion",
+			Description:  "Check whether a worker has completed, reporting its finish status.",
+			InputSchema:  mustJSON(workerIDSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
+		// Phase 1d: Task extension tools (handlers in task.go)
+		{
+			Name:         "TaskUpdate",
+			Description:  "Send a message or update to a running task.",
+			InputSchema:  mustJSON(taskUpdateSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "TaskStop",
+			Description:  "Stop a running task by ID.",
+			InputSchema:  mustJSON(taskStopSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "TaskOutput",
+			Description:  "Retrieve the output produced by a task.",
+			InputSchema:  mustJSON(taskOutputSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
+		// Phase 1e: StructuredOutput (handler in structured.go)
+		{
+			Name:         "StructuredOutput",
+			Description:  "Return structured output in a requested JSON format.",
+			InputSchema:  mustJSON(structuredOutputSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
+		// Phase 2: LSP tool spec
+		{
+			Name:         "LSP",
+			Description:  "Query Language Server Protocol for code intelligence. Actions: hover (type info at position), definition (go to definition), references (find all references), symbols (list document symbols), diagnostics (get file diagnostics).",
+			InputSchema:  mustJSON(lspSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
+		// Phase 2d: Memory list
+		{
+			Name:         "memory_list",
+			Description:  "List all persistent memories, optionally filtered by type or scope.",
+			InputSchema:  mustJSON(memoryListSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
+		// Phase 2e: Skill list
+		{
+			Name:         "skill_list",
+			Description:  "List all available skills that can be loaded via the Skill tool.",
+			InputSchema:  mustJSON(skillListSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
+		// Phase 2h: Notebook read
+		{
+			Name:         "notebook_read",
+			Description:  "Read a Jupyter notebook and display its cells with optional outputs.",
+			InputSchema:  mustJSON(notebookReadSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
+		// Phase 3a: Think tool
+		{
+			Name:         "Think",
+			Description:  "Log a reasoning step or internal thought without any side effects. Use as a scratchpad for multi-step reasoning, planning, or recording observations before acting.",
+			InputSchema:  mustJSON(thinkSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
+		// Phase 3b: SendUserMessage
+		{
+			Name:         "SendUserMessage",
+			Description:  "Send a proactive non-blocking message to the user without waiting for a response.",
+			InputSchema:  mustJSON(sendUserMessageSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+			Category:     CategoryInteractive,
+		},
+
+		// Phase 3c: AttemptCompletion
+		{
+			Name:         "AttemptCompletion",
+			Description:  "Signal that the current task is complete and present the final result. Optionally provide a verification command.",
+			InputSchema:  mustJSON(attemptCompletionSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
+		// Phase 3d: CreateRule
+		{
+			Name:         "CreateRule",
+			Description:  "Create a persistent coding rule file. Rules are stored in .agents/ycode/rules/ and loaded into future sessions.",
+			InputSchema:  mustJSON(createRuleSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
 	}
 }
 
@@ -1087,5 +1328,229 @@ var (
 				"description": "Timeout in seconds (default: 120)."
 			}
 		}
+	}`
+
+	// Phase 1a: MCP schemas
+	mcpSchema = `{
+		"type": "object",
+		"properties": {
+			"server_name": {"type": "string", "description": "Name of the MCP server"},
+			"tool_name": {"type": "string", "description": "Name of the tool to call"},
+			"arguments": {"type": "object", "description": "Arguments to pass to the tool"}
+		},
+		"required": ["server_name", "tool_name"]
+	}`
+
+	listMcpResourcesSchema = `{
+		"type": "object",
+		"properties": {
+			"server_name": {"type": "string", "description": "Name of the MCP server (optional, lists all if omitted)"}
+		}
+	}`
+
+	readMcpResourceSchema = `{
+		"type": "object",
+		"properties": {
+			"server_name": {"type": "string", "description": "Name of the MCP server"},
+			"uri": {"type": "string", "description": "URI of the resource to read"}
+		},
+		"required": ["server_name", "uri"]
+	}`
+
+	mcpAuthSchema = `{
+		"type": "object",
+		"properties": {
+			"server_name": {"type": "string", "description": "Name of the MCP server to authenticate with"}
+		},
+		"required": ["server_name"]
+	}`
+
+	// Phase 1b: Team and Cron schemas
+	teamCreateSchema = `{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string", "description": "Name for the team"}
+		},
+		"required": ["name"]
+	}`
+
+	teamDeleteSchema = `{
+		"type": "object",
+		"properties": {
+			"id": {"type": "string", "description": "Team ID to delete"}
+		},
+		"required": ["id"]
+	}`
+
+	cronCreateSchema = `{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string", "description": "Name for the cron job"},
+			"schedule": {"type": "string", "description": "Cron expression (e.g., '*/5 * * * *')"},
+			"command": {"type": "string", "description": "Command or prompt to execute on schedule"}
+		},
+		"required": ["name", "schedule", "command"]
+	}`
+
+	cronDeleteSchema = `{
+		"type": "object",
+		"properties": {
+			"id": {"type": "string", "description": "Cron job ID to delete"}
+		},
+		"required": ["id"]
+	}`
+
+	cronListSchema = `{
+		"type": "object",
+		"properties": {}
+	}`
+
+	// Phase 1c: Worker schemas
+	workerCreateSchema = `{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string", "description": "Name for the worker"}
+		},
+		"required": ["name"]
+	}`
+
+	workerIDSchema = `{
+		"type": "object",
+		"properties": {
+			"id": {"type": "string", "description": "Worker ID"}
+		},
+		"required": ["id"]
+	}`
+
+	workerObserveSchema = `{
+		"type": "object",
+		"properties": {
+			"id": {"type": "string", "description": "Worker ID"},
+			"snapshot": {"type": "string", "description": "Terminal snapshot content"}
+		},
+		"required": ["id", "snapshot"]
+	}`
+
+	workerSendPromptSchema = `{
+		"type": "object",
+		"properties": {
+			"id": {"type": "string", "description": "Worker ID"},
+			"prompt": {"type": "string", "description": "Task prompt to send"}
+		},
+		"required": ["id", "prompt"]
+	}`
+
+	// Phase 1d: Task extension schemas
+	taskUpdateSchema = `{
+		"type": "object",
+		"properties": {
+			"task_id": {"type": "string", "description": "Task ID"},
+			"message": {"type": "string", "description": "Message or update to send"}
+		},
+		"required": ["task_id", "message"]
+	}`
+
+	taskStopSchema = `{
+		"type": "object",
+		"properties": {
+			"task_id": {"type": "string", "description": "Task ID to stop"}
+		},
+		"required": ["task_id"]
+	}`
+
+	taskOutputSchema = `{
+		"type": "object",
+		"properties": {
+			"task_id": {"type": "string", "description": "Task ID"}
+		},
+		"required": ["task_id"]
+	}`
+
+	// Phase 1e: StructuredOutput schema
+	structuredOutputSchema = `{
+		"type": "object",
+		"properties": {
+			"output": {"description": "The structured output data"}
+		},
+		"required": ["output"]
+	}`
+
+	// Phase 2g: LSP schema
+	lspSchema = `{
+		"type": "object",
+		"properties": {
+			"action": {"type": "string", "enum": ["hover", "definition", "references", "symbols", "diagnostics"], "description": "LSP action to perform"},
+			"file_path": {"type": "string", "description": "Path to the file"},
+			"line": {"type": "integer", "description": "Line number (1-based, required for hover/definition/references)"},
+			"col": {"type": "integer", "description": "Column number (1-based, required for hover/definition/references)"},
+			"language": {"type": "string", "description": "Language (auto-detected from extension if omitted)"}
+		},
+		"required": ["action", "file_path"]
+	}`
+
+	// Phase 2d: Memory list schema
+	memoryListSchema = `{
+		"type": "object",
+		"properties": {
+			"type": {"type": "string", "enum": ["user", "feedback", "project", "reference"], "description": "Filter by memory type"},
+			"limit": {"type": "integer", "description": "Maximum memories to return (default: 20)"}
+		}
+	}`
+
+	// Phase 2e: Skill list schema
+	skillListSchema = `{
+		"type": "object",
+		"properties": {
+			"query": {"type": "string", "description": "Optional search query to filter skills"}
+		}
+	}`
+
+	// Phase 2h: Notebook read schema
+	notebookReadSchema = `{
+		"type": "object",
+		"properties": {
+			"notebook_path": {"type": "string", "description": "Path to the Jupyter notebook"},
+			"include_outputs": {"type": "boolean", "description": "Include cell outputs (default: false)"}
+		},
+		"required": ["notebook_path"]
+	}`
+
+	// Phase 3a: Think schema
+	thinkSchema = `{
+		"type": "object",
+		"properties": {
+			"thought": {"type": "string", "description": "The reasoning step or internal thought to record"}
+		},
+		"required": ["thought"]
+	}`
+
+	// Phase 3b: SendUserMessage schema
+	sendUserMessageSchema = `{
+		"type": "object",
+		"properties": {
+			"message": {"type": "string", "description": "Message to send to the user"}
+		},
+		"required": ["message"]
+	}`
+
+	// Phase 3c: AttemptCompletion schema
+	attemptCompletionSchema = `{
+		"type": "object",
+		"properties": {
+			"result": {"type": "string", "description": "Summary of what was accomplished"},
+			"command": {"type": "string", "description": "Optional shell command to verify the result"}
+		},
+		"required": ["result"]
+	}`
+
+	// Phase 3d: CreateRule schema
+	createRuleSchema = `{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string", "description": "Rule name (used as filename)"},
+			"content": {"type": "string", "description": "Rule content (markdown instructions)"},
+			"glob": {"type": "string", "description": "Optional file glob pattern to scope the rule"}
+		},
+		"required": ["name", "content"]
 	}`
 )

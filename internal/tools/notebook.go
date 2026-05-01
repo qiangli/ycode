@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/qiangli/ycode/internal/runtime/vfs"
 )
@@ -25,8 +26,9 @@ type Notebook struct {
 	NBFormatMinor int            `json:"nbformat_minor"`
 }
 
-// RegisterNotebookHandler registers the NotebookEdit tool handler with VFS path validation.
+// RegisterNotebookHandler registers the NotebookEdit and notebook_read tool handlers with VFS path validation.
 func RegisterNotebookHandler(r *Registry, v *vfs.VFS) {
+	registerNotebookReadHandler(r, v)
 	spec, ok := r.Get("NotebookEdit")
 	if !ok {
 		return
@@ -93,5 +95,58 @@ func RegisterNotebookHandler(r *Registry, v *vfs.VFS) {
 		r.NotifyFileWrite(params.NotebookPath)
 
 		return fmt.Sprintf("notebook %s: %s cell at index %d", params.NotebookPath, params.Action, params.CellIndex), nil
+	}
+}
+
+// registerNotebookReadHandler registers the notebook_read tool handler.
+func registerNotebookReadHandler(r *Registry, v *vfs.VFS) {
+	spec, ok := r.Get("notebook_read")
+	if !ok {
+		return
+	}
+	spec.Handler = func(ctx context.Context, input json.RawMessage) (string, error) {
+		var params struct {
+			NotebookPath   string `json:"notebook_path"`
+			IncludeOutputs bool   `json:"include_outputs"`
+		}
+		if err := json.Unmarshal(input, &params); err != nil {
+			return "", fmt.Errorf("parse notebook_read input: %w", err)
+		}
+
+		absPath, err := v.ValidatePath(ctx, params.NotebookPath)
+		if err != nil {
+			return "", err
+		}
+
+		data, err := os.ReadFile(absPath)
+		if err != nil {
+			return "", fmt.Errorf("read notebook: %w", err)
+		}
+
+		var nb Notebook
+		if err := json.Unmarshal(data, &nb); err != nil {
+			return "", fmt.Errorf("parse notebook: %w", err)
+		}
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "Notebook: %s (%d cells)\n\n", absPath, len(nb.Cells))
+		for i, cell := range nb.Cells {
+			fmt.Fprintf(&b, "--- Cell %d [%s] ---\n", i, cell.CellType)
+			for _, line := range cell.Source {
+				b.WriteString(line)
+			}
+			b.WriteString("\n")
+
+			if params.IncludeOutputs && len(cell.Outputs) > 0 {
+				fmt.Fprintf(&b, "\n[Output]\n")
+				for _, out := range cell.Outputs {
+					outJSON, _ := json.Marshal(out)
+					b.Write(outJSON)
+					b.WriteString("\n")
+				}
+			}
+			b.WriteString("\n")
+		}
+		return b.String(), nil
 	}
 }

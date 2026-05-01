@@ -297,6 +297,40 @@ func RegisterGitHubHandlers(r *Registry, client *gh.Client) {
 	})
 
 	r.Register(&ToolSpec{
+		Name:        "gh_pr_files",
+		Description: "List files changed in a GitHub pull request.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"number": {"type": "integer", "description": "PR number"}
+			},
+			"required": ["number"]
+		}`),
+		AlwaysAvailable: false,
+		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
+			var params struct {
+				Number int `json:"number"`
+			}
+			if err := json.Unmarshal(input, &params); err != nil {
+				return "", fmt.Errorf("parse input: %w", err)
+			}
+			files, err := client.GetPRFiles(ctx, params.Number)
+			if err != nil {
+				return "", err
+			}
+			if len(files) == 0 {
+				return fmt.Sprintf("No files changed in PR #%d.", params.Number), nil
+			}
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "Files changed in PR #%d (%d files):\n", params.Number, len(files))
+			for _, f := range files {
+				fmt.Fprintf(&sb, "  %s\n", f)
+			}
+			return sb.String(), nil
+		},
+	})
+
+	r.Register(&ToolSpec{
 		Name:        "gh_checks",
 		Description: "Get CI check status for a git ref (branch, tag, or SHA).",
 		InputSchema: json.RawMessage(`{

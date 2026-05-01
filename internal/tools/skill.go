@@ -11,8 +11,10 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/builtin"
 )
 
-// RegisterSkillHandler registers the Skill tool handler.
+// RegisterSkillHandler registers the Skill and skill_list tool handlers.
 func RegisterSkillHandler(r *Registry) {
+	registerSkillListHandler(r)
+
 	spec, ok := r.Get("Skill")
 	if !ok {
 		return
@@ -102,4 +104,70 @@ func skillSearchDirs() []string {
 	}
 
 	return dirs
+}
+
+// registerSkillListHandler registers the skill_list tool handler.
+func registerSkillListHandler(r *Registry) {
+	spec, ok := r.Get("skill_list")
+	if !ok {
+		return
+	}
+	spec.Handler = func(_ context.Context, input json.RawMessage) (string, error) {
+		var params struct {
+			Query string `json:"query,omitempty"`
+		}
+		if err := json.Unmarshal(input, &params); err != nil {
+			return "", fmt.Errorf("parse skill_list input: %w", err)
+		}
+
+		dirs := skillSearchDirs()
+		var skills []string
+		seen := make(map[string]bool)
+
+		for _, dir := range dirs {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, entry := range entries {
+				name := entry.Name()
+				// Check for skill directories (containing SKILL.md or skill.md).
+				if entry.IsDir() {
+					skillPath := filepath.Join(dir, name, "SKILL.md")
+					if _, err := os.Stat(skillPath); err != nil {
+						skillPath = filepath.Join(dir, name, "skill.md")
+						if _, err := os.Stat(skillPath); err != nil {
+							continue
+						}
+					}
+					if !seen[name] {
+						seen[name] = true
+						if params.Query == "" || strings.Contains(strings.ToLower(name), strings.ToLower(params.Query)) {
+							skills = append(skills, name)
+						}
+					}
+				} else if strings.HasSuffix(name, ".md") {
+					// Also check for standalone skill .md files.
+					skillName := strings.TrimSuffix(name, ".md")
+					if !seen[skillName] {
+						seen[skillName] = true
+						if params.Query == "" || strings.Contains(strings.ToLower(skillName), strings.ToLower(params.Query)) {
+							skills = append(skills, skillName)
+						}
+					}
+				}
+			}
+		}
+
+		if len(skills) == 0 {
+			return "No skills found.", nil
+		}
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "Available skills (%d):\n", len(skills))
+		for _, s := range skills {
+			fmt.Fprintf(&b, "- %s\n", s)
+		}
+		return b.String(), nil
+	}
 }

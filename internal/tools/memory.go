@@ -18,7 +18,7 @@ func SetMemoryManager(m *memory.Manager) {
 }
 
 // RegisterMemoryHandlers wires up the memory_save, memory_recall,
-// memory_forget, and memory_feedback tool handlers.
+// memory_forget, memory_feedback, and memory_list tool handlers.
 func RegisterMemoryHandlers(r *Registry) {
 	if spec, ok := r.Get("memory_save"); ok {
 		spec.Handler = handleMemorySave
@@ -31,6 +31,9 @@ func RegisterMemoryHandlers(r *Registry) {
 	}
 	if spec, ok := r.Get("memory_feedback"); ok {
 		spec.Handler = handleMemoryFeedback
+	}
+	if spec, ok := r.Get("memory_list"); ok {
+		spec.Handler = handleMemoryList
 	}
 }
 
@@ -175,4 +178,56 @@ func handleMemoryFeedback(_ context.Context, input json.RawMessage) (string, err
 	}
 
 	return "", fmt.Errorf("memory %q not found", params.Name)
+}
+
+func handleMemoryList(_ context.Context, input json.RawMessage) (string, error) {
+	if err := checkMemoryManager(); err != nil {
+		return "", err
+	}
+
+	var params struct {
+		Type  memory.Type `json:"type"`
+		Limit int         `json:"limit"`
+	}
+	if err := json.Unmarshal(input, &params); err != nil {
+		return "", fmt.Errorf("parse memory_list input: %w", err)
+	}
+	if params.Limit <= 0 {
+		params.Limit = 20
+	}
+
+	all, err := memManager.All()
+	if err != nil {
+		return "", err
+	}
+
+	// Filter by type if specified.
+	var filtered []*memory.Memory
+	for _, mem := range all {
+		if params.Type != "" && mem.Type != params.Type {
+			continue
+		}
+		filtered = append(filtered, mem)
+		if len(filtered) >= params.Limit {
+			break
+		}
+	}
+
+	if len(filtered) == 0 {
+		if params.Type != "" {
+			return fmt.Sprintf("No memories found with type %q.", params.Type), nil
+		}
+		return "No memories found.", nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Found %d memory(ies):\n\n", len(filtered))
+	for _, mem := range filtered {
+		fmt.Fprintf(&b, "- **%s** (type: %s)", mem.Name, mem.Type)
+		if mem.Description != "" {
+			fmt.Fprintf(&b, " — %s", mem.Description)
+		}
+		fmt.Fprintf(&b, "\n")
+	}
+	return b.String(), nil
 }
