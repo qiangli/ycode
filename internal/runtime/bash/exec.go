@@ -1,16 +1,13 @@
 package bash
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/qiangli/ycode/internal/runtime/bash/shellparse"
+	"github.com/qiangli/ycode/internal/runtime/permission"
 )
 
 const (
@@ -175,6 +172,7 @@ func needsTTYStringBased(command string) bool {
 }
 
 // Execute runs a bash command and returns the result.
+// It uses the in-process mvdan/sh interpreter for execution.
 func Execute(ctx context.Context, params ExecParams) (*ExecResult, error) {
 	// Commands that need interactive terminal access cannot run through
 	// piped execution. Delegate to the TTY executor if one is available;
@@ -213,39 +211,19 @@ func Execute(ctx context.Context, params ExecParams) (*ExecResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", params.Command)
-	if params.WorkDir != "" {
-		cmd.Dir = params.WorkDir
-	}
-	// Create a new process group so signals reach the entire process tree.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	// Stdin: use provided content or /dev/null.
-	if params.Stdin != "" {
-		cmd.Stdin = strings.NewReader(params.Stdin)
-	} else {
-		cmd.Stdin, _ = os.Open(os.DevNull)
+	// Use the in-process interpreter with full-access mode for the
+	// top-level Execute path. Permission enforcement is done at the
+	// tool layer above; here we allow all commands.
+	executor := NewInterpreterExecutor(nil, permission.DangerFullAccess)
+	execParams := ExecParams{
+		Command: params.Command,
+		WorkDir: params.WorkDir,
+		Stdin:   params.Stdin,
 	}
 
-	err := cmd.Run()
-
-	result := &ExecResult{
-		Stdout: truncateOutput(stdout.String()),
-		Stderr: truncateOutput(stderr.String()),
-	}
-
+	result, err := executor.Execute(ctx, execParams)
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			result.ExitCode = exitErr.ExitCode()
-		} else if ctx.Err() == context.DeadlineExceeded {
-			return result, fmt.Errorf("command timed out after %v", timeout)
-		} else {
-			return result, fmt.Errorf("execute command: %w", err)
-		}
+		return result, fmt.Errorf("command timed out after %v", timeout)
 	}
 
 	return result, nil

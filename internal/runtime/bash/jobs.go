@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/qiangli/ycode/internal/runtime/permission"
 )
 
 // JobStatus represents the lifecycle state of a background job.
@@ -32,7 +33,6 @@ type Job struct {
 
 	stdout *RingBuffer
 	stderr *RingBuffer
-	cmd    *exec.Cmd
 	cancel context.CancelFunc
 	mu     sync.RWMutex
 }
@@ -69,23 +69,33 @@ func (j *Job) FullOutput() string {
 	return out
 }
 
-// Signal sends a signal to the background process group.
-// Callers should check job status before calling this; this method only
-// validates that the process handle exists.
+// Signal sends a signal to the background job.
+// For SIGTERM/SIGKILL this cancels the interpreter context.
+// For other signals, it attempts to send to the process group if PID is known.
+// Callers (SignalJob) handle status validation before calling this.
 func (j *Job) Signal(sig os.Signal) error {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 
-	if j.cmd == nil || j.cmd.Process == nil {
-		return fmt.Errorf("process not running")
-	}
-
-	// Send to process group (negative PID) so child processes also receive it.
 	sysSig, ok := sig.(syscall.Signal)
 	if !ok {
 		return fmt.Errorf("unsupported signal type")
 	}
-	return syscall.Kill(-j.cmd.Process.Pid, sysSig)
+
+	// For termination signals, cancel the context which will propagate
+	// to all child processes via the interpreter's exec handler.
+	if sysSig == syscall.SIGTERM || sysSig == syscall.SIGKILL {
+		if j.cancel != nil {
+			j.cancel()
+		}
+		return nil
+	}
+
+	// For other signals, try to send to process group if we have a PID.
+	if j.PID > 0 {
+		return syscall.Kill(-j.PID, sysSig)
+	}
+	return fmt.Errorf("cannot send signal %v: no PID available", sig)
 }
 
 // StatusSummary returns a human-readable status string.
@@ -130,32 +140,17 @@ func (jr *JobRegistry) Start(ctx context.Context, command string, workDir string
 	jr.mu.Unlock()
 
 	ctx, cancel := context.WithCancel(ctx)
-	cmd := exec.CommandContext(ctx, "bash", "-c", command)
-	if workDir != "" {
-		cmd.Dir = workDir
-	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	stdout := NewRingBuffer(MaxOutputSize)
 	stderr := NewRingBuffer(MaxOutputSize)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	cmd.Stdin, _ = os.Open(os.DevNull)
-
-	if err := cmd.Start(); err != nil {
-		cancel()
-		return "", fmt.Errorf("start background job: %w", err)
-	}
 
 	job := &Job{
 		ID:        id,
 		Command:   command,
 		Status:    JobRunning,
-		PID:       cmd.Process.Pid,
 		StartedAt: time.Now(),
 		stdout:    stdout,
 		stderr:    stderr,
-		cmd:       cmd,
 		cancel:    cancel,
 	}
 
@@ -163,9 +158,16 @@ func (jr *JobRegistry) Start(ctx context.Context, command string, workDir string
 	jr.jobs[id] = job
 	jr.mu.Unlock()
 
-	// Cleanup goroutine: wait for process to exit and update status.
+	// Run the interpreter in a goroutine for background execution.
 	go func() {
-		err := cmd.Wait()
+		executor := NewInterpreterExecutor(nil, permission.DangerFullAccess)
+		params := ExecParams{
+			Command: command,
+			WorkDir: workDir,
+		}
+
+		result, _ := executor.Execute(ctx, params)
+
 		job.mu.Lock()
 		job.EndedAt = time.Now()
 		if job.Status == JobStopped {
@@ -173,14 +175,24 @@ func (jr *JobRegistry) Start(ctx context.Context, command string, workDir string
 			job.mu.Unlock()
 			return
 		}
-		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				job.ExitCode = exitErr.ExitCode()
+
+		// Write output to ring buffers.
+		if result != nil {
+			if result.Stdout != "" {
+				_, _ = stdout.Write([]byte(result.Stdout))
 			}
-			job.Status = JobFailed
+			if result.Stderr != "" {
+				_, _ = stderr.Write([]byte(result.Stderr))
+			}
+			job.ExitCode = result.ExitCode
+			if result.ExitCode != 0 {
+				job.Status = JobFailed
+			} else {
+				job.Status = JobCompleted
+			}
 		} else {
-			job.ExitCode = 0
-			job.Status = JobCompleted
+			job.Status = JobFailed
+			job.ExitCode = 1
 		}
 		job.mu.Unlock()
 	}()
