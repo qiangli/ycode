@@ -1,7 +1,8 @@
 # Agentic Tools Cross-Project Comparison
 
 > Comprehensive comparison of built-in tools across 10 agentic coding projects in `priorart/` vs ycode.
-> Generated 2026-05-01. Updated after gap-closure implementation.
+> Generated 2026-05-01. Updated after gap-closure implementation and
+> document reading, agent orchestration, and planning tools additions.
 
 ---
 
@@ -41,7 +42,11 @@ Prior-art column lists which projects have the tool (abbreviated): **ai**=aider,
 | Read multiple files (batch) | ✓ `read_multiple_files` | gc | Read and concatenate multiple files by path array |
 | Read media file (image/audio/video) | ✓ `view_image` | cx, gc, ow, ki | Read image file; audio/video not supported |
 | Read currently open file (IDE) | ✗ | co | Read file currently open in IDE editor |
-| Read PDF document | ✗ | ow | Analyze PDF documents natively |
+| Read PDF document | ✓ `read_document` | cl, ow | Extract text from PDF with optional page range |
+| Read DOCX (Word) | ✓ `read_document` | — | Extract text from Microsoft Word documents |
+| Read XLSX (Excel) | ✓ `read_document` | — | Extract spreadsheet data with sheet/row structure |
+| Read PPTX (PowerPoint) | ✓ `read_document` | — | Extract text from presentation slides |
+| Read CSV | ✓ `read_document` | — | Read CSV files as structured text |
 
 ### File — Write
 
@@ -188,10 +193,10 @@ Prior-art column lists which projects have the tool (abbreviated): **ai**=aider,
 | Spawn subagent | ✓ `Agent` | cl, cx, oc, gc, cc, ow, co, ki | Launch sub-agent for focused task |
 | Handoff to agent | ✓ `Handoff` | — | Transfer control with context vars |
 | Swarm orchestration | ✓ `swarm_run` | — | Run multi-agent swarm workflow |
+| List live agents | ✓ `AgentList` | cx, ow | List agents with status, tool usage, duration |
+| Wait for agent(s) | ✓ `AgentWait` | cx, ow | Block until background agent completes or timeout |
+| Close/kill agent | ✓ `AgentClose` | cx, ow | Cancel a running background agent task |
 | Send message to agent | ✗ | cx, ow | Send input to an existing running agent |
-| Wait for agent(s) | ✗ | cx, ow | Block until agent(s) complete |
-| List live agents | ✗ | cx, ow | List agents in current tree |
-| Close/kill agent | ✗ | cx, ow | Terminate a running sub-agent |
 | Resume closed agent | ✗ | cx | Resume a previously closed agent |
 | CSV batch agents | ✗ | cx | Spawn one agent per CSV row |
 
@@ -242,9 +247,11 @@ Prior-art column lists which projects have the tool (abbreviated): **ai**=aider,
 |------|:-----:|-----------|-------------|
 | Enter plan mode | ✓ `EnterPlanMode` | cl, oc, gc, cc, ki | Switch to read-only planning phase |
 | Exit plan mode | ✓ `ExitPlanMode` | cl, oc, gc, cc, ki | Finalize plan and start implementation |
-| Update step-by-step plan | ✗ | cx, ow | Update plan with step statuses |
-| Create/get/update goal | ✗ | cx | Goal management with token budgets |
-| Set task status (PLANNING/WORKING/DONE) | ✗ | co | Simple status indicator for UI |
+| Update step-by-step plan | ✓ `UpdatePlan` | cx, ow | Update plan with hierarchical steps and statuses |
+| List plan | ✓ `ListPlan` | — | Show current plan board as markdown table |
+| Set goal | ✓ `SetGoal` | cx | Set task goal with objective and token budget |
+| Get goal | ✓ `GetGoal` | cx | Retrieve current goal, status, and budget |
+| Set task status (PLANNING/WORKING/DONE) | ✓ `SetTaskStatus` | co | Simple status indicator for UI |
 
 ### User Interaction & Session
 
@@ -405,7 +412,7 @@ Prior-art column lists which projects have the tool (abbreviated): **ai**=aider,
 | Notebook | 2 | 4 |
 | Observability | 3 | 0 |
 | Config/Session | 2 | 2 |
-| **Total** | **~122** | **~107 unique** |
+| **Total** | **~131** | **~107 unique** |
 
 ### ycode Unique Strengths (not in any prior art)
 
@@ -423,13 +430,12 @@ Prior-art column lists which projects have the tool (abbreviated): **ai**=aider,
 
 **High value:**
 - REPL (persistent Python/JS session) — cx, oh, cc
-- Agent messaging (send/wait/list/close) — cx, ow
+- Agent send message to running agent — cx, ow
 - Repo map as callable tool — ai, co
 - PowerShell — cx, cc
 
 **Medium value:**
 - LSP workspace symbols, call hierarchy, go-to-implementation
-- Update plan with step statuses
 - GitHub issue create, PR merge, label management
 - Notebook execute
 

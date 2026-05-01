@@ -716,6 +716,78 @@ func builtinSpecs() []*ToolSpec {
 			RequiredMode: permission.WorkspaceWrite,
 			Source:       SourceBuiltin,
 		},
+
+		// Document reading — PDF, DOCX, XLSX, PPTX, CSV
+		{
+			Name:         "read_document",
+			Description:  "Read and extract text from documents: PDF, DOCX (Word), XLSX (Excel), PPTX (PowerPoint), CSV. Returns plain text content. For PDFs, supports page range selection.",
+			InputSchema:  mustJSON(readDocumentSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+
+		// Agent orchestration — list, wait, close
+		{
+			Name:         "AgentList",
+			Description:  "List all running and completed subagents with their status, tool usage, duration, and description.",
+			InputSchema:  mustJSON(agentListSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+			Category:     CategoryAgent,
+		},
+		{
+			Name:         "AgentWait",
+			Description:  "Wait for a background agent task to complete. Polls until the task reaches completed/failed/stopped status or timeout.",
+			InputSchema:  mustJSON(agentWaitSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+			Category:     CategoryAgent,
+		},
+		{
+			Name:         "AgentClose",
+			Description:  "Close a running background agent task by cancelling it.",
+			InputSchema:  mustJSON(agentCloseSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+			Category:     CategoryAgent,
+		},
+
+		// Planning & Workflow
+		{
+			Name:         "UpdatePlan",
+			Description:  "Create or update a step-by-step plan with statuses. Each step can be pending, in_progress, done, or blocked. Supports hierarchical steps via parent_id.",
+			InputSchema:  mustJSON(updatePlanSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "ListPlan",
+			Description:  "Show the current plan board with all steps and their statuses.",
+			InputSchema:  mustJSON(listPlanSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "SetGoal",
+			Description:  "Set the current task goal with an objective and optional token budget.",
+			InputSchema:  mustJSON(setGoalSchema),
+			RequiredMode: permission.WorkspaceWrite,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "GetGoal",
+			Description:  "Retrieve the current goal including objective, status, and budget.",
+			InputSchema:  mustJSON(getGoalSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "SetTaskStatus",
+			Description:  "Set the current task status for UI display. Valid statuses: PLANNING, WORKING, DONE, BLOCKED.",
+			InputSchema:  mustJSON(setTaskStatusSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
 	}
 }
 
@@ -1552,5 +1624,92 @@ var (
 			"glob": {"type": "string", "description": "Optional file glob pattern to scope the rule"}
 		},
 		"required": ["name", "content"]
+	}`
+
+	// Document reading schema
+	readDocumentSchema = `{
+		"type": "object",
+		"properties": {
+			"file_path": {"type": "string", "description": "Path to the document file (PDF, DOCX, XLSX, PPTX, CSV)"},
+			"pages": {"type": "string", "description": "Page range for PDFs (e.g., '1-5', '3', '1,3,5'). Omit to read all pages."}
+		},
+		"required": ["file_path"]
+	}`
+
+	// Agent orchestration schemas
+	agentListSchema = `{
+		"type": "object",
+		"properties": {
+			"active_only": {"type": "boolean", "description": "Only list active (running/spawning) agents (default: false)"}
+		}
+	}`
+
+	agentWaitSchema = `{
+		"type": "object",
+		"properties": {
+			"task_id": {"type": "string", "description": "Task ID of the background agent (returned by Agent with run_in_background=true)"},
+			"timeout": {"type": "integer", "description": "Timeout in milliseconds (default: 60000)"}
+		},
+		"required": ["task_id"]
+	}`
+
+	agentCloseSchema = `{
+		"type": "object",
+		"properties": {
+			"task_id": {"type": "string", "description": "Task ID of the background agent to close"}
+		},
+		"required": ["task_id"]
+	}`
+
+	// Planning & Workflow schemas
+	updatePlanSchema = `{
+		"type": "object",
+		"properties": {
+			"steps": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"id": {"type": "string", "description": "Step ID (omit to create new, provide to update existing)"},
+						"title": {"type": "string", "description": "Step title"},
+						"description": {"type": "string", "description": "Step description"},
+						"status": {"type": "string", "enum": ["pending", "in_progress", "done", "blocked"], "description": "Step status"},
+						"parent_id": {"type": "string", "description": "Parent step ID for hierarchy"},
+						"priority": {"type": "integer", "description": "Priority (higher = more important)"}
+					},
+					"required": ["title", "status"]
+				},
+				"description": "Plan steps to create or update"
+			}
+		},
+		"required": ["steps"]
+	}`
+
+	listPlanSchema = `{
+		"type": "object",
+		"properties": {}
+	}`
+
+	setGoalSchema = `{
+		"type": "object",
+		"properties": {
+			"objective": {"type": "string", "description": "The goal objective"},
+			"budget": {"type": "integer", "description": "Optional token budget for the goal"}
+		},
+		"required": ["objective"]
+	}`
+
+	getGoalSchema = `{
+		"type": "object",
+		"properties": {}
+	}`
+
+	setTaskStatusSchema = `{
+		"type": "object",
+		"properties": {
+			"status": {"type": "string", "enum": ["PLANNING", "WORKING", "DONE", "BLOCKED"], "description": "Current task status"},
+			"message": {"type": "string", "description": "Optional status message"}
+		},
+		"required": ["status"]
 	}`
 )
