@@ -41,6 +41,21 @@ type AgentDefinition struct {
 	Parameters  json.RawMessage   `yaml:"parameters,omitempty" json:"parameters,omitempty"`
 	Nodes       []DAGNode         `yaml:"nodes,omitempty" json:"nodes,omitempty"`
 	Process     string            `yaml:"process,omitempty" json:"process,omitempty"`
+
+	// Structured output schema for validating agent responses.
+	OutputSchema *OutputSchema `yaml:"output_schema,omitempty" json:"output_schema,omitempty"`
+
+	// Guardrails for content-level validation of agent outputs.
+	Guardrails []GuardrailConfig `yaml:"guardrails,omitempty" json:"guardrails,omitempty"`
+
+	// A2AEndpoint is the URL of a remote A2A agent for delegation.
+	A2AEndpoint string `yaml:"a2a_endpoint,omitempty" json:"a2a_endpoint,omitempty"`
+
+	// A2AAuth holds authentication config for remote A2A connections.
+	A2AAuth *A2AAuthConfig `yaml:"a2a_auth,omitempty" json:"a2a_auth,omitempty"`
+
+	// Routes for conditional routing (used with FlowRouter).
+	Routes []RouteConfig `yaml:"routes,omitempty" json:"routes,omitempty"`
 }
 
 // AdvicesConfig defines AOP-style hooks around agent execution.
@@ -87,6 +102,7 @@ const (
 	FlowFallback FlowType = "fallback" // try A, if fails try B, if fails try C
 	FlowChoice   FlowType = "choice"   // random selection
 	FlowDAG      FlowType = "dag"      // directed acyclic graph workflow
+	FlowRouter   FlowType = "router"   // conditional routing based on output
 )
 
 // ValidFlowTypes is the set of recognized flow types.
@@ -98,6 +114,23 @@ var ValidFlowTypes = map[FlowType]bool{
 	FlowFallback: true,
 	FlowChoice:   true,
 	FlowDAG:      true,
+	FlowRouter:   true,
+}
+
+// GuardrailConfig is the YAML-serializable guardrail definition embedded in AgentDefinition.
+type GuardrailConfig struct {
+	Type     string `yaml:"type" json:"type"`                             // schema, regex, command
+	Criteria string `yaml:"criteria,omitempty" json:"criteria,omitempty"` // for LLM guardrails
+	Pattern  string `yaml:"pattern,omitempty" json:"pattern,omitempty"`   // for regex guardrails
+	Command  string `yaml:"command,omitempty" json:"command,omitempty"`   // for command guardrails
+	Action   string `yaml:"action,omitempty" json:"action,omitempty"`     // accept, retry, reject
+}
+
+// A2AAuthConfig holds authentication configuration for remote A2A connections.
+type A2AAuthConfig struct {
+	Type   string `yaml:"type,omitempty" json:"type,omitempty"` // bearer, api_key
+	Token  string `yaml:"token,omitempty" json:"token,omitempty"`
+	Header string `yaml:"header,omitempty" json:"header,omitempty"` // custom header name
 }
 
 // nameRe validates agent names: lowercase alphanumeric plus underscore and hyphen.

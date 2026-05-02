@@ -1216,6 +1216,11 @@ func init() {
 	// Autonomous agent mesh
 	rootCmd.AddCommand(newMeshCmd())
 
+	// Autoloop, sprint, and skill engine
+	rootCmd.AddCommand(newAutoCmd())
+	rootCmd.AddCommand(newSprintCmd())
+	rootCmd.AddCommand(newSkillCmd())
+
 	// Evaluation framework
 	registerEvalCmd(rootCmd)
 }

@@ -28,6 +28,10 @@ type DAGNode struct {
 	Interactive     bool              `yaml:"interactive,omitempty" json:"interactive,omitempty"`           // for approval nodes
 	CaptureResponse bool              `yaml:"capture_response,omitempty" json:"capture_response,omitempty"` // for approval nodes
 	Variables       map[string]string `yaml:"variables,omitempty" json:"variables,omitempty"`
+
+	// When specifies a condition that must be true for this node to execute.
+	// If the condition evaluates to false, the node is skipped.
+	When *ConditionConfig `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 // DAGWorkflow is a complete DAG definition.

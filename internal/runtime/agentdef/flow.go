@@ -15,8 +15,10 @@ type Action func(ctx context.Context, input string) (string, error)
 type FlowExecutor struct {
 	flow        FlowType
 	actions     []Action
-	maxIter     int          // for FlowLoop; 0 means use default (10)
-	dagWorkflow *DAGWorkflow // for FlowDAG
+	maxIter     int               // for FlowLoop; 0 means use default (10)
+	dagWorkflow *DAGWorkflow      // for FlowDAG
+	routes      []RouteConfig     // for FlowRouter
+	actionMap   map[string]Action // named actions for routing
 }
 
 // NewFlowExecutor creates a flow executor for the given flow type and actions.
@@ -61,6 +63,8 @@ func (fe *FlowExecutor) Run(ctx context.Context, input string) (string, error) {
 		return fe.runChoice(ctx, input)
 	case FlowDAG:
 		return fe.runDAG(ctx, input)
+	case FlowRouter:
+		return fe.runRouter(ctx, input)
 	default:
 		return "", fmt.Errorf("unknown flow type: %s", fe.flow)
 	}
@@ -204,4 +208,55 @@ func (fe *FlowExecutor) runDAG(ctx context.Context, input string) (string, error
 		}
 	}
 	return input, nil
+}
+
+// SetRoutes configures routing rules for FlowRouter execution.
+func (fe *FlowExecutor) SetRoutes(routes []RouteConfig, actionMap map[string]Action) {
+	fe.routes = routes
+	fe.actionMap = actionMap
+}
+
+// runRouter evaluates the first action's output against route conditions
+// and dispatches to the matching target action.
+func (fe *FlowExecutor) runRouter(ctx context.Context, input string) (string, error) {
+	if len(fe.actions) == 0 {
+		return input, nil
+	}
+
+	// Run the first action to produce input for routing.
+	output, err := fe.actions[0](ctx, input)
+	if err != nil {
+		return "", fmt.Errorf("router input action: %w", err)
+	}
+
+	// Evaluate route conditions.
+	vars := map[string]string{"input": output}
+	for _, route := range fe.routes {
+		cond, err := route.When.Build()
+		if err != nil {
+			return "", fmt.Errorf("route condition build: %w", err)
+		}
+		ok, err := cond.Evaluate(ctx, vars)
+		if err != nil {
+			return "", fmt.Errorf("route condition evaluate: %w", err)
+		}
+		if ok {
+			if action, exists := fe.actionMap[route.Target]; exists {
+				return action(ctx, output)
+			}
+			return "", fmt.Errorf("route target %q not found in action map", route.Target)
+		}
+	}
+
+	// No route matched — try default from the last route.
+	for i := len(fe.routes) - 1; i >= 0; i-- {
+		if fe.routes[i].Default != "" {
+			if action, exists := fe.actionMap[fe.routes[i].Default]; exists {
+				return action(ctx, output)
+			}
+		}
+	}
+
+	// Fallback: return the first action's output.
+	return output, nil
 }

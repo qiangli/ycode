@@ -71,14 +71,20 @@ func (de *DAGExecutor) Run(ctx context.Context, workflow *DAGWorkflow) (map[stri
 		if len(layer) == 1 {
 			// Single node — run directly.
 			node := layer[0]
-			slog.Info("dag.node.execute", "workflow", workflow.Name, "node", node.ID, "type", string(node.Type), "layer", layerIdx)
-			out, err := de.handler(ctx, node, outputs)
-			if err != nil {
-				return outputs, fmt.Errorf("node %s: %w", node.ID, err)
+
+			// Evaluate condition if present.
+			if skip, _ := shouldSkipNode(ctx, node, outputs); skip {
+				slog.Info("dag.node.skipped", "workflow", workflow.Name, "node", node.ID, "reason", "condition false")
+			} else {
+				slog.Info("dag.node.execute", "workflow", workflow.Name, "node", node.ID, "type", string(node.Type), "layer", layerIdx)
+				out, err := de.handler(ctx, node, outputs)
+				if err != nil {
+					return outputs, fmt.Errorf("node %s: %w", node.ID, err)
+				}
+				mu.Lock()
+				outputs[node.ID] = out
+				mu.Unlock()
 			}
-			mu.Lock()
-			outputs[node.ID] = out
-			mu.Unlock()
 		} else {
 			// Multiple nodes — run concurrently.
 			var wg sync.WaitGroup
@@ -88,14 +94,22 @@ func (de *DAGExecutor) Run(ctx context.Context, workflow *DAGWorkflow) (map[stri
 				wg.Add(1)
 				go func(idx int, n DAGNode) {
 					defer wg.Done()
-					slog.Info("dag.node.execute", "workflow", workflow.Name, "node", n.ID, "type", string(n.Type), "layer", layerIdx)
-					// Snapshot outputs for variable substitution.
+
+					// Snapshot outputs for variable substitution and condition evaluation.
 					mu.Lock()
 					vars := make(map[string]string, len(outputs))
 					for k, v := range outputs {
 						vars[k] = v
 					}
 					mu.Unlock()
+
+					// Evaluate condition if present.
+					if skip, _ := shouldSkipNode(ctx, n, vars); skip {
+						slog.Info("dag.node.skipped", "workflow", workflow.Name, "node", n.ID, "reason", "condition false")
+						return
+					}
+
+					slog.Info("dag.node.execute", "workflow", workflow.Name, "node", n.ID, "type", string(n.Type), "layer", layerIdx)
 
 					out, err := de.handler(ctx, n, vars)
 					if err != nil {
@@ -121,4 +135,20 @@ func (de *DAGExecutor) Run(ctx context.Context, workflow *DAGWorkflow) (map[stri
 	}
 
 	return outputs, nil
+}
+
+// shouldSkipNode evaluates the node's When condition and returns true if the node should be skipped.
+func shouldSkipNode(ctx context.Context, node DAGNode, vars map[string]string) (bool, error) {
+	if node.When == nil {
+		return false, nil
+	}
+	cond, err := node.When.Build()
+	if err != nil {
+		return false, fmt.Errorf("build condition for node %q: %w", node.ID, err)
+	}
+	ok, err := cond.Evaluate(ctx, vars)
+	if err != nil {
+		return false, fmt.Errorf("evaluate condition for node %q: %w", node.ID, err)
+	}
+	return !ok, nil // skip if condition is false
 }
