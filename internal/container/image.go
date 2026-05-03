@@ -8,9 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
-	buildahDefine "github.com/qiangli/ycode/pkg/oci/buildah"
 	"github.com/qiangli/ycode/pkg/oci/bindings/images"
 	"github.com/qiangli/ycode/pkg/oci/bindings/system"
+	buildahDefine "github.com/qiangli/ycode/pkg/oci/buildah"
 	entTypes "github.com/qiangli/ycode/pkg/oci/entities"
 )
 

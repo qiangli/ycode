@@ -20,8 +20,8 @@ import (
 	"github.com/qiangli/ycode/internal/httputil"
 
 	"github.com/qiangli/ycode/pkg/otel/prometheus/labels"
-	"github.com/qiangli/ycode/pkg/otel/prometheus/textparse"
 	"github.com/qiangli/ycode/pkg/otel/prometheus/promql"
+	"github.com/qiangli/ycode/pkg/otel/prometheus/textparse"
 	"github.com/qiangli/ycode/pkg/otel/prometheus/tsdb"
 )
 

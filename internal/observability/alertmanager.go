@@ -151,6 +151,6 @@ func (a *AlertmanagerComponent) AddAlert(ctx context.Context, alert *am.Alert) e
 // noopPeer implements cluster.ClusterPeer for single-node operation.
 type noopPeer struct{}
 
-func (n *noopPeer) Name() string                  { return "embedded" }
-func (n *noopPeer) Status() string                { return "disabled" }
-func (n *noopPeer) Peers() []am.ClusterMember     { return nil }
+func (n *noopPeer) Name() string              { return "embedded" }
+func (n *noopPeer) Status() string            { return "disabled" }
+func (n *noopPeer) Peers() []am.ClusterMember { return nil }
