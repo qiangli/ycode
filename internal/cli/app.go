@@ -940,22 +940,24 @@ func (a *App) Close() error {
 		}
 	}
 
-	// Run cleanup functions in reverse order (LIFO).
-	// rootCancel runs here, signaling background goroutines to stop.
-	for i := len(a.cleanupFuncs) - 1; i >= 0; i-- {
-		a.cleanupFuncs[i]()
-	}
-	if a.storage != nil {
-		// Storage close may block if background indexers haven't released locks yet.
-		// Use a timeout to avoid hanging the process.
-		done := make(chan error, 1)
-		go func() { done <- a.storage.Close() }()
-		select {
-		case err := <-done:
-			return err
-		case <-time.After(2 * time.Second):
-			return nil // Best-effort — process is exiting anyway.
+	// Run all cleanup (OTEL flush, rootCancel, storage) with a hard deadline.
+	// The process is exiting — don't hang waiting for gRPC flushes or lock releases.
+	done := make(chan struct{})
+	go func() {
+		// Run cleanup functions in reverse order (LIFO).
+		for i := len(a.cleanupFuncs) - 1; i >= 0; i-- {
+			a.cleanupFuncs[i]()
 		}
+		if a.storage != nil {
+			a.storage.Close()
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		// Best-effort — process is exiting anyway.
 	}
 	return nil
 }

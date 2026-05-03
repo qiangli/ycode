@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -13,8 +14,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/cli"
 	"github.com/qiangli/ycode/internal/client"
+	"github.com/qiangli/ycode/internal/service"
 )
 
 const (
@@ -225,6 +228,71 @@ func findFreePort() (int, error) {
 	port := l.Addr().(*net.TCPAddr).Port
 	l.Close()
 	return port, nil
+}
+
+// runServerPrompt sends a one-shot prompt to the server and streams the response to stdout.
+func runServerPrompt(baseURL, prompt string) error {
+	token := readTokenFile()
+	apiBase := baseURL + "/ycode"
+
+	c := client.NewWSClient(apiBase, token, "")
+	status, err := c.GetStatus(context.Background())
+	if err != nil {
+		return fmt.Errorf("connect to server: %w", err)
+	}
+
+	sessionID := status.SessionID
+	if sessionID == "" {
+		info, err := c.CreateSession(context.Background())
+		if err != nil {
+			return fmt.Errorf("create session: %w", err)
+		}
+		sessionID = info.ID
+	}
+
+	wsClient := client.NewWSClient(apiBase, token, sessionID)
+	if err := wsClient.Connect(context.Background()); err != nil {
+		return fmt.Errorf("websocket connect: %w", err)
+	}
+	defer wsClient.Close()
+
+	// Subscribe and send.
+	evCh, err := wsClient.Events(context.Background())
+	if err != nil {
+		return fmt.Errorf("subscribe events: %w", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- wsClient.SendMessage(context.Background(), sessionID, service.MessageInput{Text: prompt})
+	}()
+
+	// Stream text to stdout.
+	for ev := range evCh {
+		switch ev.Type {
+		case bus.EventTextDelta:
+			var data struct {
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(ev.Data, &data) == nil {
+				fmt.Print(data.Text)
+			}
+		case bus.EventTurnComplete:
+			fmt.Println()
+			return nil
+		case bus.EventTurnError:
+			var data struct {
+				Error string `json:"error"`
+			}
+			json.Unmarshal(ev.Data, &data)
+			return fmt.Errorf("agent error: %s", data.Error)
+		}
+	}
+
+	if err := <-errCh; err != nil {
+		return err
+	}
+	return nil
 }
 
 // cleanAutoSentinel removes the auto-start sentinel file.
