@@ -23,10 +23,26 @@ type handoffResult struct {
 // The Handoff tool allows an agent to transfer control to another agent,
 // passing context variables and a message.
 func RegisterHandoffHandler(r *Registry) {
+	RegisterHandoffHandlerWithAgents(r, nil)
+}
+
+// RegisterHandoffHandlerWithAgents registers the Handoff tool handler with
+// a list of valid agent names. When validAgents is non-nil and non-empty,
+// the handler validates the target_agent against this list, preventing
+// hallucinated agent names. Inspired by ADK-Python's TransferToAgentTool
+// which uses JSON schema enum constraints.
+func RegisterHandoffHandlerWithAgents(r *Registry, validAgents []string) {
 	spec, ok := r.Get("Handoff")
 	if !ok {
 		return
 	}
+
+	// Build lookup set for validation.
+	agentSet := make(map[string]bool, len(validAgents))
+	for _, name := range validAgents {
+		agentSet[name] = true
+	}
+
 	spec.Handler = func(_ context.Context, input json.RawMessage) (string, error) {
 		var params struct {
 			TargetAgent string            `json:"target_agent"`
@@ -38,6 +54,15 @@ func RegisterHandoffHandler(r *Registry) {
 		}
 		if params.TargetAgent == "" {
 			return "", fmt.Errorf("target_agent is required")
+		}
+
+		// Validate target against known agents if a list was provided.
+		if len(agentSet) > 0 && !agentSet[params.TargetAgent] {
+			names := make([]string, 0, len(agentSet))
+			for name := range agentSet {
+				names = append(names, name)
+			}
+			return "", fmt.Errorf("unknown agent %q — valid agents: %v", params.TargetAgent, names)
 		}
 
 		sig := handoffSignal{
