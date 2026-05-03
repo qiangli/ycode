@@ -37,6 +37,45 @@ type DAGNode struct {
 	AllowedTools []string `yaml:"allowed_tools,omitempty" json:"allowed_tools,omitempty"`
 	// DeniedTools hides specific tools from this node (blacklist).
 	DeniedTools []string `yaml:"denied_tools,omitempty" json:"denied_tools,omitempty"`
+
+	// FanOut enables dynamic parallelism: the node is executed once per item
+	// in the upstream output. The upstream node's output is split by SplitOn
+	// (default: newline) and each slice is passed to a separate instance of
+	// this node via the $fan.item and $fan.index template variables.
+	// Results are collected and joined by JoinWith (default: newline).
+	// Inspired by LangGraph's Send() pattern for map-reduce workflows.
+	FanOut *FanOutConfig `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
+}
+
+// FanOutConfig controls dynamic parallel execution of a DAG node.
+type FanOutConfig struct {
+	// SourceNode is the upstream node whose output is split into items.
+	SourceNode string `yaml:"source_node" json:"source_node"`
+	// SplitOn is the delimiter used to split the source output into items.
+	// Default: "\n" (newline).
+	SplitOn string `yaml:"split_on,omitempty" json:"split_on,omitempty"`
+	// JoinWith is the delimiter used to join fan-out results.
+	// Default: "\n" (newline).
+	JoinWith string `yaml:"join_with,omitempty" json:"join_with,omitempty"`
+	// MaxParallel limits the number of concurrent fan-out instances.
+	// Default: 0 (unlimited).
+	MaxParallel int `yaml:"max_parallel,omitempty" json:"max_parallel,omitempty"`
+}
+
+// EffectiveSplitOn returns the split delimiter, defaulting to newline.
+func (f *FanOutConfig) EffectiveSplitOn() string {
+	if f.SplitOn == "" {
+		return "\n"
+	}
+	return f.SplitOn
+}
+
+// EffectiveJoinWith returns the join delimiter, defaulting to newline.
+func (f *FanOutConfig) EffectiveJoinWith() string {
+	if f.JoinWith == "" {
+		return "\n"
+	}
+	return f.JoinWith
 }
 
 // DAGWorkflow is a complete DAG definition.

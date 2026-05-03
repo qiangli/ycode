@@ -198,3 +198,105 @@ func TestDAGExecutor_NodeError(t *testing.T) {
 		t.Errorf("expected node a error, got: %v", err)
 	}
 }
+
+func TestDAGExecutor_FanOut(t *testing.T) {
+	workflow := &DAGWorkflow{
+		Name: "fan-out-test",
+		Nodes: []DAGNode{
+			{ID: "source", Type: NodeTypePrompt, Prompt: "generate items"},
+			{
+				ID:        "process",
+				Type:      NodeTypePrompt,
+				Prompt:    "process $fan.item at index $fan.index",
+				DependsOn: []string{"source"},
+				FanOut: &FanOutConfig{
+					SourceNode:  "source",
+					MaxParallel: 2,
+				},
+			},
+		},
+	}
+
+	var callCount atomic.Int32
+	handler := func(_ context.Context, node DAGNode, vars map[string]string) (string, error) {
+		callCount.Add(1)
+		if node.ID == "source" {
+			return "alpha\nbeta\ngamma", nil
+		}
+		// process node receives substituted prompt
+		return "done:" + node.Prompt, nil
+	}
+
+	executor := NewDAGExecutor(handler)
+	outputs, err := executor.Run(context.Background(), workflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// source + 3 fan-out instances = 4 calls
+	if got := callCount.Load(); got != 4 {
+		t.Errorf("expected 4 handler calls, got %d", got)
+	}
+
+	// Fan-out results should be joined by newline.
+	result := outputs["process"]
+	if !strings.Contains(result, "done:") {
+		t.Errorf("expected fan-out results, got: %s", result)
+	}
+	parts := strings.Split(result, "\n")
+	if len(parts) != 3 {
+		t.Errorf("expected 3 fan-out results, got %d: %v", len(parts), parts)
+	}
+}
+
+func TestDAGExecutor_FanOut_EmptySource(t *testing.T) {
+	workflow := &DAGWorkflow{
+		Name: "fan-out-empty",
+		Nodes: []DAGNode{
+			{ID: "source", Type: NodeTypePrompt},
+			{
+				ID:        "process",
+				Type:      NodeTypePrompt,
+				Prompt:    "process $fan.item",
+				DependsOn: []string{"source"},
+				FanOut: &FanOutConfig{
+					SourceNode: "source",
+				},
+			},
+		},
+	}
+
+	handler := func(_ context.Context, node DAGNode, _ map[string]string) (string, error) {
+		if node.ID == "source" {
+			return "", nil // empty output
+		}
+		return "should-not-reach", nil
+	}
+
+	executor := NewDAGExecutor(handler)
+	outputs, err := executor.Run(context.Background(), workflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outputs["process"] != "" {
+		t.Errorf("expected empty result for empty fan-out, got: %s", outputs["process"])
+	}
+}
+
+func TestFanOutConfig_Defaults(t *testing.T) {
+	cfg := &FanOutConfig{SourceNode: "src"}
+	if got := cfg.EffectiveSplitOn(); got != "\n" {
+		t.Errorf("EffectiveSplitOn() = %q, want %q", got, "\n")
+	}
+	if got := cfg.EffectiveJoinWith(); got != "\n" {
+		t.Errorf("EffectiveJoinWith() = %q, want %q", got, "\n")
+	}
+
+	cfg2 := &FanOutConfig{SourceNode: "src", SplitOn: ",", JoinWith: ";"}
+	if got := cfg2.EffectiveSplitOn(); got != "," {
+		t.Errorf("EffectiveSplitOn() = %q, want %q", got, ",")
+	}
+	if got := cfg2.EffectiveJoinWith(); got != ";" {
+		t.Errorf("EffectiveJoinWith() = %q, want %q", got, ";")
+	}
+}
