@@ -30,6 +30,12 @@ func (s *Store) Save(mem *Memory) error {
 		mem.FilePath = filepath.Join(s.dir, sanitizeFilename(mem.Name)+".md")
 	}
 
+	// Auto-set ValidUntil from TTLMinutes if not explicitly set.
+	if mem.TTLMinutes > 0 && mem.ValidUntil == nil {
+		expiry := time.Now().Add(time.Duration(mem.TTLMinutes) * time.Minute)
+		mem.ValidUntil = &expiry
+	}
+
 	var b strings.Builder
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "name: %s\n", mem.Name)
@@ -49,6 +55,9 @@ func (s *Store) Save(mem *Memory) error {
 	}
 	if len(mem.Entities) > 0 {
 		fmt.Fprintf(&b, "entities: %s\n", strings.Join(mem.Entities, ","))
+	}
+	if mem.TTLMinutes > 0 {
+		fmt.Fprintf(&b, "ttl_minutes: %d\n", mem.TTLMinutes)
 	}
 	if mem.ValidFrom != nil {
 		fmt.Fprintf(&b, "valid_from: %s\n", mem.ValidFrom.Format(time.RFC3339))
@@ -170,6 +179,10 @@ func parseFrontmatter(data string) *Memory {
 			if v := strings.TrimSpace(value); v != "" {
 				mem.Entities = strings.Split(v, ",")
 			}
+		case "ttl_minutes":
+			if v, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+				mem.TTLMinutes = v
+			}
 		case "valid_from":
 			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(value)); err == nil {
 				mem.ValidFrom = &t
@@ -184,6 +197,68 @@ func parseFrontmatter(data string) *Memory {
 	}
 
 	return mem
+}
+
+// BatchOp represents a single operation in a batch.
+type BatchOp struct {
+	// Op is the operation type: "save" or "delete".
+	Op     string
+	Memory *Memory
+}
+
+// batchRollback tracks a completed operation for undo purposes.
+type batchRollback struct {
+	op     string // "save" means we need to delete, "delete" means we need to restore
+	path   string
+	backup []byte // saved content for delete rollback
+}
+
+// Batch executes multiple operations atomically (best-effort for files).
+// On any failure, previously completed operations in this batch are rolled back.
+// Inspired by LangGraph's store batch() for multi-operation atomicity.
+func (s *Store) Batch(ops []BatchOp) error {
+	var completed []batchRollback
+
+	for i, op := range ops {
+		switch op.Op {
+		case "save":
+			if err := s.Save(op.Memory); err != nil {
+				rollbackBatchOps(completed)
+				return fmt.Errorf("batch op %d (save %q): %w", i, op.Memory.Name, err)
+			}
+			completed = append(completed, batchRollback{op: "save", path: op.Memory.FilePath})
+
+		case "delete":
+			// Read content for rollback before deleting.
+			var backup []byte
+			if data, err := os.ReadFile(op.Memory.FilePath); err == nil {
+				backup = data
+			}
+			if err := s.Delete(op.Memory.FilePath); err != nil {
+				rollbackBatchOps(completed)
+				return fmt.Errorf("batch op %d (delete %q): %w", i, op.Memory.Name, err)
+			}
+			completed = append(completed, batchRollback{op: "delete", path: op.Memory.FilePath, backup: backup})
+
+		default:
+			rollbackBatchOps(completed)
+			return fmt.Errorf("batch op %d: unknown op %q", i, op.Op)
+		}
+	}
+	return nil
+}
+
+func rollbackBatchOps(ops []batchRollback) {
+	for i := len(ops) - 1; i >= 0; i-- {
+		switch ops[i].op {
+		case "save":
+			_ = os.Remove(ops[i].path)
+		case "delete":
+			if ops[i].backup != nil {
+				_ = os.WriteFile(ops[i].path, ops[i].backup, 0o644)
+			}
+		}
+	}
 }
 
 // sanitizeFilename converts a name to a safe filename.

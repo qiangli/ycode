@@ -57,6 +57,11 @@ type Memory struct {
 	ValidUntil   *time.Time `json:"valid_until,omitempty"`
 	SupersededBy string     `json:"superseded_by,omitempty"` // name of the memory that replaced this one
 
+	// TTLMinutes sets automatic expiration. When > 0 and ValidUntil is nil,
+	// Save will set ValidUntil = now + TTLMinutes. Inspired by LangGraph's
+	// store TTL pattern for automatic memory cleanup.
+	TTLMinutes int `json:"ttl_minutes,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
