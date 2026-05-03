@@ -12,9 +12,10 @@ import (
 
 // ServerConfig describes an LSP server configuration.
 type ServerConfig struct {
-	Language string   `json:"language"`
-	Command  string   `json:"command"`
-	Args     []string `json:"args,omitempty"`
+	Language    string         `json:"language"`
+	Command     string         `json:"command"`
+	Args        []string       `json:"args,omitempty"`
+	InitOptions map[string]any `json:"initOptions,omitempty"`
 }
 
 // Client wraps an LSP server connection.
@@ -135,6 +136,7 @@ func (c *Client) ensureConnected(ctx context.Context) (*conn, error) {
 				"publishDiagnostics": map[string]any{},
 			},
 		},
+		"initializationOptions": c.config.InitOptions,
 	}
 
 	initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -446,6 +448,13 @@ func AutoDetectServers() []ServerConfig {
 			Language: "go",
 			Command:  "gopls",
 			Args:     []string{"serve"},
+			InitOptions: map[string]any{
+				"directoryFilters": []string{
+					"-external",
+					"-priorart",
+					"-vendor",
+				},
+			},
 		})
 	}
 
