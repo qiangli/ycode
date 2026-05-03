@@ -20,7 +20,7 @@ jobs:
           go-version: '1.26'
 
       - name: Build
-        run: go build -tags "sqlite,sqlite_unlock_notify,bindata,containers_image_openpgp,exclude_graphdriver_btrfs" $(go list ./... | grep -v '/priorart/')
+        run: go build -tags "sqlite,sqlite_unlock_notify,bindata,containers_image_openpgp,exclude_graphdriver_btrfs" -o /dev/null ./cmd/ycode/
 
       - name: Vet
         run: go vet -tags "sqlite,sqlite_unlock_notify,bindata,containers_image_openpgp,exclude_graphdriver_btrfs" $(go list ./... | grep -v '/priorart/')
