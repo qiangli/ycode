@@ -34,7 +34,8 @@ tmp/
 priorart/
 reference/
 evals/results/
-graphify-out/
+#
+.gfy-out/
 #
 .agents/
 
