@@ -52,7 +52,9 @@ func (f *Fixer) Healthy() bool { return f.healthy.Load() }
 func (f *Fixer) Start(ctx context.Context) error {
 	ctx, f.cancel = context.WithCancel(ctx)
 	f.healthy.Store(true)
-	go f.listen(ctx)
+	// Subscribe before launching the goroutine so no events are missed.
+	ch, unsub := f.b.Subscribe(bus.EventDiagReport)
+	go f.listen(ctx, ch, unsub)
 	return nil
 }
 
@@ -63,8 +65,7 @@ func (f *Fixer) Stop() {
 	f.healthy.Store(false)
 }
 
-func (f *Fixer) listen(ctx context.Context) {
-	ch, unsub := f.b.Subscribe(bus.EventDiagReport)
+func (f *Fixer) listen(ctx context.Context, ch <-chan bus.Event, unsub func()) {
 	defer unsub()
 
 	for {

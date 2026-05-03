@@ -20,6 +20,22 @@ func openRepo(dir string) (*git.Repository, error) {
 	})
 }
 
+// resolveAuthor reads the git user.name/user.email config from the repository.
+// Returns nil if the config provides valid author info (letting go-git resolve it),
+// or a default signature if no config is available.
+func resolveAuthor(repo *git.Repository) *object.Signature {
+	cfg, err := repo.ConfigScoped(config.GlobalScope)
+	if err == nil && cfg.User.Name != "" && cfg.User.Email != "" {
+		return nil // go-git will read from config
+	}
+	// No git config available — provide a default so commits don't fail.
+	return &object.Signature{
+		Name:  "ycode",
+		Email: "ycode@localhost",
+		When:  time.Now(),
+	}
+}
+
 func nativeRevParse(_ context.Context, dir string, args []string) (*Result, error) {
 	if len(args) == 0 {
 		return nil, ErrNotImplemented
@@ -521,7 +537,14 @@ func nativeCommit(_ context.Context, dir string, args []string) (*Result, error)
 		return nil, ErrNotImplemented
 	}
 
-	hash, err := wt.Commit(msg, &git.CommitOptions{})
+	opts := &git.CommitOptions{}
+	// Provide an explicit author when git config is not available (e.g. in containers).
+	// Try repo-level config first, then fall back to a default signature.
+	if sig := resolveAuthor(repo); sig != nil {
+		opts.Author = sig
+	}
+
+	hash, err := wt.Commit(msg, opts)
 	if err != nil {
 		return nil, ErrNotImplemented
 	}
@@ -1088,9 +1111,13 @@ func nativeMerge(_ context.Context, dir string, args []string) (*Result, error) 
 	if isAncestor && noFF {
 		// Create merge commit even though ff is possible
 		mergeMsg := fmt.Sprintf("Merge branch '%s'", targetBranch)
-		hash, err := wt.Commit(mergeMsg, &git.CommitOptions{
+		mergeOpts := &git.CommitOptions{
 			Parents: []plumbing.Hash{head.Hash(), *targetHash},
-		})
+		}
+		if sig := resolveAuthor(repo); sig != nil {
+			mergeOpts.Author = sig
+		}
+		hash, err := wt.Commit(mergeMsg, mergeOpts)
 		if err != nil {
 			return nil, ErrNotImplemented
 		}

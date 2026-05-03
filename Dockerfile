@@ -6,8 +6,9 @@
 #   podman compose run --rm test         # unit tests only
 FROM docker.io/library/golang:1.26-bookworm
 
-# System dependencies for CGO (podman storage, gpgme, sqlite).
+# System dependencies: git for toolexec host-exec tier, CGO libs for podman/sqlite.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
     libbtrfs-dev \
     libgpgme-dev \
     libsqlite3-dev \
