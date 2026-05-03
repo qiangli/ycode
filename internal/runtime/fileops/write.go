@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // WriteFileParams configures file writing.
@@ -61,4 +62,44 @@ func WriteFile(params WriteFileParams, workspaceRoot string) error {
 	}
 
 	return nil
+}
+
+// DetectOmissionPlaceholders scans content for common patterns that indicate
+// the LLM has truncated or omitted code sections rather than providing complete
+// content. Returns warning messages for any detected placeholders.
+// Inspired by GeminiCLI's omission placeholder detection.
+func DetectOmissionPlaceholders(content string) []string {
+	var warnings []string
+	lines := strings.Split(content, "\n")
+
+	// Patterns that suggest truncated/omitted content when on a line alone.
+	omissionPatterns := []string{
+		"...",
+		"// ...",
+		"/* ... */",
+		"# ...",
+		"// ... existing code ...",
+		"# ... existing code ...",
+		"/* ... existing code ... */",
+		"// rest of the code",
+		"# rest of the code",
+		"// remaining implementation",
+		"// TODO: implement",
+	}
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		trimmedLower := strings.ToLower(trimmed)
+		for _, pattern := range omissionPatterns {
+			if trimmedLower == pattern {
+				warnings = append(warnings, fmt.Sprintf("line %d: possible omission placeholder %q", i+1, trimmed))
+				break
+			}
+		}
+	}
+
+	return warnings
 }

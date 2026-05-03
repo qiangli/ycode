@@ -141,6 +141,12 @@ func classifyNode(node shellparse.CommandNode) (CommandIntent, []string) {
 		return Write, []string{fmt.Sprintf("%q modifies the filesystem", base)}
 	}
 
+	// Argument-level safety validation for otherwise-safe commands.
+	// Some read-only commands become write/dangerous with specific flags.
+	if intent, reason := checkUnsafeArgs(base, node.Args); intent != ReadOnly {
+		return intent, []string{reason}
+	}
+
 	// Git operations.
 	if base == "git" && len(node.Args) > 0 {
 		return classifyGit(node.Args)
@@ -229,6 +235,11 @@ func classifySegment(segment string) (CommandIntent, []string) {
 	// Write commands.
 	if isWriteCommand(base) {
 		return Write, []string{fmt.Sprintf("%q modifies the filesystem", base)}
+	}
+
+	// Argument-level safety validation.
+	if intent, reason := checkUnsafeArgs(base, fields[1:]); intent != ReadOnly {
+		return intent, []string{reason}
 	}
 
 	// Git operations.
@@ -330,6 +341,52 @@ func hasRecursiveOrForce(args []string) bool {
 		}
 	}
 	return false
+}
+
+// checkUnsafeArgs detects when otherwise-safe commands become dangerous due to
+// specific arguments. Inspired by Codex CLI's argument-level safety analysis.
+func checkUnsafeArgs(base string, args []string) (CommandIntent, string) {
+	switch base {
+	case "find":
+		// find with -exec, -execdir, -ok, -okdir, -delete can modify/execute.
+		for _, arg := range args {
+			switch arg {
+			case "-exec", "-execdir", "-ok", "-okdir":
+				return Write, "find with -exec/-execdir can execute arbitrary commands"
+			case "-delete":
+				return Destructive, "find with -delete removes matched files"
+			}
+		}
+	case "base64":
+		// base64 with -o/--output writes to a file.
+		for _, arg := range args {
+			if arg == "-o" || arg == "--output" || strings.HasPrefix(arg, "--output=") {
+				return Write, "base64 with -o/--output writes to file"
+			}
+		}
+	case "xargs":
+		// xargs executes commands with piped input.
+		return Write, "xargs executes commands from input"
+	case "rg", "ripgrep":
+		// rg with --pre runs a preprocessor command.
+		for _, arg := range args {
+			if arg == "--pre" || strings.HasPrefix(arg, "--pre=") {
+				return Write, "rg with --pre executes a preprocessor command"
+			}
+		}
+	case "git":
+		// git with global options can hijack config/execution.
+		for _, arg := range args {
+			if arg == "-c" || arg == "-C" || arg == "--git-dir" || arg == "--config" {
+				return Write, "git with global config options can execute arbitrary code"
+			}
+			// Stop checking at first non-flag (subcommand).
+			if !strings.HasPrefix(arg, "-") {
+				break
+			}
+		}
+	}
+	return ReadOnly, ""
 }
 
 var writeCmds = map[string]bool{

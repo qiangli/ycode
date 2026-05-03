@@ -12,14 +12,32 @@ var blockedRanges []*net.IPNet
 
 func init() {
 	cidrs := []string{
-		"127.0.0.0/8",    // loopback
-		"10.0.0.0/8",     // private
-		"172.16.0.0/12",  // private
-		"192.168.0.0/16", // private
-		"169.254.0.0/16", // link-local / cloud metadata
-		"::1/128",        // IPv6 loopback
-		"fc00::/7",       // IPv6 unique local
-		"fe80::/10",      // IPv6 link-local
+		// Loopback.
+		"127.0.0.0/8",
+		// Private (RFC 1918).
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		// Link-local / cloud metadata (AWS, GCP, Azure).
+		"169.254.0.0/16",
+		// CGNAT / Shared Address Space (RFC 6598).
+		"100.64.0.0/10",
+		// Reserved / "this network" (RFC 791).
+		"0.0.0.0/8",
+		// TEST-NET blocks (RFC 5737) — documentation ranges, never routable.
+		"192.0.2.0/24",
+		"198.51.100.0/24",
+		"203.0.113.0/24",
+		// Benchmarking (RFC 2544).
+		"198.18.0.0/15",
+		// Multicast (RFC 5771).
+		"224.0.0.0/4",
+		// IPv6 loopback.
+		"::1/128",
+		// IPv6 unique local.
+		"fc00::/7",
+		// IPv6 link-local.
+		"fe80::/10",
 	}
 	for _, cidr := range cidrs {
 		_, ipNet, err := net.ParseCIDR(cidr)
