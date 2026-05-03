@@ -1,6 +1,7 @@
 [submodule "external/victorialogs"]
 	path = external/victorialogs
-	url = https://github.com/VictoriaMetrics/VictoriaLogs.git
+	url = https://github.com/qiangli/VictoriaLogs.git
+	branch = ycode
 [submodule "external/jaeger"]
 	path = external/jaeger
 	url = https://github.com/qiangli/jaeger.git
