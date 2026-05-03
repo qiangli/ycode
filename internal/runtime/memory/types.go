@@ -46,6 +46,9 @@ type Memory struct {
 	ValueScore     float64   `json:"value_score,omitempty"`      // dynamic score, starts at Importance, adjusted by feedback
 	Tags           []string  `json:"tags,omitempty"`             // free-form tags
 
+	// Content deduplication.
+	ContentHash string `json:"content_hash,omitempty"` // MD5 hash for dedup
+
 	// Entity linking (Phase 4).
 	Entities []string `json:"entities,omitempty"` // cached extracted entity names
 
