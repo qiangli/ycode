@@ -55,6 +55,13 @@ type Callbacks struct {
 
 	// Learn extracts patterns and persists learnings.
 	Learn func(ctx context.Context, iteration int, score float64) error
+
+	// Replan is called when the stall detector triggers replanning.
+	// It receives the current goal, last gap analysis, and current score,
+	// and returns refreshed gap analysis and tasks. If nil, stall detection
+	// falls back to the existing stagnation-abort behavior.
+	// Inspired by AutoGen MagenticOne's dual-loop outer replanning.
+	Replan func(ctx context.Context, goal, lastGapAnalysis string, currentScore float64) (gapAnalysis string, tasks []string, err error)
 }
 
 // IterationResult records the outcome of one loop cycle.
