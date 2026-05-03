@@ -28,7 +28,14 @@ func EditFile(params EditFileParams) error {
 	}
 
 	if !strings.Contains(content, params.OldString) {
-		return fmt.Errorf("old_string not found in %s", params.Path)
+		// Fuzzy fallback: try line-trimmed and block-anchor matching.
+		match := FindFuzzyMatch(content, params.OldString)
+		if match == nil {
+			return fmt.Errorf("old_string not found in %s (tried exact and fuzzy matching). Use read_file to verify current content, or grep_search to find similar text", params.Path)
+		}
+		// Apply fuzzy-matched replacement.
+		content = content[:match.StartByte] + params.NewString + content[match.EndByte:]
+		return os.WriteFile(params.Path, []byte(content), 0o644)
 	}
 
 	if params.ReplaceAll {

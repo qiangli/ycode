@@ -32,6 +32,11 @@ type DAGNode struct {
 	// When specifies a condition that must be true for this node to execute.
 	// If the condition evaluates to false, the node is skipped.
 	When *ConditionConfig `yaml:"when,omitempty" json:"when,omitempty"`
+
+	// AllowedTools restricts tools available to this node (whitelist).
+	AllowedTools []string `yaml:"allowed_tools,omitempty" json:"allowed_tools,omitempty"`
+	// DeniedTools hides specific tools from this node (blacklist).
+	DeniedTools []string `yaml:"denied_tools,omitempty" json:"denied_tools,omitempty"`
 }
 
 // DAGWorkflow is a complete DAG definition.

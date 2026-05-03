@@ -18,9 +18,11 @@ func TruncateOutput(s string, maxSize int) string {
 		return strings.TrimRight(s, "\n")
 	}
 
-	// Reserve space for the omission marker.
+	// Reserve space for the omission marker with recovery instructions.
 	omitted := len(s) - maxSize
-	marker := fmt.Sprintf("\n\n[... %d bytes omitted ...]\n\n", omitted)
+	marker := fmt.Sprintf("\n\n[... %d bytes omitted (%d of %d total bytes shown) ...]\n"+
+		"To see specific parts, use: grep_search for patterns, or bash with \"head -n N\" / \"tail -n N\" for targeted reads.\n\n",
+		omitted, maxSize, len(s))
 	available := maxSize - len(marker)
 	if available <= 0 {
 		// Degenerate case: maxSize too small for even a marker.

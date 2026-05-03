@@ -77,7 +77,8 @@ func (de *DAGExecutor) Run(ctx context.Context, workflow *DAGWorkflow) (map[stri
 				slog.Info("dag.node.skipped", "workflow", workflow.Name, "node", node.ID, "reason", "condition false")
 			} else {
 				slog.Info("dag.node.execute", "workflow", workflow.Name, "node", node.ID, "type", string(node.Type), "layer", layerIdx)
-				out, err := de.handler(ctx, node, outputs)
+				nodeCtx := injectNodeRestrictions(ctx, node)
+				out, err := de.handler(nodeCtx, node, outputs)
 				if err != nil {
 					return outputs, fmt.Errorf("node %s: %w", node.ID, err)
 				}
@@ -111,7 +112,8 @@ func (de *DAGExecutor) Run(ctx context.Context, workflow *DAGWorkflow) (map[stri
 
 					slog.Info("dag.node.execute", "workflow", workflow.Name, "node", n.ID, "type", string(n.Type), "layer", layerIdx)
 
-					out, err := de.handler(ctx, n, vars)
+					nodeCtx := injectNodeRestrictions(ctx, n)
+					out, err := de.handler(nodeCtx, n, vars)
 					if err != nil {
 						errs[idx] = fmt.Errorf("node %s: %w", n.ID, err)
 						return
@@ -151,4 +153,15 @@ func shouldSkipNode(ctx context.Context, node DAGNode, vars map[string]string) (
 		return false, fmt.Errorf("evaluate condition for node %q: %w", node.ID, err)
 	}
 	return !ok, nil // skip if condition is false
+}
+
+// injectNodeRestrictions adds per-node tool restrictions to the context if configured.
+func injectNodeRestrictions(ctx context.Context, node DAGNode) context.Context {
+	if len(node.AllowedTools) == 0 && len(node.DeniedTools) == 0 {
+		return ctx
+	}
+	return ContextWithNodeRestrictions(ctx, NodeToolRestrictions{
+		AllowedTools: node.AllowedTools,
+		DeniedTools:  node.DeniedTools,
+	})
 }

@@ -56,12 +56,24 @@ func TestTruncateOutput_TailBias(t *testing.T) {
 		t.Fatal("marker not found")
 	}
 	headLen := markerIdx
-	// Tail starts after marker end
-	markerEnd := strings.Index(got, "...]\n\n")
+	// Tail starts after the last line of the marker block (ends with double newline before tail).
+	// Find the marker's closing bracket and the subsequent content.
+	markerEnd := strings.Index(got[markerIdx:], "]\n")
 	if markerEnd < 0 {
 		t.Fatal("marker end not found")
 	}
-	tailLen := len(got) - (markerEnd + len("...]\n\n"))
+	// Skip to the end of the full marker block (may have recovery instructions).
+	afterMarker := markerIdx + markerEnd
+	// Find where the tail content starts (after blank lines following marker block).
+	tailStart := afterMarker
+	for tailStart < len(got) && (got[tailStart] == '\n' || got[tailStart] == ' ') {
+		tailStart++
+		// Stop skipping at the first non-whitespace after the marker block.
+		if tailStart < len(got) && got[tailStart] != '\n' && got[tailStart] != ' ' {
+			break
+		}
+	}
+	tailLen := len(got) - tailStart
 
 	// Head should be ~30% of available, tail ~70%.
 	ratio := float64(tailLen) / float64(headLen+tailLen)
