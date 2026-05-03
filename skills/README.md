@@ -37,6 +37,7 @@ Include this paragraph verbatim in your AI tool's instruction file
 
 | Command     | Description |
 |-------------|-------------|
+| `/autopilot`| Autonomously analyze agentic tools, identify gaps in 3 domains, implement, test, commit |
 | `/build`    | Build binary with full quality checks, fix errors, commit on success |
 | `/claude`   | Run Claude Code CLI with a single prompt |
 | `/deploy`   | Deploy to host, ensures build first |
