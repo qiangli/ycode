@@ -80,7 +80,7 @@ Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one
 
 ## Skills
 
-When the user's message starts with `/<name>`, read `skills/<name>/skill.md` and follow it. Everything after `/<name> ` is `ARGS`. Project skills: `/audit`, `/autopilot`, `/build`, `/claude`, `/deploy`, `/eval`, `/learn`, `/setup`, `/validate`, `/bench-instructions`. Some skills (`/init`, `/commit`) are embedded in the binary.
+When the user's message starts with `/<name>`, read `skills/<name>/skill.md` and follow it. Everything after `/<name> ` is `ARGS`. Project skills: `/audit`, `/autopilot`, `/build`, `/claude`, `/deploy`, `/eval`, `/learn`, `/oci`, `/setup`, `/validate`, `/bench-instructions`. Some skills (`/init`, `/commit`) are embedded in the binary.
 
 ## Development Cycle: Build → Deploy → Validate
 

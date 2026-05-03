@@ -14,7 +14,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL
 
-.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
+.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
 
 .DEFAULT_GOAL := help
 
@@ -68,6 +68,9 @@ test-integration: ## Run Go integration tests (requires running server)
 
 test-container: ## Run container integration tests (requires podman)
 	go test -tags integration -race -count=1 -timeout 180s -v ./internal/container/...
+
+test-oci: ## Run OCI self-build integration test (requires podman)
+	go test -tags integration -race -count=1 -timeout 600s -v ./internal/container/... -run TestOCIBuildSelf
 
 test-gitserver: ## Run git server workspace integration tests
 	go test -tags integration -race -count=1 -timeout 60s -v ./internal/gitserver/...
