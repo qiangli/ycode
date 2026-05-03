@@ -35,8 +35,9 @@ type Server struct {
 	logger  *slog.Logger
 
 	// WebSocket connection tracking.
-	wsMu    sync.Mutex
-	wsConns map[*websocket.Conn]struct{}
+	wsMu         sync.Mutex
+	wsConns      map[*websocket.Conn]struct{}
+	lastActivity time.Time // last connect/disconnect/message time
 
 	upgrader websocket.Upgrader
 
@@ -49,11 +50,12 @@ type Server struct {
 // New creates a new API server.
 func New(cfg Config, svc service.Service) *Server {
 	s := &Server{
-		config:  cfg,
-		service: svc,
-		mux:     http.NewServeMux(),
-		logger:  slog.Default(),
-		wsConns: make(map[*websocket.Conn]struct{}),
+		config:       cfg,
+		service:      svc,
+		mux:          http.NewServeMux(),
+		logger:       slog.Default(),
+		wsConns:      make(map[*websocket.Conn]struct{}),
+		lastActivity: time.Now(),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true // allow all origins for local dev
@@ -115,6 +117,20 @@ func (s *Server) Stop(ctx context.Context) error {
 // Mux returns the HTTP mux for testing with httptest.Server.
 func (s *Server) Mux() *http.ServeMux {
 	return s.mux
+}
+
+// ConnCount returns the number of active WebSocket connections.
+func (s *Server) ConnCount() int {
+	s.wsMu.Lock()
+	defer s.wsMu.Unlock()
+	return len(s.wsConns)
+}
+
+// LastActivity returns the time of the last client connect/disconnect/message.
+func (s *Server) LastActivity() time.Time {
+	s.wsMu.Lock()
+	defer s.wsMu.Unlock()
+	return s.lastActivity
 }
 
 // Addr returns the listen address. Only valid after Start.
@@ -296,12 +312,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Track connection.
 	s.wsMu.Lock()
 	s.wsConns[conn] = struct{}{}
+	s.lastActivity = time.Now()
 	s.wsMu.Unlock()
 	s.trackWSConnect()
 
 	defer func() {
 		s.wsMu.Lock()
 		delete(s.wsConns, conn)
+		s.lastActivity = time.Now()
 		s.wsMu.Unlock()
 		s.trackWSDisconnect()
 		conn.Close()

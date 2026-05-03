@@ -118,6 +118,29 @@ type AppOptions struct {
 	MemoryManager   *memory.Manager
 }
 
+// NewThinApp creates a minimal App for client-mode TUI rendering.
+// It does not initialize tools, storage, or provider — all agent logic
+// is delegated to the remote server via the client passed to RunInteractiveWithClient.
+func NewThinApp(version, workDir string) (*App, error) {
+	renderer, err := NewRenderer("")
+	if err != nil {
+		return nil, err
+	}
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
+	if version == "" {
+		version = "dev"
+	}
+	return &App{
+		renderer: renderer,
+		version:  version,
+		workDir:  workDir,
+		stdout:   os.Stdout,
+		config:   &config.Config{},
+	}, nil
+}
+
 // NewApp creates a new app instance.
 func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, opts ...AppOptions) (*App, error) {
 	renderer, err := NewRenderer("")

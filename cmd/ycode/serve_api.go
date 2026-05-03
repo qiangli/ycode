@@ -26,7 +26,8 @@ type apiStack struct {
 	app     *cli.App
 	memBus  *bus.MemoryBus
 	svc     *service.LocalService
-	handler http.Handler // HTTP handler for the API/WebSocket server
+	srv     *internalserver.Server // underlying server (for connection tracking)
+	handler http.Handler           // HTTP handler for the API/WebSocket server
 	natsSrv *internalserver.NATSServer
 	token   string
 }
@@ -57,6 +58,7 @@ func buildAPIStack(noNATS bool) (*apiStack, error) {
 		app:     app,
 		memBus:  memBus,
 		svc:     svc,
+		srv:     srv,
 		handler: srv.Mux(),
 		token:   token,
 	}

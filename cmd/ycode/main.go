@@ -782,6 +782,16 @@ var rootCmd = &cobra.Command{
 			return app.RunPrompt(context.Background(), prompt)
 		}
 
+		// Try client-server mode for instant startup.
+		if os.Getenv("YCODE_NO_SERVER") == "" {
+			if baseURL, err := ensureServer(); err == nil {
+				return runThinTUI(baseURL)
+			} else {
+				slog.Debug("server unavailable, falling back to in-process", "error", err)
+			}
+		}
+
+		// Fallback: full in-process initialization.
 		app, err := newApp()
 		if err != nil {
 			return err

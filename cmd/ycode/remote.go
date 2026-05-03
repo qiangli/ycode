@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/qiangli/ycode/internal/cli"
 	"github.com/qiangli/ycode/internal/client"
 )
 
@@ -45,22 +46,29 @@ func runWSRemoteTUI(url string, token string) error {
 
 	sessionID := status.SessionID
 	if sessionID == "" {
-		return fmt.Errorf("server returned no session ID")
+		// Create a new session.
+		info, err := c.CreateSession(context.Background())
+		if err != nil {
+			return fmt.Errorf("create session: %w", err)
+		}
+		sessionID = info.ID
 	}
 
-	// Create proper client with session ID.
+	// Connect WebSocket for streaming events.
 	wsClient := client.NewWSClient(baseURL, token, sessionID)
 	if err := wsClient.Connect(context.Background()); err != nil {
 		return fmt.Errorf("websocket connect: %w", err)
 	}
 	defer wsClient.Close()
 
-	fmt.Printf("Connected to %s (session: %s, model: %s)\n", baseURL, sessionID, status.Model)
+	// Create thin app and run TUI in client mode.
+	cwd, _ := os.Getwd()
+	app, err := cli.NewThinApp(version, cwd)
+	if err != nil {
+		return fmt.Errorf("create app: %w", err)
+	}
 
-	// TODO: Wire into TUI when TUI refactor is complete.
-	// For now, this demonstrates the connection works.
-	fmt.Println("Remote TUI mode — TUI refactor pending. Use the web UI for now.")
-	return nil
+	return app.RunInteractiveWithClient(context.Background(), wsClient)
 }
 
 func runNATSRemoteTUI(url string) error {

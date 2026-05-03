@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -27,6 +28,7 @@ import (
 var (
 	servePort   int
 	serveDetach bool
+	serveAuto   bool // auto-started by TUI; enables idle shutdown
 )
 
 // overrideGitServerURL is set by runAllServices to communicate the embedded
@@ -339,9 +341,38 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	_ = os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644)
 	defer os.Remove(pidPath)
 
-	// Wait for signal.
+	// If auto-started, write sentinel and enable idle shutdown.
+	autoPath := filepath.Join(home, ".agents", "ycode", "serve.auto")
+	if serveAuto {
+		_ = os.WriteFile(autoPath, []byte(strconv.Itoa(os.Getpid())), 0o644)
+		defer os.Remove(autoPath)
+	}
+
+	// Wait for signal (or idle timeout for auto-started servers).
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	if serveAuto && api != nil {
+		// Auto-started servers shut down after idle timeout.
+		go func() {
+			const idleTimeout = 5 * time.Minute
+			const checkInterval = 30 * time.Second
+			const initialGrace = 2 * time.Minute
+
+			// Give clients time to connect after server starts.
+			time.Sleep(initialGrace)
+
+			for {
+				time.Sleep(checkInterval)
+				if api.srv != nil && api.srv.ConnCount() == 0 && time.Since(api.srv.LastActivity()) > idleTimeout {
+					slog.Info("auto-server idle timeout, shutting down")
+					sigCh <- syscall.SIGTERM
+					return
+				}
+			}
+		}()
+	}
+
 	<-sigCh
 
 	fmt.Println("\nShutting down...")
@@ -359,6 +390,9 @@ func detachServer(cfg *config.ObservabilityConfig, dataDir string) error {
 	args := []string{"serve"}
 	if servePort > 0 {
 		args = append(args, "--port", strconv.Itoa(servePort))
+	}
+	if serveAuto {
+		args = append(args, "--auto")
 	}
 	if serveNoAPI {
 		args = append(args, "--no-api")
@@ -597,8 +631,10 @@ Connect from Claude Code or any MCP client:
 func init() {
 	serveCmd.PersistentFlags().IntVar(&servePort, "port", 58080, "Port for the observability server")
 	serveCmd.Flags().BoolVar(&serveDetach, "detach", false, "Run server in background")
+	serveCmd.Flags().BoolVar(&serveAuto, "auto", false, "Auto-started by TUI (enables idle shutdown)")
 	serveCmd.Flags().BoolVar(&serveNoAPI, "no-api", false, "Disable the API/WebSocket server")
 	serveCmd.Flags().BoolVar(&serveNoNATS, "no-nats", false, "Disable the embedded NATS server")
+	_ = serveCmd.Flags().MarkHidden("auto")
 	serveCmd.Flags().IntVar(&apiNATSPort, "nats-port", 4222, "Port for the embedded NATS server")
 
 	serveAuditCmd.Flags().Int("last", 10, "Number of records to show")
