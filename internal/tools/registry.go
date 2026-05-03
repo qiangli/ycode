@@ -44,6 +44,11 @@ type Registry struct {
 	mu    sync.RWMutex
 	tools map[string]*ToolSpec
 
+	// Global middleware chain — applied to all tool invocations in order.
+	// Inspired by LangGraph's wrap_tool_call pattern for composable
+	// interception (retry, caching, logging, metrics).
+	globalMiddleware []Middleware
+
 	// Permission enforcement (optional — if nil, all tools are allowed).
 	permResolver PermissionResolver
 	permPrompter PermissionPrompter
@@ -252,8 +257,18 @@ func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessag
 		}
 	}
 
+	// Build the handler chain: global middleware wraps the tool's handler.
+	handler := spec.Handler
+	r.mu.RLock()
+	middleware := r.globalMiddleware
+	r.mu.RUnlock()
+	// Apply in reverse so the first registered middleware is outermost.
+	for i := len(middleware) - 1; i >= 0; i-- {
+		handler = middleware[i](handler)
+	}
+
 	start := time.Now()
-	result, err := spec.Handler(ctx, input)
+	result, err := handler(ctx, input)
 
 	// Record call metrics in quality monitor.
 	if r.qualityMonitor != nil {
@@ -332,6 +347,16 @@ func (r *Registry) Names() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// UseMiddleware appends a global middleware that wraps every tool invocation.
+// Global middleware is applied in the order registered, outermost first.
+// This is the composable interception pattern inspired by LangGraph's
+// wrap_tool_call — useful for retry, caching, logging, and metrics.
+func (r *Registry) UseMiddleware(mw Middleware) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.globalMiddleware = append(r.globalMiddleware, mw)
 }
 
 // ApplyMiddleware wraps a tool's handler with middleware.
