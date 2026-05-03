@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Minimal ycode client in Python.
+"""Simple chat agent using ycode with local Ollama models.
 
-Connects to a running ycode server, sends a prompt, and streams the response.
+ycode provides the full agentic capabilities: tools (bash, file ops, search),
+memory, code understanding — same as the ycode TUI/web UI.
 
 Usage:
     python main.py "explain what this project does"
+    python main.py                # interactive mode
 
 Prerequisites:
-    - ycode server running: `ycode serve` or auto-started by `ycode`
-    - pip install websockets httpx  (only dependencies)
+    - ycode server running: `ycode serve` (auto-starts Ollama + all services)
+    - pip install websockets httpx
 """
 
 import asyncio
@@ -31,14 +33,15 @@ def discover_port() -> int:
         return 58080
 
 
-BASE_URL = os.environ.get("YCODE_URL", f"http://127.0.0.1:{discover_port()}")
-
-
 def read_token() -> str:
     try:
         return TOKEN_PATH.read_text().strip()
     except FileNotFoundError:
         return ""
+
+
+BASE_URL = os.environ.get("YCODE_URL", f"http://127.0.0.1:{discover_port()}")
+API_BASE = f"{BASE_URL}/ycode"
 
 
 def headers() -> dict:
@@ -49,41 +52,13 @@ def headers() -> dict:
     return h
 
 
-async def main():
-    prompt = " ".join(sys.argv[1:])
-    if not prompt:
-        print("Usage: python main.py <prompt>", file=sys.stderr)
-        sys.exit(1)
+async def chat(session_id: str, prompt: str):
+    """Send a message and stream the agent's response."""
+    ws_url = API_BASE.replace("http", "ws") + f"/api/sessions/{session_id}/ws"
 
-    # 1. Health check
-    async with httpx.AsyncClient(base_url=BASE_URL, headers=headers()) as client:
-        try:
-            resp = await client.get("/ycode/api/health", timeout=2.0)
-            resp.raise_for_status()
-        except (httpx.ConnectError, httpx.HTTPStatusError):
-            print(f"Cannot reach ycode server at {BASE_URL}. Is it running?", file=sys.stderr)
-            print("Start it with: ycode serve", file=sys.stderr)
-            sys.exit(1)
-
-        # 2. Get or create session
-        try:
-            resp = await client.get("/ycode/api/status")
-            session_id = resp.json().get("session_id")
-        except Exception:
-            resp = await client.post("/ycode/api/sessions", json={})
-            session_id = resp.json().get("id")
-
-        if not session_id:
-            print("Failed to get session ID from server", file=sys.stderr)
-            sys.exit(1)
-
-    # 3. Connect WebSocket
-    ws_url = BASE_URL.replace("http", "ws") + f"/ycode/api/sessions/{session_id}/ws"
     async with websockets.connect(ws_url) as ws:
-        # 4. Send message
         await ws.send(json.dumps({"type": "message.send", "data": {"text": prompt}}))
 
-        # 5. Stream response
         async for raw in ws:
             event = json.loads(raw)
             event_type = event.get("type")
@@ -93,13 +68,51 @@ async def main():
             elif event_type == "tool_use.start":
                 tool = event["data"].get("tool", "")
                 detail = event["data"].get("detail", "")
-                print(f"\n[tool: {tool}] {detail}", file=sys.stderr)
+                print(f"\n[{tool}] {detail}", file=sys.stderr)
             elif event_type == "turn.complete":
                 print()
                 break
             elif event_type == "turn.error":
                 print(f"\nError: {event['data']['error']}", file=sys.stderr)
-                sys.exit(1)
+                break
+
+
+async def main():
+    # Verify server is running.
+    async with httpx.AsyncClient(base_url=API_BASE, headers=headers()) as client:
+        try:
+            resp = await client.get("/api/health", timeout=2.0)
+            resp.raise_for_status()
+        except (httpx.ConnectError, httpx.HTTPStatusError):
+            print(f"Cannot reach ycode server at {BASE_URL}.", file=sys.stderr)
+            print("Start it with: ycode serve", file=sys.stderr)
+            sys.exit(1)
+
+        # Get active session.
+        resp = await client.get("/api/status")
+        status = resp.json()
+        session_id = status.get("session_id", "")
+
+    print(f"Connected to ycode agent (model: {status.get('model')}, session: {session_id})",
+          file=sys.stderr)
+    print("Full agentic mode: tools, memory, code understanding\n", file=sys.stderr)
+
+    prompt = " ".join(sys.argv[1:])
+    if prompt:
+        # One-shot mode.
+        await chat(session_id, prompt)
+    else:
+        # Interactive mode.
+        try:
+            while True:
+                text = input("> ")
+                if not text.strip():
+                    continue
+                if text.strip() == "/quit":
+                    break
+                await chat(session_id, text)
+        except (EOFError, KeyboardInterrupt):
+            print()
 
 
 if __name__ == "__main__":
