@@ -9,25 +9,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	amcluster "github.com/prometheus/alertmanager/cluster"
-	amconfig "github.com/prometheus/alertmanager/config"
-	"github.com/prometheus/alertmanager/dispatch"
-	"github.com/prometheus/alertmanager/featurecontrol"
-	"github.com/prometheus/alertmanager/provider/mem"
-	"github.com/prometheus/alertmanager/silence"
-	"github.com/prometheus/alertmanager/types"
-	prometheus_model "github.com/prometheus/common/model"
-
-	v2 "github.com/prometheus/alertmanager/api/v2"
-	"github.com/prometheus/alertmanager/asset"
-	"github.com/prometheus/client_golang/prometheus"
+	am "github.com/qiangli/ycode/pkg/otel/alertmanager"
 )
 
 // AlertmanagerComponent runs an embedded Alertmanager with the real upstream
 // API v2 and the Elm-based UI from the alertmanager/asset package.
 type AlertmanagerComponent struct {
-	alerts  *mem.Alerts
-	marker  *types.MemMarker
+	alerts  *am.Alerts
+	marker  *am.MemMarker
 	healthy atomic.Bool
 	cancel  context.CancelFunc
 }
@@ -39,12 +28,12 @@ func (a *AlertmanagerComponent) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	a.cancel = cancel
 
-	reg := prometheus.NewRegistry()
+	reg := am.NewRegistry()
 	logger := slog.Default()
 
-	a.marker = types.NewMarker(reg)
+	a.marker = am.NewMarker(reg)
 
-	alerts, err := mem.NewAlerts(ctx, a.marker, 30*time.Minute, 0, nil, logger, reg, featurecontrol.NoopFlags{})
+	alerts, err := am.NewAlerts(ctx, a.marker, 30*time.Minute, 0, nil, logger, reg, am.NoopFlags{})
 	if err != nil {
 		return err
 	}
@@ -70,10 +59,10 @@ func (a *AlertmanagerComponent) Stop(_ context.Context) error {
 func (a *AlertmanagerComponent) Healthy() bool { return a.healthy.Load() }
 
 func (a *AlertmanagerComponent) HTTPHandler() http.Handler {
-	reg := prometheus.NewRegistry()
+	reg := am.NewRegistry()
 	logger := slog.Default()
 
-	silences, err := silence.New(silence.Options{
+	silences, err := am.NewSilences(am.SilenceOptions{
 		Retention: 24 * time.Hour,
 		Logger:    logger,
 		Metrics:   reg,
@@ -86,19 +75,19 @@ func (a *AlertmanagerComponent) HTTPHandler() http.Handler {
 	peer := &noopPeer{}
 
 	// groupsFn returns alert groups — empty since we have no dispatcher.
-	groupsFn := func(_ context.Context, _ func(*dispatch.Route) bool, _ func(*types.Alert, time.Time) bool) (dispatch.AlertGroups, map[prometheus_model.Fingerprint][]string, error) {
+	groupsFn := func(_ context.Context, _ func(*am.DispatchRoute) bool, _ func(*am.Alert, time.Time) bool) (am.AlertGroups, map[am.Fingerprint][]string, error) {
 		return nil, nil, nil
 	}
 	// getAlertStatusFn returns the status for a given alert fingerprint.
-	getAlertStatusFn := func(_ prometheus_model.Fingerprint) types.AlertStatus {
-		return types.AlertStatus{State: types.AlertStateActive}
+	getAlertStatusFn := func(_ am.Fingerprint) am.AlertStatus {
+		return am.AlertStatus{State: am.AlertStateActive}
 	}
 	// groupMutedFunc returns the muted state.
 	groupMutedFunc := func(routeID, groupKey string) ([]string, bool) {
 		return a.marker.Muted(routeID, groupKey)
 	}
 
-	api, err := v2.NewAPI(a.alerts, groupsFn, getAlertStatusFn, groupMutedFunc, silences, peer, logger, reg)
+	api, err := am.NewAPI(a.alerts, groupsFn, getAlertStatusFn, groupMutedFunc, silences, peer, logger, reg)
 	if err != nil {
 		slog.Warn("alertmanager: API v2 init failed, using stub", "error", err)
 		return a.fallbackHandler()
@@ -106,10 +95,10 @@ func (a *AlertmanagerComponent) HTTPHandler() http.Handler {
 
 	// Initialize with a minimal config so the status endpoint works.
 	defaultReceiver := "default"
-	api.Update(&amconfig.Config{
-		Route:     &amconfig.Route{Receiver: defaultReceiver},
-		Receivers: []amconfig.Receiver{{Name: defaultReceiver}},
-	}, func(_ context.Context, _ prometheus_model.LabelSet) {})
+	api.Update(&am.Config{
+		Route:     &am.Route{Receiver: defaultReceiver},
+		Receivers: []am.Receiver{{Name: defaultReceiver}},
+	}, func(_ context.Context, _ am.LabelSet) {})
 
 	mux := http.NewServeMux()
 	// Mount the real API v2.
@@ -119,7 +108,7 @@ func (a *AlertmanagerComponent) HTTPHandler() http.Handler {
 	mux.HandleFunc("/-/ready", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("OK")) })
 
 	// Serve the real Alertmanager Elm UI from embedded assets.
-	fs := http.FileServer(asset.Assets)
+	fs := http.FileServer(am.Assets)
 	mux.HandleFunc("/script.js", func(w http.ResponseWriter, r *http.Request) {
 		r.URL.Path = "/static/script.js"
 		fs.ServeHTTP(w, r)
@@ -152,7 +141,7 @@ func (a *AlertmanagerComponent) fallbackHandler() http.Handler {
 }
 
 // AddAlert inserts an alert via the in-memory provider.
-func (a *AlertmanagerComponent) AddAlert(ctx context.Context, alert *types.Alert) error {
+func (a *AlertmanagerComponent) AddAlert(ctx context.Context, alert *am.Alert) error {
 	if a.alerts == nil {
 		return nil
 	}
@@ -162,6 +151,6 @@ func (a *AlertmanagerComponent) AddAlert(ctx context.Context, alert *types.Alert
 // noopPeer implements cluster.ClusterPeer for single-node operation.
 type noopPeer struct{}
 
-func (n *noopPeer) Name() string                     { return "embedded" }
-func (n *noopPeer) Status() string                   { return "disabled" }
-func (n *noopPeer) Peers() []amcluster.ClusterMember { return nil }
+func (n *noopPeer) Name() string                  { return "embedded" }
+func (n *noopPeer) Status() string                { return "disabled" }
+func (n *noopPeer) Peers() []am.ClusterMember     { return nil }

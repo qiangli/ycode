@@ -9,9 +9,9 @@ import (
 
 func TestParseOCIArgs(t *testing.T) {
 	tests := []struct {
-		args    string
-		subcmd  string
-		target  string
+		args   string
+		subcmd string
+		target string
 	}{
 		{"", "build", "."},
 		{".", "build", "."},

@@ -7,12 +7,7 @@ import (
 	"net/http"
 	"sync/atomic"
 
-	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/confmap"
-	"go.opentelemetry.io/collector/confmap/provider/yamlprovider"
-	"go.opentelemetry.io/collector/otelcol"
-
-	jaegerembed "github.com/jaegertracing/jaeger/cmd/jaeger/embed"
+	ociJaeger "github.com/qiangli/ycode/pkg/otel/jaeger"
 )
 
 // JaegerComponent runs Jaeger v2 all-in-one in-process as a goroutine.
@@ -24,7 +19,7 @@ type JaegerComponent struct {
 	dataDir    string
 	pathPrefix string // proxy path prefix (e.g. "/traces")
 
-	svc     *otelcol.Collector
+	svc     *ociJaeger.Collector
 	healthy atomic.Bool
 	cancel  context.CancelFunc
 }
@@ -54,8 +49,8 @@ func (j *JaegerComponent) Start(ctx context.Context) error {
 	// Build Jaeger all-in-one config YAML programmatically.
 	configYAML := j.generateConfig()
 
-	settings := otelcol.CollectorSettings{
-		BuildInfo: component.BuildInfo{
+	settings := ociJaeger.CollectorSettings{
+		BuildInfo: ociJaeger.BuildInfo{
 			Command:     "ycode-jaeger",
 			Description: "Embedded Jaeger for ycode",
 			Version:     "0.1.0",
@@ -63,16 +58,16 @@ func (j *JaegerComponent) Start(ctx context.Context) error {
 		// Prevent embedded Jaeger from intercepting SIGINT/SIGTERM.
 		// Shutdown is handled via context cancellation from the cluster manager.
 		DisableGracefulShutdown: true,
-		Factories:               jaegerembed.Components,
-		ConfigProviderSettings: otelcol.ConfigProviderSettings{
-			ResolverSettings: confmap.ResolverSettings{
+		Factories:               ociJaeger.Components,
+		ConfigProviderSettings: ociJaeger.ConfigProviderSettings{
+			ResolverSettings: ociJaeger.ResolverSettings{
 				URIs:              []string{"yaml:" + configYAML},
-				ProviderFactories: []confmap.ProviderFactory{yamlprovider.NewFactory()},
+				ProviderFactories: []ociJaeger.ProviderFactory{ociJaeger.NewYAMLProviderFactory()},
 			},
 		},
 	}
 
-	svc, err := otelcol.NewCollector(settings)
+	svc, err := ociJaeger.NewCollector(settings)
 	if err != nil {
 		return fmt.Errorf("jaeger: create collector: %w", err)
 	}

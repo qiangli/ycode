@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"go.podman.io/podman/v6/libpod"
-	"go.podman.io/podman/v6/pkg/api/server"
-	"go.podman.io/podman/v6/pkg/domain/entities"
+	ociEntities "github.com/qiangli/ycode/pkg/oci/entities"
+	"github.com/qiangli/ycode/pkg/oci/libpod"
+	"github.com/qiangli/ycode/pkg/oci/server"
 )
 
 // startServiceInProcess starts the Podman REST API server as an in-process
@@ -48,7 +48,7 @@ func (e *Engine) startServiceInProcess(ctx context.Context, cfg *EngineConfig) e
 	}
 
 	// Start the REST API server.
-	opts := entities.ServiceOptions{
+	opts := ociEntities.ServiceOptions{
 		Timeout: 0, // no idle timeout
 	}
 	apiServer, err := server.NewServerWithSettings(rt, ln, opts)

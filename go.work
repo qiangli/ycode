@@ -1,0 +1,18 @@
+go 1.26.2
+
+use (
+	.
+	./pkg/oci
+	./pkg/ollm
+	./pkg/otel
+)
+
+// Workspace-level replace directives override sub-module replaces
+// to use local external/ paths during development.
+replace (
+	go.podman.io/podman/v6 => ./external/podman
+	github.com/ollama/ollama => ./external/ollama
+	github.com/jaegertracing/jaeger => ./external/jaeger
+	github.com/VictoriaMetrics/VictoriaLogs => ./external/victorialogs
+	github.com/perses/perses => ./external/perses
+)

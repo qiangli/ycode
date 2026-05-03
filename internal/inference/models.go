@@ -21,21 +21,19 @@ func NewOllamaLister() api.OllamaLister {
 			return nil
 		}
 
-		responses, err := OllamaListModels(ctx, baseURL)
+		ollamaModels, err := OllamaListModels(ctx, baseURL)
 		if err != nil {
 			return nil
 		}
 
 		var models []api.ModelInfo
-		for _, resp := range responses {
-			for _, m := range resp.Models {
-				models = append(models, api.ModelInfo{
-					ID:       m.Name,
-					Provider: "ollama",
-					Source:   "ollama",
-					Size:     api.FormatBytes(m.Size),
-				})
-			}
+		for _, m := range ollamaModels {
+			models = append(models, api.ModelInfo{
+				ID:       m.Name,
+				Provider: "ollama",
+				Source:   "ollama",
+				Size:     api.FormatBytes(m.Size),
+			})
 		}
 		return models
 	}

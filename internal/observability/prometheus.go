@@ -19,10 +19,10 @@ import (
 
 	"github.com/qiangli/ycode/internal/httputil"
 
-	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/model/textparse"
-	"github.com/prometheus/prometheus/promql"
-	"github.com/prometheus/prometheus/tsdb"
+	"github.com/qiangli/ycode/pkg/otel/prometheus/labels"
+	"github.com/qiangli/ycode/pkg/otel/prometheus/textparse"
+	"github.com/qiangli/ycode/pkg/otel/prometheus/promql"
+	"github.com/qiangli/ycode/pkg/otel/prometheus/tsdb"
 )
 
 //go:embed static/prometheus

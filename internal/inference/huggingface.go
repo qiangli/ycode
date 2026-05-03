@@ -11,9 +11,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
-	ollamaembed "github.com/ollama/ollama/embed"
+	"github.com/qiangli/ycode/pkg/ollm"
 )
 
 // HFModel represents a model from the Hugging Face Hub API.
@@ -185,22 +184,11 @@ func ParseHFRef(ref string) (repo, filename string, err error) {
 // ImportGGUFToOllama imports a downloaded GGUF file into Ollama's local registry.
 // The model becomes immediately runnable after this call returns.
 func ImportGGUFToOllama(ctx context.Context, ollamaBaseURL, modelName, ggufPath string, progress func(status string)) error {
-	client, err := ollamaembed.NewClient(ollamaBaseURL)
+	client, err := ollm.NewClient(ollamaBaseURL)
 	if err != nil {
-		return fmt.Errorf("create ollama client: %w", err)
+		return err
 	}
-
-	req := &ollamaembed.CreateRequest{
-		Model: modelName,
-		From:  ggufPath,
-	}
-
-	return client.Create(ctx, req, func(resp ollamaembed.ProgressResponse) error {
-		if progress != nil && resp.Status != "" {
-			progress(resp.Status)
-		}
-		return nil
-	})
+	return client.Import(ctx, modelName, ggufPath, progress)
 }
 
 // DeriveModelName generates an Ollama-friendly model name from a HF reference.
@@ -232,60 +220,41 @@ func DeriveModelName(repo, filename string) string {
 
 // DetectOllamaServer checks if an Ollama server is reachable at the given URL.
 func DetectOllamaServer(ctx context.Context, baseURL string) bool {
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(baseURL)
-	if err != nil {
-		return false
-	}
-	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	return ollm.Detect(ctx, baseURL)
 }
 
 // DefaultOllamaURL returns the default Ollama server URL.
 func DefaultOllamaURL() string {
-	if u := os.Getenv("OLLAMA_HOST"); u != "" {
-		if !strings.HasPrefix(u, "http") {
-			return "http://" + u
-		}
-		return u
-	}
-	return "http://127.0.0.1:11434"
+	return ollm.DefaultURL()
 }
 
 // OllamaListModels lists models from a running Ollama server.
-func OllamaListModels(ctx context.Context, baseURL string) ([]ollamaembed.ListResponse, error) {
-	client, err := ollamaembed.NewClient(baseURL)
+func OllamaListModels(ctx context.Context, baseURL string) ([]ollm.Model, error) {
+	client, err := ollm.NewClient(baseURL)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	// Wrap in slice for type compatibility — caller uses resp.Models directly.
-	return []ollamaembed.ListResponse{*resp}, nil
+	return client.List(ctx)
 }
 
 // OllamaPullModel pulls a model from the Ollama registry.
 func OllamaPullModel(ctx context.Context, baseURL, modelName string, progress func(status string, completed, total int64)) error {
-	client, err := ollamaembed.NewClient(baseURL)
+	client, err := ollm.NewClient(baseURL)
 	if err != nil {
 		return err
 	}
-	req := &ollamaembed.PullRequest{Model: modelName}
-	return client.Pull(ctx, req, func(resp ollamaembed.ProgressResponse) error {
+	return client.Pull(ctx, modelName, func(p ollm.PullProgress) {
 		if progress != nil {
-			progress(resp.Status, resp.Completed, resp.Total)
+			progress(p.Status, p.Completed, p.Total)
 		}
-		return nil
 	})
 }
 
 // OllamaDeleteModel deletes a model from the Ollama server.
 func OllamaDeleteModel(ctx context.Context, baseURL, modelName string) error {
-	client, err := ollamaembed.NewClient(baseURL)
+	client, err := ollm.NewClient(baseURL)
 	if err != nil {
 		return err
 	}
-	return client.Delete(ctx, &ollamaembed.DeleteRequest{Model: modelName})
+	return client.Delete(ctx, modelName)
 }

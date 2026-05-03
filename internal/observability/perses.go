@@ -14,9 +14,7 @@ import (
 	"github.com/qiangli/ycode/internal/observability/dashboards"
 	"github.com/qiangli/ycode/internal/observability/plugins"
 
-	persesembed "github.com/perses/perses/embed"
-	"github.com/perses/perses/pkg/model/api/config"
-	"github.com/perses/perses/pkg/model/api/v1/secret"
+	ociPerses "github.com/qiangli/ycode/pkg/otel/perses"
 )
 
 const persesDefaultKey = "e=dz;`M'5Pjvy^Sq3FVBkTC@N9?H/gua"
@@ -28,7 +26,7 @@ type PersesComponent struct {
 	dataDir       string
 	pathPrefix    string // proxy path prefix (e.g. "/dashboard")
 
-	server  *persesembed.Server
+	server  *ociPerses.Server
 	healthy atomic.Bool
 }
 
@@ -76,18 +74,18 @@ func (p *PersesComponent) Start(ctx context.Context) error {
 	_ = os.MkdirAll(archiveDir, 0o755)
 	provisionPluginArchives(archiveDir)
 
-	conf := config.Config{
+	conf := ociPerses.Config{
 		APIPrefix: p.pathPrefix,
-		Database: config.Database{
-			File: &config.File{
+		Database: ociPerses.Database{
+			File: &ociPerses.File{
 				Folder:    dbDir,
 				Extension: "json",
 			},
 		},
-		Security: config.Security{
-			EncryptionKey: secret.Hidden(persesDefaultKey),
+		Security: ociPerses.Security{
+			EncryptionKey: ociPerses.Hidden(persesDefaultKey),
 		},
-		Plugin: config.Plugin{
+		Plugin: ociPerses.Plugin{
 			Path:         pluginDir,
 			ArchivePaths: []string{archiveDir},
 		},
@@ -97,7 +95,7 @@ func (p *PersesComponent) Start(ctx context.Context) error {
 		return fmt.Errorf("perses: verify security config: %w", err)
 	}
 
-	server, err := persesembed.Start(ctx, conf)
+	server, err := ociPerses.Start(ctx, conf)
 	if err != nil {
 		return fmt.Errorf("perses: start: %w", err)
 	}

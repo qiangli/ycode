@@ -12,12 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"go.podman.io/podman/v6/pkg/api/handlers"
-	"go.podman.io/podman/v6/pkg/bindings/containers"
-	"go.podman.io/podman/v6/pkg/specgen"
-
-	ociSpec "github.com/opencontainers/runtime-spec/specs-go"
-	nettypes "go.podman.io/common/libnetwork/types"
+	"github.com/qiangli/ycode/pkg/oci/bindings/containers"
+	"github.com/qiangli/ycode/pkg/oci/handlers"
+	"github.com/qiangli/ycode/pkg/oci/nettypes"
+	ociSpec "github.com/qiangli/ycode/pkg/oci/spec"
+	"github.com/qiangli/ycode/pkg/oci/specgen"
 )
 
 // ContainerConfig holds the configuration for creating a container.

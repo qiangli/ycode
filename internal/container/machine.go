@@ -13,12 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"go.podman.io/podman/v6/pkg/machine"
-	machineDefine "go.podman.io/podman/v6/pkg/machine/define"
-	"go.podman.io/podman/v6/pkg/machine/env"
-	"go.podman.io/podman/v6/pkg/machine/provider"
-	"go.podman.io/podman/v6/pkg/machine/shim"
-	"go.podman.io/podman/v6/pkg/machine/vmconfigs"
+	ociMachine "github.com/qiangli/ycode/pkg/oci/machine"
 
 	vfkitEmbed "github.com/qiangli/ycode/internal/container/vfkit_embed"
 )
@@ -48,7 +43,7 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 	ensureVfkitOnPath()
 
 	// Get the platform's VM provider (AppleHV on macOS, QEMU on Linux, HyperV on Windows).
-	mp, err := provider.Get()
+	mp, err := ociMachine.GetProvider()
 	if err != nil {
 		return fmt.Errorf("get machine provider: %w", err)
 	}
@@ -57,7 +52,7 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 	mc, exists := findMachine(cfg.Name, mp)
 	if exists {
 		state, err := mp.State(mc, false)
-		if err == nil && state == machineDefine.Running {
+		if err == nil && state == ociMachine.Running {
 			slog.Info("container: machine already running", "name", cfg.Name)
 			return nil
 		}
@@ -65,7 +60,7 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 		// Machine exists but not running — start it.
 		slog.Info("container: starting machine", "name", cfg.Name)
 		updateConn := true
-		if err := shim.Start(mc, mp, machine.StartOptions{}, &updateConn); err != nil {
+		if err := ociMachine.Start(mc, mp, ociMachine.StartOptions{}, &updateConn); err != nil {
 			return fmt.Errorf("machine start: %w", err)
 		}
 	} else {
@@ -73,7 +68,7 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 		slog.Info("container: initializing machine (first-time setup, downloads ~800MB VM image)",
 			"name", cfg.Name, "cpus", cfg.CPUs, "memory_mb", cfg.Memory, "disk_gb", cfg.Disk)
 
-		initOpts := machineDefine.InitOptions{
+		initOpts := ociMachine.InitOptions{
 			Name:      cfg.Name,
 			CPUS:      uint64(cfg.CPUs),
 			Memory:    uint64(cfg.Memory),
@@ -81,7 +76,7 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 			IsDefault: true,
 		}
 
-		if err := shim.Init(initOpts, mp); err != nil {
+		if err := ociMachine.Init(initOpts, mp); err != nil {
 			return fmt.Errorf("machine init: %w", err)
 		}
 
@@ -93,7 +88,7 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 
 		slog.Info("container: starting machine", "name", cfg.Name)
 		updateConn := true
-		if err := shim.Start(mc, mp, machine.StartOptions{}, &updateConn); err != nil {
+		if err := ociMachine.Start(mc, mp, ociMachine.StartOptions{}, &updateConn); err != nil {
 			return fmt.Errorf("machine start: %w", err)
 		}
 	}
@@ -114,7 +109,7 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 
 // StopMachine stops the podman machine using Go libraries.
 func StopMachine(ctx context.Context, name string) error {
-	mp, err := provider.Get()
+	mp, err := ociMachine.GetProvider()
 	if err != nil {
 		return err
 	}
@@ -124,7 +119,7 @@ func StopMachine(ctx context.Context, name string) error {
 		return fmt.Errorf("machine %q not found", name)
 	}
 
-	return shim.Stop(mc, mp, false)
+	return ociMachine.Stop(mc, mp, false)
 }
 
 // --- internal helpers ---
@@ -149,12 +144,12 @@ func ensureVfkitOnPath() {
 }
 
 // findMachine looks up a machine config by name from the provider.
-func findMachine(name string, mp vmconfigs.VMProvider) (*vmconfigs.MachineConfig, bool) {
-	dirs, err := env.GetMachineDirs(mp.VMType())
+func findMachine(name string, mp ociMachine.VMProvider) (*ociMachine.MachineConfig, bool) {
+	dirs, err := ociMachine.GetMachineDirs(mp.VMType())
 	if err != nil {
 		return nil, false
 	}
-	mc, err := vmconfigs.LoadMachineByName(name, dirs)
+	mc, err := ociMachine.LoadMachineByName(name, dirs)
 	if err != nil {
 		return nil, false
 	}

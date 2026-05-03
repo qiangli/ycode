@@ -13,19 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/confmap"
-	"go.opentelemetry.io/collector/confmap/provider/yamlprovider"
-	"go.opentelemetry.io/collector/exporter/debugexporter"
-	"go.opentelemetry.io/collector/exporter/otlpexporter"
-	"go.opentelemetry.io/collector/exporter/otlphttpexporter"
-	"go.opentelemetry.io/collector/otelcol"
-	"go.opentelemetry.io/collector/processor/batchprocessor"
-	"go.opentelemetry.io/collector/receiver/otlpreceiver"
-	"go.opentelemetry.io/collector/service/telemetry/otelconftelemetry"
-
-	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusexporter"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver"
+	oc "github.com/qiangli/ycode/pkg/otel/collector"
 )
 
 // EmbeddedCollector runs an OTEL Collector in-process as a goroutine.
@@ -34,7 +22,7 @@ type EmbeddedCollector struct {
 	dataDir string
 
 	mu      sync.Mutex
-	svc     *otelcol.Collector
+	svc     *oc.Collector
 	healthy atomic.Bool
 	cancel  context.CancelFunc
 }
@@ -79,8 +67,8 @@ func (c *EmbeddedCollector) Start(ctx context.Context) error {
 		return fmt.Errorf("build collector factories: %w", err)
 	}
 
-	settings := otelcol.CollectorSettings{
-		BuildInfo: component.BuildInfo{
+	settings := oc.CollectorSettings{
+		BuildInfo: oc.BuildInfo{
 			Command:     "ycode-collector",
 			Description: "Embedded OTEL Collector for ycode",
 			Version:     "0.1.0",
@@ -88,16 +76,16 @@ func (c *EmbeddedCollector) Start(ctx context.Context) error {
 		// Prevent the embedded collector from intercepting SIGINT/SIGTERM.
 		// Shutdown is handled via context cancellation from the cluster manager.
 		DisableGracefulShutdown: true,
-		Factories:               func() (otelcol.Factories, error) { return factories, nil },
-		ConfigProviderSettings: otelcol.ConfigProviderSettings{
-			ResolverSettings: confmap.ResolverSettings{
+		Factories:               func() (oc.Factories, error) { return factories, nil },
+		ConfigProviderSettings: oc.ConfigProviderSettings{
+			ResolverSettings: oc.ResolverSettings{
 				URIs:              []string{"yaml:" + configYAML},
-				ProviderFactories: []confmap.ProviderFactory{yamlprovider.NewFactory()},
+				ProviderFactories: []oc.ProviderFactory{oc.NewYAMLProviderFactory()},
 			},
 		},
 	}
 
-	svc, err := otelcol.NewCollector(settings)
+	svc, err := oc.NewCollector(settings)
 	if err != nil {
 		return fmt.Errorf("create collector: %w", err)
 	}
@@ -268,36 +256,36 @@ func isPortAvailable(port int) bool {
 }
 
 // factories builds the component factories for the embedded collector.
-func (c *EmbeddedCollector) factories() (otelcol.Factories, error) {
-	receivers, err := otelcol.MakeFactoryMap(
-		otlpreceiver.NewFactory(),
-		hostmetricsreceiver.NewFactory(),
+func (c *EmbeddedCollector) factories() (oc.Factories, error) {
+	receivers, err := oc.MakeFactoryMap(
+		oc.NewOTLPReceiverFactory(),
+		oc.NewHostMetricsReceiverFactory(),
 	)
 	if err != nil {
-		return otelcol.Factories{}, fmt.Errorf("receiver factories: %w", err)
+		return oc.Factories{}, fmt.Errorf("receiver factories: %w", err)
 	}
 
-	processors, err := otelcol.MakeFactoryMap(
-		batchprocessor.NewFactory(),
+	processors, err := oc.MakeFactoryMap(
+		oc.NewBatchProcessorFactory(),
 	)
 	if err != nil {
-		return otelcol.Factories{}, fmt.Errorf("processor factories: %w", err)
+		return oc.Factories{}, fmt.Errorf("processor factories: %w", err)
 	}
 
-	exporters, err := otelcol.MakeFactoryMap(
-		debugexporter.NewFactory(),
-		prometheusexporter.NewFactory(),
-		otlpexporter.NewFactory(),     // traces → Jaeger (OTLP gRPC)
-		otlphttpexporter.NewFactory(), // logs → VictoriaLogs (OTLP HTTP)
+	exporters, err := oc.MakeFactoryMap(
+		oc.NewDebugExporterFactory(),
+		oc.NewPrometheusExporterFactory(),
+		oc.NewOTLPExporterFactory(),     // traces → Jaeger (OTLP gRPC)
+		oc.NewOTLPHTTPExporterFactory(), // logs → VictoriaLogs (OTLP HTTP)
 	)
 	if err != nil {
-		return otelcol.Factories{}, fmt.Errorf("exporter factories: %w", err)
+		return oc.Factories{}, fmt.Errorf("exporter factories: %w", err)
 	}
 
-	return otelcol.Factories{
+	return oc.Factories{
 		Receivers:  receivers,
 		Processors: processors,
 		Exporters:  exporters,
-		Telemetry:  otelconftelemetry.NewFactory(),
+		Telemetry:  oc.NewTelemetryFactory(),
 	}, nil
 }

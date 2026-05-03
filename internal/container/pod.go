@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	nettypes "go.podman.io/common/libnetwork/types"
-	"go.podman.io/podman/v6/pkg/bindings/pods"
-	entTypes "go.podman.io/podman/v6/pkg/domain/entities/types"
-	"go.podman.io/podman/v6/pkg/specgen"
+	"github.com/qiangli/ycode/pkg/oci/bindings/pods"
+	entTypes "github.com/qiangli/ycode/pkg/oci/entities"
+	nettypes "github.com/qiangli/ycode/pkg/oci/nettypes"
+	"github.com/qiangli/ycode/pkg/oci/specgen"
 )
 
 // PodOptions holds configuration for creating a pod.

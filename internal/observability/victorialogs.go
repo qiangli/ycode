@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"sync/atomic"
 
-	"github.com/VictoriaMetrics/VictoriaLogs/app/vlinsert"
-	"github.com/VictoriaMetrics/VictoriaLogs/app/vlinsert/insertutil"
-	"github.com/VictoriaMetrics/VictoriaLogs/app/vlselect"
-	"github.com/VictoriaMetrics/VictoriaLogs/app/vlstorage"
-	"github.com/VictoriaMetrics/VictoriaMetrics/lib/httpserver"
+	"github.com/qiangli/ycode/pkg/otel/victorialogs/httpserver"
+	"github.com/qiangli/ycode/pkg/otel/victorialogs/insertutil"
+	"github.com/qiangli/ycode/pkg/otel/victorialogs/vlinsert"
+	"github.com/qiangli/ycode/pkg/otel/victorialogs/vlselect"
+	"github.com/qiangli/ycode/pkg/otel/victorialogs/vlstorage"
 )
 
 // VictoriaLogsComponent runs VictoriaLogs in-process as a goroutine.

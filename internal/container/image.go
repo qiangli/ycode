@@ -8,10 +8,10 @@ import (
 	"os"
 	"path/filepath"
 
-	buildahDefine "go.podman.io/buildah/define"
-	"go.podman.io/podman/v6/pkg/bindings/images"
-	"go.podman.io/podman/v6/pkg/bindings/system"
-	entTypes "go.podman.io/podman/v6/pkg/domain/entities/types"
+	buildahDefine "github.com/qiangli/ycode/pkg/oci/buildah"
+	"github.com/qiangli/ycode/pkg/oci/bindings/images"
+	"github.com/qiangli/ycode/pkg/oci/bindings/system"
+	entTypes "github.com/qiangli/ycode/pkg/oci/entities"
 )
 
 //go:embed Dockerfile.sandbox

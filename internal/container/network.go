@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	nettypes "go.podman.io/common/libnetwork/types"
-	"go.podman.io/podman/v6/pkg/bindings/network"
+	"github.com/qiangli/ycode/pkg/oci/bindings/network"
+	nettypes "github.com/qiangli/ycode/pkg/oci/nettypes"
 )
 
 // CreateNetwork creates a bridge network for the ycode session via REST API.

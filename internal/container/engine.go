@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.podman.io/podman/v6/pkg/bindings"
+	"github.com/qiangli/ycode/pkg/oci/bindings"
 )
 
 // Engine wraps the Podman container management layer.

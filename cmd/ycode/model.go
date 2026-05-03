@@ -152,25 +152,23 @@ func newModelListCmd() *cobra.Command {
 				return nil
 			}
 
-			responses, err := inference.OllamaListModels(ctx, base)
+			models, err := inference.OllamaListModels(ctx, base)
 			if err != nil {
 				return fmt.Errorf("list models: %w", err)
 			}
 
-			if len(responses) == 0 || len(responses[0].Models) == 0 {
+			if len(models) == 0 {
 				fmt.Println("No models found.")
 				return nil
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "NAME\tSIZE\tMODIFIED\tFAMILY")
-			for _, resp := range responses {
-				for _, m := range resp.Models {
-					size := formatBytes(m.Size)
-					modified := m.ModifiedAt.Format("2006-01-02 15:04")
-					family := m.Details.Family
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", m.Name, size, modified, family)
-				}
+			for _, m := range models {
+				size := formatBytes(m.Size)
+				modified := m.ModifiedAt.Format("2006-01-02 15:04")
+				family := m.Details.Family
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", m.Name, size, modified, family)
 			}
 			w.Flush()
 			return nil
