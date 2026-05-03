@@ -2,8 +2,11 @@ package fileops
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -30,6 +33,12 @@ type ReadFileParams struct {
 func ReadFile(params ReadFileParams) (string, error) {
 	info, err := os.Stat(params.Path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			suggestion := suggestSimilarFiles(params.Path)
+			if suggestion != "" {
+				return "", fmt.Errorf("file not found: %s\n%s", params.Path, suggestion)
+			}
+		}
 		return "", fmt.Errorf("stat %s: %w", params.Path, err)
 	}
 	if info.IsDir() {
@@ -96,4 +105,105 @@ func ReadFile(params ReadFileParams) (string, error) {
 	}
 
 	return b.String(), nil
+}
+
+// suggestSimilarFiles looks for files in the same directory with names similar
+// to the requested file. Returns a formatted suggestion string, or empty if
+// no good matches are found.
+func suggestSimilarFiles(path string) string {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+
+	type scored struct {
+		name  string
+		score int
+	}
+
+	var candidates []scored
+	baseLower := strings.ToLower(base)
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		nameLower := strings.ToLower(name)
+
+		// Score by edit distance and prefix/substring matching.
+		score := 0
+		if strings.HasPrefix(nameLower, baseLower[:min(len(baseLower), 3)]) {
+			score += 3
+		}
+		if strings.Contains(nameLower, baseLower) || strings.Contains(baseLower, nameLower) {
+			score += 5
+		}
+		// Same extension bonus.
+		if filepath.Ext(name) == filepath.Ext(base) {
+			score += 2
+		}
+		// Edit distance for short names.
+		if len(base) < 50 && len(name) < 50 {
+			dist := levenshtein(baseLower, nameLower)
+			if dist <= 3 {
+				score += 4 - dist
+			}
+		}
+
+		if score > 0 {
+			candidates = append(candidates, scored{name, score})
+		}
+	}
+
+	if len(candidates) == 0 {
+		return ""
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].score > candidates[j].score
+	})
+
+	limit := min(3, len(candidates))
+	var sb strings.Builder
+	sb.WriteString("Did you mean one of these files?\n")
+	for i := 0; i < limit; i++ {
+		sb.WriteString("  - ")
+		sb.WriteString(filepath.Join(dir, candidates[i].name))
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
+// levenshtein computes the edit distance between two strings.
+func levenshtein(a, b string) int {
+	la, lb := len(a), len(b)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+
+	prev := make([]int, lb+1)
+	curr := make([]int, lb+1)
+	for j := range prev {
+		prev[j] = j
+	}
+
+	for i := 1; i <= la; i++ {
+		curr[0] = i
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = min(curr[j-1]+1, min(prev[j]+1, prev[j-1]+cost))
+		}
+		prev, curr = curr, prev
+	}
+	return prev[lb]
 }

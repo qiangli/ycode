@@ -13,6 +13,7 @@ type WriteFileParams struct {
 }
 
 // WriteFile writes content to a file, creating parent directories as needed.
+// If the file already exists, preserves its BOM and line ending style.
 func WriteFile(params WriteFileParams, workspaceRoot string) error {
 	// Validate path is within workspace.
 	absPath, err := filepath.Abs(params.Path)
@@ -38,7 +39,24 @@ func WriteFile(params WriteFileParams, workspaceRoot string) error {
 		return fmt.Errorf("content too large (%d bytes, max %d)", len(params.Content), MaxFileSize)
 	}
 
-	if err := os.WriteFile(absPath, []byte(params.Content), 0o644); err != nil {
+	content := params.Content
+
+	// If file exists, detect and preserve its encoding and line endings.
+	existing, readErr := os.ReadFile(absPath)
+	if readErr == nil && len(existing) > 0 {
+		enc := DetectEncoding(existing)
+		le := DetectLineEndings(existing)
+
+		// Normalize content to match existing file's line endings.
+		content = NormalizeLineEndings(content, le)
+
+		// Preserve BOM if original had one.
+		if enc == EncodingUTF8BOM {
+			content = "\xEF\xBB\xBF" + content
+		}
+	}
+
+	if err := os.WriteFile(absPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", absPath, err)
 	}
 

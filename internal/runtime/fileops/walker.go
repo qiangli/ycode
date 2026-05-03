@@ -65,6 +65,10 @@ func WalkSourceFiles(root string, opts *WalkOptions, fn func(path string, d fs.D
 			if ShouldSkipDir(name) {
 				return filepath.SkipDir
 			}
+			// Skip OS-protected directories (macOS TCC) to avoid permission dialogs.
+			if IsProtectedPath(path) {
+				return filepath.SkipDir
+			}
 			if ic != nil && ic.IsIgnored(path) {
 				return filepath.SkipDir
 			}
