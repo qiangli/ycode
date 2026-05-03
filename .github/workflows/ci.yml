@@ -20,13 +20,13 @@ jobs:
           go-version: '1.26'
 
       - name: Build
-        run: go build -tags "sqlite,sqlite_unlock_notify,bindata" $(go list ./... | grep -v '/priorart/')
+        run: go build -tags "sqlite,sqlite_unlock_notify,bindata,containers_image_openpgp,exclude_graphdriver_btrfs" $(go list ./... | grep -v '/priorart/')
 
       - name: Vet
-        run: go vet $(go list ./... | grep -v '/priorart/')
+        run: go vet -tags "sqlite,sqlite_unlock_notify,bindata,containers_image_openpgp,exclude_graphdriver_btrfs" $(go list ./... | grep -v '/priorart/')
 
       - name: Test
-        run: go test -short -race -coverprofile=coverage.out $(go list ./... | grep -v '/priorart/')
+        run: go test -tags "sqlite,sqlite_unlock_notify,bindata,containers_image_openpgp,exclude_graphdriver_btrfs" -short -race -coverprofile=coverage.out $(go list ./... | grep -v '/priorart/')
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
@@ -61,7 +61,7 @@ jobs:
         run: |
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-          go build -tags "sqlite,sqlite_unlock_notify,bindata" \
+          go build -tags "sqlite,sqlite_unlock_notify,bindata,containers_image_openpgp,exclude_graphdriver_btrfs" \
             -ldflags "-X main.version=$(git describe --tags --always --dirty) -X main.commit=$(git rev-parse --short HEAD)" \
             -o dist/ycode-${{ matrix.goos }}-${{ matrix.goarch }}${ext} ./cmd/ycode/
 
