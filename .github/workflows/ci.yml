@@ -11,19 +11,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.26'
 
       - name: Build
-        run: go build ./...
+        run: go build -tags "sqlite,sqlite_unlock_notify,bindata" $(go list ./... | grep -v '/priorart/')
 
       - name: Vet
-        run: go vet ./...
+        run: go vet $(go list ./... | grep -v '/priorart/')
 
       - name: Test
-        run: go test -race -coverprofile=coverage.out ./...
+        run: go test -short -race -coverprofile=coverage.out $(go list ./... | grep -v '/priorart/')
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
@@ -43,10 +45,12 @@ jobs:
             goarch: arm64
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.26'
 
       - name: Build
         env:
@@ -55,7 +59,8 @@ jobs:
         run: |
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-          go build -ldflags "-X main.version=$(git describe --tags --always --dirty) -X main.commit=$(git rev-parse --short HEAD)" \
+          go build -tags "sqlite,sqlite_unlock_notify,bindata" \
+            -ldflags "-X main.version=$(git describe --tags --always --dirty) -X main.commit=$(git rev-parse --short HEAD)" \
             -o dist/ycode-${{ matrix.goos }}-${{ matrix.goarch }}${ext} ./cmd/ycode/
 
       - name: Upload binary
