@@ -15,58 +15,14 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
+      - name: Build image
+        run: docker build -t ycode-builder .
 
-      - name: Build
-        run: go build -tags "sqlite,sqlite_unlock_notify,bindata,containers_image_openpgp,exclude_graphdriver_btrfs" -o /dev/null ./cmd/ycode/
+      - name: Compile
+        run: docker run --rm ycode-builder make compile
 
       - name: Vet
-        run: go vet -tags "sqlite,sqlite_unlock_notify,bindata,containers_image_openpgp,exclude_graphdriver_btrfs" $(go list ./... | grep -v '/priorart/')
+        run: docker run --rm ycode-builder make vet
 
       - name: Test
-        run: go test -tags "sqlite,sqlite_unlock_notify,bindata,containers_image_openpgp,exclude_graphdriver_btrfs" -short -race -coverprofile=coverage.out $(go list ./... | grep -v '/priorart/')
-
-      - name: Upload coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage
-          path: coverage.out
-
-  build:
-    runs-on: ubuntu-latest
-    needs: test
-    strategy:
-      matrix:
-        goos: [linux, darwin, windows]
-        goarch: [amd64, arm64]
-        exclude:
-          - goos: windows
-            goarch: arm64
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          ext=""
-          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-          go build -tags "sqlite,sqlite_unlock_notify,bindata,containers_image_openpgp,exclude_graphdriver_btrfs" \
-            -ldflags "-X main.version=$(git describe --tags --always --dirty) -X main.commit=$(git rev-parse --short HEAD)" \
-            -o dist/ycode-${{ matrix.goos }}-${{ matrix.goarch }}${ext} ./cmd/ycode/
-
-      - name: Upload binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: ycode-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/
+        run: docker run --rm ycode-builder make test

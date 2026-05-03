@@ -1,0 +1,20 @@
+services:
+  build:
+    build: .
+    command: ["make", "build"]
+
+  compile:
+    build: .
+    command: ["make", "compile"]
+
+  test:
+    build: .
+    command: ["make", "test"]
+
+  vet:
+    build: .
+    command: ["make", "vet"]
+
+  cross:
+    build: .
+    command: ["make", "cross"]
