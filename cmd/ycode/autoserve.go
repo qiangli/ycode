@@ -113,45 +113,54 @@ func ensureServer() (string, error) {
 	return "", fmt.Errorf("server did not become healthy within %v", serverStartupTimeout)
 }
 
-// runThinTUI connects to a running server and starts the TUI as a thin client.
-func runThinTUI(baseURL string) error {
-	token := readTokenFile()
-
-	// The API is mounted at /ycode/ on the proxy.
-	apiBase := baseURL + "/ycode"
-
-	// Get server status (active session).
-	c := client.NewWSClient(apiBase, token, "")
-	status, err := c.GetStatus(context.Background())
-	if err != nil {
-		return fmt.Errorf("connect to server: %w", err)
-	}
-
-	sessionID := status.SessionID
-	if sessionID == "" {
-		// Create a new session if none active.
-		info, err := c.CreateSession(context.Background())
-		if err != nil {
-			return fmt.Errorf("create session: %w", err)
-		}
-		sessionID = info.ID
-	}
-
-	// Connect WebSocket for streaming events.
-	wsClient := client.NewWSClient(apiBase, token, sessionID)
-	if err := wsClient.Connect(context.Background()); err != nil {
-		return fmt.Errorf("websocket connect: %w", err)
-	}
-	defer wsClient.Close()
-
-	// Create thin app (renderer + TUI only, no heavy init).
+// runThinTUIAsync shows the TUI instantly and connects to the server in the background.
+// The server is detected or started asynchronously — the TUI is responsive immediately.
+func runThinTUIAsync() error {
 	cwd, _ := os.Getwd()
 	app, err := cli.NewThinApp(version, cwd)
 	if err != nil {
 		return fmt.Errorf("create thin app: %w", err)
 	}
 
-	return app.RunInteractiveWithClient(context.Background(), wsClient)
+	// Create a lazy client that connects on first use.
+	lazyClient := client.NewLazyClient(func(ctx context.Context) (*client.WSClient, error) {
+		// This runs in background — detect or start server.
+		baseURL, err := ensureServer()
+		if err != nil {
+			return nil, err
+		}
+
+		token := readTokenFile()
+		apiBase := baseURL + "/ycode"
+
+		// Get or create session.
+		c := client.NewWSClient(apiBase, token, "")
+		status, err := c.GetStatus(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("connect to server: %w", err)
+		}
+
+		sessionID := status.SessionID
+		if sessionID == "" {
+			info, err := c.CreateSession(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("create session: %w", err)
+			}
+			sessionID = info.ID
+		}
+
+		// Connect WebSocket.
+		wsClient := client.NewWSClient(apiBase, token, sessionID)
+		if err := wsClient.Connect(ctx); err != nil {
+			return nil, fmt.Errorf("websocket connect: %w", err)
+		}
+		return wsClient, nil
+	})
+
+	// Start connecting in background immediately.
+	lazyClient.ConnectAsync()
+
+	return app.RunInteractiveWithClient(context.Background(), lazyClient)
 }
 
 // startAutoServer spawns a detached ycode server with the --auto flag on the given port.

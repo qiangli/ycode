@@ -771,9 +771,9 @@ var rootCmd = &cobra.Command{
 			if prompt == "" {
 				return fmt.Errorf("empty input from stdin")
 			}
-			// Use server if already running (instant response).
+			// Use server (start one if needed).
 			if os.Getenv("YCODE_NO_SERVER") == "" {
-				if baseURL, ok := detectServer(); ok {
+				if baseURL, err := ensureServer(); err == nil {
 					return runServerPrompt(baseURL, prompt)
 				}
 			}
@@ -788,17 +788,12 @@ var rootCmd = &cobra.Command{
 			return app.RunPrompt(context.Background(), prompt)
 		}
 
-		// Try client-server mode for instant startup.
-		// Only use the server if one is already running (don't block waiting for startup).
+		// Client-server mode: show TUI instantly, connect to server in background.
 		if os.Getenv("YCODE_NO_SERVER") == "" {
-			if baseURL, ok := detectServer(); ok {
-				return runThinTUI(baseURL)
-			}
-			// No server running — start one in background for next time.
-			go func() { _, _ = ensureServer() }()
+			return runThinTUIAsync()
 		}
 
-		// Fallback: full in-process initialization.
+		// Fallback: full in-process initialization (YCODE_NO_SERVER=1).
 		app, err := newApp()
 		if err != nil {
 			return err

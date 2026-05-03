@@ -141,6 +141,8 @@ func NewThinApp(version, workDir string) (*App, error) {
 		commands:     commands.NewRegistry(),
 		taskRegistry: task.NewRegistry(),
 		agentPool:    agentpool.New(),
+		usageTracker: usage.NewTracker(),
+		sessionStart: time.Now(),
 	}, nil
 }
 
