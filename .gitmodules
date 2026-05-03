@@ -3,13 +3,15 @@
 	url = https://github.com/VictoriaMetrics/VictoriaLogs.git
 [submodule "external/jaeger"]
 	path = external/jaeger
-	url = https://github.com/jaegertracing/jaeger.git
+	url = https://github.com/qiangli/jaeger.git
+	branch = ycode
 [submodule "external/perses"]
 	path = external/perses
-	url = https://github.com/perses/perses.git
+	url = https://github.com/qiangli/perses.git
+	branch = ycode
 [submodule "external/ollama"]
 	path = external/ollama
-	url = https://github.com/ollama/ollama.git
+	url = https://github.com/qiangli/ollama.git
 [submodule "external/podman"]
 	path = external/podman
 	url = https://github.com/qiangli/podman.git
