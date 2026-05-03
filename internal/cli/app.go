@@ -133,11 +133,14 @@ func NewThinApp(version, workDir string) (*App, error) {
 		version = "dev"
 	}
 	return &App{
-		renderer: renderer,
-		version:  version,
-		workDir:  workDir,
-		stdout:   os.Stdout,
-		config:   &config.Config{},
+		renderer:     renderer,
+		version:      version,
+		workDir:      workDir,
+		stdout:       os.Stdout,
+		config:       &config.Config{},
+		commands:     commands.NewRegistry(),
+		taskRegistry: task.NewRegistry(),
+		agentPool:    agentpool.New(),
 	}, nil
 }
 
@@ -663,6 +666,9 @@ func (a *App) CompactContext(ctx context.Context) (summary string, compactedCoun
 
 // sessionMessages converts session history to API messages.
 func (a *App) sessionMessages() []api.Message {
+	if a.session == nil {
+		return nil
+	}
 	var msgs []api.Message
 	for _, sm := range a.session.Messages {
 		var blocks []api.ContentBlock

@@ -556,12 +556,14 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.resumeAgentTurn()
 				}
 				// Accumulate context while paused — add to conversation.
-				_ = m.app.session.AddMessage(session.ConversationMessage{
-					Role: session.RoleUser,
-					Content: []session.ContentBlock{
-						{Type: session.ContentTypeText, Text: text},
-					},
-				})
+				if m.app.session != nil {
+					_ = m.app.session.AddMessage(session.ConversationMessage{
+						Role: session.RoleUser,
+						Content: []session.ContentBlock{
+							{Type: session.ContentTypeText, Text: text},
+						},
+					})
+				}
 				if len(m.pausedCalls) > 0 {
 					// Pending tool calls: defer context injection until after
 					// tool results to preserve tool_use → tool_result adjacency.
@@ -698,7 +700,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				slog.Error("tui.turn_error",
 					"error", msg.Err.Error(),
-					"session", m.app.session.ID,
+					"session", m.app.SessionID(),
 				)
 			}
 			cmds = append(cmds, func() tea.Msg { return repaintMsg{} })
@@ -741,12 +743,14 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			// Save assistant response to session.
-			_ = m.app.session.AddMessage(session.ConversationMessage{
-				Role: session.RoleAssistant,
-				Content: []session.ContentBlock{
-					{Type: session.ContentTypeText, Text: result.TextContent},
-				},
-			})
+			if m.app.session != nil {
+				_ = m.app.session.AddMessage(session.ConversationMessage{
+					Role: session.RoleAssistant,
+					Content: []session.ContentBlock{
+						{Type: session.ContentTypeText, Text: result.TextContent},
+					},
+				})
+			}
 		}
 
 		// If no tool calls, turn is complete.
@@ -830,7 +834,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Info("tui.pause",
 				"trigger", "turn_boundary",
 				"pending_tools", len(result.ToolCalls),
-				"session", m.app.session.ID,
+				"session", m.app.SessionID(),
 			)
 			if inst := m.otelInst(); inst != nil {
 				inst.PauseTotal.Add(context.Background(), 1)
@@ -856,7 +860,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		slog.Info("tui.pause",
 			"trigger", "mid_tool_execution",
 			"pending_tools", len(msg.Calls),
-			"session", m.app.session.ID,
+			"session", m.app.SessionID(),
 		)
 		if inst := m.otelInst(); inst != nil {
 			inst.PauseTotal.Add(context.Background(), 1)
@@ -1216,7 +1220,7 @@ func (m *TUIModel) welcomeText() string {
 		{"Branch", branch},
 		{"Workspace", workspace},
 		{"Directory", m.app.workDir},
-		{"Session", m.app.session.ID},
+		{"Session", m.app.SessionID()},
 		{"Version", m.app.version},
 	}
 
@@ -1277,18 +1281,20 @@ func (m *TUIModel) flushViewport() {
 
 // handleInput dispatches text as either a slash command or a prompt.
 func (m *TUIModel) handleInput(text string) tea.Cmd {
-	// Save user message to session.
-	_ = m.app.session.AddMessage(session.ConversationMessage{
-		Role: session.RoleUser,
-		Content: []session.ContentBlock{
-			{Type: session.ContentTypeText, Text: text},
-		},
-	})
+	// Save user message to session (skip in client mode — server manages state).
+	if m.app.session != nil {
+		_ = m.app.session.AddMessage(session.ConversationMessage{
+			Role: session.RoleUser,
+			Content: []session.ContentBlock{
+				{Type: session.ContentTypeText, Text: text},
+			},
+		})
 
-	// Auto-generate session title from first user message.
-	if m.app.session.Title == "" && !strings.HasPrefix(text, "/") &&
-		!strings.HasPrefix(text, "!") {
-		m.app.session.GenerateDefaultTitle()
+		// Auto-generate session title from first user message.
+		if m.app.session.Title == "" && !strings.HasPrefix(text, "/") &&
+			!strings.HasPrefix(text, "!") {
+			m.app.session.GenerateDefaultTitle()
+		}
 	}
 
 	if strings.HasPrefix(text, "!!") {
@@ -1535,7 +1541,7 @@ func (m *TUIModel) resumeAgentTurn() tea.Cmd {
 		"pause_duration_ms", pauseDur.Milliseconds(),
 		"pending_tools", len(m.pausedCalls),
 		"deferred_context", len(m.pausedContext),
-		"session", m.app.session.ID,
+		"session", m.app.SessionID(),
 	)
 	if inst := m.otelInst(); inst != nil {
 		inst.ResumeTotal.Add(context.Background(), 1)
@@ -1898,6 +1904,9 @@ func (m *TUIModel) toggleMode() tea.Cmd {
 // injectModeTransition adds a system reminder message to the session
 // so the LLM is informed about the mode change on its next turn.
 func (m *TUIModel) injectModeTransition(reminder string) {
+	if m.app.session == nil {
+		return
+	}
 	msg := session.ConversationMessage{
 		Role: session.RoleUser,
 		Content: []session.ContentBlock{
