@@ -348,13 +348,25 @@ func hasRecursiveOrForce(args []string) bool {
 func checkUnsafeArgs(base string, args []string) (CommandIntent, string) {
 	switch base {
 	case "find":
-		// find with -exec, -execdir, -ok, -okdir, -delete can modify/execute.
-		for _, arg := range args {
+		// find with -delete is always destructive.
+		// find with -exec/-execdir: extract the command and classify it using
+		// the full command safety infrastructure (AST parsing + classification).
+		for i, arg := range args {
 			switch arg {
-			case "-exec", "-execdir", "-ok", "-okdir":
-				return Write, "find with -exec/-execdir can execute arbitrary commands"
 			case "-delete":
 				return Destructive, "find with -delete removes matched files"
+			case "-exec", "-execdir", "-ok", "-okdir":
+				// Extract the command between -exec and the terminator (; or +).
+				execArgs := extractExecCommand(args[i+1:])
+				if len(execArgs) == 0 {
+					return Write, fmt.Sprintf("find with %s (command not specified)", arg)
+				}
+				// Classify the exec'd command using our full classification system.
+				execStr := strings.Join(execArgs, " ")
+				intent, _ := ClassifyCommand(execStr)
+				if intent != ReadOnly {
+					return intent, fmt.Sprintf("find with %s executing %q (%s)", arg, execArgs[0], intent)
+				}
 			}
 		}
 	case "base64":
@@ -389,8 +401,26 @@ func checkUnsafeArgs(base string, args []string) (CommandIntent, string) {
 	return ReadOnly, ""
 }
 
+// extractExecCommand extracts the command arguments between -exec and its
+// terminator (';' or '+' or '\;'). The {} placeholder is stripped.
+func extractExecCommand(args []string) []string {
+	var cmd []string
+	for _, arg := range args {
+		// Terminators for -exec.
+		if arg == ";" || arg == "+" || arg == `\;` {
+			break
+		}
+		// Skip the {} placeholder.
+		if arg == "{}" {
+			continue
+		}
+		cmd = append(cmd, arg)
+	}
+	return cmd
+}
+
 var writeCmds = map[string]bool{
-	"cp": true, "mv": true, "mkdir": true, "chmod": true, "chown": true,
+	"rm": true, "cp": true, "mv": true, "mkdir": true, "chmod": true, "chown": true,
 	"touch": true, "tee": true, "install": true, "ln": true, "rsync": true,
 }
 

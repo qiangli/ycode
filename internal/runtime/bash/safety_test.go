@@ -405,6 +405,74 @@ func TestClassifyCommand_PathQualified(t *testing.T) {
 	}
 }
 
+func TestClassifyCommand_FindExec(t *testing.T) {
+	// find -exec with read-only command should stay read-only.
+	readOnlyCases := []string{
+		`find . -exec ls -al {} \;`,
+		`find . -exec grep -l foo {} +`,
+		`find . -exec cat {} \;`,
+		`find . -exec head -5 {} \;`,
+		`find . -name "*.go"`,
+	}
+	for _, cmd := range readOnlyCases {
+		intent, _ := ClassifyCommand(cmd)
+		if intent != ReadOnly {
+			t.Errorf("ClassifyCommand(%q) = %s, want read-only", cmd, intent)
+		}
+	}
+
+	// find -exec with write command should classify as write.
+	writeCases := []string{
+		`find . -exec rm {} \;`,
+		`find . -exec chmod 777 {} \;`,
+		`find . -exec cp {} /tmp \;`,
+	}
+	for _, cmd := range writeCases {
+		intent, _ := ClassifyCommand(cmd)
+		if intent != Write && intent != Destructive {
+			t.Errorf("ClassifyCommand(%q) = %s, want write or destructive", cmd, intent)
+		}
+	}
+
+	// find -delete should be destructive.
+	intent, _ := ClassifyCommand(`find . -name "*.tmp" -delete`)
+	if intent != Destructive {
+		t.Errorf("find -delete: got %s, want destructive", intent)
+	}
+}
+
+func TestClassifyCommand_UnsafeArgs(t *testing.T) {
+	// base64 with -o is write.
+	intent, _ := ClassifyCommand("base64 -o output.bin input.txt")
+	if intent != Write {
+		t.Errorf("base64 -o: got %s, want write", intent)
+	}
+
+	// base64 without -o is read-only.
+	intent, _ = ClassifyCommand("base64 input.txt")
+	if intent != ReadOnly {
+		t.Errorf("base64 (no -o): got %s, want read-only", intent)
+	}
+
+	// xargs is write.
+	intent, _ = ClassifyCommand("xargs rm")
+	if intent != Write {
+		t.Errorf("xargs: got %s, want write", intent)
+	}
+
+	// rg --pre is write.
+	intent, _ = ClassifyCommand("rg --pre my-filter pattern")
+	if intent != Write {
+		t.Errorf("rg --pre: got %s, want write", intent)
+	}
+
+	// rg without --pre is read-only.
+	intent, _ = ClassifyCommand("rg pattern .")
+	if intent != ReadOnly {
+		t.Errorf("rg (no --pre): got %s, want read-only", intent)
+	}
+}
+
 func TestDetectRedirects_QuotedRedirect(t *testing.T) {
 	// Redirect character inside quotes should NOT be detected.
 	if DetectRedirects(`echo ">"`) {
