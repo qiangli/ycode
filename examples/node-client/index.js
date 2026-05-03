@@ -17,8 +17,18 @@ const { join } = require("os").homedir
 const os = require("os");
 const path = require("path");
 
-const BASE_URL = process.env.YCODE_URL || "http://127.0.0.1:58080";
+const PORT_PATH = path.join(os.homedir(), ".agents", "ycode", "serve.port");
 const TOKEN_PATH = path.join(os.homedir(), ".agents", "ycode", "server.token");
+
+function discoverPort() {
+  try {
+    return parseInt(readFileSync(PORT_PATH, "utf-8").trim(), 10);
+  } catch {
+    return 58080;
+  }
+}
+
+const BASE_URL = process.env.YCODE_URL || `http://127.0.0.1:${discoverPort()}`;
 
 function readToken() {
   try {
@@ -52,7 +62,7 @@ async function main() {
 
   // 1. Health check
   try {
-    await request("GET", "/api/health");
+    await request("GET", "/ycode/api/health");
   } catch (err) {
     console.error(`Cannot reach ycode server at ${BASE_URL}. Is it running?`);
     console.error("Start it with: ycode serve");
@@ -62,15 +72,15 @@ async function main() {
   // 2. Get or create session
   let sessionID;
   try {
-    const status = await request("GET", "/api/status");
+    const status = await request("GET", "/ycode/api/status");
     sessionID = status.session_id;
   } catch {
-    const session = await request("POST", "/api/sessions", {});
+    const session = await request("POST", "/ycode/api/sessions", {});
     sessionID = session.id;
   }
 
   // 3. Connect WebSocket
-  const wsURL = BASE_URL.replace("http", "ws") + `/api/sessions/${sessionID}/ws`;
+  const wsURL = BASE_URL.replace("http", "ws") + `/ycode/api/sessions/${sessionID}/ws`;
   const ws = new WebSocket(wsURL);
 
   await new Promise((resolve, reject) => {

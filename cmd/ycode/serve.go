@@ -335,11 +335,14 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 
 	fmt.Println("\nPress Ctrl+C to stop.")
 
-	// Write PID file.
+	// Write PID and port files for client discovery.
 	pidPath = filepath.Join(home, ".agents", "ycode", "serve.pid")
+	portPath := filepath.Join(home, ".agents", "ycode", "serve.port")
 	_ = os.MkdirAll(filepath.Dir(pidPath), 0o755)
 	_ = os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644)
+	_ = os.WriteFile(portPath, []byte(strconv.Itoa(port)), 0o644)
 	defer os.Remove(pidPath)
+	defer os.Remove(portPath)
 
 	// If auto-started, write sentinel and enable idle shutdown.
 	autoPath := filepath.Join(home, ".agents", "ycode", "serve.auto")

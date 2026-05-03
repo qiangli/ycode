@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -55,8 +56,16 @@ func detectServer() (baseURL string, ok bool) {
 		return "", false
 	}
 
-	// Process alive — verify it's actually a ycode server via health check.
+	// Read port from discovery file, fall back to default.
 	port := resolveServerPort()
+	portPath := filepath.Join(home, ".agents", "ycode", "serve.port")
+	if portData, err := os.ReadFile(portPath); err == nil {
+		if p, err := strconv.Atoi(strings.TrimSpace(string(portData))); err == nil && p > 0 {
+			port = p
+		}
+	}
+
+	// Process alive — verify it's actually a ycode server via health check.
 	baseURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 
 	if !healthCheck(baseURL) {
@@ -73,13 +82,18 @@ func ensureServer() (string, error) {
 		return baseURL, nil
 	}
 
+	// Find an available port for the new server.
+	port, err := findFreePort()
+	if err != nil {
+		return "", fmt.Errorf("find free port: %w", err)
+	}
+
 	// Start a new server in detached mode with --auto flag.
-	if err := startAutoServer(); err != nil {
+	if err := startAutoServer(port); err != nil {
 		return "", fmt.Errorf("auto-start server: %w", err)
 	}
 
 	// Wait for server to become healthy.
-	port := resolveServerPort()
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 
 	deadline := time.Now().Add(serverStartupTimeout)
@@ -100,8 +114,11 @@ func ensureServer() (string, error) {
 func runThinTUI(baseURL string) error {
 	token := readTokenFile()
 
+	// The API is mounted at /ycode/ on the proxy.
+	apiBase := baseURL + "/ycode"
+
 	// Get server status (active session).
-	c := client.NewWSClient(baseURL, token, "")
+	c := client.NewWSClient(apiBase, token, "")
 	status, err := c.GetStatus(context.Background())
 	if err != nil {
 		return fmt.Errorf("connect to server: %w", err)
@@ -118,7 +135,7 @@ func runThinTUI(baseURL string) error {
 	}
 
 	// Connect WebSocket for streaming events.
-	wsClient := client.NewWSClient(baseURL, token, sessionID)
+	wsClient := client.NewWSClient(apiBase, token, sessionID)
 	if err := wsClient.Connect(context.Background()); err != nil {
 		return fmt.Errorf("websocket connect: %w", err)
 	}
@@ -134,8 +151,8 @@ func runThinTUI(baseURL string) error {
 	return app.RunInteractiveWithClient(context.Background(), wsClient)
 }
 
-// startAutoServer spawns a detached ycode server with the --auto flag.
-func startAutoServer() error {
+// startAutoServer spawns a detached ycode server with the --auto flag on the given port.
+func startAutoServer(port int) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("find executable: %w", err)
@@ -149,7 +166,6 @@ func startAutoServer() error {
 		return fmt.Errorf("open log file: %w", err)
 	}
 
-	port := resolveServerPort()
 	args := []string{filepath.Base(exe), "serve", "--auto", "--port", strconv.Itoa(port)}
 
 	attr := &os.ProcAttr{
@@ -171,11 +187,12 @@ func startAutoServer() error {
 }
 
 // healthCheck performs a quick HTTP health check against the server.
+// The API is mounted at /ycode/ on the proxy.
 func healthCheck(baseURL string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), serverHealthTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/api/health", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/ycode/api/health", nil)
 	if err != nil {
 		return false
 	}
@@ -197,6 +214,17 @@ func resolveServerPort() int {
 		}
 	}
 	return defaultServerPort
+}
+
+// findFreePort finds an available TCP port on localhost.
+func findFreePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port, nil
 }
 
 // cleanAutoSentinel removes the auto-start sentinel file.

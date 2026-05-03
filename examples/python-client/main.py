@@ -20,8 +20,18 @@ from pathlib import Path
 import httpx
 import websockets
 
-BASE_URL = os.environ.get("YCODE_URL", "http://127.0.0.1:58080")
+PORT_PATH = Path.home() / ".agents" / "ycode" / "serve.port"
 TOKEN_PATH = Path.home() / ".agents" / "ycode" / "server.token"
+
+
+def discover_port() -> int:
+    try:
+        return int(PORT_PATH.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        return 58080
+
+
+BASE_URL = os.environ.get("YCODE_URL", f"http://127.0.0.1:{discover_port()}")
 
 
 def read_token() -> str:
@@ -48,7 +58,7 @@ async def main():
     # 1. Health check
     async with httpx.AsyncClient(base_url=BASE_URL, headers=headers()) as client:
         try:
-            resp = await client.get("/api/health", timeout=2.0)
+            resp = await client.get("/ycode/api/health", timeout=2.0)
             resp.raise_for_status()
         except (httpx.ConnectError, httpx.HTTPStatusError):
             print(f"Cannot reach ycode server at {BASE_URL}. Is it running?", file=sys.stderr)
@@ -57,10 +67,10 @@ async def main():
 
         # 2. Get or create session
         try:
-            resp = await client.get("/api/status")
+            resp = await client.get("/ycode/api/status")
             session_id = resp.json().get("session_id")
         except Exception:
-            resp = await client.post("/api/sessions", json={})
+            resp = await client.post("/ycode/api/sessions", json={})
             session_id = resp.json().get("id")
 
         if not session_id:
@@ -68,7 +78,7 @@ async def main():
             sys.exit(1)
 
     # 3. Connect WebSocket
-    ws_url = BASE_URL.replace("http", "ws") + f"/api/sessions/{session_id}/ws"
+    ws_url = BASE_URL.replace("http", "ws") + f"/ycode/api/sessions/{session_id}/ws"
     async with websockets.connect(ws_url) as ws:
         # 4. Send message
         await ws.send(json.dumps({"type": "message.send", "data": {"text": prompt}}))
