@@ -57,8 +57,54 @@ func bar() {
 	if m == nil {
 		t.Fatal("expected block-anchor match")
 	}
+	if m.Level != 3 {
+		t.Errorf("expected level 3 (block-anchor), got %d", m.Level)
+	}
+}
+
+func TestFindFuzzyMatch_IndentNormalized(t *testing.T) {
+	// Content has code at 8-space indent.
+	content := `func outer() {
+        if condition {
+            x := compute()
+            y := process(x)
+            return y
+        }
+}`
+	// Search has same code at 4-space indent (LLM produced wrong indent level).
+	search := `    if condition {
+        x := compute()
+        y := process(x)
+        return y
+    }`
+
+	m := FindFuzzyMatch(content, search)
+	if m == nil {
+		t.Fatal("expected indentation-normalized match")
+	}
 	if m.Level != 2 {
-		t.Errorf("expected level 2 (block-anchor), got %d", m.Level)
+		t.Errorf("expected level 2 (indent-normalized), got %d", m.Level)
+	}
+
+	// Verify the matched region contains the right content.
+	matched := content[m.StartByte:m.EndByte]
+	if !containsFuzzy(matched, "x := compute()") {
+		t.Errorf("matched region should contain 'x := compute()', got: %q", matched)
+	}
+}
+
+func TestFindFuzzyMatch_IndentNormalized_Tabs(t *testing.T) {
+	// Content uses double-tab indent.
+	content := "func main() {\n\t\tif x > 0 {\n\t\t\treturn x\n\t\t}\n}"
+	// Search uses single-tab indent.
+	search := "\tif x > 0 {\n\t\treturn x\n\t}"
+
+	m := FindFuzzyMatch(content, search)
+	if m == nil {
+		t.Fatal("expected indentation-normalized match for tabs")
+	}
+	if m.Level != 2 {
+		t.Errorf("expected level 2 (indent-normalized), got %d", m.Level)
 	}
 }
 

@@ -11,10 +11,11 @@ type FuzzyMatch struct {
 	EndByte   int // end offset in original content
 }
 
-// FindFuzzyMatch searches for oldString in content using a 3-level fallback:
+// FindFuzzyMatch searches for oldString in content using a 4-level fallback:
 //   - Level 0: Exact match (strings.Contains)
 //   - Level 1: Line-trimmed match (trailing whitespace per line normalized)
-//   - Level 2: Block-anchor match (first/last line anchors with interior similarity)
+//   - Level 2: Indentation-normalized match (matches regardless of absolute indent level)
+//   - Level 3: Block-anchor match (first/last line anchors with interior similarity)
 //
 // Returns nil if no match found at any level.
 func FindFuzzyMatch(content, oldString string) *FuzzyMatch {
@@ -28,7 +29,12 @@ func FindFuzzyMatch(content, oldString string) *FuzzyMatch {
 		return m
 	}
 
-	// Level 2: Block-anchor match.
+	// Level 2: Indentation-normalized match (inspired by Aider's RelativeIndenter).
+	if m := indentNormalizedMatch(content, oldString); m != nil {
+		return m
+	}
+
+	// Level 3: Block-anchor match.
 	if m := blockAnchorMatch(content, oldString); m != nil {
 		return m
 	}
@@ -116,7 +122,7 @@ func blockAnchorMatch(content, search string) *FuzzyMatch {
 		startByte := lineStartOffset(content, i)
 		endByte := lineEndOffset(content, endLine)
 
-		return &FuzzyMatch{Level: 2, StartByte: startByte, EndByte: endByte}
+		return &FuzzyMatch{Level: 3, StartByte: startByte, EndByte: endByte}
 	}
 
 	return nil
@@ -222,4 +228,114 @@ func lineEndOffset(content string, lineNum int) int {
 		return len(content)
 	}
 	return start + idx
+}
+
+// indentNormalizedMatch handles the common case where the LLM produces correct
+// code but at the wrong indentation level. It strips the base indentation from
+// both the search text and candidate regions in the content, then compares
+// the "de-indented" versions. Inspired by Aider's RelativeIndenter.
+func indentNormalizedMatch(content, search string) *FuzzyMatch {
+	searchLines := strings.Split(search, "\n")
+	contentLines := strings.Split(content, "\n")
+
+	// Need at least 2 non-empty lines to match meaningfully.
+	nonEmpty := 0
+	for _, l := range searchLines {
+		if strings.TrimSpace(l) != "" {
+			nonEmpty++
+		}
+	}
+	if nonEmpty < 2 {
+		return nil
+	}
+
+	// Compute base indent of search (minimum indent among non-empty lines).
+	searchBase := baseIndent(searchLines)
+
+	// De-indent the search text.
+	deindentedSearch := deindentLines(searchLines, searchBase)
+
+	// Slide a window of len(searchLines) over the content.
+	windowSize := len(searchLines)
+	if windowSize > len(contentLines) {
+		return nil
+	}
+
+	for i := 0; i <= len(contentLines)-windowSize; i++ {
+		window := contentLines[i : i+windowSize]
+
+		// Compute base indent of this window.
+		windowBase := baseIndent(window)
+
+		// De-indent the window.
+		deindentedWindow := deindentLines(window, windowBase)
+
+		// Compare de-indented versions.
+		if slicesEqual(deindentedSearch, deindentedWindow) {
+			startByte := lineStartOffset(content, i)
+			endByte := lineEndOffset(content, i+windowSize-1)
+			return &FuzzyMatch{Level: 2, StartByte: startByte, EndByte: endByte}
+		}
+	}
+
+	return nil
+}
+
+// baseIndent returns the minimum leading whitespace count among non-empty lines.
+func baseIndent(lines []string) int {
+	minIndent := -1
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		indent := leadingSpaces(line)
+		if minIndent < 0 || indent < minIndent {
+			minIndent = indent
+		}
+	}
+	if minIndent < 0 {
+		return 0
+	}
+	return minIndent
+}
+
+// leadingSpaces counts leading space characters (tabs count as 1).
+func leadingSpaces(line string) int {
+	count := 0
+	for _, ch := range line {
+		if ch == ' ' || ch == '\t' {
+			count++
+		} else {
+			break
+		}
+	}
+	return count
+}
+
+// deindentLines removes baseN leading characters from each non-empty line.
+func deindentLines(lines []string, baseN int) []string {
+	result := make([]string, len(lines))
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			result[i] = ""
+		} else if len(line) >= baseN {
+			result[i] = line[baseN:]
+		} else {
+			result[i] = line
+		}
+	}
+	return result
+}
+
+// slicesEqual compares two string slices for equality.
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
