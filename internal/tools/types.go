@@ -40,6 +40,19 @@ type ToolSpec struct {
 	AlwaysAvailable bool            `json:"-"` // sent in every request vs deferred
 	Category        ToolCategory    `json:"-"` // concurrency scheduling category
 	Disabled        bool            `json:"-"` // disabled by system context (e.g., no internet → WebSearch disabled)
+
+	// PermissionMatcher extracts a matchable detail string from tool input for
+	// fine-grained permission pattern matching (e.g., bash command, file path).
+	// Returns empty string if no detail is available.
+	PermissionMatcher func(input json.RawMessage) string `json:"-"`
+
+	// ContextModifier is called after successful execution to update the context
+	// for subsequent tools in the same turn. When nil, no modification occurs.
+	ContextModifier func(ctx context.Context, input json.RawMessage, output string) context.Context `json:"-"`
+
+	// IsConcurrencySafe indicates this tool can run concurrently with other tools.
+	// Used by the streaming tool executor to start execution before all tool calls arrive.
+	IsConcurrencySafe bool `json:"-"`
 }
 
 // RuntimeToolDefinition is the API-facing tool definition.

@@ -68,6 +68,14 @@ type DistillConfig struct {
 	// providers (OpenAI, Moonshot/Kimi) where every input token is billed at
 	// full price every turn. Thresholds are roughly halved.
 	AggressiveMode bool `json:"aggressiveMode,omitempty"`
+
+	// ToolThresholds provides per-tool override for MaxInlineChars.
+	// Key is tool name, value is the character threshold for that tool.
+	ToolThresholds map[string]int `json:"toolThresholds,omitempty"`
+
+	// MaxToolResultsPerMessage is the aggregate character budget for all
+	// tool results in a single message turn. Default: 200,000.
+	MaxToolResultsPerMessage int `json:"maxToolResultsPerMessage,omitempty"`
 }
 
 // DefaultDistillConfig returns sensible defaults.
@@ -106,6 +114,11 @@ func DistillToolOutput(toolName string, output string, cfg DistillConfig) string
 	// Check exemptions.
 	if slices.Contains(cfg.ExemptTools, toolName) {
 		return output
+	}
+
+	// Apply per-tool threshold override if configured.
+	if threshold, ok := cfg.ToolThresholds[toolName]; ok && threshold > 0 {
+		cfg.MaxInlineChars = threshold
 	}
 
 	// Truncate individual long lines first (e.g., minified JS).
@@ -153,7 +166,13 @@ func DistillToolOutput(toolName string, output string, cfg DistillConfig) string
 
 	if savedPath != "" {
 		fmt.Fprintf(&b, "\n[... %d lines omitted, full output saved to %s ...]\n", omitted, savedPath)
-		b.WriteString("Use Grep to search the full content or Read with offset/limit to view specific sections.\n\n")
+		// Include a preview snippet of the omitted content.
+		preview := output
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		fmt.Fprintf(&b, "Preview: %s\n", preview)
+		b.WriteString("Use Read with file_path to access the full output, or Grep to search it.\n\n")
 	} else {
 		fmt.Fprintf(&b, "\n[... %d lines omitted ...]\n\n", omitted)
 	}
