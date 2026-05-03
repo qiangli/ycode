@@ -1,4 +1,7 @@
 .git
+.agents
+.claude
+.gfy-out
 bin/
 dist/
 priorart/

@@ -141,7 +141,7 @@ func (e *Engine) BuildImageWithContext(ctx context.Context, name string, dockerf
 		ContainerFiles: []string{dockerfilePath},
 	}
 
-	_, err := images.Build(e.connCtx, []string{contextDir}, buildOpts)
+	_, err := images.Build(e.connCtx, []string{dockerfilePath}, buildOpts)
 	if err != nil {
 		return fmt.Errorf("build image %s: %w", name, err)
 	}
