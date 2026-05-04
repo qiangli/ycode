@@ -31,6 +31,9 @@ type SkillSpec struct {
 	// Quality criteria for success evaluation
 	SuccessCriteria string `json:"success_criteria,omitempty" yaml:"success_criteria,omitempty"`
 
+	// Compatibility constraints (provider filtering, trust level).
+	Compatibility CompatibilitySpec `json:"compatibility,omitempty" yaml:"compatibility,omitempty"`
+
 	// Evolution metadata
 	EvolutionMode EvolutionMode `json:"evolution_mode,omitempty" yaml:"evolution_mode,omitempty"`
 	CreatedAt     time.Time     `json:"created_at" yaml:"created_at"`
