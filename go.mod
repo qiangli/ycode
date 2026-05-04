@@ -20,8 +20,6 @@ replace github.com/qiangli/ycode/pkg/ollm => ./pkg/ollm
 
 replace github.com/qiangli/ycode/pkg/otel => ./pkg/otel
 
-replace github.com/qiangli/gfy => ./reference/gfy
-
 replace mvdan.cc/sh/v3 => ./external/sh
 
 replace code.gitea.io/gitea => ./external/gitea
@@ -58,7 +56,7 @@ require (
 	github.com/nguyenthenguyen/docx v0.0.0-20230621112118-9c8e795a11db
 	github.com/odvcencio/gotreesitter v0.15.3
 	github.com/philippgille/chromem-go v0.7.0
-	github.com/qiangli/gfy v0.0.0-00010101000000-000000000000
+	github.com/qiangli/gfy v0.0.0-20260504062854-764095a2877d
 	github.com/qiangli/ycode/pkg/oci v0.0.0-00010101000000-000000000000
 	github.com/qiangli/ycode/pkg/ollm v0.0.0-00010101000000-000000000000
 	github.com/qiangli/ycode/pkg/otel v0.0.0-00010101000000-000000000000
