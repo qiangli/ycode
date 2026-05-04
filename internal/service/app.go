@@ -39,6 +39,11 @@ type AppBackend interface {
 
 	// Command execution.
 	ExecuteCommand(ctx context.Context, name string, args string) (string, error)
+	HasCommand(name string) bool
+
+	// Progress callbacks for streaming command output.
+	SetProgressFunc(fn func(string))
+	SetDeltaFunc(fn func(string))
 
 	// Lifecycle.
 	Close() error

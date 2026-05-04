@@ -1312,6 +1312,8 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 		}
 	}
 
+	// --- TUI-local commands (always run on client) ---
+
 	if strings.HasPrefix(text, "!!") {
 		shell := strings.TrimLeft(text[2:], " ")
 		if shell == "" {
@@ -1361,11 +1363,24 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 
 	if strings.HasPrefix(text, "/") {
 		rest := text[1:]
-		name, args, _ := strings.Cut(rest, " ")
-
+		name, _, _ := strings.Cut(rest, " ")
 		if name == "quit" || name == "exit" {
 			return tea.Quit
 		}
+	}
+
+	// --- Thin-client mode: send everything else to the server ---
+	if m.cl != nil {
+		m.appendOutput(fmt.Sprintf("> %s\n", text))
+		m.resetTitle()
+		return m.startAgentTurn(text)
+	}
+
+	// --- Direct mode: local slash command dispatch ---
+
+	if strings.HasPrefix(text, "/") {
+		rest := text[1:]
+		name, args, _ := strings.Cut(rest, " ")
 
 		// Try built-in commands first; fall through to agent for unregistered
 		// names (e.g. skill slash commands like /claude, /build).
@@ -1533,8 +1548,9 @@ func (m *TUIModel) startAgentTurnViaClient(ctx context.Context, userPrompt strin
 			if prog != nil {
 				prog.Send(busEventMsg{ev})
 			}
-			if ev.Type == bus.EventTurnComplete || ev.Type == bus.EventTurnError {
-				return nil // turn is done, stop forwarding
+			if ev.Type == bus.EventTurnComplete || ev.Type == bus.EventTurnError ||
+				ev.Type == bus.EventCommandComplete || ev.Type == bus.EventCommandError {
+				return nil // turn/command is done, stop forwarding
 			}
 		}
 		return nil
@@ -2011,6 +2027,38 @@ func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
 				m.app.usageTracker.Add(int(in), int(out), 0, 0)
 			}
 		}
+
+	case bus.EventCommandProgress:
+		if message := str("message"); message != "" {
+			m.appendOutput(message + "\n")
+		}
+
+	case bus.EventCommandDelta:
+		if text := str("text"); text != "" {
+			m.appendOutput(text)
+		}
+
+	case bus.EventCommandComplete:
+		m.working = false
+		m.workCancel = nil
+		m.midTurnCh = nil
+		if result := str("result"); result != "" {
+			m.appendOutput(result + "\n")
+		}
+		m.appendOutput("\n")
+		if cmd := m.drainPendingInput(); cmd != nil {
+			return m, cmd
+		}
+		return m, func() tea.Msg { return repaintMsg{} }
+
+	case bus.EventCommandError:
+		m.working = false
+		m.workCancel = nil
+		m.midTurnCh = nil
+		m.pendingInputs = nil
+		errMsg := str("error")
+		m.appendOutput(fmt.Sprintf("\n✗ Command error: %s\n\n", errMsg))
+		return m, func() tea.Msg { return repaintMsg{} }
 
 	case bus.EventPermissionReq:
 		reqID := str("request_id")

@@ -32,6 +32,12 @@ const (
 	EventAgentMessage     EventType = "agent.message"  // inter-agent messaging
 	EventFlowStep         EventType = "flow.step"      // flow orchestration step
 
+	// Command streaming events (server → client for slash command execution).
+	EventCommandProgress EventType = "command.progress" // progress line
+	EventCommandDelta    EventType = "command.delta"    // streaming text delta
+	EventCommandComplete EventType = "command.complete" // command finished
+	EventCommandError    EventType = "command.error"    // command failed
+
 	// Mesh agent events.
 	EventDiagReport    EventType = "diagnostic.report"
 	EventFixStart      EventType = "fix.start"

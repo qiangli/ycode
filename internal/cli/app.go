@@ -952,6 +952,12 @@ func (a *App) runAgenticInit(ctx context.Context, systemPrompt, userPrompt strin
 	return allText.String(), nil
 }
 
+// HasCommand checks if a slash command exists in the registry.
+func (a *App) HasCommand(name string) bool {
+	_, ok := a.commands.Get(name)
+	return ok
+}
+
 // SetProgressFunc sets the progress callback function (called by TUI).
 func (a *App) SetProgressFunc(fn func(message string)) {
 	a.progressFunc = fn

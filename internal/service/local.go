@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/qiangli/ycode/internal/api"
@@ -100,6 +101,17 @@ func (s *LocalService) SendMessage(ctx context.Context, sessionID string, input 
 		s.cancelMu.Unlock()
 		cancel()
 	}()
+
+	// Detect slash command input and route to command execution.
+	if strings.HasPrefix(input.Text, "/") {
+		rest := input.Text[1:]
+		name, args, _ := strings.Cut(rest, " ")
+		if s.app.HasCommand(name) {
+			return s.executeCommandFromMessage(ctx, sessionID, name, args)
+		}
+		// Not a registered command — fall through to agentic loop
+		// (e.g. skill slash commands like /claude, /build).
+	}
 
 	// Create runtime with event callback.
 	rt := s.app.ConversationRuntime()
@@ -335,6 +347,46 @@ func (s *LocalService) SendMessage(ctx context.Context, sessionID string, input 
 		Type:      bus.EventTurnComplete,
 		SessionID: sessionID,
 		Data:      mustJSON(map[string]string{"status": "max_iterations"}),
+	})
+	return nil
+}
+
+// executeCommandFromMessage runs a slash command with streaming progress via bus events.
+func (s *LocalService) executeCommandFromMessage(ctx context.Context, sessionID, name, args string) error {
+	// Wire progress/delta callbacks to publish bus events.
+	s.app.SetProgressFunc(func(message string) {
+		s.b.Publish(bus.Event{
+			Type:      bus.EventCommandProgress,
+			SessionID: sessionID,
+			Data:      mustJSON(map[string]string{"message": message}),
+		})
+	})
+	s.app.SetDeltaFunc(func(text string) {
+		s.b.Publish(bus.Event{
+			Type:      bus.EventCommandDelta,
+			SessionID: sessionID,
+			Data:      mustJSON(map[string]string{"text": text}),
+		})
+	})
+	defer func() {
+		s.app.SetProgressFunc(nil)
+		s.app.SetDeltaFunc(nil)
+	}()
+
+	result, err := s.app.ExecuteCommand(ctx, name, args)
+	if err != nil {
+		s.b.Publish(bus.Event{
+			Type:      bus.EventCommandError,
+			SessionID: sessionID,
+			Data:      mustJSON(map[string]string{"error": err.Error()}),
+		})
+		return err
+	}
+
+	s.b.Publish(bus.Event{
+		Type:      bus.EventCommandComplete,
+		SessionID: sessionID,
+		Data:      mustJSON(map[string]string{"result": result}),
 	})
 	return nil
 }
