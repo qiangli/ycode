@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -65,6 +66,7 @@ type fakeAgentClient struct {
 	sendFunc   func(ctx context.Context, sessionID string, input bus.MessageInput) error
 	cancelFunc func(ctx context.Context, sessionID string) error
 	eventsCh   chan bus.Event
+	models     []api.ModelInfo
 }
 
 func (f *fakeAgentClient) SendMessage(ctx context.Context, sessionID string, input bus.MessageInput) error {
@@ -88,6 +90,14 @@ func (f *fakeAgentClient) Events(ctx context.Context, filter ...bus.EventType) (
 	ch := make(chan bus.Event)
 	close(ch)
 	return ch, nil
+}
+
+func (f *fakeAgentClient) ListModels(ctx context.Context) ([]api.ModelInfo, error) {
+	return f.models, nil
+}
+
+func (f *fakeAgentClient) SwitchModel(ctx context.Context, model string) error {
+	return nil
 }
 
 // sendKeys applies a sequence of key messages to a tea.Model, returning

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/service"
 )
@@ -91,6 +92,24 @@ func (l *LazyClient) Events(ctx context.Context, filter ...bus.EventType) (<-cha
 		return nil, fmt.Errorf("server not ready: %w", err)
 	}
 	return c.Events(ctx, filter...)
+}
+
+// ListModels waits for connection then lists.
+func (l *LazyClient) ListModels(ctx context.Context) ([]api.ModelInfo, error) {
+	c, err := l.wait(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("server not ready: %w", err)
+	}
+	return c.ListModels(ctx)
+}
+
+// SwitchModel waits for connection then switches.
+func (l *LazyClient) SwitchModel(ctx context.Context, model string) error {
+	c, err := l.wait(ctx)
+	if err != nil {
+		return fmt.Errorf("server not ready: %w", err)
+	}
+	return c.SwitchModel(ctx, model)
 }
 
 // Close closes the underlying client if connected.

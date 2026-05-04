@@ -224,7 +224,6 @@ func resolveServerPort() int {
 	return defaultServerPort
 }
 
-
 // runServerPrompt sends a one-shot prompt to the server and streams the response to stdout.
 func runServerPrompt(baseURL, prompt string) error {
 	token := readTokenFile()

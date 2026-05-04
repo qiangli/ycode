@@ -43,6 +43,8 @@ type agentClient interface {
 	SendMessage(ctx context.Context, sessionID string, input bus.MessageInput) error
 	CancelTurn(ctx context.Context, sessionID string) error
 	Events(ctx context.Context, filter ...bus.EventType) (<-chan bus.Event, error)
+	ListModels(ctx context.Context) ([]api.ModelInfo, error)
+	SwitchModel(ctx context.Context, model string) error
 }
 
 // TUIModel is the top-level bubbletea model for interactive mode.
@@ -362,11 +364,19 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case tea.KeyEnter:
 				if model := m.modelPicker.selectedModel(); model != "" {
 					m.modelPicker.close()
-					result, err := m.app.SwitchModel(model)
-					if err != nil {
-						m.toasts.add(fmt.Sprintf("Model switch failed: %v", err), ToastError)
+					if m.cl != nil {
+						if err := m.cl.SwitchModel(context.Background(), model); err != nil {
+							m.toasts.add(fmt.Sprintf("Model switch failed: %v", err), ToastError)
+						} else {
+							m.toasts.add(fmt.Sprintf("Switched to %s", model), ToastSuccess)
+						}
 					} else {
-						m.toasts.add(result, ToastSuccess)
+						result, err := m.app.SwitchModel(model)
+						if err != nil {
+							m.toasts.add(fmt.Sprintf("Model switch failed: %v", err), ToastError)
+						} else {
+							m.toasts.add(result, ToastSuccess)
+						}
 					}
 					return m, func() tea.Msg { return repaintMsg{} }
 				}
@@ -405,7 +415,12 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Handle built-in actions.
 					switch name {
 					case "Switch Model":
-						models := api.DiscoverModels(context.Background(), m.app.config.Aliases, m.app.ollamaLister)
+						var models []api.ModelInfo
+						if m.cl != nil {
+							models, _ = m.cl.ListModels(context.Background())
+						} else {
+							models = api.DiscoverModels(context.Background(), m.app.config.Aliases, m.app.ollamaLister)
+						}
 						m.modelPicker.open(m.app.Model(), models)
 					case "Toggle Mode":
 						return m, m.toggleMode()
