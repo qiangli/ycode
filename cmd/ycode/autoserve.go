@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -85,11 +84,8 @@ func ensureServer() (string, error) {
 		return baseURL, nil
 	}
 
-	// Find an available port for the new server.
-	port, err := findFreePort()
-	if err != nil {
-		return "", fmt.Errorf("find free port: %w", err)
-	}
+	// Use the default port (same as ycode serve default).
+	port := resolveServerPort()
 
 	// Start a new server in detached mode with --auto flag.
 	if err := startAutoServer(port); err != nil {
@@ -228,16 +224,6 @@ func resolveServerPort() int {
 	return defaultServerPort
 }
 
-// findFreePort finds an available TCP port on localhost.
-func findFreePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	port := l.Addr().(*net.TCPAddr).Port
-	l.Close()
-	return port, nil
-}
 
 // runServerPrompt sends a one-shot prompt to the server and streams the response to stdout.
 func runServerPrompt(baseURL, prompt string) error {
