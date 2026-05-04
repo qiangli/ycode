@@ -100,7 +100,10 @@ func realMain() error {
 	return rootCmd.Execute()
 }
 
-func newApp() (*cli.App, error) {
+// newApp creates a full App instance. If workDirOverride is non-empty, it is
+// used as the project directory instead of os.Getwd(). This enables the server
+// to create per-project App instances for multi-session support.
+func newApp(workDirOverride ...string) (*cli.App, error) {
 	// Root context for all background goroutines — cancelled on App.Close().
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	success := false
@@ -114,6 +117,9 @@ func newApp() (*cli.App, error) {
 	home, _ := os.UserHomeDir()
 	userDir := filepath.Join(home, ".config", "ycode")
 	cwd, _ := os.Getwd()
+	if len(workDirOverride) > 0 && workDirOverride[0] != "" {
+		cwd = workDirOverride[0]
+	}
 	projectDir := filepath.Join(cwd, ".agents", "ycode")
 
 	// Load config.

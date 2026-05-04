@@ -25,6 +25,8 @@ type WSClient struct {
 	token   string
 
 	sessionID string
+	clientID  string // UUID for client identification across reconnects
+	workDir   string // project directory for session isolation
 	conn      *websocket.Conn
 	connMu    sync.Mutex
 
@@ -36,15 +38,32 @@ type WSClient struct {
 	done   chan struct{}
 }
 
+// WSClientOption configures optional WSClient parameters.
+type WSClientOption func(*WSClient)
+
+// WithClientID sets the client UUID for identification across reconnects.
+func WithClientID(id string) WSClientOption {
+	return func(c *WSClient) { c.clientID = id }
+}
+
+// WithWorkDir sets the project directory for session isolation.
+func WithWorkDir(dir string) WSClientOption {
+	return func(c *WSClient) { c.workDir = dir }
+}
+
 // NewWSClient creates a WebSocket client connecting to the ycode API server.
-func NewWSClient(baseURL, token, sessionID string) *WSClient {
-	return &WSClient{
+func NewWSClient(baseURL, token, sessionID string, opts ...WSClientOption) *WSClient {
+	c := &WSClient{
 		baseURL:   baseURL,
 		token:     token,
 		sessionID: sessionID,
 		logger:    slog.Default(),
 		done:      make(chan struct{}),
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // Connect establishes the WebSocket connection and starts the read loop.
@@ -52,6 +71,12 @@ func (c *WSClient) Connect(ctx context.Context) error {
 	wsURL := fmt.Sprintf("ws%s/api/sessions/%s/ws?token=%s",
 		c.baseURL[4:], // strip "http" prefix, keep "s" if https
 		c.sessionID, c.token)
+	if c.clientID != "" {
+		wsURL += "&client_id=" + c.clientID
+	}
+	if c.workDir != "" {
+		wsURL += "&work_dir=" + c.workDir
+	}
 
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
 	if err != nil {
@@ -210,7 +235,11 @@ func jsonReader(data []byte) io.Reader {
 
 func (c *WSClient) CreateSession(ctx context.Context) (*service.SessionInfo, error) {
 	var info service.SessionInfo
-	return &info, c.restPost("/api/sessions", nil, &info)
+	body := map[string]string{}
+	if c.workDir != "" {
+		body["work_dir"] = c.workDir
+	}
+	return &info, c.restPost("/api/sessions", body, &info)
 }
 
 func (c *WSClient) GetSession(ctx context.Context, id string) (*service.SessionInfo, error) {

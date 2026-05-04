@@ -54,6 +54,7 @@ type Event struct {
 	ID        uint64          `json:"id"`
 	Type      EventType       `json:"type"`
 	SessionID string          `json:"session_id"`
+	GroupID   string          `json:"group_id,omitempty"`
 	Timestamp time.Time       `json:"timestamp"`
 	Data      json.RawMessage `json:"data"`
 }

@@ -30,6 +30,7 @@ type AppBackend interface {
 	Model() string
 	ProviderKind() string
 	Version() string
+	WorkDir() string
 	InPlanMode() bool
 	SwitchModel(name string) (string, error)
 

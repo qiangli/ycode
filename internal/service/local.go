@@ -441,6 +441,7 @@ func (s *LocalService) GetStatus(ctx context.Context) (*StatusInfo, error) {
 		Model:        s.app.Model(),
 		ProviderKind: s.app.ProviderKind(),
 		SessionID:    s.app.SessionID(),
+		WorkDir:      s.app.WorkDir(),
 		PlanMode:     s.app.InPlanMode(),
 		Version:      s.app.Version(),
 	}, nil
@@ -463,6 +464,7 @@ func (s *LocalService) ExecuteCommand(ctx context.Context, name string, args str
 func (s *LocalService) currentSessionInfo() *SessionInfo {
 	return &SessionInfo{
 		ID:           s.app.SessionID(),
+		WorkDir:      s.app.WorkDir(),
 		MessageCount: s.app.MessageCount(),
 	}
 }

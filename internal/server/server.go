@@ -30,6 +30,7 @@ type Config struct {
 type Server struct {
 	config  Config
 	service service.Service
+	hub     *Hub
 	mux     *http.ServeMux
 	server  *http.Server
 	logger  *slog.Logger
@@ -49,9 +50,11 @@ type Server struct {
 
 // New creates a new API server.
 func New(cfg Config, svc service.Service) *Server {
+	hub := NewHub()
 	s := &Server{
 		config:       cfg,
 		service:      svc,
+		hub:          hub,
 		mux:          http.NewServeMux(),
 		logger:       slog.Default(),
 		wsConns:      make(map[*websocket.Conn]struct{}),
@@ -64,8 +67,23 @@ func New(cfg Config, svc service.Service) *Server {
 			WriteBufferSize: 1024,
 		},
 	}
+	// Start the hub and wire bus events into it.
+	go hub.Run()
+	go s.busToHub()
 	s.registerRoutes()
 	return s
+}
+
+// Hub returns the server's connection hub.
+func (s *Server) Hub() *Hub { return s.hub }
+
+// busToHub subscribes to all bus events and dispatches them through the hub.
+func (s *Server) busToHub() {
+	ch, unsub := s.service.Bus().Subscribe()
+	defer unsub()
+	for ev := range ch {
+		s.hub.Dispatch(ev)
+	}
 }
 
 // SetOTEL configures optional observability instrumentation.
@@ -232,7 +250,19 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
-	info, err := s.service.CreateSession(r.Context())
+	// Extract workDir from request body or header for multi-project support.
+	ctx := r.Context()
+	var body struct {
+		WorkDir string `json:"work_dir"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body.WorkDir == "" {
+		body.WorkDir = r.Header.Get("X-Work-Dir")
+	}
+	if body.WorkDir != "" {
+		ctx = context.WithValue(ctx, service.CtxWorkDir, body.WorkDir)
+	}
+	info, err := s.service.CreateSession(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -302,6 +332,12 @@ type wsMessage struct {
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
+	clientID := ClientID(r.URL.Query().Get("client_id"))
+	workDir := r.URL.Query().Get("work_dir")
+	clientKind := ClientKind(r.URL.Query().Get("client_kind"))
+	if clientKind == "" {
+		clientKind = ClientTUI
+	}
 
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -316,7 +352,23 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	s.wsMu.Unlock()
 	s.trackWSConnect()
 
+	// Register client with hub for session-aware event routing.
+	// If no client_id provided, generate one from the connection pointer.
+	if clientID == "" {
+		clientID = ClientID(fmt.Sprintf("conn-%p", conn))
+	}
+	client := &Client{
+		ID:        clientID,
+		Kind:      clientKind,
+		SessionID: sessionID,
+		WorkDir:   workDir,
+		Send:      make(chan bus.Event, 256),
+		JoinedAt:  time.Now(),
+	}
+	s.hub.Register(client)
+
 	defer func() {
+		s.hub.Unregister(clientID)
 		s.wsMu.Lock()
 		delete(s.wsConns, conn)
 		s.lastActivity = time.Now()
@@ -339,22 +391,18 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Subscribe to bus events for this session.
-	ch, unsub := s.service.Bus().Subscribe()
-	defer unsub()
-
-	// Write loop: send bus events to client.
+	// Write loop: drain client.Send channel to WebSocket.
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	go s.wsWriteLoop(ctx, conn, ch, sessionID)
+	go s.clientWritePump(ctx, conn, client)
 
 	// Read loop: receive client commands.
 	s.wsReadLoop(ctx, conn, sessionID)
 }
 
-// wsWriteLoop sends bus events to the WebSocket client.
-func (s *Server) wsWriteLoop(ctx context.Context, conn *websocket.Conn, ch <-chan bus.Event, sessionID string) {
+// clientWritePump drains events from the client's Send channel to the WebSocket.
+func (s *Server) clientWritePump(ctx context.Context, conn *websocket.Conn, client *Client) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -362,13 +410,9 @@ func (s *Server) wsWriteLoop(ctx context.Context, conn *websocket.Conn, ch <-cha
 		select {
 		case <-ctx.Done():
 			return
-		case ev, ok := <-ch:
+		case ev, ok := <-client.Send:
 			if !ok {
-				return
-			}
-			// Only send events for this session.
-			if ev.SessionID != "" && ev.SessionID != sessionID {
-				continue
+				return // channel closed by hub on unregister
 			}
 			data, err := json.Marshal(ev)
 			if err != nil {

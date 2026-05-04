@@ -755,6 +755,9 @@ func (a *App) ProviderKind() string { return a.providerKind }
 // SetProviderKind sets the provider kind (used by thin client to sync from server).
 func (a *App) SetProviderKind(kind string) { a.providerKind = kind }
 
+// WorkDir returns the working directory for this app instance.
+func (a *App) WorkDir() string { return a.workDir }
+
 // InPlanMode returns whether plan mode is active.
 func (a *App) InPlanMode() bool {
 	if a.planMode == nil {

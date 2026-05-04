@@ -37,32 +37,25 @@ func runWSRemoteTUI(url string, token string) error {
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 
-	// Get session ID from the server.
-	c := client.NewWSClient(baseURL, token, "")
-	status, err := c.GetStatus(context.Background())
+	// Create or reuse session for this project directory.
+	cwd, _ := os.Getwd()
+	c := client.NewWSClient(baseURL, token, "",
+		client.WithWorkDir(cwd),
+	)
+	info, err := c.CreateSession(context.Background())
 	if err != nil {
-		return fmt.Errorf("connect to server: %w", err)
+		return fmt.Errorf("create session: %w", err)
 	}
-
-	sessionID := status.SessionID
-	if sessionID == "" {
-		// Create a new session.
-		info, err := c.CreateSession(context.Background())
-		if err != nil {
-			return fmt.Errorf("create session: %w", err)
-		}
-		sessionID = info.ID
-	}
-
-	// Connect WebSocket for streaming events.
-	wsClient := client.NewWSClient(baseURL, token, sessionID)
+	sessionID := info.ID
+	wsClient := client.NewWSClient(baseURL, token, sessionID,
+		client.WithWorkDir(cwd),
+	)
 	if err := wsClient.Connect(context.Background()); err != nil {
 		return fmt.Errorf("websocket connect: %w", err)
 	}
 	defer wsClient.Close()
 
 	// Create thin app and run TUI in client mode.
-	cwd, _ := os.Getwd()
 	app, err := cli.NewThinApp(version, cwd)
 	if err != nil {
 		return fmt.Errorf("create app: %w", err)

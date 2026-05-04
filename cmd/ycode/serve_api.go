@@ -23,27 +23,41 @@ var (
 
 // apiStack holds the API/NATS server state for the unified serve command.
 type apiStack struct {
-	app     *cli.App
-	memBus  *bus.MemoryBus
-	svc     *service.LocalService
-	srv     *internalserver.Server // underlying server (for connection tracking)
-	handler http.Handler           // HTTP handler for the API/WebSocket server
-	natsSrv *internalserver.NATSServer
-	token   string
+	app      *cli.App              // primary app (first session or server-started)
+	pool     *service.SessionPool  // session pool for multi-project support
+	multiSvc *service.MultiService // multi-session service
+	memBus   *bus.MemoryBus
+	svc      service.Service // the active service (LocalService or MultiService)
+	srv      *internalserver.Server
+	handler  http.Handler
+	natsSrv  *internalserver.NATSServer
+	token    string
 }
 
 // buildAPIStack initializes the app, service layer, and optionally NATS.
 // It returns an apiStack with the HTTP handler ready to be served
 // (by WebUIComponent or standalone).
 func buildAPIStack(noNATS bool) (*apiStack, error) {
+	// Create the primary app for the server's working directory.
 	app, err := newApp()
 	if err != nil {
 		return nil, err
 	}
 
 	memBus := bus.NewMemoryBus()
-	svc := service.NewLocalService(app, memBus)
-	svc.SetOllamaLister(inference.NewOllamaLister())
+	ollamaLister := inference.NewOllamaLister()
+
+	// Build a session pool with a factory that creates new App instances per workDir.
+	pool := service.NewSessionPool(func(workDir string) (service.AppBackend, error) {
+		return newApp(workDir)
+	})
+
+	// Seed the pool with the primary app's session.
+	pool.SeedSession(app)
+
+	// Create the multi-session service.
+	multiSvc := service.NewMultiService(pool, memBus)
+	multiSvc.SetOllamaLister(ollamaLister)
 
 	token, err := generateToken()
 	if err != nil {
@@ -52,15 +66,17 @@ func buildAPIStack(noNATS bool) (*apiStack, error) {
 	_ = writeTokenFile(token)
 
 	// Build the HTTP/WebSocket handler (but don't start listening yet).
-	srv := internalserver.New(internalserver.Config{Token: token}, svc)
+	srv := internalserver.New(internalserver.Config{Token: token}, multiSvc)
 
 	stack := &apiStack{
-		app:     app,
-		memBus:  memBus,
-		svc:     svc,
-		srv:     srv,
-		handler: srv.Mux(),
-		token:   token,
+		app:      app,
+		pool:     pool,
+		multiSvc: multiSvc,
+		memBus:   memBus,
+		svc:      multiSvc,
+		srv:      srv,
+		handler:  srv.Mux(),
+		token:    token,
 	}
 
 	if !noNATS {
@@ -68,7 +84,7 @@ func buildAPIStack(noNATS bool) (*apiStack, error) {
 			Enabled:  true,
 			Port:     apiNATSPort,
 			Embedded: true,
-		}, svc)
+		}, multiSvc)
 		if err := natsSrv.Start(context.Background()); err != nil {
 			return nil, err
 		}
@@ -85,7 +101,9 @@ func (s *apiStack) stop() {
 	if s.memBus != nil {
 		s.memBus.Close()
 	}
-	if s.app != nil {
+	if s.multiSvc != nil {
+		s.multiSvc.Close()
+	} else if s.app != nil {
 		s.app.Close()
 	}
 }

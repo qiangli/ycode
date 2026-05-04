@@ -129,24 +129,20 @@ func runThinTUIAsync() error {
 		token := readTokenFile()
 		apiBase := baseURL + "/ycode"
 
-		// Get or create session.
-		c := client.NewWSClient(apiBase, token, "")
-		status, err := c.GetStatus(ctx)
+		// Create or reuse session for this project directory.
+		c := client.NewWSClient(apiBase, token, "",
+			client.WithWorkDir(cwd),
+		)
+		info, err := c.CreateSession(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("connect to server: %w", err)
+			return nil, fmt.Errorf("create session: %w", err)
 		}
+		sessionID := info.ID
 
-		sessionID := status.SessionID
-		if sessionID == "" {
-			info, err := c.CreateSession(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("create session: %w", err)
-			}
-			sessionID = info.ID
-		}
-
-		// Connect WebSocket.
-		wsClient := client.NewWSClient(apiBase, token, sessionID)
+		// Connect WebSocket with project context.
+		wsClient := client.NewWSClient(apiBase, token, sessionID,
+			client.WithWorkDir(cwd),
+		)
 		if err := wsClient.Connect(ctx); err != nil {
 			return nil, fmt.Errorf("websocket connect: %w", err)
 		}

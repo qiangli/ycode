@@ -15,6 +15,7 @@ type MessageInput = bus.MessageInput
 // SessionInfo describes a session for API responses.
 type SessionInfo struct {
 	ID           string `json:"id"`
+	WorkDir      string `json:"work_dir,omitempty"`
 	CreatedAt    string `json:"created_at"`
 	MessageCount int    `json:"message_count"`
 	Summary      string `json:"summary,omitempty"`
@@ -25,6 +26,7 @@ type StatusInfo struct {
 	Model        string `json:"model"`
 	ProviderKind string `json:"provider_kind"`
 	SessionID    string `json:"session_id"`
+	WorkDir      string `json:"work_dir,omitempty"`
 	PlanMode     bool   `json:"plan_mode"`
 	Version      string `json:"version"`
 }
