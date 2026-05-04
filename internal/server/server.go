@@ -31,6 +31,7 @@ type Server struct {
 	config  Config
 	service service.Service
 	hub     *Hub
+	groups  *service.GroupManager
 	mux     *http.ServeMux
 	server  *http.Server
 	logger  *slog.Logger
@@ -55,6 +56,7 @@ func New(cfg Config, svc service.Service) *Server {
 		config:       cfg,
 		service:      svc,
 		hub:          hub,
+		groups:       service.NewGroupManager(),
 		mux:          http.NewServeMux(),
 		logger:       slog.Default(),
 		wsConns:      make(map[*websocket.Conn]struct{}),
@@ -169,6 +171,14 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/commands/{name}", s.authMiddleware(s.handleCommand))
 	s.mux.HandleFunc("GET /api/models", s.authMiddleware(s.handleListModels))
 	s.mux.HandleFunc("GET /api/status", s.authMiddleware(s.handleGetStatus))
+
+	// Group endpoints (team agent coordination).
+	s.mux.HandleFunc("GET /api/groups", s.authMiddleware(s.handleListGroups))
+	s.mux.HandleFunc("POST /api/groups", s.authMiddleware(s.handleCreateGroup))
+	s.mux.HandleFunc("GET /api/groups/{id}", s.authMiddleware(s.handleGetGroup))
+	s.mux.HandleFunc("DELETE /api/groups/{id}", s.authMiddleware(s.handleDeleteGroup))
+	s.mux.HandleFunc("PUT /api/groups/{id}/sessions/{sid}", s.authMiddleware(s.handleAddSessionToGroup))
+	s.mux.HandleFunc("DELETE /api/groups/{id}/sessions/{sid}", s.authMiddleware(s.handleRemoveSessionFromGroup))
 
 	// WebSocket endpoint.
 	s.mux.HandleFunc("GET /api/sessions/{id}/ws", s.handleWebSocket)
