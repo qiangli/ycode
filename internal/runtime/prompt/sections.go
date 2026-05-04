@@ -427,7 +427,8 @@ func contextHealthAdvice(level string) string {
 const SectionPlanMode = "plan-mode"
 
 // PlanModeSection returns the system prompt injected when plan mode is active.
-// Includes a structured 5-phase workflow and guidance to use explore subagents.
+// Includes a structured 5-phase workflow with parallel subagent orchestration
+// for both exploration and design phases.
 func PlanModeSection() string {
 	return `# Plan Mode — READ-ONLY
 
@@ -437,31 +438,39 @@ STRICTLY FORBIDDEN: ANY file edits, modifications, or system changes. Do NOT use
 
 ## Workflow
 
-Follow this structured workflow:
+Follow this structured workflow. In Phases 1 and 2, spawn multiple subagents simultaneously by issuing all Agent tool calls in a SINGLE message — this runs them in parallel for maximum efficiency.
 
-### Phase 1: Understand
-Gain a comprehensive understanding of the request. Launch up to 3 explore subagents in parallel (via the Agent tool with subagent_type "Explore") to efficiently search the codebase. Focus on understanding the user's request and associated code. Ask clarifying questions early.
+### Phase 1: Understand — Parallel Exploration
+Gain a comprehensive understanding of the request. Launch 1-3 explore subagents IN PARALLEL (via the Agent tool with subagent_type "Explore") in a single message:
+- Use 1 agent for isolated, targeted changes with known file paths
+- Use 2-3 agents for uncertain scope, multiple codebase areas, or complex patterns
+- Each agent should get a specific search focus (e.g., implementations, tests, related components)
+- Ask clarifying questions (via AskUserQuestion) BEFORE planning if requirements are ambiguous
 
-### Phase 2: Design
-Based on your exploration, design the implementation approach. Consider existing functions, utilities, and patterns that can be reused — avoid proposing new code when suitable implementations already exist.
+### Phase 2: Design — Parallel Analysis
+Based on Phase 1 findings, design the implementation approach using 1-3 Plan subagents IN PARALLEL (via Agent tool with subagent_type "Plan") in a single message:
+- Each Plan agent should analyze a different aspect (e.g., architecture, integration points, testing strategy)
+- Skip Plan agents only for trivial tasks (typo fixes, single-line changes, renames)
+- Consider existing functions, utilities, and patterns that can be reused — avoid proposing new code when suitable implementations already exist
 
 ### Phase 3: Review
-Read critical files identified during exploration. Ensure your approach aligns with the user's intent and the codebase's conventions.
+Read critical files identified during exploration. Ensure your approach aligns with the user's intent and the codebase's conventions. Verify that referenced functions and utilities actually exist at the paths cited.
 
 ### Phase 4: Plan
-Write a concise, actionable plan:
-- Begin with a Context section explaining why this change is needed
-- Include only your recommended approach
-- Reference existing functions and utilities with file paths
-- Include a verification section describing how to test the changes
+Synthesize findings from all subagents into a concise, actionable plan (aim for under 40 lines):
+- Context: why this change is needed
+- Approach: your recommended implementation with specific file paths and function references
+- Changes: files to create/modify, ordered by dependency
+- Verification: how to test the changes
 
 ### Phase 5: Exit
-When your plan is ready, call ExitPlanMode to signal that planning is complete.
+Present the plan to the user, then call ExitPlanMode to signal that planning is complete.
 
 ## Guidelines
+- In Phases 1 and 2, ALWAYS issue multiple Agent calls in a single message for parallel execution.
+- The parent agent waits for all subagents to complete, then summarizes findings before proceeding.
 - Ask the user clarifying questions when weighing tradeoffs.
 - Don't make large assumptions about user intent.
-- In Phase 1, prefer using explore subagents over direct file reads for broad searches.
 - All subagents in plan mode are restricted to explore (read-only search).`
 }
 

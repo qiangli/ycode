@@ -14,6 +14,13 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/session"
 )
 
+// PlanModeController manages plan mode state.
+type PlanModeController interface {
+	EnterPlanMode() (string, error)
+	ExitPlanMode() (string, error)
+	InPlanMode() bool
+}
+
 // RuntimeDeps provides dependencies for command handlers.
 type RuntimeDeps struct {
 	SessionID    string
@@ -67,6 +74,10 @@ type RuntimeDeps struct {
 	// GraphManager provides session-level code graph access (optional).
 	// When set, /init updates the session graph directly instead of only caching to disk.
 	GraphManager *codegraph.Manager
+
+	// PlanMode provides plan mode toggle (optional).
+	// When set, enables the /plan slash command.
+	PlanMode PlanModeController
 }
 
 // ConfigDirs holds the config directory paths for display.
@@ -424,6 +435,15 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		},
 	})
 
+	// Plan mode command
+	r.Register(&Spec{
+		Name:        "plan",
+		Description: "Toggle plan mode or enter with a query",
+		Usage:       "/plan [query]",
+		Category:    "mode",
+		Handler:     planHandler(deps),
+	})
+
 	// Automation commands
 	commitFn := commitHandler(deps)
 	r.Register(&Spec{
@@ -638,6 +658,44 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			}
 		},
 	})
+}
+
+func planHandler(deps *RuntimeDeps) func(context.Context, string) (string, error) {
+	return func(ctx context.Context, args string) (string, error) {
+		if deps.PlanMode == nil {
+			return "Plan mode not available (no .agents/ycode/ directory).", nil
+		}
+
+		args = strings.TrimSpace(args)
+
+		// /plan with no args: toggle mode.
+		if args == "" {
+			if deps.PlanMode.InPlanMode() {
+				return deps.PlanMode.ExitPlanMode()
+			}
+			return deps.PlanMode.EnterPlanMode()
+		}
+
+		// /plan status: show current mode.
+		if args == "status" {
+			if deps.PlanMode.InPlanMode() {
+				return "Currently in plan mode (read-only). Use /plan or shift+tab to exit.", nil
+			}
+			return "Currently in build mode (full access). Use /plan or shift+tab to enter plan mode.", nil
+		}
+
+		// /plan <query>: enter plan mode (if not already) with context.
+		if !deps.PlanMode.InPlanMode() {
+			result, err := deps.PlanMode.EnterPlanMode()
+			if err != nil {
+				return "", err
+			}
+			return result + "\n\nPlan context: " + args, nil
+		}
+
+		// Already in plan mode with a query — just echo the context.
+		return "Already in plan mode. Plan context: " + args, nil
+	}
 }
 
 func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error) {

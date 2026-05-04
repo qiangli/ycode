@@ -71,6 +71,8 @@ func TestAllCommandsRegistered(t *testing.T) {
 		"clear", "compact", "config", "export", "init", "memory",
 		// discovery
 		"doctor", "context", "skills", "tasks",
+		// mode
+		"plan",
 		// automation
 		"commit", "review", "advisor", "security-review", "team", "cron", "loop",
 		// plugin
@@ -438,4 +440,103 @@ func TestInitHandler_SlowAPI(t *testing.T) {
 	}
 
 	_ = err // Error or not, the key property is timely completion.
+}
+
+// mockPlanMode is a test implementation of PlanModeController.
+type mockPlanMode struct {
+	inPlan bool
+}
+
+func (m *mockPlanMode) EnterPlanMode() (string, error) {
+	m.inPlan = true
+	return "Entered plan mode. Write-modifying tools are now disabled.", nil
+}
+
+func (m *mockPlanMode) ExitPlanMode() (string, error) {
+	m.inPlan = false
+	return "Exited plan mode. All tools are now available.", nil
+}
+
+func (m *mockPlanMode) InPlanMode() bool {
+	return m.inPlan
+}
+
+func TestPlanCommand(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("no_plan_mode_controller", func(t *testing.T) {
+		r := NewRegistry()
+		RegisterBuiltins(r, &RuntimeDeps{})
+		output, err := r.Execute(ctx, "plan", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !containsStr(output, "not available") {
+			t.Errorf("expected 'not available' message, got: %s", output)
+		}
+	})
+
+	t.Run("toggle_enter", func(t *testing.T) {
+		mock := &mockPlanMode{}
+		r := NewRegistry()
+		RegisterBuiltins(r, &RuntimeDeps{PlanMode: mock})
+		output, err := r.Execute(ctx, "plan", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !containsStr(output, "Entered plan mode") {
+			t.Errorf("expected enter message, got: %s", output)
+		}
+		if !mock.inPlan {
+			t.Error("expected plan mode to be active")
+		}
+	})
+
+	t.Run("toggle_exit", func(t *testing.T) {
+		mock := &mockPlanMode{inPlan: true}
+		r := NewRegistry()
+		RegisterBuiltins(r, &RuntimeDeps{PlanMode: mock})
+		output, err := r.Execute(ctx, "plan", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !containsStr(output, "Exited plan mode") {
+			t.Errorf("expected exit message, got: %s", output)
+		}
+		if mock.inPlan {
+			t.Error("expected plan mode to be inactive")
+		}
+	})
+
+	t.Run("status_in_plan", func(t *testing.T) {
+		mock := &mockPlanMode{inPlan: true}
+		r := NewRegistry()
+		RegisterBuiltins(r, &RuntimeDeps{PlanMode: mock})
+		output, err := r.Execute(ctx, "plan", "status")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !containsStr(output, "plan mode") {
+			t.Errorf("expected plan mode status, got: %s", output)
+		}
+	})
+
+	t.Run("enter_with_query", func(t *testing.T) {
+		mock := &mockPlanMode{}
+		r := NewRegistry()
+		RegisterBuiltins(r, &RuntimeDeps{PlanMode: mock})
+		output, err := r.Execute(ctx, "plan", "refactor the auth module")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !containsStr(output, "Entered plan mode") {
+			t.Errorf("expected enter message, got: %s", output)
+		}
+		if !containsStr(output, "refactor the auth module") {
+			t.Errorf("expected query context in output, got: %s", output)
+		}
+		if !mock.inPlan {
+			t.Error("expected plan mode to be active")
+		}
+	})
 }

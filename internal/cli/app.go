@@ -236,6 +236,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		},
 		RunAgenticInit: app.runAgenticInit,
 		GraphManager:   app.graphManager,
+		PlanMode:       o.PlanMode,
 	})
 	app.commands = cmdRegistry
 
