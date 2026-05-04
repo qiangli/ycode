@@ -1,11 +1,15 @@
 package builtin
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/qiangli/ycode/internal/runtime/codegraph"
+	"github.com/qiangli/ycode/internal/runtime/repomap"
 )
 
 //go:embed init_template.txt
@@ -17,8 +21,7 @@ const (
 
 	// initSystemPrompt provides the LLM with its role.
 	initSystemPrompt = `You are an expert at creating AGENTS.md files for software repositories.
-Your task is to analyze project context and generate a concise, high-quality AGENTS.md file.
-Follow the investigation guidance and writing rules provided in the user prompt.
+Your task is to analyze pre-gathered project context — including a code knowledge graph, ranked symbol map, and configuration files — and generate a concise, high-quality AGENTS.md file.
 
 Output format:
 - Output ONLY the raw markdown content for AGENTS.md. No wrapper, no explanation.
@@ -28,28 +31,44 @@ Output format:
 
 Key principles:
 - Every line must earn its place. If an agent would figure it out without help, omit it.
+- Prefer executable sources of truth (Makefile, CI, config) over prose.
 - Delegate to sub-directory instruction files instead of duplicating their content.
 - Never include speculative "Open Questions" sections or content you cannot verify.
-- Prefer pointers ("see X for details") over inline tables or verbose lists.
+
+Using the code architecture context:
+- Communities in the knowledge graph reveal logical module boundaries — describe them as architecture.
+- God nodes are architectural linchpins — document their role if not obvious from the name.
+- Cross-community edges indicate coupling — note unexpected dependencies.
+- Synthesize graph + symbol map into architecture descriptions. Do NOT list raw graph data.
+- You have graph query tools available if you need to explore specific relationships deeper.
 
 Architecture depth:
-- For multi-service repos, include a service table with tech stack AND port numbers.
-- Document entry points with the actual call chain (e.g., main.go → cmd.Execute(embeddedAssets)).
+- Document entry points with the actual call chain (e.g., main.go → cobra CLI → REPL).
 - Describe non-obvious internal packages — an agent can read filenames but not infer purpose.
-- Document build patterns like embedded assets, code generation, or rsync-then-embed flows.
-- Include operational commands: hot-reload endpoints, apply scripts, data persistence warnings.
-- If .env files are machine-specific and gitignored, say so explicitly.
-- Summarize key scripts in a table when scripts/ contains non-trivial operational tooling.`
+- Document build patterns like embedded assets, code generation, or build tags.
+- For multi-service repos, include a service table with tech stack and port numbers.
+
+Interoperability:
+- The output must work for any AI coding tool (Claude Code, opencode, Cursor, Copilot).
+- Use tool-agnostic language. Reference CLAUDE.md for tool-specific guidance if it exists.`
 )
 
 // InitGenerator creates AGENTS.md with single-shot LLM call.
 type InitGenerator struct {
-	cwd string
+	cwd          string
+	graphManager *codegraph.Manager // optional session-level graph manager
 }
 
 // NewInitGenerator creates an InitGenerator.
 func NewInitGenerator(cwd string) *InitGenerator {
 	return &InitGenerator{cwd: cwd}
+}
+
+// SetGraphManager sets an optional session-level graph manager.
+// When set, buildCodeGraph updates the session graph directly
+// instead of only caching to disk.
+func (ig *InitGenerator) SetGraphManager(mgr *codegraph.Manager) {
+	ig.graphManager = mgr
 }
 
 // InitResult holds the outcome of init generation.
@@ -110,6 +129,9 @@ type initContext struct {
 	ComposeFiles     map[string]string // docker-compose path -> content
 	EntryPoints      map[string]string // main.go / cmd/ entry -> content
 	ToolVersions     string            // mise.toml or .tool-versions content
+	DirTree          string            // depth-2 directory tree
+	RepoMapContent   string            // PageRank-scored symbol map
+	GraphSummary     string            // gfy knowledge graph summary
 	Focus            string
 	FilesRead        []string
 	MissingContext   []string
@@ -145,16 +167,25 @@ func (ig *InitGenerator) gatherContext() *initContext {
 	// Phase 6: Detect frameworks
 	ctx.Frameworks = ig.detectFrameworks()
 
-	// Phase 7: Read scripts for operational context
+	// Phase 7: Generate directory tree
+	ig.generateDirTree(ctx)
+
+	// Phase 8: Build code knowledge graph via gfy
+	ig.buildCodeGraph(ctx)
+
+	// Phase 9: Generate symbol map via repomap
+	ig.readRepoMap(ctx)
+
+	// Phase 10: Read scripts for operational context
 	ig.readScripts(ctx)
 
-	// Phase 8: Read docker-compose files for service topology
+	// Phase 11: Read docker-compose files for service topology
 	ig.readComposeFiles(ctx)
 
-	// Phase 9: Read entry points for architecture understanding
+	// Phase 12: Read entry points for architecture understanding
 	ig.readEntryPoints(ctx)
 
-	// Phase 10: Read tool version files
+	// Phase 13: Read tool version files
 	ig.readToolVersions(ctx)
 
 	return ctx
@@ -507,6 +538,128 @@ func (ig *InitGenerator) readToolVersions(ctx *initContext) {
 	}
 }
 
+// generateDirTree creates a depth-limited directory tree for context.
+func (ig *InitGenerator) generateDirTree(ctx *initContext) {
+	skipDirs := map[string]bool{
+		".git": true, "node_modules": true, "vendor": true, "__pycache__": true,
+		".agents": true, ".venv": true, "venv": true, "dist": true, "build": true,
+		"target": true, ".next": true, ".cache": true, ".tox": true,
+		"priorart": true, "reference": true, "external": true, "testdata": true,
+	}
+
+	var lines []string
+	lines = append(lines, ".")
+
+	entries, err := os.ReadDir(ig.cwd)
+	if err != nil {
+		return
+	}
+
+	for i, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") && name != ".github" {
+			continue
+		}
+
+		prefix := "├── "
+		childPrefix := "│   "
+		if i == len(entries)-1 {
+			prefix = "└── "
+			childPrefix = "    "
+		}
+
+		if entry.IsDir() {
+			if skipDirs[name] {
+				continue
+			}
+			lines = append(lines, prefix+name+"/")
+
+			// One level deeper.
+			subEntries, err := os.ReadDir(filepath.Join(ig.cwd, name))
+			if err != nil {
+				continue
+			}
+			shown := 0
+			for j, sub := range subEntries {
+				if strings.HasPrefix(sub.Name(), ".") {
+					continue
+				}
+				if sub.IsDir() && skipDirs[sub.Name()] {
+					continue
+				}
+				subPrefix := childPrefix + "├── "
+				if j == len(subEntries)-1 {
+					subPrefix = childPrefix + "└── "
+				}
+				suffix := ""
+				if sub.IsDir() {
+					suffix = "/"
+				}
+				lines = append(lines, subPrefix+sub.Name()+suffix)
+				shown++
+				if shown >= 15 {
+					lines = append(lines, childPrefix+"└── ...")
+					break
+				}
+			}
+		} else {
+			lines = append(lines, prefix+name)
+		}
+
+		if len(lines) > 80 {
+			lines = append(lines, "... (truncated)")
+			break
+		}
+	}
+
+	ctx.DirTree = strings.Join(lines, "\n")
+}
+
+// buildCodeGraph runs the gfy pipeline to build a code knowledge graph.
+// If a session-level Manager is set, it rebuilds through the manager
+// so the graph is immediately available to tools in the current session.
+func (ig *InitGenerator) buildCodeGraph(ctx *initContext) {
+	if ig.graphManager != nil {
+		// Rebuild through the session manager — this atomically updates
+		// the live graph and saves the cache.
+		if err := ig.graphManager.Rebuild(context.Background()); err != nil {
+			ctx.MissingContext = append(ctx.MissingContext, "code graph: "+err.Error())
+			return
+		}
+		gc := ig.graphManager.Get()
+		if gc != nil {
+			ctx.GraphSummary = gc.Summary()
+		}
+		return
+	}
+
+	// Fallback: build directly and cache to disk.
+	gc, err := codegraph.Build(ig.cwd)
+	if err != nil {
+		ctx.MissingContext = append(ctx.MissingContext, "code graph: "+err.Error())
+		return
+	}
+
+	cachePath := codegraph.CachePath(ig.cwd)
+	if saveErr := gc.Save(cachePath); saveErr != nil {
+		ctx.MissingContext = append(ctx.MissingContext, "graph cache: "+saveErr.Error())
+	}
+
+	ctx.GraphSummary = gc.Summary()
+}
+
+// readRepoMap generates a PageRank-scored symbol overview.
+func (ig *InitGenerator) readRepoMap(ctx *initContext) {
+	opts := repomap.DefaultOptions()
+	opts.MaxTokens = 2048
+
+	rm, err := repomap.Generate(ig.cwd, opts)
+	if err != nil || rm == nil || len(rm.Entries) == 0 {
+		return
+	}
+	ctx.RepoMapContent = rm.Format()
+}
+
 func (ig *InitGenerator) detectFrameworks() []string {
 	var frameworks []string
 
@@ -686,14 +839,23 @@ func (ig *InitGenerator) buildPrompt(ctx *initContext, args string) string {
 }
 
 // renderContext serializes the gathered project context into a structured
-// text block that is appended to the LLM prompt.
+// text block that is appended to the LLM prompt. Sections are ordered
+// by value to the LLM, with guidance comments explaining how to use each.
 func renderContext(ctx *initContext) string {
 	var b strings.Builder
 
 	b.WriteString("## Project Context (pre-gathered)\n\n")
-	b.WriteString("The following files have been read for you. Use this context to generate AGENTS.md.\n\n")
+	b.WriteString("The following project information has been gathered for you. Use it to generate AGENTS.md.\n\n")
 
-	// Project summary.
+	// Helper to emit a fenced section.
+	writeSection := func(title, content string) {
+		if content == "" {
+			return
+		}
+		fmt.Fprintf(&b, "### %s\n```\n%s\n```\n\n", title, content)
+	}
+
+	// 1. Project summary.
 	b.WriteString("### Project Summary\n")
 	if ctx.ProjectName != "" {
 		fmt.Fprintf(&b, "- **Name**: %s\n", ctx.ProjectName)
@@ -718,14 +880,30 @@ func renderContext(ctx *initContext) string {
 	}
 	b.WriteString("\n")
 
-	// File contents — helper to emit a section.
-	writeSection := func(title, content string) {
-		if content == "" {
-			return
-		}
-		fmt.Fprintf(&b, "### %s\n```\n%s\n```\n\n", title, content)
+	// 2. Directory structure.
+	if ctx.DirTree != "" {
+		b.WriteString("### Directory Structure\n")
+		b.WriteString("Project layout at depth 2. Don't reproduce this tree in AGENTS.md — describe what's non-obvious.\n\n")
+		fmt.Fprintf(&b, "```\n%s\n```\n\n", ctx.DirTree)
 	}
 
+	// 3. Code architecture (gfy knowledge graph).
+	if ctx.GraphSummary != "" {
+		b.WriteString("### Code Architecture (knowledge graph analysis)\n")
+		b.WriteString("Communities reveal logical module boundaries. God nodes are architectural linchpins.\n")
+		b.WriteString("Cross-community edges indicate coupling. Synthesize into architecture descriptions — don't list raw data.\n\n")
+		b.WriteString(ctx.GraphSummary)
+	}
+
+	// 4. Code structure (repomap symbols).
+	if ctx.RepoMapContent != "" {
+		b.WriteString("### Code Structure (ranked symbol map)\n")
+		b.WriteString("Files ranked by connectivity. Use for package boundaries and API surface.\n")
+		b.WriteString("Don't list symbols in AGENTS.md — describe what's non-obvious about the architecture.\n\n")
+		fmt.Fprintf(&b, "```\n%s\n```\n\n", ctx.RepoMapContent)
+	}
+
+	// 5. Build & test configuration.
 	writeSection("README", ctx.READMEContent)
 	writeSection("go.mod", ctx.GoModContent)
 	writeSection("package.json", ctx.PkgJSONContent)
@@ -733,42 +911,62 @@ func renderContext(ctx *initContext) string {
 	writeSection("Cargo.toml", ctx.CargoContent)
 	writeSection("Dockerfile", ctx.DockerContent)
 
-	// Config files (Makefile, instruction files, etc.)
 	for name, content := range ctx.ConfigFiles {
 		writeSection(name, content)
 	}
 
-	// CI files.
+	// 6. CI/CD (cap at 3 files).
+	ciCount := 0
 	for name, content := range ctx.CIFiles {
+		if ciCount >= 3 {
+			break
+		}
 		writeSection(name, content)
+		ciCount++
 	}
 
-	// Entry points — so the LLM understands architecture.
+	// 7. Service topology.
+	entryCount := 0
 	for name, content := range ctx.EntryPoints {
+		if entryCount >= 5 {
+			break
+		}
 		writeSection(name, content)
+		entryCount++
 	}
 
-	// Docker Compose files — service topology.
+	composeCount := 0
 	for name, content := range ctx.ComposeFiles {
+		if composeCount >= 2 {
+			break
+		}
 		writeSection(name, content)
+		composeCount++
 	}
 
-	// Scripts — operational context.
+	// 8. Existing instructions (for improve-in-place).
+	// Already included via ConfigFiles (AGENTS.md, CLAUDE.md).
+
+	// 9. Operational context.
 	if len(ctx.Scripts) > 0 {
 		b.WriteString("### Scripts\n")
-		b.WriteString("Script headers (first ~10 lines each) for understanding operational commands:\n\n")
+		b.WriteString("Script headers for understanding operational commands:\n\n")
+		scriptCount := 0
 		for name, content := range ctx.Scripts {
+			if scriptCount >= 5 {
+				break
+			}
 			writeSection(name, content)
+			scriptCount++
 		}
 	}
 
-	// Tool version files.
 	if ctx.ToolVersions != "" {
 		b.WriteString("### Tool Versions\n")
 		b.WriteString(ctx.ToolVersions)
 	}
 
-	// Sub-directory instruction files — listed so the LLM can delegate to them.
+	// 10. Sub-directory delegations.
 	if len(ctx.SubInstructions) > 0 {
 		b.WriteString("### Sub-directory Instruction Files\n")
 		b.WriteString("These files contain authoritative guidance for their directories. ")

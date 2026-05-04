@@ -131,6 +131,22 @@ func (r *Registry) SetFileWriteHook(hook FileAccessHook) {
 	r.fileWriteHook = hook
 }
 
+// AddFileWriteHook chains an additional callback onto the file write hook.
+// Unlike SetFileWriteHook which replaces, this preserves existing hooks.
+func (r *Registry) AddFileWriteHook(hook FileAccessHook) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	prev := r.fileWriteHook
+	if prev == nil {
+		r.fileWriteHook = hook
+	} else {
+		r.fileWriteHook = func(path string) {
+			prev(path)
+			hook(path)
+		}
+	}
+}
+
 // NotifyFileWrite calls the file write hook if set.
 // Tools should call this after successfully writing or editing a file.
 func (r *Registry) NotifyFileWrite(path string) {

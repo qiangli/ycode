@@ -649,22 +649,58 @@ func RenderInitClaudeMD(cwd string, metadata *ProjectMetadata) string {
 	return strings.Join(lines, "\n")
 }
 
-// RenderInitAgentsMD generates a minimal AGENTS.md with references to USAGE.md
-// for detailed instructions. If CLAUDE.md exists, a reference is included so
-// ycode (and other tools) can follow its instructions too.
+// RenderInitAgentsMD generates an AGENTS.md scaffold with detected project
+// information. This serves as a useful fallback when no LLM is available,
+// and as a starting point for LLM enhancement.
 func RenderInitAgentsMD(cwd string, metadata *ProjectMetadata) string {
+	d := detectRepo(cwd)
 	var lines []string
 
 	lines = append(lines, "# AGENTS.md", "")
-
-	lines = append(lines, "Instructions for AI coding assistants working in this repository.", "")
+	lines = append(lines, "This file provides guidance to AI coding assistants working in this repository.", "")
 
 	// Reference CLAUDE.md if it exists (Claude Code compatibility).
 	if fileExists(filepath.Join(cwd, "CLAUDE.md")) {
-		lines = append(lines, "**Read [CLAUDE.md](./CLAUDE.md)** for additional project conventions and Claude Code-specific guidance.", "")
+		lines = append(lines, "**Read [CLAUDE.md](./CLAUDE.md)** for Claude Code-specific conventions.", "")
 	}
 
-	lines = append(lines, "**Read [USAGE.md](./USAGE.md)** for detailed instructions on build commands, configuration, tools, and workflows.", "")
+	// Reference USAGE.md for detailed instructions.
+	lines = append(lines, "**Read [USAGE.md](./USAGE.md)** for detailed build commands, configuration, tools, and workflows.", "")
+
+	// Detected stack.
+	if len(metadata.Languages) > 0 {
+		lines = append(lines, "## Stack", "")
+		lines = append(lines, fmt.Sprintf("- **Languages**: %s", strings.Join(metadata.Languages, ", ")))
+		if len(metadata.Frameworks) > 0 {
+			lines = append(lines, fmt.Sprintf("- **Frameworks**: %s", strings.Join(metadata.Frameworks, ", ")))
+		}
+		if metadata.PackageMgr != "" {
+			lines = append(lines, fmt.Sprintf("- **Package Manager**: %s", metadata.PackageMgr))
+		}
+		lines = append(lines, "")
+	}
+
+	// Build/test/lint commands.
+	if metadata.BuildCmd != "" || metadata.TestCmd != "" || metadata.LintCmd != "" {
+		lines = append(lines, "## Commands", "")
+		if metadata.BuildCmd != "" {
+			lines = append(lines, fmt.Sprintf("- Build: `%s`", metadata.BuildCmd))
+		}
+		if metadata.TestCmd != "" {
+			lines = append(lines, fmt.Sprintf("- Test: `%s`", metadata.TestCmd))
+		}
+		if metadata.LintCmd != "" {
+			lines = append(lines, fmt.Sprintf("- Lint: `%s`", metadata.LintCmd))
+		}
+		lines = append(lines, "")
+	}
+
+	// Repository structure.
+	if sl := repositoryShapeLines(&d); len(sl) > 0 {
+		lines = append(lines, "## Repository Structure")
+		lines = append(lines, sl...)
+		lines = append(lines, "")
+	}
 
 	return strings.Join(lines, "\n")
 }

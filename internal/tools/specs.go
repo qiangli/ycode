@@ -799,6 +799,57 @@ func builtinSpecs() []*ToolSpec {
 			RequiredMode: permission.ReadOnly,
 			Source:       SourceBuiltin,
 		},
+		// Code graph query tools (powered by gfy knowledge graph).
+		// These query a cached code structure graph built by /init.
+		{
+			Name:         "query_graph",
+			Description:  "Search the code knowledge graph by keyword and return a subgraph context with BFS traversal. Use this to explore how code entities relate to each other.",
+			InputSchema:  mustJSON(queryGraphSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "get_node",
+			Description:  "Look up a code entity (function, type, class) by label or ID in the knowledge graph.",
+			InputSchema:  mustJSON(getNodeSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "get_neighbors",
+			Description:  "Return direct neighbors of a code entity with edge metadata (calls, contains, imports relationships).",
+			InputSchema:  mustJSON(getNeighborsSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "get_community",
+			Description:  "Return all code entities in a detected module community. Communities are logical code groupings found by graph analysis.",
+			InputSchema:  mustJSON(getCommunitySchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "god_nodes",
+			Description:  "Return the most connected code entities in the knowledge graph. These are architectural linchpins where changes have the widest impact.",
+			InputSchema:  mustJSON(godNodesSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "graph_stats",
+			Description:  "Return code knowledge graph statistics: node/edge counts, community count, confidence breakdown, languages detected.",
+			InputSchema:  mustJSON(graphStatsSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
+		{
+			Name:         "shortest_path",
+			Description:  "Find the shortest dependency/call path between two code entities in the knowledge graph.",
+			InputSchema:  mustJSON(shortestPathSchema),
+			RequiredMode: permission.ReadOnly,
+			Source:       SourceBuiltin,
+		},
 	}
 }
 
@@ -1747,5 +1798,62 @@ var (
 			"message": {"type": "string", "description": "Optional status message"}
 		},
 		"required": ["status"]
+	}`
+
+	// Code graph tool schemas.
+	queryGraphSchema = `{
+		"type": "object",
+		"properties": {
+			"question": {"type": "string", "description": "Search terms to match against code entity labels"},
+			"depth": {"type": "integer", "description": "BFS traversal depth from matched nodes (default 2)"}
+		},
+		"required": ["question"]
+	}`
+
+	getNodeSchema = `{
+		"type": "object",
+		"properties": {
+			"label": {"type": "string", "description": "Node label or ID to look up"}
+		},
+		"required": ["label"]
+	}`
+
+	getNeighborsSchema = `{
+		"type": "object",
+		"properties": {
+			"label": {"type": "string", "description": "Node label or ID"},
+			"relation_filter": {"type": "string", "description": "Filter by relation type (calls, contains, imports, method)"}
+		},
+		"required": ["label"]
+	}`
+
+	getCommunitySchema = `{
+		"type": "object",
+		"properties": {
+			"community_id": {"type": "integer", "description": "Community ID to retrieve"}
+		},
+		"required": ["community_id"]
+	}`
+
+	godNodesSchema = `{
+		"type": "object",
+		"properties": {
+			"top_n": {"type": "integer", "description": "Number of top nodes to return (default 10)"}
+		}
+	}`
+
+	graphStatsSchema = `{
+		"type": "object",
+		"properties": {}
+	}`
+
+	shortestPathSchema = `{
+		"type": "object",
+		"properties": {
+			"source": {"type": "string", "description": "Source node label or ID"},
+			"target": {"type": "string", "description": "Target node label or ID"},
+			"max_hops": {"type": "integer", "description": "Maximum path length (default unlimited)"}
+		},
+		"required": ["source", "target"]
 	}`
 )

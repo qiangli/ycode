@@ -7,6 +7,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/agentdef"
 	"github.com/qiangli/ycode/internal/runtime/agentpool"
 	"github.com/qiangli/ycode/internal/runtime/builtin"
+	"github.com/qiangli/ycode/internal/runtime/codegraph"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/git"
@@ -92,6 +94,9 @@ type App struct {
 
 	// Cleanup functions called on Close (OTEL shutdown, context cancel, etc.).
 	cleanupFuncs []func()
+
+	// Code knowledge graph manager — thread-safe, auto-rebuilds on code changes.
+	graphManager *codegraph.Manager
 
 	// Progress callback for command status updates (set by TUI).
 	progressFunc func(message string)
@@ -194,6 +199,9 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		agentPool:       agentpool.New(),
 	}
 
+	// Create code graph manager (loaded from cache if available).
+	app.graphManager = codegraph.NewManager(o.WorkDir)
+
 	// Set up command registry.
 	cmdRegistry := commands.NewRegistry()
 	commands.RegisterBuiltins(cmdRegistry, &commands.RuntimeDeps{
@@ -221,6 +229,8 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		LogDelta: func(text string) {
 			app.LogDelta(text)
 		},
+		RunAgenticInit: app.runAgenticInit,
+		GraphManager:   app.graphManager,
 	})
 	app.commands = cmdRegistry
 
@@ -230,6 +240,13 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		tools.RegisterWorkerHandlers(app.toolRegistry, worker.NewRegistry())
 		tools.RegisterTeamHandlers(app.toolRegistry, team.NewRegistry(), team.NewCronRegistry())
 		tools.RegisterHandoffHandler(app.toolRegistry)
+
+		// Register code graph query tools with live manager.
+		tools.RegisterGraphHandlers(app.toolRegistry, app.graphManager)
+
+		// Chain graph invalidation onto the file write hook so the graph
+		// rebuilds automatically when code changes during the session.
+		app.toolRegistry.AddFileWriteHook(app.graphManager.NotifyFileChanged)
 	}
 
 	// Load custom agent definitions from config directories.
@@ -829,6 +846,111 @@ func (a *App) AgentPool() *agentpool.Pool { return a.agentPool }
 
 // TaskRegistry returns the background task registry.
 func (a *App) TaskRegistry() *task.Registry { return a.taskRegistry }
+
+// maxInitToolIterations limits the number of tool-use round-trips during /init.
+const maxInitToolIterations = 8
+
+// runAgenticInit runs a mini agentic loop for /init with graph tool support.
+// The LLM can query the code knowledge graph during AGENTS.md generation.
+// Returns nil if the conversation runtime can't be created (missing deps).
+func (a *App) runAgenticInit(ctx context.Context, systemPrompt, userPrompt string, onDelta func(string), onUsage func(int, int, int, int)) (string, error) {
+	if a.provider == nil || a.toolRegistry == nil || a.config == nil {
+		return "", fmt.Errorf("agentic init requires provider, tool registry, and config")
+	}
+
+	// Create a fresh session for the init loop (prevents context bloat).
+	initSessionDir := filepath.Join(os.TempDir(), fmt.Sprintf("ycode-init-%d", time.Now().UnixNano()))
+	sess, err := session.New(initSessionDir)
+	if err != nil {
+		return "", fmt.Errorf("create init session: %w", err)
+	}
+	defer os.RemoveAll(initSessionDir)
+
+	// Create conversation runtime with tool access.
+	rt := conversation.NewRuntime(
+		a.config,
+		a.provider,
+		sess,
+		a.toolRegistry,
+		a.promptCtx,
+	)
+
+	// Build initial messages with system prompt in user message
+	// (single-shot pattern: system role handled by the runtime's system prompt assembly).
+	messages := []api.Message{
+		{
+			Role: api.RoleUser,
+			Content: []api.ContentBlock{
+				{Type: api.ContentTypeText, Text: systemPrompt + "\n\n" + userPrompt},
+			},
+		},
+	}
+
+	// Run the mini agentic loop.
+	var allText strings.Builder
+	for i := 0; i < maxInitToolIterations; i++ {
+		result, _, err := rt.TurnWithRecovery(ctx, messages)
+		if err != nil {
+			return allText.String(), fmt.Errorf("init turn %d: %w", i+1, err)
+		}
+
+		// Collect text output.
+		if result.TextContent != "" {
+			allText.WriteString(result.TextContent)
+			if onDelta != nil {
+				onDelta(result.TextContent)
+			}
+		}
+
+		// Track usage.
+		if onUsage != nil && (result.Usage.InputTokens > 0 || result.Usage.OutputTokens > 0) {
+			onUsage(result.Usage.InputTokens, result.Usage.OutputTokens, result.Usage.CacheCreationInput, result.Usage.CacheReadInput)
+		}
+
+		// No tool calls means the LLM is done.
+		if len(result.ToolCalls) == 0 {
+			break
+		}
+
+		slog.Info("init: LLM using tools", "turn", i+1, "tools", len(result.ToolCalls))
+
+		// Build assistant message with tool_use blocks.
+		var assistantBlocks []api.ContentBlock
+		if result.ThinkingContent != "" {
+			assistantBlocks = append(assistantBlocks, api.ContentBlock{
+				Type: api.ContentTypeThinking,
+				Text: result.ThinkingContent,
+			})
+		}
+		if result.TextContent != "" {
+			assistantBlocks = append(assistantBlocks, api.ContentBlock{
+				Type: api.ContentTypeText,
+				Text: result.TextContent,
+			})
+		}
+		for _, tc := range result.ToolCalls {
+			assistantBlocks = append(assistantBlocks, api.ContentBlock{
+				Type:  api.ContentTypeToolUse,
+				ID:    tc.ID,
+				Name:  tc.Name,
+				Input: tc.Input,
+			})
+		}
+		messages = append(messages, api.Message{
+			Role:    api.RoleAssistant,
+			Content: assistantBlocks,
+		})
+
+		// Execute tools and append results.
+		toolResults := rt.ExecuteTools(ctx, result.ToolCalls, nil)
+		messages = append(messages, api.Message{
+			Role:    api.RoleUser,
+			Content: toolResults,
+		})
+	}
+
+	return allText.String(), nil
+}
 
 // SetProgressFunc sets the progress callback function (called by TUI).
 func (a *App) SetProgressFunc(fn func(message string)) {

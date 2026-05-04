@@ -9,6 +9,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/builtin"
+	"github.com/qiangli/ycode/internal/runtime/codegraph"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/session"
 )
@@ -57,6 +58,15 @@ type RuntimeDeps struct {
 	// Unlike LogProgress, deltas are appended without trailing newlines,
 	// suitable for streaming LLM output character-by-character.
 	LogDelta func(text string)
+
+	// RunAgenticInit runs a mini agentic loop for /init with tool support.
+	// The LLM can use graph query tools during AGENTS.md generation.
+	// Returns the generated text. If nil, falls back to single-shot.
+	RunAgenticInit func(ctx context.Context, systemPrompt, userPrompt string, onDelta func(string), onUsage func(int, int, int, int)) (string, error)
+
+	// GraphManager provides session-level code graph access (optional).
+	// When set, /init updates the session graph directly instead of only caching to disk.
+	GraphManager *codegraph.Manager
 }
 
 // ConfigDirs holds the config directory paths for display.
@@ -310,6 +320,9 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			// Gather context using opencode-style investigation.
 			outputParts = append(outputParts, "⧗ Analyzing project structure...")
 			gen := builtin.NewInitGenerator(cwd)
+			if deps.GraphManager != nil {
+				gen.SetGraphManager(deps.GraphManager)
+			}
 			initResult, genErr := gen.Generate(args)
 			if genErr != nil {
 				outputParts = append(outputParts, fmt.Sprintf("⚠ Failed to gather project context: %v", genErr))
@@ -654,33 +667,57 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 		}
 		progress(report.Render())
 
-		// Phase 2: Single-shot LLM enhancement if provider available.
+		// Phase 2: LLM enhancement if provider available.
 		if deps.Provider == nil || deps.Config == nil {
 			progress("⚠ Skipped LLM enhancement (no API provider configured)")
 		} else {
-			chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
-
 			progress("⧗ Analyzing project structure...")
 			gen := builtin.NewInitGenerator(cwd)
+			if deps.GraphManager != nil {
+				gen.SetGraphManager(deps.GraphManager)
+			}
 			initResult, genErr := gen.Generate(args)
 			if genErr != nil {
 				progress(fmt.Sprintf("⚠ Failed to gather project context: %v", genErr))
 			} else if initResult == nil {
 				progress("⚠ Failed to gather project context (no result)")
 			} else {
-				progress("⧗ Generating AGENTS.md via LLM...")
-				llmResult, llmErr := chain.SingleShotStreamingWithTimeout(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096, builtin.InitSingleShotTimeout, func(text string) {
-					if deps.LogDelta != nil {
-						deps.LogDelta(text)
+				var llmText string
+				var llmInputTokens, llmOutputTokens int
+				var llmErr error
+
+				// Try agentic init (with graph tools) if available, else single-shot.
+				if deps.RunAgenticInit != nil {
+					progress("⧗ Generating AGENTS.md via LLM (with graph tools)...")
+					llmText, llmErr = deps.RunAgenticInit(ctx, initResult.SystemPrompt, initResult.UserPrompt, func(text string) {
+						if deps.LogDelta != nil {
+							deps.LogDelta(text)
+						}
+					}, deps.TrackUsage)
+				} else {
+					progress("⧗ Generating AGENTS.md via LLM...")
+					chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
+					llmResult, err := chain.SingleShotStreamingWithTimeout(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096, builtin.InitSingleShotTimeout, func(text string) {
+						if deps.LogDelta != nil {
+							deps.LogDelta(text)
+						}
+					}, deps.TrackUsage)
+					if err != nil {
+						llmErr = err
+					} else if llmResult != nil {
+						llmText = llmResult.Text
+						llmInputTokens = llmResult.InputTokens
+						llmOutputTokens = llmResult.OutputTokens
 					}
-				}, deps.TrackUsage)
+				}
+
 				if llmErr != nil {
 					progress(fmt.Sprintf("⚠ LLM generation failed: %v", llmErr))
-				} else if llmResult == nil || llmResult.Text == "" {
+				} else if llmText == "" {
 					progress("⚠ LLM returned empty response — AGENTS.md not updated")
 				} else {
 					agentsPath := filepath.Join(cwd, "AGENTS.md")
-					cleaned := builtin.CleanInitOutput(llmResult.Text)
+					cleaned := builtin.CleanInitOutput(llmText)
 
 					// Compare against existing content to detect no-op updates.
 					existing, _ := os.ReadFile(agentsPath)
@@ -698,10 +735,10 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 							}
 						}
 					}
-					if llmResult.InputTokens > 0 || llmResult.OutputTokens > 0 {
-						totalTokens := llmResult.InputTokens + llmResult.OutputTokens
+					if llmInputTokens > 0 || llmOutputTokens > 0 {
+						totalTokens := llmInputTokens + llmOutputTokens
 						progress(fmt.Sprintf("  Tokens: %d in, %d out (%d total)",
-							llmResult.InputTokens, llmResult.OutputTokens, totalTokens))
+							llmInputTokens, llmOutputTokens, totalTokens))
 					}
 				}
 			}

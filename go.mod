@@ -20,6 +20,8 @@ replace github.com/qiangli/ycode/pkg/ollm => ./pkg/ollm
 
 replace github.com/qiangli/ycode/pkg/otel => ./pkg/otel
 
+replace github.com/qiangli/gfy => ./reference/gfy
+
 replace mvdan.cc/sh/v3 => ./external/sh
 
 replace code.gitea.io/gitea => ./external/gitea
@@ -56,6 +58,7 @@ require (
 	github.com/nguyenthenguyen/docx v0.0.0-20230621112118-9c8e795a11db
 	github.com/odvcencio/gotreesitter v0.15.3
 	github.com/philippgille/chromem-go v0.7.0
+	github.com/qiangli/gfy v0.0.0-00010101000000-000000000000
 	github.com/qiangli/ycode/pkg/oci v0.0.0-00010101000000-000000000000
 	github.com/qiangli/ycode/pkg/ollm v0.0.0-00010101000000-000000000000
 	github.com/qiangli/ycode/pkg/otel v0.0.0-00010101000000-000000000000
@@ -284,7 +287,7 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/flc1125/go-cron/v4 v4.7.2 // indirect
 	github.com/foxboron/go-tpm-keyfiles v0.0.0-20251226215517-609e4778396f // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	github.com/fsnotify/fsnotify v1.10.0 // indirect
 	github.com/fsouza/go-dockerclient v1.13.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/gliderlabs/ssh v0.3.8 // indirect
@@ -354,7 +357,7 @@ require (
 	github.com/google/go-intervals v0.0.2 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
-	github.com/google/jsonschema-go v0.4.2 // indirect
+	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/licenseclassifier/v2 v2.0.0 // indirect
 	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
@@ -470,7 +473,7 @@ require (
 	github.com/moby/sys/user v0.4.0 // indirect
 	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/moby/term v0.5.2 // indirect
-	github.com/modelcontextprotocol/go-sdk v1.5.0 // indirect
+	github.com/modelcontextprotocol/go-sdk v1.6.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/mostynb/go-grpc-compression v1.2.3 // indirect

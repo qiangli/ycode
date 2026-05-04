@@ -173,6 +173,58 @@ func defaultRedirectRules() []RedirectRule {
 					"Example: edit_file(file_path: \"/path\", old_string: \"before\", new_string: \"after\")"
 			},
 		},
+
+		// bash grep/rg for structural code relationships → suggest graph tools
+		{
+			ToolName: "bash",
+			Match: func(input json.RawMessage) bool {
+				cmd := extractStringField(input, "command")
+				if cmd == "" {
+					return false
+				}
+				lower := strings.ToLower(cmd)
+				hasGrep := strings.Contains(lower, "grep ") || strings.Contains(lower, "rg ")
+				hasStructural := strings.Contains(lower, "import") ||
+					strings.Contains(lower, "caller") ||
+					strings.Contains(lower, "callee") ||
+					strings.Contains(lower, "dependency") ||
+					strings.Contains(lower, "depends") ||
+					strings.Contains(lower, "calls ")
+				return hasGrep && hasStructural
+			},
+			Suggest: func(input json.RawMessage) string {
+				return "For understanding code relationships, use graph query tools instead of bash grep:\n" +
+					"- `query_graph` — search the code knowledge graph and explore entity connections via BFS\n" +
+					"- `get_neighbors` — see direct calls, imports, contains relationships for an entity\n" +
+					"- `shortest_path` — find dependency/call chains between two entities\n" +
+					"- `god_nodes` — find high-impact architectural hubs\n" +
+					"These provide structural understanding in one call instead of multiple grep rounds.\n" +
+					"Call ToolSearch(query: \"code graph\") to activate these tools."
+			},
+		},
+
+		// grep_search for relational patterns → suggest graph tools
+		{
+			ToolName: "grep_search",
+			Match: func(input json.RawMessage) bool {
+				pattern := extractStringField(input, "pattern")
+				if pattern == "" {
+					return false
+				}
+				lower := strings.ToLower(pattern)
+				return strings.Contains(lower, "import") && strings.Contains(lower, "from") ||
+					strings.Contains(lower, "require(") ||
+					strings.Contains(lower, "implements") ||
+					strings.Contains(lower, "extends ")
+			},
+			Suggest: func(input json.RawMessage) string {
+				return "For tracing code relationships (imports, calls, implements), " +
+					"graph tools are more accurate than regex:\n" +
+					"- `query_graph` — semantic search across the code knowledge graph\n" +
+					"- `get_neighbors` with relation_filter — precise relationship queries\n" +
+					"Call ToolSearch(query: \"code graph neighbors\") to activate these tools."
+			},
+		},
 	}
 }
 
