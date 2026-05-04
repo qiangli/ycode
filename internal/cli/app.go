@@ -104,6 +104,8 @@ type App struct {
 	deltaFunc func(text string)
 	// Usage callback for token usage updates during command execution.
 	usageFunc func(inputTokens, outputTokens, cacheCreate, cacheRead int)
+	// Agent event callback for subagent lifecycle progress (set by TUI).
+	agentEventFunc func(eventType string, data map[string]any)
 }
 
 // AppOptions holds optional configuration for App creation.
@@ -282,6 +284,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 			LaneScheduler:    app.laneScheduler,
 			MemoryManager:    app.memoryManager,
 			SessionID:        sess.ID,
+			OnEvent:          app.emitAgentEvent,
 		})
 		// Wrap spawner with swarm orchestration: detect handoff signals in
 		// agent results and route to the target agent via the Orchestrator.
@@ -859,6 +862,14 @@ func (a *App) UsageTracker() *usage.Tracker { return a.usageTracker }
 // AgentPool returns the agent pool for progress tracking.
 func (a *App) AgentPool() *agentpool.Pool { return a.agentPool }
 
+// emitAgentEvent forwards agent lifecycle events to the TUI via progressFunc.
+// This is the callback wired into SpawnerConfig.OnEvent.
+func (a *App) emitAgentEvent(eventType string, data map[string]any) {
+	if a.agentEventFunc != nil {
+		a.agentEventFunc(eventType, data)
+	}
+}
+
 // TaskRegistry returns the background task registry.
 func (a *App) TaskRegistry() *task.Registry { return a.taskRegistry }
 
@@ -1000,6 +1011,11 @@ func (a *App) LogDelta(text string) {
 // SetUsageFunc sets the usage callback for real-time token usage events.
 func (a *App) SetUsageFunc(fn func(inputTokens, outputTokens, cacheCreate, cacheRead int)) {
 	a.usageFunc = fn
+}
+
+// SetAgentEventFunc sets the agent lifecycle event callback (called by TUI).
+func (a *App) SetAgentEventFunc(fn func(eventType string, data map[string]any)) {
+	a.agentEventFunc = fn
 }
 
 // TurnIndex returns the current turn index and increments it.

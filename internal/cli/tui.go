@@ -83,6 +83,9 @@ type TUIModel struct {
 	toolTasks []toolTaskProgress // per-tool status during parallel execution
 	program   *tea.Program       // set after NewProgram; used to send progress msgs
 
+	// Subagent progress tracking for nested tree rendering.
+	subagents []subagentProgress // tracked subagents in current turn
+
 	// Slash command completion.
 	completion    completionState  // popup state
 	completionAll []completionItem // all available commands (built once)
@@ -195,6 +198,18 @@ type toolTaskProgress struct {
 	Status taskqueue.TaskStatus
 }
 
+// subagentProgress tracks a running or completed subagent for TUI rendering.
+type subagentProgress struct {
+	ID          string
+	AgentType   string
+	Description string
+	Status      string // "running", "completed", "failed"
+	ToolUses    int
+	Turn        int
+	StartedAt   time.Time
+	DurationMs  int64
+}
+
 // Custom message types.
 
 type commandOutputMsg struct {
@@ -224,6 +239,12 @@ type repaintMsg struct{}
 // workingTickMsg is sent periodically while m.working is true so the status
 // bar re-renders with live token/cost updates during long-running commands.
 type workingTickMsg struct{}
+
+// agentEventMsg delivers a subagent lifecycle event from the spawner.
+type agentEventMsg struct {
+	EventType string
+	Data      map[string]any
+}
 
 // busEventMsg wraps a bus.Event for delivery through bubbletea's message system.
 type busEventMsg struct{ bus.Event }
@@ -294,6 +315,11 @@ func (m *TUIModel) SetProgram(p *tea.Program) {
 	m.app.SetDeltaFunc(func(text string) {
 		if m.program != nil {
 			m.program.Send(commandDeltaMsg{text: text})
+		}
+	})
+	m.app.SetAgentEventFunc(func(eventType string, data map[string]any) {
+		if m.program != nil {
+			m.program.Send(agentEventMsg{EventType: eventType, Data: data})
 		}
 	})
 }
@@ -926,6 +952,10 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case agentEventMsg:
+		m.handleAgentEvent(msg)
+		return m, nil
+
 	case commandOutputMsg:
 		m.appendOutput(msg.Echo)
 		if msg.Err != nil {
@@ -1460,6 +1490,7 @@ func (m *TUIModel) startAgentTurn(userPrompt string) tea.Cmd {
 	m.pauseRequested = false
 	m.midTurnCh = make(chan string, 8)
 	m.logState("turn_start", "trigger", "user_input")
+	m.subagents = nil // reset subagent tracking for new turn
 
 	m.appendOutput("⧗ Sending to LLM...\n")
 
@@ -1928,6 +1959,122 @@ func formatSessionSummary(tracker *usage.Tracker, startTime time.Time) string {
 		cost)
 }
 
+// handleAgentEvent processes a subagent lifecycle event and updates the TUI.
+func (m *TUIModel) handleAgentEvent(msg agentEventMsg) {
+	str := func(key string) string {
+		if v, ok := msg.Data[key].(string); ok {
+			return v
+		}
+		return ""
+	}
+	num := func(key string) int {
+		switch v := msg.Data[key].(type) {
+		case float64:
+			return int(v)
+		case int:
+			return v
+		case int64:
+			return int(v)
+		}
+		return 0
+	}
+
+	agentID := str("agent_id")
+	desc := str("description")
+
+	switch msg.EventType {
+	case "agent.start":
+		agentType := str("agent_type")
+		m.subagents = append(m.subagents, subagentProgress{
+			ID:          agentID,
+			AgentType:   agentType,
+			Description: desc,
+			Status:      "running",
+			StartedAt:   time.Now(),
+		})
+		m.renderSubagentTree()
+
+	case "agent.progress":
+		for i := range m.subagents {
+			if m.subagents[i].ID == agentID {
+				m.subagents[i].ToolUses = num("tool_uses")
+				m.subagents[i].Turn = num("turn")
+				m.subagents[i].DurationMs = int64(num("duration_ms"))
+			}
+		}
+		m.renderSubagentTree()
+
+	case "agent.complete":
+		status := str("status")
+		for i := range m.subagents {
+			if m.subagents[i].ID == agentID {
+				m.subagents[i].Status = status
+				m.subagents[i].DurationMs = int64(num("duration_ms"))
+			}
+		}
+		m.renderSubagentTree()
+	}
+}
+
+// renderSubagentTree appends a visual tree of active/completed subagents.
+func (m *TUIModel) renderSubagentTree() {
+	if len(m.subagents) == 0 {
+		return
+	}
+	var b strings.Builder
+	b.WriteString("\r") // carriage return to overwrite previous tree
+	for i, sa := range m.subagents {
+		isLast := i == len(m.subagents)-1
+		prefix := "  ├─ "
+		if isLast {
+			prefix = "  └─ "
+		}
+
+		icon := "✳"
+		switch sa.Status {
+		case "completed":
+			icon = "✔"
+		case "failed":
+			icon = "✗"
+		case "running":
+			icon = "◼"
+		}
+
+		// Format: icon description (timing · tool uses)
+		stats := formatAgentStats(sa)
+		fmt.Fprintf(&b, "%s%s %s(%s) %s\n", prefix, icon, sa.AgentType, truncateStr(sa.Description, 50), stats)
+	}
+	m.appendOutput(b.String())
+}
+
+// formatAgentStats returns a compact stats string for a subagent.
+func formatAgentStats(sa subagentProgress) string {
+	var parts []string
+	if sa.DurationMs > 0 {
+		d := time.Duration(sa.DurationMs) * time.Millisecond
+		if d >= time.Minute {
+			parts = append(parts, fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60))
+		} else {
+			parts = append(parts, fmt.Sprintf("%.1fs", d.Seconds()))
+		}
+	}
+	if sa.ToolUses > 0 {
+		parts = append(parts, fmt.Sprintf("%d tools", sa.ToolUses))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "· " + strings.Join(parts, " · ")
+}
+
+// truncateStr truncates a string to max length with ellipsis.
+func truncateStr(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-3] + "..."
+}
+
 // toggleMode switches between plan and build mode.
 // Both directions are immediate — no confirmation needed.
 // A transition reminder is injected into the session so the LLM
@@ -2101,6 +2248,9 @@ func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
 		errMsg := str("error")
 		m.appendOutput(fmt.Sprintf("\n✗ Command error: %s\n\n", errMsg))
 		return m, func() tea.Msg { return repaintMsg{} }
+
+	case bus.EventAgentStart, bus.EventAgentProgress, bus.EventAgentComplete:
+		m.handleAgentEvent(agentEventMsg{EventType: string(ev.Type), Data: data})
 
 	case bus.EventPermissionReq:
 		reqID := str("request_id")

@@ -115,13 +115,16 @@ func (s *LocalService) SendMessage(ctx context.Context, sessionID string, input 
 
 	// Create runtime with event callback.
 	rt := s.app.ConversationRuntime()
-	rt.SetEventCallback(func(eventType string, data map[string]any) {
+	publishEvent := func(eventType string, data map[string]any) {
 		s.b.Publish(bus.Event{
 			Type:      bus.EventType(eventType),
 			SessionID: sessionID,
 			Data:      mustJSON(data),
 		})
-	})
+	}
+	rt.SetEventCallback(publishEvent)
+	// Also route subagent lifecycle events through the bus so remote clients see them.
+	s.app.SetAgentEventFunc(publishEvent)
 
 	// Build conversation history from session + new user message.
 	messages := s.app.SessionMessages()

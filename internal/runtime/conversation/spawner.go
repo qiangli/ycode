@@ -51,6 +51,10 @@ type SpawnerConfig struct {
 
 	// Session ID for episodic memory context.
 	SessionID string
+
+	// OnEvent emits events for agent lifecycle progress (optional).
+	// Event types: "agent.start", "agent.progress", "agent.complete".
+	OnEvent func(eventType string, data map[string]any)
 }
 
 // NewAgentSpawner creates a spawner function that can be passed to
@@ -105,6 +109,13 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 			pool.Register(agentID, string(manifest.Type), manifest.Description)
 			pool.SetRunning(agentID)
 		}
+
+		// Emit agent start event for TUI rendering.
+		emitAgentEvent(sc, "agent.start", map[string]any{
+			"agent_id":    agentID,
+			"agent_type":  string(manifest.Type),
+			"description": manifest.Description,
+		})
 
 		// completeAgent marks the agent as done in the pool.
 		completeAgent := func(failed bool) {
@@ -262,6 +273,12 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 
 			if err := <-errc; err != nil {
 				completeAgent(true)
+				emitAgentEvent(sc, "agent.complete", map[string]any{
+					"agent_id":    agentID,
+					"description": manifest.Description,
+					"status":      "failed",
+					"duration_ms": time.Since(startTime).Milliseconds(),
+				})
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
 				return "", fmt.Errorf("subagent turn %d: %w", i+1, err)
@@ -275,6 +292,13 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 				completeAgent(false)
 				span.SetAttributes(attribute.Int("agent.turns", i+1))
 				recordEpisodicMemory(sc, manifest, agentID, startTime, toolsUsed, true)
+				emitAgentEvent(sc, "agent.complete", map[string]any{
+					"agent_id":    agentID,
+					"description": manifest.Description,
+					"status":      "completed",
+					"turns":       i + 1,
+					"duration_ms": time.Since(startTime).Milliseconds(),
+				})
 				return textContent, nil
 			}
 
@@ -309,6 +333,21 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 			for _, tc := range toolCalls {
 				toolsUsed[tc.Name] = true
 			}
+
+			// Emit progress event with current tool activity.
+			toolNames := make([]string, len(toolCalls))
+			for ti, tc := range toolCalls {
+				toolNames[ti] = tc.Name
+			}
+			emitAgentEvent(sc, "agent.progress", map[string]any{
+				"agent_id":    agentID,
+				"description": manifest.Description,
+				"tool_uses":   len(toolsUsed),
+				"tools":       toolNames,
+				"turn":        i + 1,
+				"duration_ms": time.Since(startTime).Milliseconds(),
+			})
+
 			toolResults := executeSubagentTools(ctx, sc, filtered, toolCalls, logger)
 
 			messages = append(messages, api.Message{
@@ -319,6 +358,12 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 
 		completeAgent(true)
 		recordEpisodicMemory(sc, manifest, agentID, startTime, toolsUsed, false)
+		emitAgentEvent(sc, "agent.complete", map[string]any{
+			"agent_id":    agentID,
+			"description": manifest.Description,
+			"status":      "failed",
+			"duration_ms": time.Since(startTime).Milliseconds(),
+		})
 		err := fmt.Errorf("subagent exceeded maximum iterations (%d)", maxSubagentIterations)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -401,6 +446,13 @@ func executeSubagentToolsSequential(ctx context.Context, filtered *tools.Filtere
 		logger.Info("subagent tool executed", "tool", tc.Name, "error", err != nil)
 	}
 	return results
+}
+
+// emitAgentEvent publishes an agent lifecycle event if the event callback is set.
+func emitAgentEvent(sc *SpawnerConfig, eventType string, data map[string]any) {
+	if sc.OnEvent != nil {
+		sc.OnEvent(eventType, data)
+	}
 }
 
 // recordEpisodicMemory saves an episodic memory for a completed subagent.

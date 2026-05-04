@@ -46,6 +46,7 @@ type AppBackend interface {
 	SetProgressFunc(fn func(string))
 	SetDeltaFunc(fn func(string))
 	SetUsageFunc(fn func(inputTokens, outputTokens, cacheCreate, cacheRead int))
+	SetAgentEventFunc(fn func(eventType string, data map[string]any))
 
 	// Lifecycle.
 	Close() error
