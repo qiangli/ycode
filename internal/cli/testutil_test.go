@@ -17,6 +17,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/usage"
+	"github.com/qiangli/ycode/internal/service"
 )
 
 // newTestApp creates a minimal App suitable for testing.
@@ -98,6 +99,10 @@ func (f *fakeAgentClient) ListModels(ctx context.Context) ([]api.ModelInfo, erro
 
 func (f *fakeAgentClient) SwitchModel(ctx context.Context, model string) error {
 	return nil
+}
+
+func (f *fakeAgentClient) GetStatus(ctx context.Context) (*service.StatusInfo, error) {
+	return &service.StatusInfo{Model: "test-model"}, nil
 }
 
 // sendKeys applies a sequence of key messages to a tea.Model, returning

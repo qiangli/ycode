@@ -102,6 +102,8 @@ type App struct {
 	progressFunc func(message string)
 	// Delta callback for streaming text during command execution (set by TUI).
 	deltaFunc func(text string)
+	// Usage callback for token usage updates during command execution.
+	usageFunc func(inputTokens, outputTokens, cacheCreate, cacheRead int)
 }
 
 // AppOptions holds optional configuration for App creation.
@@ -222,6 +224,9 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		RevertFiles:   app.RevertFiles,
 		TrackUsage: func(inputTokens, outputTokens, cacheCreate, cacheRead int) {
 			app.usageTracker.Add(inputTokens, outputTokens, cacheCreate, cacheRead)
+			if app.usageFunc != nil {
+				app.usageFunc(inputTokens, outputTokens, cacheCreate, cacheRead)
+			}
 		},
 		LogProgress: func(message string) {
 			app.LogProgress(message)
@@ -741,8 +746,14 @@ func (a *App) SwitchModel(name string) (string, error) {
 // Model returns the current model ID.
 func (a *App) Model() string { return a.config.Model }
 
+// SetModel sets the model ID (used by thin client to sync from server).
+func (a *App) SetModel(model string) { a.config.Model = model }
+
 // ProviderKind returns the current provider kind.
 func (a *App) ProviderKind() string { return a.providerKind }
+
+// SetProviderKind sets the provider kind (used by thin client to sync from server).
+func (a *App) SetProviderKind(kind string) { a.providerKind = kind }
 
 // InPlanMode returns whether plan mode is active.
 func (a *App) InPlanMode() bool {
@@ -980,6 +991,11 @@ func (a *App) LogDelta(text string) {
 	if a.deltaFunc != nil {
 		a.deltaFunc(text)
 	}
+}
+
+// SetUsageFunc sets the usage callback for real-time token usage events.
+func (a *App) SetUsageFunc(fn func(inputTokens, outputTokens, cacheCreate, cacheRead int)) {
+	a.usageFunc = fn
 }
 
 // TurnIndex returns the current turn index and increments it.

@@ -57,6 +57,7 @@ Interoperability:
 type InitGenerator struct {
 	cwd          string
 	graphManager *codegraph.Manager // optional session-level graph manager
+	progressFunc func(string)       // optional progress callback
 }
 
 // NewInitGenerator creates an InitGenerator.
@@ -69,6 +70,17 @@ func NewInitGenerator(cwd string) *InitGenerator {
 // instead of only caching to disk.
 func (ig *InitGenerator) SetGraphManager(mgr *codegraph.Manager) {
 	ig.graphManager = mgr
+}
+
+// SetProgressFunc sets a callback for reporting progress during context gathering.
+func (ig *InitGenerator) SetProgressFunc(fn func(string)) {
+	ig.progressFunc = fn
+}
+
+func (ig *InitGenerator) progress(msg string) {
+	if ig.progressFunc != nil {
+		ig.progressFunc(msg)
+	}
 }
 
 // InitResult holds the outcome of init generation.
@@ -619,16 +631,19 @@ func (ig *InitGenerator) generateDirTree(ctx *initContext) {
 // If a session-level Manager is set, it rebuilds through the manager
 // so the graph is immediately available to tools in the current session.
 func (ig *InitGenerator) buildCodeGraph(ctx *initContext) {
+	ig.progress("⧗ Building code knowledge graph...")
 	if ig.graphManager != nil {
 		// Rebuild through the session manager — this atomically updates
 		// the live graph and saves the cache.
 		if err := ig.graphManager.Rebuild(context.Background()); err != nil {
 			ctx.MissingContext = append(ctx.MissingContext, "code graph: "+err.Error())
+			ig.progress("⚠ Code graph build failed: " + err.Error())
 			return
 		}
 		gc := ig.graphManager.Get()
 		if gc != nil {
 			ctx.GraphSummary = gc.Summary()
+			ig.progress("✓ Code graph built (via session manager)")
 		}
 		return
 	}
@@ -637,6 +652,7 @@ func (ig *InitGenerator) buildCodeGraph(ctx *initContext) {
 	gc, err := codegraph.Build(ig.cwd)
 	if err != nil {
 		ctx.MissingContext = append(ctx.MissingContext, "code graph: "+err.Error())
+		ig.progress("⚠ Code graph build failed: " + err.Error())
 		return
 	}
 
@@ -646,10 +662,12 @@ func (ig *InitGenerator) buildCodeGraph(ctx *initContext) {
 	}
 
 	ctx.GraphSummary = gc.Summary()
+	ig.progress("✓ Code graph built")
 }
 
 // readRepoMap generates a PageRank-scored symbol overview.
 func (ig *InitGenerator) readRepoMap(ctx *initContext) {
+	ig.progress("⧗ Generating symbol map...")
 	opts := repomap.DefaultOptions()
 	opts.MaxTokens = 2048
 
@@ -658,6 +676,7 @@ func (ig *InitGenerator) readRepoMap(ctx *initContext) {
 		return
 	}
 	ctx.RepoMapContent = rm.Format()
+	ig.progress("✓ Symbol map generated")
 }
 
 func (ig *InitGenerator) detectFrameworks() []string {

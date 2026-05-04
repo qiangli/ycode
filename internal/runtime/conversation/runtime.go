@@ -510,8 +510,9 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 					}
 					result.ToolCalls = append(result.ToolCalls, tc)
 					r.emitEvent("tool_use.start", map[string]any{
-						"id":   tc.ID,
-						"tool": tc.Name,
+						"id":    tc.ID,
+						"tool":  tc.Name,
+						"input": tc.Input,
 					})
 				}
 				currentBlock = nil

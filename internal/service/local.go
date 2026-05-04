@@ -189,6 +189,7 @@ func (s *LocalService) SendMessage(ctx context.Context, sessionID string, input 
 			Data: mustJSON(map[string]any{
 				"input_tokens":  result.Usage.InputTokens,
 				"output_tokens": result.Usage.OutputTokens,
+				"model":         s.app.Model(),
 			}),
 		})
 
@@ -353,7 +354,9 @@ func (s *LocalService) SendMessage(ctx context.Context, sessionID string, input 
 
 // executeCommandFromMessage runs a slash command with streaming progress via bus events.
 func (s *LocalService) executeCommandFromMessage(ctx context.Context, sessionID, name, args string) error {
-	// Wire progress/delta callbacks to publish bus events.
+	model := s.app.Model()
+
+	// Wire progress/delta/usage callbacks to publish bus events in real time.
 	s.app.SetProgressFunc(func(message string) {
 		s.b.Publish(bus.Event{
 			Type:      bus.EventCommandProgress,
@@ -368,9 +371,21 @@ func (s *LocalService) executeCommandFromMessage(ctx context.Context, sessionID,
 			Data:      mustJSON(map[string]string{"text": text}),
 		})
 	})
+	s.app.SetUsageFunc(func(inputTokens, outputTokens, cacheCreate, cacheRead int) {
+		s.b.Publish(bus.Event{
+			Type:      bus.EventUsageUpdate,
+			SessionID: sessionID,
+			Data: mustJSON(map[string]any{
+				"input_tokens":  inputTokens,
+				"output_tokens": outputTokens,
+				"model":         model,
+			}),
+		})
+	})
 	defer func() {
 		s.app.SetProgressFunc(nil)
 		s.app.SetDeltaFunc(nil)
+		s.app.SetUsageFunc(nil)
 	}()
 
 	result, err := s.app.ExecuteCommand(ctx, name, args)

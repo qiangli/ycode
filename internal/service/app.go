@@ -44,6 +44,7 @@ type AppBackend interface {
 	// Progress callbacks for streaming command output.
 	SetProgressFunc(fn func(string))
 	SetDeltaFunc(fn func(string))
+	SetUsageFunc(fn func(inputTokens, outputTokens, cacheCreate, cacheRead int))
 
 	// Lifecycle.
 	Close() error

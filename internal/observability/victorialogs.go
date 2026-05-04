@@ -56,6 +56,9 @@ func (v *VictoriaLogsComponent) Start(ctx context.Context) error {
 		flag.CommandLine.Parse([]string{})
 	}
 
+	// Clean up stale lock file left by a killed process.
+	cleanStaleFlock(v.dataDir + "/data")
+
 	// Initialize storage, select, and insert subsystems.
 	vlstorage.Init()
 	vlselect.Init()

@@ -112,6 +112,15 @@ func (l *LazyClient) SwitchModel(ctx context.Context, model string) error {
 	return c.SwitchModel(ctx, model)
 }
 
+// GetStatus waits for connection then fetches server status.
+func (l *LazyClient) GetStatus(ctx context.Context) (*service.StatusInfo, error) {
+	c, err := l.wait(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("server not ready: %w", err)
+	}
+	return c.GetStatus(ctx)
+}
+
 // Close closes the underlying client if connected.
 func (l *LazyClient) Close() error {
 	l.mu.Lock()

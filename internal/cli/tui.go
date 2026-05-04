@@ -25,6 +25,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/runtime/usage"
+	"github.com/qiangli/ycode/internal/service"
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -45,6 +46,7 @@ type agentClient interface {
 	Events(ctx context.Context, filter ...bus.EventType) (<-chan bus.Event, error)
 	ListModels(ctx context.Context) ([]api.ModelInfo, error)
 	SwitchModel(ctx context.Context, model string) error
+	GetStatus(ctx context.Context) (*service.StatusInfo, error)
 }
 
 // TUIModel is the top-level bubbletea model for interactive mode.
@@ -307,14 +309,38 @@ type commandDeltaMsg struct {
 	text string
 }
 
+// serverStatusMsg carries server status synced at startup in thin-client mode.
+type serverStatusMsg struct {
+	info *service.StatusInfo
+}
+
 func (m *TUIModel) Init() tea.Cmd {
-	return tea.Batch(m.textarea.Focus(), tea.SetWindowTitle(appTitle))
+	cmds := []tea.Cmd{m.textarea.Focus(), tea.SetWindowTitle(appTitle)}
+	// In thin-client mode, fetch server status to sync model/provider info.
+	if m.cl != nil {
+		cmds = append(cmds, func() tea.Msg {
+			status, err := m.cl.GetStatus(context.Background())
+			if err != nil {
+				return nil
+			}
+			return serverStatusMsg{info: status}
+		})
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case serverStatusMsg:
+		if msg.info != nil {
+			m.app.SetModel(msg.info.Model)
+			m.app.SetProviderKind(msg.info.ProviderKind)
+			m.app.usageTracker.Model = msg.info.Model
+		}
+		return m, nil
+
 	case logEntryMsg:
 		// Show formatted log entry in the viewport.
 		m.appendOutput(msg.text + "\n")
@@ -1976,7 +2002,12 @@ func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
 
 	case bus.EventToolUseStart:
 		tool := str("tool")
-		m.appendOutput(fmt.Sprintf("\n⚙ Tool(%s)\n", tool))
+		detail := toolInputSummary(tool, data)
+		if detail != "" {
+			m.appendOutput(fmt.Sprintf("\n⚙ %s: %s\n", tool, detail))
+		} else {
+			m.appendOutput(fmt.Sprintf("\n⚙ %s\n", tool))
+		}
 
 	case bus.EventToolProgress:
 		tool := str("tool")
@@ -1990,7 +2021,13 @@ func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
 		case "queued":
 			icon = "◻"
 		}
-		m.appendOutput(fmt.Sprintf("  %s %s\n", icon, tool))
+		idx, _ := data["index"].(float64)
+		total, _ := data["total"].(float64)
+		if total > 1 {
+			m.appendOutput(fmt.Sprintf("  %s %s [%d/%d]\n", icon, tool, int(idx)+1, int(total)))
+		} else {
+			m.appendOutput(fmt.Sprintf("  %s %s\n", icon, tool))
+		}
 
 	case bus.EventToolResult:
 		// Tool result handled — will be followed by next turn or turn.complete.
@@ -2024,9 +2061,12 @@ func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
 	case bus.EventUsageUpdate:
 		if in, ok := data["input_tokens"].(float64); ok {
 			if out, ok := data["output_tokens"].(float64); ok {
-				m.app.usageTracker.Add(int(in), int(out), 0, 0)
+				model := str("model")
+				m.app.usageTracker.AddWithModel(model, int(in), int(out), 0, 0)
 			}
 		}
+		// Repaint so the status bar reflects updated token/cost info.
+		return m, func() tea.Msg { return repaintMsg{} }
 
 	case bus.EventCommandProgress:
 		if message := str("message"); message != "" {
@@ -2046,10 +2086,12 @@ func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
 			m.appendOutput(result + "\n")
 		}
 		m.appendOutput("\n")
+		m.appendOutput(formatSessionSummary(m.app.usageTracker, m.app.sessionStart))
+		m.appendOutput("\n")
 		if cmd := m.drainPendingInput(); cmd != nil {
 			return m, cmd
 		}
-		return m, func() tea.Msg { return repaintMsg{} }
+		return m, tea.Batch(func() tea.Msg { return repaintMsg{} }, alertDone())
 
 	case bus.EventCommandError:
 		m.working = false
@@ -2080,6 +2122,59 @@ func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// toolInputSummary extracts a concise one-line description from a tool's input.
+func toolInputSummary(tool string, data map[string]any) string {
+	input, ok := data["input"]
+	if !ok {
+		return ""
+	}
+	m, ok := input.(map[string]any)
+	if !ok {
+		return ""
+	}
+
+	s := func(key string) string {
+		if v, ok := m[key].(string); ok {
+			return v
+		}
+		return ""
+	}
+
+	truncate := func(text string, max int) string {
+		text = strings.ReplaceAll(text, "\n", " ")
+		if len(text) > max {
+			return text[:max] + "…"
+		}
+		return text
+	}
+
+	switch tool {
+	case "Read":
+		return s("file_path")
+	case "Write":
+		return s("file_path")
+	case "Edit":
+		return s("file_path")
+	case "Bash":
+		return truncate(s("command"), 80)
+	case "Grep":
+		pat := s("pattern")
+		path := s("path")
+		if path != "" {
+			return fmt.Sprintf("%q in %s", pat, path)
+		}
+		return fmt.Sprintf("%q", pat)
+	case "Glob":
+		return s("pattern")
+	case "Agent":
+		return truncate(s("description"), 60)
+	case "Skill":
+		return s("skill")
+	default:
+		return ""
+	}
 }
 
 // handleConfirmKey processes key input during a confirmation dialog.

@@ -320,6 +320,9 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			// Gather context using opencode-style investigation.
 			outputParts = append(outputParts, "⧗ Analyzing project structure...")
 			gen := builtin.NewInitGenerator(cwd)
+			gen.SetProgressFunc(func(msg string) {
+				outputParts = append(outputParts, msg)
+			})
 			if deps.GraphManager != nil {
 				gen.SetGraphManager(deps.GraphManager)
 			}
@@ -673,6 +676,7 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 		} else {
 			progress("⧗ Analyzing project structure...")
 			gen := builtin.NewInitGenerator(cwd)
+			gen.SetProgressFunc(progress)
 			if deps.GraphManager != nil {
 				gen.SetGraphManager(deps.GraphManager)
 			}
