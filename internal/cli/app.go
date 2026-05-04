@@ -132,13 +132,18 @@ func NewThinApp(version, workDir string) (*App, error) {
 	if version == "" {
 		version = "dev"
 	}
+	cmdRegistry := commands.NewRegistry()
+	commands.RegisterBuiltins(cmdRegistry, &commands.RuntimeDeps{
+		Version: version,
+		WorkDir: workDir,
+	})
 	return &App{
 		renderer:     renderer,
 		version:      version,
 		workDir:      workDir,
 		stdout:       os.Stdout,
 		config:       &config.Config{},
-		commands:     commands.NewRegistry(),
+		commands:     cmdRegistry,
 		taskRegistry: task.NewRegistry(),
 		agentPool:    agentpool.New(),
 		usageTracker: usage.NewTracker(),
