@@ -197,3 +197,55 @@ func (p *Pool) ActiveCount() int {
 	}
 	return count
 }
+
+// RecoveryAction describes what happened to a recovered orphan.
+type RecoveryAction struct {
+	AgentID  string
+	Liveness LivenessState
+	Action   string // "marked_failed", "removed"
+}
+
+// RecoverOrphans scans for stranded/critical agents using the provided
+// LivenessClassifier and recovers them. Critical agents are marked as failed;
+// stranded agents are removed entirely. Returns what was recovered.
+//
+// Inspired by openclaw's subagent orphan recovery with announce queue.
+func (p *Pool) RecoverOrphans(lc *LivenessClassifier) []RecoveryAction {
+	now := time.Now()
+	stale := lc.ScanStale(now)
+	if len(stale) == 0 {
+		return nil
+	}
+
+	var actions []RecoveryAction
+	for agentID, state := range stale {
+		// Only recover agents that are still in the pool and active.
+		info, ok := p.Get(agentID)
+		if !ok {
+			continue
+		}
+		if info.Status != StatusSpawning && info.Status != StatusRunning {
+			continue
+		}
+
+		switch state {
+		case LivenessCritical:
+			p.Complete(agentID, true)
+			actions = append(actions, RecoveryAction{
+				AgentID:  agentID,
+				Liveness: state,
+				Action:   "marked_failed",
+			})
+		case LivenessStranded:
+			p.Complete(agentID, true)
+			p.Remove(agentID)
+			lc.Remove(agentID)
+			actions = append(actions, RecoveryAction{
+				AgentID:  agentID,
+				Liveness: state,
+				Action:   "removed",
+			})
+		}
+	}
+	return actions
+}
