@@ -1,14 +1,51 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/features"
 )
+
+// inYcodeSourceTree reports whether the current working directory looks like
+// the ycode source repository (has go.mod naming module github.com/qiangli/ycode).
+// Returns the repo root and true on match. The on-disk file-existence check in
+// `features verify` is only meaningful from inside the source tree; running
+// from a user's project would falsely report every internal file as missing.
+func inYcodeSourceTree() (string, bool) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", false
+	}
+	for {
+		mod := filepath.Join(dir, "go.mod")
+		if f, err := os.Open(mod); err == nil {
+			scanner := bufio.NewScanner(f)
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				if strings.HasPrefix(line, "module github.com/qiangli/ycode") {
+					f.Close()
+					return dir, true
+				}
+				if strings.HasPrefix(line, "module ") {
+					break
+				}
+			}
+			f.Close()
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}
 
 func newFeaturesCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -48,13 +85,21 @@ func newFeaturesCmd() *cobra.Command {
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "verify",
-		Short: "Verify the registry against the codebase (CI gate)",
+		Short: "Verify the registry structure (and codebase paths if run from the ycode source tree)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			reg, err := features.Load()
 			if err != nil {
 				return err
 			}
-			root, _ := os.Getwd()
+			// Always validate registry structure (Load already calls Validate).
+			// On-disk file check only when we're inside the ycode source tree;
+			// running from any other repo would false-positive every entry.
+			root, inSource := inYcodeSourceTree()
+			if !inSource {
+				fmt.Printf("registry: structurally valid (%d features)\n", len(reg.Features))
+				fmt.Println("note: on-disk file check skipped — not running inside the ycode source tree")
+				return nil
+			}
 			issues := features.Verify(reg, root)
 			for _, iss := range issues {
 				fmt.Fprintln(os.Stderr, iss)
@@ -62,7 +107,7 @@ func newFeaturesCmd() *cobra.Command {
 			if len(issues) > 0 {
 				return fmt.Errorf("%d feature registry verification issue(s)", len(issues))
 			}
-			fmt.Printf("registry: ok (%d features)\n", len(reg.Features))
+			fmt.Printf("registry: ok (%d features, all declared paths exist)\n", len(reg.Features))
 			return nil
 		},
 	})

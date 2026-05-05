@@ -695,7 +695,7 @@ Sequenced sub-phases:
 |---|---|---|---|---|
 | 0 — Credibility floor | W1–2 | 2026-05-05 | — | 5/7 done: strategy doc, feature-tier mechanism + CI gate, chat-adapter stubs gated, TUI permission flow wired with regression test. Remaining: full tool audit + README auto-gen. |
 | 1 — Wedge & proof | W3–6 | — | — | |
-| 2 — On-ramp | W5–10 | 2026-05-05 | — | release workflow landed; tag any `v*` to publish binaries |
+| 2 — On-ramp | W5–10 | 2026-05-05 | — | **v0.1.0 released** (linux-amd64 + darwin-arm64 binaries published with SHA256SUMS). Release workflow has dryrun mode (`workflow_dispatch` / PR) so future fixes validate before tagging. Remaining: brew tap, `go install` verification, npx wrapper, first-run wizard, VS Code extension, README rewrite. |
 | 3 — Daily ergonomics | W8–14 | — | — | |
 | 4 — Differentiators | W14+ | — | — | |
 | 5 — Compounding | Ongoing | — | — | |
