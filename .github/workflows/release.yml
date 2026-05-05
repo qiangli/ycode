@@ -59,22 +59,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Initialize embedded assets
-        if: runner.os != 'Windows'
-        run: |
-          ./scripts/fetch-perses-plugins.sh
-          ./scripts/gzip-embeds.sh
-
-      - name: Initialize embedded assets (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          ./scripts/fetch-perses-plugins.sh
-          ./scripts/gzip-embeds.sh
-
       - name: Verify feature registry
-        if: runner.os != 'Windows'
-        run: make verify-features
+        run: go test -count=1 ./internal/features/...
 
       - name: Build binary
         shell: bash

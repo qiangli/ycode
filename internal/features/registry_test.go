@@ -91,3 +91,25 @@ func TestTierValid(t *testing.T) {
 		t.Error("unknown tier should be invalid")
 	}
 }
+
+// TestRegistryFilesExist is the on-disk credibility-floor gate: every file
+// path declared in the embedded registry must exist in the working tree.
+// Catches drift between registry entries and the actual codebase (e.g.,
+// renamed/moved/deleted directories).
+//
+// This test runs in CI as `go test ./internal/features/...` — no heavy build
+// tags required, so it works on every platform without the podman/sqlite CGO
+// dependency chain that the full ycode binary needs.
+func TestRegistryFilesExist(t *testing.T) {
+	reg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// The test runs from internal/features/, so resolve paths against the
+	// repo root (two levels up).
+	root := "../.."
+	issues := Verify(reg, root)
+	for _, iss := range issues {
+		t.Error(iss)
+	}
+}

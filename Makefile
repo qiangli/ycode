@@ -57,7 +57,7 @@ compile-wip: ## Compile with experimental + wip features enabled (-tags experime
 	@echo "Built with experimental + wip features: bin/ycode"
 
 verify-features: ## Verify the feature registry vs. the working tree
-	go run $(TAGS) ./cmd/ycode/ features verify
+	go test -count=1 ./internal/features/...
 
 compile-full: ## Compile with embedded podman + runner (single binary, all-in-one)
 	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata,embed_podman,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
