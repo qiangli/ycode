@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/qiangli/ycode/internal/runtime/memory"
+	"github.com/qiangli/ycode/pkg/memex/memory"
 )
 
 // memManager is the module-level memory manager, set via SetMemoryManager.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/qiangli/ycode/internal/runtime/memory"
+	"github.com/qiangli/ycode/pkg/memex/memory"
 )
 
 // PrewarmResult holds the results of concurrent startup discovery.

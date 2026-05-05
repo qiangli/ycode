@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qiangli/ycode/internal/runtime/fileops"
+	"github.com/qiangli/ycode/pkg/memex/store/fileatomic"
 )
 
 const personaFilePrefix = "_persona_"
@@ -36,7 +36,7 @@ func SavePersona(store *Store, p *Persona) error {
 	b.WriteString("---\n\n")
 	b.WriteString(formatPersonaBody(p))
 
-	return fileops.AtomicWriteFile(path, []byte(b.String()), 0o644)
+	return fileatomic.AtomicWriteFile(path, []byte(b.String()), 0o644)
 }
 
 // LoadPersona loads a persona by ID from the store.

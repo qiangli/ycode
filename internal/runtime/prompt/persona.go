@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/qiangli/ycode/internal/runtime/memory"
+	"github.com/qiangli/ycode/pkg/memex/memory"
 )
 
 // MaxPersonaBudget is the maximum character budget for persona context in the prompt.

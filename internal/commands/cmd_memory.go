@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/qiangli/ycode/internal/runtime/memory"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
+	"github.com/qiangli/ycode/pkg/memex/memory"
 )
 
 // memoryHandler returns a handler that displays discovered instruction files

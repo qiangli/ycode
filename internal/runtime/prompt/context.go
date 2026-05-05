@@ -1,8 +1,8 @@
 package prompt
 
 import (
-	"github.com/qiangli/ycode/internal/runtime/memory"
 	"github.com/qiangli/ycode/internal/runtime/sysinfo"
+	"github.com/qiangli/ycode/pkg/memex/memory"
 )
 
 // DegradedTool describes a tool with a success rate below the quality threshold.

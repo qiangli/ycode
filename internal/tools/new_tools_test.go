@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiangli/ycode/internal/runtime/memory"
 	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/team"
 	"github.com/qiangli/ycode/internal/runtime/vfs"
 	"github.com/qiangli/ycode/internal/runtime/worker"
+	"github.com/qiangli/ycode/pkg/memex/memory"
 )
 
 // --- Phase 1: Verify spec registration for previously-broken tools ---

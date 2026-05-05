@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/qiangli/ycode/internal/runtime/fileops"
+	"github.com/qiangli/ycode/pkg/memex/store/fileatomic"
 )
 
 const (
@@ -41,7 +41,7 @@ func (idx *Index) AddEntry(title, filename, description string) error {
 				updated = append(updated, line)
 			}
 		}
-		return fileops.AtomicWriteFile(idx.path, []byte(strings.Join(updated, "\n")), 0o644)
+		return fileatomic.AtomicWriteFile(idx.path, []byte(strings.Join(updated, "\n")), 0o644)
 	}
 
 	// Append new entry.
@@ -58,7 +58,7 @@ func (idx *Index) AddEntry(title, filename, description string) error {
 		content = strings.Join(lines, "\n")
 	}
 
-	return fileops.AtomicWriteFile(idx.path, []byte(content), 0o644)
+	return fileatomic.AtomicWriteFile(idx.path, []byte(content), 0o644)
 }
 
 // RemoveEntry removes an entry from MEMORY.md.
@@ -76,7 +76,7 @@ func (idx *Index) RemoveEntry(filename string) error {
 		}
 	}
 
-	return fileops.AtomicWriteFile(idx.path, []byte(strings.Join(kept, "\n")), 0o644)
+	return fileatomic.AtomicWriteFile(idx.path, []byte(strings.Join(kept, "\n")), 0o644)
 }
 
 // Read returns the content of MEMORY.md.

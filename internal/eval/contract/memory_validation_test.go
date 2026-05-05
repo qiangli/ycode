@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiangli/ycode/internal/runtime/memory"
+	"github.com/qiangli/ycode/pkg/memex/memory"
 )
 
 // =============================================================================

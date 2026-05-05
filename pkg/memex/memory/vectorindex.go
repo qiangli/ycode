@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 const vectorCollection = "memory"
@@ -12,19 +12,19 @@ const vectorCollection = "memory"
 // VectorSearcher provides vector-based semantic search for memories.
 // It complements BleveSearcher (keyword) with embedding similarity.
 type VectorSearcher struct {
-	store storage.VectorStore
+	store store.VectorStore
 }
 
 // NewVectorSearcher creates a vector-based memory searcher.
-func NewVectorSearcher(store storage.VectorStore) *VectorSearcher {
+func NewVectorSearcher(store store.VectorStore) *VectorSearcher {
 	return &VectorSearcher{store: store}
 }
 
 // IndexMemory adds a memory's embedding to the vector store.
 func (v *VectorSearcher) IndexMemory(mem *Memory, embedding []float32) {
 	ctx := context.Background()
-	doc := storage.VectorDocument{
-		Document: storage.Document{
+	doc := store.VectorDocument{
+		Document: store.Document{
 			ID:      mem.Name,
 			Content: mem.Name + " " + mem.Description + " " + mem.Content,
 			Metadata: map[string]string{
@@ -36,7 +36,7 @@ func (v *VectorSearcher) IndexMemory(mem *Memory, embedding []float32) {
 		},
 		Embedding: embedding,
 	}
-	if err := v.store.AddDocuments(ctx, vectorCollection, []storage.VectorDocument{doc}); err != nil {
+	if err := v.store.AddDocuments(ctx, vectorCollection, []store.VectorDocument{doc}); err != nil {
 		slog.Debug("vector: index memory", "name", mem.Name, "error", err)
 	}
 }

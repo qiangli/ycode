@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/qiangli/ycode/internal/runtime/memory"
 	"github.com/qiangli/ycode/internal/runtime/security"
+	"github.com/qiangli/ycode/pkg/memex/memory"
 )
 
 // Section types for system prompt assembly.

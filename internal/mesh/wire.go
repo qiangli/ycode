@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/qiangli/ycode/internal/runtime/memory"
 	"github.com/qiangli/ycode/internal/selfheal"
+	"github.com/qiangli/ycode/pkg/memex/memory"
 )
 
 // WireDeps holds dependencies for wiring mesh agent callbacks.

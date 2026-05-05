@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 const bleveIndexName = "memory"
@@ -12,18 +12,18 @@ const bleveIndexName = "memory"
 // BleveSearcher provides Bleve-backed full-text search for memories.
 // When set on the Manager, it replaces the simple keyword matching in Search().
 type BleveSearcher struct {
-	index storage.SearchIndex
+	index store.SearchIndex
 }
 
 // NewBleveSearcher creates a Bleve-backed memory searcher.
-func NewBleveSearcher(index storage.SearchIndex) *BleveSearcher {
+func NewBleveSearcher(index store.SearchIndex) *BleveSearcher {
 	return &BleveSearcher{index: index}
 }
 
 // IndexMemory adds or updates a memory in the Bleve index.
 func (b *BleveSearcher) IndexMemory(mem *Memory) {
 	ctx := context.Background()
-	doc := storage.Document{
+	doc := store.Document{
 		ID:      mem.Name,
 		Content: mem.Name + " " + mem.Description + " " + mem.Content,
 		Metadata: map[string]string{
@@ -74,9 +74,9 @@ func (b *BleveSearcher) Search(query string, maxResults int) []SearchResult {
 // IndexAll indexes all provided memories into Bleve.
 func (b *BleveSearcher) IndexAll(memories []*Memory) {
 	ctx := context.Background()
-	var docs []storage.Document
+	var docs []store.Document
 	for _, mem := range memories {
-		docs = append(docs, storage.Document{
+		docs = append(docs, store.Document{
 			ID:      mem.Name,
 			Content: mem.Name + " " + mem.Description + " " + mem.Content,
 			Metadata: map[string]string{

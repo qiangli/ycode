@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qiangli/ycode/internal/runtime/fileops"
+	"github.com/qiangli/ycode/pkg/memex/store/fileatomic"
 )
 
 // Store handles file-based memory persistence.
@@ -76,7 +76,7 @@ func (s *Store) Save(mem *Memory) error {
 		mem.CreatedAt = mem.UpdatedAt
 	}
 
-	return fileops.AtomicWriteFile(mem.FilePath, []byte(b.String()), 0o644)
+	return fileatomic.AtomicWriteFile(mem.FilePath, []byte(b.String()), 0o644)
 }
 
 // Load reads a memory from a file.
