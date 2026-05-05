@@ -1,0 +1,36 @@
+name: verify-features
+
+# Gates the feature-tier registry: every feature declared in
+# internal/features/registry.yaml must reference paths that exist, have a
+# valid tier, and (for stable features, eventually) meet graduation criteria.
+#
+# See docs/strategy.md#feature-tiers for policy.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - 'internal/features/**'
+      - 'cmd/ycode/features_cmd.go'
+      - '.github/workflows/verify-features.yml'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify feature registry
+        run: make verify-features
+
+      - name: Run features package tests
+        run: go test -short -race ./internal/features/...

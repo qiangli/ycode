@@ -45,8 +45,19 @@ priorart-sync: ## Pull latest changes for all priorart repos
 
 # ─── Build ──────────────────────────────────────────────────────────────────
 
-compile: ## Compile the ycode binary to bin/ (no checks)
+compile: ## Compile the ycode binary to bin/ (no checks; stable features only)
 	go build -trimpath $(TAGS) $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+
+compile-experimental: ## Compile with experimental features enabled (-tags experimental)
+	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata,experimental" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	@echo "Built with experimental features: bin/ycode"
+
+compile-wip: ## Compile with experimental + wip features enabled (-tags experimental,wip)
+	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata,experimental,wip" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	@echo "Built with experimental + wip features: bin/ycode"
+
+verify-features: ## Verify the feature registry vs. the working tree
+	go run $(TAGS) ./cmd/ycode/ features verify
 
 compile-full: ## Compile with embedded podman + runner (single binary, all-in-one)
 	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata,embed_podman,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/

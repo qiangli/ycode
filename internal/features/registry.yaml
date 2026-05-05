@@ -1,0 +1,130 @@
+# Feature registry — single source of truth for which capabilities ship in
+# default builds vs. behind experimental/wip build tags. See
+# docs/strategy.md#feature-tiers for policy and graduation criteria.
+#
+# Tiers:
+#   stable        — always compiled. Integration-tested + dogfooded ≥2 weeks +
+#                   failure mode documented. In README/benchmarks.
+#   experimental  — opt-in via `-tags experimental`. New/rough; not in README.
+#   wip           — opt-in via `-tags wip`. Active development; not user-facing.
+#
+# Graduation: a feature moves wip → experimental → stable via PR. CI fails if
+# tier=stable without graduation criteria satisfied.
+#
+# This file is the audit baseline as of 2026-05-05. Not exhaustive; new
+# features get added here as part of their landing PR.
+
+features:
+  # ---- stable anchors (initial set) ----
+  - name: bash-tool
+    tier: stable
+    files: [internal/runtime/bash]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 8
+      failure_mode_doc: false  # backfill: docs/failures.md not yet present
+
+  - name: file-ops
+    tier: stable
+    files: [internal/tools]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 8
+      failure_mode_doc: false
+
+  - name: git-tools
+    tier: stable
+    files: [internal/runtime/toolexec]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 8
+      failure_mode_doc: false
+
+  - name: ollama-runtime
+    tier: stable
+    files: [internal/inference]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: repomap
+    tier: stable
+    files: [internal/runtime/repomap]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: ast-search
+    tier: stable
+    files: [internal/runtime/treesitter]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: mcp-client
+    tier: stable
+    files: [internal/runtime/mcp]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: gitea-server
+    tier: stable
+    files: [internal/gitserver]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: memory-system
+    tier: stable
+    files: [pkg/memex/memory]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: permission-tiers
+    tier: stable
+    files: [internal/runtime/permission]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 8
+      failure_mode_doc: false
+
+  # ---- experimental (compiles + tests, but rough or unproven) ----
+  - name: chat-adapter-slack
+    tier: experimental
+    files: [internal/chat]
+    notes: "adapter scaffold present; not wired end-to-end"
+    blocked_by: [chat-hub-routing]
+
+  - name: chat-adapter-matrix
+    tier: experimental
+    files: [internal/chat]
+    notes: "adapter scaffold present; not wired end-to-end"
+
+  - name: chat-adapter-email
+    tier: experimental
+    files: [internal/chat]
+    notes: "adapter scaffold present; not wired end-to-end"
+
+  - name: mesh-auto-start
+    tier: experimental
+    files: [internal/mesh]
+    notes: "background agents wired in wire.go but do not auto-engage in main loop"
+
+  # ---- wip (placeholder or active dev; not user-facing) ----
+  - name: trainer-agent
+    tier: wip
+    files: [internal/training]
+    notes: "no-op placeholder; do not surface in tools or README"
+
+  - name: sprint-two-stage-review
+    tier: wip
+    files: [cmd/ycode/sprint_cmd.go]
+    notes: "scaffolded callbacks; phase transition not gate-driven"

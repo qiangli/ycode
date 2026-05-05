@@ -1239,6 +1239,9 @@ func init() {
 	rootCmd.AddCommand(newSprintCmd())
 	rootCmd.AddCommand(newSkillCmd())
 
+	// Feature registry (build tiers — see docs/strategy.md#feature-tiers)
+	rootCmd.AddCommand(newFeaturesCmd())
+
 	// Evaluation framework
 	registerEvalCmd(rootCmd)
 }
