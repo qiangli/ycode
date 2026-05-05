@@ -576,8 +576,8 @@ This is the **strategic** roadmap. For the tactical feature-gap inventory (P0/P1
 - [x] Add `experimental` and `wip` build tags to existing rough features — Slack/Matrix/Email adapters now behind `experimental`. Trainer agent / sprint two-stage review / mesh auto-start investigated and confirmed already config-gated or honestly documented as planned; no additional tags needed.
 - [x] Wire `verify-features` CI workflow
 - [x] Resolve TUI permission TODO (`internal/cli/tui.go`) — confirmYes/No now call RespondPermission via the agentClient; regression test in `internal/cli/permission_test.go`
-- [ ] Audit and re-classify all 50+ tools — register each as stable/experimental/wip
-- [ ] Auto-generate the README tool catalog section from the registry
+- [x] Audit and re-classify all 50+ tools — registry now covers 27 stable user-facing capability areas (was 10) with `description` field for each.
+- [x] Auto-generate the README tool catalog section from the registry — `ycode features readme --write README.md` renders into `<!-- BEGIN FEATURES -->` / `<!-- END FEATURES -->` sentinels. `make verify-features` fails CI on drift.
 - [x] Commit `docs/strategy.md` (this document) + reference it from `AGENTS.md` and `README.md`
 
 **Exit gate:** Default `make build` produces a binary where every advertised feature passes graduation criteria. Running `ycode doctor` on three fresh OSes reports zero TODO/stub conditions.
@@ -693,7 +693,7 @@ Sequenced sub-phases:
 
 | Phase | Target | Started | Done | Notes |
 |---|---|---|---|---|
-| 0 — Credibility floor | W1–2 | 2026-05-05 | — | 5/7 done: strategy doc, feature-tier mechanism + CI gate, chat-adapter stubs gated, TUI permission flow wired with regression test. Remaining: full tool audit + README auto-gen. |
+| 0 — Credibility floor | W1–2 | 2026-05-05 | 2026-05-05 | **complete (7/7)**. Strategy doc, feature-tier mechanism + CI gate, chat-adapter stubs gated, TUI permission flow wired (with regression test), full tool audit (27 stable entries with descriptions), README auto-gen + drift CI gate. |
 | 1 — Wedge & proof | W3–6 | — | — | |
 | 2 — On-ramp | W5–10 | 2026-05-05 | — | **v0.1.0 released** (linux-amd64 + darwin-arm64 binaries published with SHA256SUMS). Release workflow has dryrun mode (`workflow_dispatch` / PR) so future fixes validate before tagging. Remaining: brew tap, `go install` verification, npx wrapper, first-run wizard, VS Code extension, README rewrite. |
 | 3 — Daily ergonomics | W8–14 | — | — | |
