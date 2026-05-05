@@ -42,11 +42,11 @@ jobs:
             goos: darwin
             goarch: arm64
             ext: ""
-          - target: windows-amd64
-            runs-on: windows-latest
-            goos: windows
-            goarch: amd64
-            ext: ".exe"
+          # Windows is intentionally absent: the vendored podman in
+          # external/podman uses Unix-only syscalls (unix.Rlimit, etc.).
+          # Adding Windows requires either build constraints around the
+          # container code or a Windows-compatible podman fork. Tracked as
+          # a follow-up.
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v4
@@ -58,6 +58,23 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      # System CGO deps required by the vendored podman/buildah:
+      #   - libgpgme-dev: signature verification in image/v5/signature
+      #   - libbtrfs-dev: storage/drivers/btrfs (Linux only)
+      #   - libsqlite3-dev: matches the Dockerfile's compile env
+      # Same packages installed in the Dockerfile builder image; the release
+      # workflow runs natively (not in the container) so we install here too.
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libbtrfs-dev libgpgme-dev libsqlite3-dev
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install gpgme
 
       - name: Verify feature registry
         run: go test -count=1 ./internal/features/...
@@ -107,25 +124,14 @@ jobs:
           for dir in artifacts/ycode-*; do
             target=$(basename "$dir" | sed 's/^ycode-//')
             cd "$dir"
-            case "$target" in
-              windows-*)
-                # Windows: zip with .exe preserved.
-                cp ycode-windows-amd64.exe ycode.exe
-                zip "../../release-assets/ycode-${target}.zip" ycode.exe
-                rm ycode.exe
-                ;;
-              *)
-                # Unix: tar.gz with bare `ycode` binary inside.
-                cp "ycode-${target}" ycode
-                chmod +x ycode
-                tar -czf "../../release-assets/ycode-${target}.tar.gz" ycode
-                rm ycode
-                ;;
-            esac
+            cp "ycode-${target}" ycode
+            chmod +x ycode
+            tar -czf "../../release-assets/ycode-${target}.tar.gz" ycode
+            rm ycode
             cd ../..
           done
           cd release-assets
-          sha256sum *.tar.gz *.zip > SHA256SUMS
+          sha256sum *.tar.gz > SHA256SUMS
           ls -la
 
       - name: Create GitHub Release
