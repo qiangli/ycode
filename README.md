@@ -2,14 +2,55 @@
 
 A pure Go CLI agent harness for autonomous software development. Single static binary, permissive-license dependencies only (MIT, Apache-2.0, BSD).
 
+## Install
+
+### Homebrew (macOS / Linux, once tap is bootstrapped)
+
+```bash
+brew tap qiangli/ycode
+brew install ycode
+```
+
+(Tap bootstrap is a one-time admin step — see [docs/release.md](./docs/release.md#homebrew-tap).)
+
+### Prebuilt binary
+
+Latest release: <https://github.com/qiangli/ycode/releases/latest>
+
+```bash
+# macOS (Apple Silicon)
+curl -sSL https://github.com/qiangli/ycode/releases/latest/download/ycode-darwin-arm64.tar.gz | tar -xz
+sudo mv ycode /usr/local/bin/
+
+# Linux (x86_64)
+curl -sSL https://github.com/qiangli/ycode/releases/latest/download/ycode-linux-amd64.tar.gz | tar -xz
+sudo mv ycode /usr/local/bin/
+```
+
+Each release includes a `SHA256SUMS` file alongside the archives. Verify before installing:
+
+```bash
+curl -sSLO https://github.com/qiangli/ycode/releases/latest/download/SHA256SUMS
+shasum -a 256 -c SHA256SUMS --ignore-missing
+```
+
+Other platforms (darwin-amd64, linux-arm64, windows) are not yet packaged — see `.github/workflows/release.yml` for the matrix and the open issues blocking each.
+
+### From source
+
+```bash
+git clone https://github.com/qiangli/ycode.git
+cd ycode
+make init   # initialize submodules (first time only)
+make build  # full quality gate; binary lands at bin/ycode
+```
+
 ## Quick start
 
 ```bash
-make init                              # initialize submodules (first time only)
-make build                             # full quality gate
 export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY
-./bin/ycode doctor                     # health check
-./bin/ycode                            # interactive REPL
+ycode doctor                            # health check
+ycode                                   # interactive REPL
 ```
 
 ## Features
@@ -58,6 +99,7 @@ The list below is auto-generated from `internal/features/registry.yaml` (filtere
 - [docs/strategy.md](./docs/strategy.md) -- **strategic roadmap, wedge positioning, feature-tier policy, operating principles** (read first for any planning or feature discussion)
 - [docs/roadmap.md](./docs/roadmap.md) -- tactical feature-gap inventory (P0/P1/P2)
 - [docs/leaderboards.md](./docs/leaderboards.md) -- benchmark targets and submission process
+- [docs/release.md](./docs/release.md) -- release process, Homebrew tap bootstrap, troubleshooting
 - [AGENTS.md](./AGENTS.md) -- instructions for AI coding assistants (CLAUDE.md symlinks here)
 - [docs/usage.md](./docs/usage.md) -- CLI modes, configuration, tools, and workflows
 - [docs/instructions.md](./docs/instructions.md) -- conventions, skill system, build/test/commit rules

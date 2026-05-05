@@ -1,0 +1,107 @@
+name: update-homebrew-tap
+
+# Fires after a GitHub Release is published (i.e. after the release.yml
+# workflow's publish job creates one). Generates a fresh Homebrew formula
+# from the release's SHA256SUMS and pushes it to the tap repo.
+#
+# Bootstrap once before this can succeed:
+#   1. Create a public repo: gh repo create qiangli/homebrew-ycode --public \
+#        --description "Homebrew tap for ycode"
+#   2. Generate a fine-grained PAT with contents:write on that repo only.
+#   3. Add it to this repo's secrets as HOMEBREW_TAP_TOKEN.
+#
+# See docs/release.md for details. Until secrets are configured, this
+# workflow exits cleanly with a notice — it never fails the release.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  update-tap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target tag
+        id: tag
+        env:
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          TAG="${DISPATCH_TAG:-$RELEASE_TAG}"
+          if [ -z "$TAG" ]; then
+            echo "no tag resolved; aborting" >&2
+            exit 1
+          fi
+          # Strip leading v if present for the version string in the formula.
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check tap token is configured
+        id: token
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "HOMEBREW_TAP_TOKEN secret not set — see docs/release.md to bootstrap" >&2
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download SHA256SUMS from the release
+        if: steps.token.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern SHA256SUMS \
+            --output SHA256SUMS
+
+      - name: Generate formula
+        if: steps.token.outputs.configured == 'true'
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p generated/Formula
+          ./scripts/generate-homebrew-formula.sh "$VERSION" SHA256SUMS \
+            > generated/Formula/ycode.rb
+          echo "--- generated formula ---"
+          cat generated/Formula/ycode.rb
+
+      - name: Push formula to tap repo
+        if: steps.token.outputs.configured == 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config --global user.name "ycode-release-bot"
+          git config --global user.email "ycode-release-bot@users.noreply.github.com"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/qiangli/homebrew-ycode.git" tap
+          mkdir -p tap/Formula
+          cp generated/Formula/ycode.rb tap/Formula/ycode.rb
+          cd tap
+          if git diff --quiet; then
+            echo "tap already up-to-date for ${TAG}"
+          else
+            git add Formula/ycode.rb
+            git commit -m "ycode ${TAG}"
+            git push
+            echo "pushed ${TAG} to qiangli/homebrew-ycode"
+          fi
