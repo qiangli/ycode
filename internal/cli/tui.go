@@ -47,6 +47,7 @@ type agentClient interface {
 	ListModels(ctx context.Context) ([]api.ModelInfo, error)
 	SwitchModel(ctx context.Context, model string) error
 	GetStatus(ctx context.Context) (*service.StatusInfo, error)
+	RespondPermission(ctx context.Context, requestID string, allowed bool) error
 }
 
 // TUIModel is the top-level bubbletea model for interactive mode.
@@ -2257,21 +2258,39 @@ func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
 		toolName := str("tool")
 		if m.permAlwaysAllow {
 			m.appendOutput(fmt.Sprintf("  Auto-allowing tool %q\n", toolName))
+			m.respondPermission(reqID, true)
 			return m, nil
 		}
 		m.confirming = true
 		m.confirmPrompt = fmt.Sprintf("Allow tool %q? (y/n/a)", toolName)
 		m.confirmYes = func() tea.Cmd {
-			_ = reqID // TODO: wire RespondPermission via client when permission flow is integrated
+			m.respondPermission(reqID, true)
 			return func() tea.Msg { return repaintMsg{} }
 		}
 		m.confirmNo = func() tea.Cmd {
-			_ = reqID
+			m.respondPermission(reqID, false)
 			return func() tea.Msg { return repaintMsg{} }
 		}
 	}
 
 	return m, nil
+}
+
+// respondPermission forwards a permission decision to the running service.
+// Fire-and-forget on a background goroutine: blocking the bubbletea loop on a
+// network round-trip would freeze the UI. When cl is nil (in-process mode
+// without the client/service/bus path) the callback is a no-op — the in-process
+// permission resolver consults config directly.
+func (m *TUIModel) respondPermission(reqID string, allowed bool) {
+	if m.cl == nil || reqID == "" {
+		return
+	}
+	cl := m.cl
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = cl.RespondPermission(ctx, reqID, allowed)
+	}()
 }
 
 // toolInputSummary extracts a concise one-line description from a tool's input.

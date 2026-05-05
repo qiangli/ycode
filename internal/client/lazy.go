@@ -85,6 +85,15 @@ func (l *LazyClient) CancelTurn(ctx context.Context, sessionID string) error {
 	return c.CancelTurn(ctx, sessionID)
 }
 
+// RespondPermission waits for connection then forwards the permission decision.
+func (l *LazyClient) RespondPermission(ctx context.Context, requestID string, allowed bool) error {
+	c, err := l.wait(ctx)
+	if err != nil {
+		return fmt.Errorf("server not ready: %w", err)
+	}
+	return c.RespondPermission(ctx, requestID, allowed)
+}
+
 // Events waits for connection then subscribes.
 func (l *LazyClient) Events(ctx context.Context, filter ...bus.EventType) (<-chan bus.Event, error) {
 	c, err := l.wait(ctx)

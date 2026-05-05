@@ -66,6 +66,7 @@ func newTestTUIModel(t *testing.T) *TUIModel {
 type fakeAgentClient struct {
 	sendFunc   func(ctx context.Context, sessionID string, input bus.MessageInput) error
 	cancelFunc func(ctx context.Context, sessionID string) error
+	permFunc   func(ctx context.Context, requestID string, allowed bool) error
 	eventsCh   chan bus.Event
 	models     []api.ModelInfo
 }
@@ -103,6 +104,13 @@ func (f *fakeAgentClient) SwitchModel(ctx context.Context, model string) error {
 
 func (f *fakeAgentClient) GetStatus(ctx context.Context) (*service.StatusInfo, error) {
 	return &service.StatusInfo{Model: "test-model"}, nil
+}
+
+func (f *fakeAgentClient) RespondPermission(ctx context.Context, requestID string, allowed bool) error {
+	if f.permFunc != nil {
+		return f.permFunc(ctx, requestID, allowed)
+	}
+	return nil
 }
 
 // sendKeys applies a sequence of key messages to a tea.Model, returning
