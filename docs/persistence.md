@@ -816,10 +816,10 @@ Total additional binary size: ~45MB (dominated by SQLite transpilation and Bleve
 
 ### 9. Implementation Status
 
-The storage layer is **implemented** in `internal/storage/` with full integration into the application:
+The storage layer is **implemented** in `pkg/memex/store/` with full integration into the application:
 
 ```
-internal/storage/
+pkg/memex/store/
 ├── storage.go          # Core interfaces: KVStore, SQLStore, VectorStore, SearchIndex
 ├── manager.go          # StorageManager with progressive Phase 1/2/3 init
 ├── eviction.go         # Background prompt cache TTL eviction
@@ -866,10 +866,10 @@ All tests pass with `go test -race ./...`.
 
 - [x] Define storage interfaces (`KVStore`, `SQLStore`, `VectorStore`, `SearchIndex`)
 - [x] Implement `StorageManager` with progressive initialization
-- [x] Implement bbolt KV store (`internal/storage/kv/`)
-- [x] Implement SQLite store with migrations (`internal/storage/sqlite/`)
-- [x] Implement Bleve search index (`internal/storage/search/`)
-- [x] Implement chromem-go vector store (`internal/storage/vector/`)
+- [x] Implement bbolt KV store (`pkg/memex/store/kv/`)
+- [x] Implement SQLite store with migrations (`pkg/memex/store/sqlite/`)
+- [x] Implement Bleve search index (`pkg/memex/store/search/`)
+- [x] Implement chromem-go vector store (`pkg/memex/store/vector/`)
 - [x] Add dependencies: `modernc.org/sqlite`, `go.etcd.io/bbolt`, `bleve/v2`, `chromem-go`
 - [x] Write unit tests for all backends
 - [x] Full project `go vet` and `go test -race` passing
@@ -912,3 +912,43 @@ All tests pass with `go test -race ./...`.
 - [x] Add chromem-go persistence tuning (WithCompression, WithConcurrency options)
 - [x] Monitor binary size impact; factory-based optional backends (build tags unnecessary)
 - [x] Add storage health check to `doctor` diagnostic output
+
+---
+
+## 10. Embedding `pkg/memex` from another tool
+
+The persistence + memory toolkit is exposed as a public Go package under
+`pkg/memex/`, importable by any agentic tool with no dependency on
+ycode-specific internals. Three layers can be pulled in independently:
+
+```go
+// Just the storage backends (KV/SQL/search/vector).
+import "github.com/qiangli/ycode/pkg/memex/store"
+import "github.com/qiangli/ycode/pkg/memex/store/kv"      // bbolt
+import "github.com/qiangli/ycode/pkg/memex/store/sqlite"  // modernc.org/sqlite
+import "github.com/qiangli/ycode/pkg/memex/store/search"  // Bleve v2
+import "github.com/qiangli/ycode/pkg/memex/store/vector"  // chromem-go
+
+// File-based memory layer with RRF retrieval, persona, dreamer.
+import "github.com/qiangli/ycode/pkg/memex/memory"
+
+// SQLite-backed wiki notes with REST + embedded web UI.
+import "github.com/qiangli/ycode/pkg/memex/memos"
+
+// Umbrella that wires all three with sensible defaults.
+import "github.com/qiangli/ycode/pkg/memex"
+```
+
+Minimal example using the umbrella:
+
+```go
+mx, _ := memex.Open("/var/lib/myagent")
+defer mx.Close()
+_ = mx.Memory().Save(&memory.Memory{Name: "x", Type: memory.TypeReference, Content: "..."})
+hits, _ := mx.Memory().Recall("query", 5)
+_ = mx.Memos().Create(ctx, &memos.Memo{Content: "wiki note"})
+http.Handle("/memos/", mx.HTTPHandler())  // optional web UI
+```
+
+Smoke tests in `examples/memex_store/` and `examples/memex_full/` build
+without any `internal/` dependencies and serve as the public-API contract.

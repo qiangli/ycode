@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/qiangli/ycode/internal/memos"
+	"github.com/qiangli/ycode/pkg/memex/memos"
 )
 
 // memosStore is the module-level memo store, set via SetMemosStore.

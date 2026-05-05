@@ -378,7 +378,7 @@ markdown := board.RenderMarkdown()
 | `internal/runtime/ralph/` | Ralph loop controller, state persistence |
 | `internal/runtime/task/` | Task tree, mailbox (+ existing flat registry) |
 | `internal/runtime/todo/` | Hierarchical todo board, persistence |
-| `internal/runtime/memory/` | Episodic, procedural memory types (+ existing 5-layer system) |
+| `pkg/memex/memory/` | Episodic, procedural memory types (+ existing 5-layer system) |
 | `internal/tools/` | Handoff tool handler (+ existing Agent tool with custom agent support) |
 | `internal/bus/` | EventAgentHandoff, EventAgentMessage, EventFlowStep (+ existing events) |
 

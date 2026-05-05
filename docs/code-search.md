@@ -126,7 +126,7 @@ The `TestRepoMap_GraphRankingImprovement` test logs ranking quality as a metric 
 | `internal/runtime/indexer/refgraph.go` | Reference graph via go/ast (Phase 3) |
 | `internal/runtime/indexer/trigram.go` | Trigram index (Phase 4) |
 | `internal/runtime/astgrep/astgrep.go` | Containerized ast-grep (Phase 4) |
-| `internal/storage/search/search.go` | Bleve store with SearchWithFilter |
+| `pkg/memex/store/search/search.go` | Bleve store with SearchWithFilter |
 | `internal/tools/search.go` | Tool handler wiring |
 | `internal/tools/symbol_search.go` | symbol_search tool (Phase 3) |
 | `internal/tools/references.go` | find_references + find_impact tools (Phase 3) |

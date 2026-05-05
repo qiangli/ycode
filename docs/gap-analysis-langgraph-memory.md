@@ -32,9 +32,9 @@
 ### Phase 1: Memory TTL & Background Sweep (M1)
 
 **Files to modify:**
-- `internal/runtime/memory/memory.go` — add TTL field to memory entries, sweep goroutine
-- `internal/runtime/memory/types.go` — extend `MemoryEntry` with `ExpiresAt` and `TTLMinutes`
-- `internal/storage/storage.go` — add `DeleteExpired(ctx, before time.Time)` to store interfaces
+- `pkg/memex/memory/memory.go` — add TTL field to memory entries, sweep goroutine
+- `pkg/memex/memory/types.go` — extend `MemoryEntry` with `ExpiresAt` and `TTLMinutes`
+- `pkg/memex/store/storage.go` — add `DeleteExpired(ctx, before time.Time)` to store interfaces
 
 **Design:**
 - Add `ExpiresAt *time.Time` and `TTLMinutes int` to `MemoryEntry`
@@ -46,8 +46,8 @@
 ### Phase 2: Store Batch Operations (M3)
 
 **Files to modify:**
-- `internal/storage/storage.go` — add `BatchOp` type and `Batch(ctx, []BatchOp)` method
-- `internal/storage/sqlite.go` — implement batch within a single transaction
+- `pkg/memex/store/storage.go` — add `BatchOp` type and `Batch(ctx, []BatchOp)` method
+- `pkg/memex/store/sqlite.go` — implement batch within a single transaction
 
 **Design:**
 - `BatchOp` is a union type: Put, Delete, or Search

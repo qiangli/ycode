@@ -70,7 +70,7 @@ Per-platform formatting guidance injected into the system prompt: Telegram (Mark
 ### 3.2 Memory Provider Plugin Interface
 `MemoryProvider` interface with core operations (Save/Load/List/Delete/Search) and lifecycle hooks (OnTurnStart, OnPreCompress, OnMemoryWrite, OnDelegation, OnSessionEnd). `FileProvider` wraps the existing Store as the default. Manager calls `OnMemoryWrite` after each save.
 
-**Files**: `internal/runtime/memory/provider.go` (new), `internal/runtime/memory/memory.go` (wired)
+**Files**: `pkg/memex/memory/provider.go` (new), `pkg/memex/memory/memory.go` (wired)
 
 ### 3.3 Subagent Blocked Tools
 `DefaultSubagentBlocklist` prevents subagents from: recursive delegation (Agent, Handoff), user interaction (AskUserQuestion), memory corruption (MemorySave, MemoryForget), scheduling (CronCreate, CronDelete), and remote triggers. Applied in spawner for all agent types.
@@ -172,7 +172,7 @@ Config types: `TrainConfig`, `CollectConfig`, `EvalConfig`. Cobra subcommands:
 ### 6.1 Atomic File Operations
 `AtomicWriteFile` (write-to-temp + fsync + rename) prevents corruption from crashes. Applied to: memory store, memory index, session state snapshots, ghost snapshots, distill cache, model overrides, child session state.
 
-**Files**: `internal/runtime/fileops/atomic.go` (new), `internal/runtime/memory/store.go`, `index.go`, `internal/runtime/session/state_snapshot.go`, `ghost.go`, `distill.go`, `model_override.go`, `child.go` (all updated)
+**Files**: `internal/runtime/fileops/atomic.go` (new), `pkg/memex/memory/store.go`, `index.go`, `internal/runtime/session/state_snapshot.go`, `ghost.go`, `distill.go`, `model_override.go`, `child.go` (all updated)
 
 ### 6.2 Skills as User Messages for Cache Preservation
 `SkillInjectionMode` with `SkillInjectSystem` (default) and `SkillInjectUser` (for Anthropic prompt caching). `RecommendedSkillInjection()` selects mode based on provider caching support. `FormatSkillAsUserMessage()` wraps skill content with a system note. `BuildSkillInjection()` combines both.

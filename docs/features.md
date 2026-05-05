@@ -171,14 +171,14 @@ Five-layer memory system with multi-backend retrieval.
 - Entity extraction (NER) and entity-based linking
 - Dreamer: background consolidation on 30-min intervals with LLM-backed merge
 - Persona system: knowledge domains, communication style, behavior profiling
-- **Package**: `internal/runtime/memory/` (5,356 LOC, 22 test files)
+- **Package**: `pkg/memex/memory/` (5,356 LOC, 22 test files)
 
 ### Memory Retrieval
 - **4 search backends**: keyword matching, Bleve full-text, vector semantic, entity-based
 - Reciprocal Rank Fusion (RRF) across backends
 - Maximal Marginal Relevance (MMR) diversity re-ranking
 - Adaptive-depth recall with confidence-based deepening and LLM sub-queries
-- **Package**: `internal/runtime/memory/` (integrated)
+- **Package**: `pkg/memex/memory/` (integrated)
 
 ### Prompt Assembly
 - **18 prompt sections**: intro, system, tasks, actions, environment, project, git, instructions, memory, config, filesystem, builtin-skills, active-topic, personality, platform, repo-map, persona, diagnostics
@@ -198,7 +198,7 @@ Five-layer memory system with multi-backend retrieval.
 - **4 backends**: KVStore (bbolt), SQLStore (modernc.org/sqlite), VectorStore (chromem-go), SearchIndex (Bleve)
 - Progressive initialization: Phase 1 (KV instant), Phase 2 (SQL background), Phase 3 (search lazy)
 - Pure Go, zero CGO, permissive licenses only
-- **Package**: `internal/storage/` (1,529 LOC, tests per backend)
+- **Package**: `pkg/memex/store/` (1,529 LOC, tests per backend)
 
 ---
 
@@ -232,7 +232,7 @@ Five-layer memory system with multi-backend retrieval.
 - **Bleve FTS**: BM25 scoring, fuzzy matching, phrase queries, faceted metadata search
 - **Vector store**: chromem-go embeddings with cosine/euclidean/dot-product similarity
 - Dual indices: "code" (file chunks) + "symbols" (extracted definitions)
-- **Packages**: `internal/storage/search/` (330 LOC), `internal/storage/vector/` (228 LOC)
+- **Packages**: `pkg/memex/store/search/` (330 LOC), `pkg/memex/store/vector/` (228 LOC)
 
 ---
 

@@ -11,7 +11,7 @@ ycode is a pure Go CLI agent harness; Memos is a Go-based lightweight note-takin
 - Vector search via embedded store
 - Auto-dream compaction (summarization of old memories)
 - Flat markdown files for Claude Code auto-memory (`~/.claude/projects/.../memory/`)
-- KV store and SQL store abstractions in `internal/storage/`
+- KV store and SQL store abstractions in `pkg/memex/store/`
 
 ### Gaps Identified
 

@@ -268,17 +268,17 @@ A confidence-scored user model (`memory/persona*.go`) infers user identity from 
 
 **Implementation:**
 - `internal/runtime/prompt/builder.go` - Builder pattern for sections
-- `internal/runtime/memory/memory.go` - Manager (Save/Recall/Forget with RRF fusion)
-- `internal/runtime/memory/fusion.go` - RRF and MMR algorithms
-- `internal/runtime/memory/value.go` - Dynamic value scoring and reward propagation
-- `internal/runtime/memory/entity.go` - Entity extraction and linking index
-- `internal/runtime/memory/persona.go` - Persona model and session context
+- `pkg/memex/memory/memory.go` - Manager (Save/Recall/Forget with RRF fusion)
+- `pkg/memex/memory/fusion.go` - RRF and MMR algorithms
+- `pkg/memex/memory/value.go` - Dynamic value scoring and reward propagation
+- `pkg/memex/memory/entity.go` - Entity extraction and linking index
+- `pkg/memex/memory/persona.go` - Persona model and session context
 - `internal/runtime/prompt/persona.go` - Persona prompt section rendering
-- `internal/runtime/memory/profile.go` - Structured user profile
-- `internal/runtime/memory/turninjector.go` - Per-turn context-aware injection
-- `internal/runtime/memory/temporal.go` - Temporal validity windows
-- `internal/runtime/memory/dream.go` - Background consolidation with similarity clustering
-- `internal/runtime/memory/reindex.go` - Catch-up indexing on startup
+- `pkg/memex/memory/profile.go` - Structured user profile
+- `pkg/memex/memory/turninjector.go` - Per-turn context-aware injection
+- `pkg/memex/memory/temporal.go` - Temporal validity windows
+- `pkg/memex/memory/dream.go` - Background consolidation with similarity clustering
+- `pkg/memex/memory/reindex.go` - Catch-up indexing on startup
 - `internal/runtime/embedding/` - Vector storage and search
 
 ---

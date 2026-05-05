@@ -762,6 +762,14 @@ func (a *App) SetProviderKind(kind string) { a.providerKind = kind }
 // WorkDir returns the working directory for this app instance.
 func (a *App) WorkDir() string { return a.workDir }
 
+// Storage returns the underlying memex store.Manager (KV/SQL/search/vector).
+// May be nil if the App was constructed without storage (e.g. NewThinApp).
+func (a *App) Storage() *store.Manager { return a.storage }
+
+// Memory returns the underlying memory.Manager. May be nil if the App was
+// constructed without a memory subsystem.
+func (a *App) Memory() *memory.Manager { return a.memoryManager }
+
 // InPlanMode returns whether plan mode is active.
 func (a *App) InPlanMode() bool {
 	if a.planMode == nil {

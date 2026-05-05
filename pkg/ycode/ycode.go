@@ -17,6 +17,8 @@ import (
 	"github.com/qiangli/ycode/internal/server"
 	"github.com/qiangli/ycode/internal/service"
 	"github.com/qiangli/ycode/internal/tools"
+	"github.com/qiangli/ycode/pkg/memex/memory"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 // Agent is the public API for embedding ycode as a library.
@@ -139,6 +141,15 @@ func (a *Agent) RunInteractive(ctx context.Context) error {
 func (a *Agent) Registry() *tools.Registry {
 	return a.registry
 }
+
+// Memory returns the underlying memex memory manager. May be nil if the
+// agent was constructed without a memory subsystem (e.g. when no persistent
+// store is configured).
+func (a *Agent) Memory() *memory.Manager { return a.app.Memory() }
+
+// Storage returns the underlying memex store.Manager (KV/SQL/search/vector).
+// May be nil for agents that don't carry a persistent store.
+func (a *Agent) Storage() *store.Manager { return a.app.Storage() }
 
 // Event represents a streaming event from the agent.
 type Event struct {

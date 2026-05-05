@@ -384,7 +384,7 @@ The codebase follows a standard Go layout with `cmd/` for binaries, `internal/` 
 - `openai_compat.go` — OpenAI-compatible providers (OpenAI, xAI, Ollama, etc.)
 - `prompt_cache.go` — prompt fingerprinting for cache hit detection
 
-### Memory system (`internal/runtime/memory/`)
+### Memory system (`pkg/memex/memory/`)
 
 Five layers: working (context window) → short-term (session JSONL) → long-term (compaction summaries) → contextual (CLAUDE.md ancestry) → persistent (file-based `~/.ycode/projects/`). Types: user, feedback, project, reference.
 

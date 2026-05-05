@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"sync/atomic"
 
-	"github.com/qiangli/ycode/internal/memos"
-	"github.com/qiangli/ycode/internal/storage/sqlite"
+	"github.com/qiangli/ycode/pkg/memex/memos"
+	"github.com/qiangli/ycode/pkg/memex/store/sqlite"
 )
 
 // MemosComponent provides persistent memo storage as an observability

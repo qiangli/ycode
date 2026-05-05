@@ -177,7 +177,7 @@ wilson_lower = (p + z²/2n - z·√(p(1-p)/n + z²/4n²)) / (1 + z²/n)
 | Local LLM inference | `inference.OllamaComponent` | `internal/inference/` |
 | Sandboxed workspaces | `container.Engine` (Podman) | `internal/container/` |
 | Test git repos | `gitserver.Client` (Gitea) | `internal/gitserver/` |
-| Result storage | `storage.SQLStore` (SQLite) + `storage.SearchIndex` (Bleve) | `internal/storage/` |
+| Result storage | `storage.SQLStore` (SQLite) + `storage.SearchIndex` (Bleve) | `pkg/memex/store/` |
 | Metrics & dashboards | `observability.StackManager` (Prometheus + Perses) | `internal/observability/` |
 | Event publishing | `bus.Bus` | `internal/bus/` |
 | Parallel execution | `taskqueue.Executor` | `internal/runtime/taskqueue/` |
@@ -635,7 +635,7 @@ Model selection: `EVAL_MODEL` env var or `--model` flag. Default: largest Ollama
 | `internal/inference/provider.go` | Read | Local Ollama provider |
 | `internal/container/engine.go` | Read | Podman container management |
 | `internal/gitserver/client.go` | Read | Gitea API for test repos |
-| `internal/storage/sqlite/sqlite.go` | Read | SQLite for result storage |
+| `pkg/memex/store/sqlite/sqlite.go` | Read | SQLite for result storage |
 | `internal/observability/perses.go` | Read | Dashboard provisioning |
 | `internal/runtime/loop/scheduler.go` | Read | Cron scheduling |
 | `internal/runtime/team/cron.go` | Read | CronRegistry |
