@@ -29,12 +29,15 @@ How ycode versions get tagged, built, published, and distributed. See `docs/stra
 
 ## Homebrew tap
 
-The tap lives at `qiangli/homebrew-ycode` (separate repo). On every release, `update-homebrew-tap.yml` regenerates `Formula/ycode.rb` from the release's `SHA256SUMS` and pushes it to the tap. End users install with:
+The tap lives at `qiangli/homebrew-ycode` (separate repo) and is the single source of truth for the formula. On every release, `update-homebrew-tap.yml` runs `scripts/generate-homebrew-formula.sh` against the release's `SHA256SUMS` and pushes the result to `Formula/ycode.rb` in the tap. End users install with:
 
 ```bash
 brew tap qiangli/ycode
 brew install ycode
 ```
+
+Formula source: <https://github.com/qiangli/homebrew-ycode/blob/main/Formula/ycode.rb>
+Generator: [`scripts/generate-homebrew-formula.sh`](../scripts/generate-homebrew-formula.sh)
 
 ### One-time bootstrap (already done for `qiangli/homebrew-ycode`)
 
