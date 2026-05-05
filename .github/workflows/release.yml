@@ -1,10 +1,14 @@
 name: release
 
-# Tag-triggered release workflow. On every `v*` tag push:
-#   1. Matrix-build binaries on each native platform (avoids CGO cross-compile
-#      pain — gpgme/podman bits are platform-specific)
-#   2. Each job uploads its artifact to a shared scratch space
-#   3. Final job packages archives + SHA256 checksums and creates the Release
+# Dual-mode workflow:
+#
+# 1. **Tag push (v*)**: full release. Build matrix → package → publish a
+#    GitHub Release with binaries and SHA256SUMS.
+#
+# 2. **Manual dispatch / PR touching this workflow**: dryrun. Build matrix
+#    only — no Release is created. This is the gate that must pass green
+#    before any new tag is created (see
+#    feedback_no_tag_while_fixing in user memory: never tag to test a fix).
 #
 # Phase 2 unlock: prebuilt binaries are the prerequisite for brew/go install/
 # npx wrappers. See docs/strategy.md#phase-2--on-ramp.
@@ -16,6 +20,10 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
 
 permissions:
   contents: write  # required to create releases and upload assets
@@ -84,12 +92,22 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          # On tag push, ref_name is the tag (v0.x.y). On dispatch/PR, it's
+          # the branch name. The dryrun build doesn't create a Release so the
+          # version string just labels the binary "vX.Y.Z-dryrun" — useful
+          # when verifying the workflow without polluting the version
+          # sequence.
           VERSION: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           mkdir -p dist
           BIN="dist/ycode-${{ matrix.target }}${{ matrix.ext }}"
+          # Suffix non-tag builds with -dryrun so the resulting binary's
+          # `ycode --version` makes it obvious this isn't a release artifact.
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            VERSION="${VERSION}-dryrun"
+          fi
           go build -trimpath \
             -tags "sqlite,sqlite_unlock_notify,bindata" \
             -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT" \
@@ -108,14 +126,28 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  release:
-    name: package + release
+  # Packages artifacts on every successful build (tag, dispatch, or PR) so
+  # the workflow's packaging logic itself is exercised on dryruns. The
+  # publish step below is gated to tag pushes only.
+  package:
+    name: package
     needs: build
     runs-on: ubuntu-latest
+    outputs:
+      is_release: ${{ steps.flags.outputs.is_release }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: Compute release flags
+        id: flags
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Package archives + checksums
         run: |
@@ -134,6 +166,24 @@ jobs:
           sha256sum *.tar.gz > SHA256SUMS
           ls -la
 
+      - name: Upload packaged assets (dryrun visibility)
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets/
+          retention-days: 7
+
+  publish:
+    name: publish release
+    needs: package
+    if: needs.package.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -145,6 +195,7 @@ jobs:
             *-*) PRERELEASE_FLAG="--prerelease" ;;
           esac
           gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
             $PRERELEASE_FLAG \
             --title "$TAG" \
             --generate-notes \
