@@ -127,10 +127,20 @@ func Open(dir string, opts ...Option) (*Memex, error) {
 		memGraph: memGraph,
 	}
 	m.vfs = NewVFS(mem, memoStore)
-	if memoStore != nil {
-		m.handler = memos.NewWebHandler(memoStore)
-	}
+	m.handler = m.buildHTTPHandler()
 	return m, nil
+}
+
+// buildHTTPHandler composes the memos REST + UI handler with the VFS
+// overlay endpoints under /api/wiki/. When the memos store is nil, only
+// the wiki overlay is mounted.
+func (m *Memex) buildHTTPHandler() http.Handler {
+	mux := http.NewServeMux()
+	if m.memos != nil {
+		mux.Handle("/", memos.NewWebHandler(m.memos))
+	}
+	mux.Handle("/api/wiki/", http.StripPrefix("/api/wiki", WikiHandler(m.vfs)))
+	return mux
 }
 
 // Store returns the persistence Manager (KV/SQL/search/vector).
