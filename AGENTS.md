@@ -4,6 +4,8 @@ This file provides guidance to AI coding assistants working in this repository.
 
 ycode — pure Go CLI agent harness for autonomous software development. Go 1.26+, permissive-license dependencies only. CLAUDE.md is a symlink to this file.
 
+> **Read first:** [`docs/strategy.md`](./docs/strategy.md) — the wedge, feature-tier build-tag policy, roadmap, and operating principles. Before suggesting features, refactors, or architectural changes, consult the strategy doc to confirm alignment with the current wedge ("local-first, single-binary, runs offline") and graduation criteria. New features land behind the `experimental` build tag by default and graduate to `stable` only after meeting the criteria documented there.
+
 ## First-Time Setup
 
 ```bash

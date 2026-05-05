@@ -42,6 +42,9 @@ export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY
 
 ## Documentation
 
+- [docs/strategy.md](./docs/strategy.md) -- **strategic roadmap, wedge positioning, feature-tier policy, operating principles** (read first for any planning or feature discussion)
+- [docs/roadmap.md](./docs/roadmap.md) -- tactical feature-gap inventory (P0/P1/P2)
+- [docs/leaderboards.md](./docs/leaderboards.md) -- benchmark targets and submission process
 - [AGENTS.md](./AGENTS.md) -- instructions for AI coding assistants (CLAUDE.md symlinks here)
 - [docs/usage.md](./docs/usage.md) -- CLI modes, configuration, tools, and workflows
 - [docs/instructions.md](./docs/instructions.md) -- conventions, skill system, build/test/commit rules
