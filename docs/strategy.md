@@ -540,10 +540,10 @@ This is the **strategic** roadmap. For the tactical feature-gap inventory (P0/P1
 
 **Goal:** Mechanically separate "what's ready" from "what's WIP."
 
-- [ ] Land `internal/features/registry.yaml` and registry parser
-- [ ] Add `experimental` and `wip` build tags to existing rough features (Slack/Matrix/Email adapters, Trainer agent, Sprint two-stage review hooks, mesh auto-start)
-- [ ] Wire `verify-features` CI workflow
-- [ ] Resolve TUI permission TODO (`internal/cli/tui.go`)
+- [x] Land `internal/features/registry.yaml` and registry parser
+- [x] Add `experimental` and `wip` build tags to existing rough features — Slack/Matrix/Email adapters now behind `experimental`. Trainer agent / sprint two-stage review / mesh auto-start investigated and confirmed already config-gated or honestly documented as planned; no additional tags needed.
+- [x] Wire `verify-features` CI workflow
+- [x] Resolve TUI permission TODO (`internal/cli/tui.go`) — confirmYes/No now call RespondPermission via the agentClient; regression test in `internal/cli/permission_test.go`
 - [ ] Audit and re-classify all 50+ tools — register each as stable/experimental/wip
 - [ ] Auto-generate the README tool catalog section from the registry
 - [x] Commit `docs/strategy.md` (this document) + reference it from `AGENTS.md` and `README.md`
@@ -661,7 +661,7 @@ Sequenced sub-phases:
 
 | Phase | Target | Started | Done | Notes |
 |---|---|---|---|---|
-| 0 — Credibility floor | W1–2 | 2026-05-05 | — | strategy doc landed; registry + tags in progress |
+| 0 — Credibility floor | W1–2 | 2026-05-05 | — | 5/7 done: strategy doc, feature-tier mechanism + CI gate, chat-adapter stubs gated, TUI permission flow wired with regression test. Remaining: full tool audit + README auto-gen. |
 | 1 — Wedge & proof | W3–6 | — | — | |
 | 2 — On-ramp | W5–10 | — | — | |
 | 3 — Daily ergonomics | W8–14 | — | — | |
