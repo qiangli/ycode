@@ -1,0 +1,159 @@
+name: release
+
+# Tag-triggered release workflow. On every `v*` tag push:
+#   1. Matrix-build binaries on each native platform (avoids CGO cross-compile
+#      pain — gpgme/podman bits are platform-specific)
+#   2. Each job uploads its artifact to a shared scratch space
+#   3. Final job packages archives + SHA256 checksums and creates the Release
+#
+# Phase 2 unlock: prebuilt binaries are the prerequisite for brew/go install/
+# npx wrappers. See docs/strategy.md#phase-2--on-ramp.
+#
+# Versioning: semver. Pre-1.0 = breaking changes expected. Tags containing a
+# hyphen (e.g., v0.1.0-rc.1) are auto-marked as pre-release.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write  # required to create releases and upload assets
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runs-on: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            ext: ""
+          - target: darwin-amd64
+            runs-on: macos-latest
+            goos: darwin
+            goarch: amd64
+            ext: ""
+          - target: darwin-arm64
+            runs-on: macos-latest
+            goos: darwin
+            goarch: arm64
+            ext: ""
+          - target: windows-amd64
+            runs-on: windows-latest
+            goos: windows
+            goarch: amd64
+            ext: ".exe"
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Initialize embedded assets
+        if: runner.os != 'Windows'
+        run: |
+          ./scripts/fetch-perses-plugins.sh
+          ./scripts/gzip-embeds.sh
+
+      - name: Initialize embedded assets (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          ./scripts/fetch-perses-plugins.sh
+          ./scripts/gzip-embeds.sh
+
+      - name: Verify feature registry
+        if: runner.os != 'Windows'
+        run: make verify-features
+
+      - name: Build binary
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          BIN="dist/ycode-${{ matrix.target }}${{ matrix.ext }}"
+          go build -trimpath \
+            -tags "sqlite,sqlite_unlock_notify,bindata" \
+            -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT" \
+            -o "$BIN" ./cmd/ycode/
+          # Ad-hoc codesign on macOS so binaries don't get killed by Gatekeeper.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            codesign -f -s - "$BIN" 2>/dev/null || true
+          fi
+          ls -la "$BIN"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ycode-${{ matrix.target }}
+          path: dist/ycode-${{ matrix.target }}${{ matrix.ext }}
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    name: package + release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package archives + checksums
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          for dir in artifacts/ycode-*; do
+            target=$(basename "$dir" | sed 's/^ycode-//')
+            cd "$dir"
+            case "$target" in
+              windows-*)
+                # Windows: zip with .exe preserved.
+                cp ycode-windows-amd64.exe ycode.exe
+                zip "../../release-assets/ycode-${target}.zip" ycode.exe
+                rm ycode.exe
+                ;;
+              *)
+                # Unix: tar.gz with bare `ycode` binary inside.
+                cp "ycode-${target}" ycode
+                chmod +x ycode
+                tar -czf "../../release-assets/ycode-${target}.tar.gz" ycode
+                rm ycode
+                ;;
+            esac
+            cd ../..
+          done
+          cd release-assets
+          sha256sum *.tar.gz *.zip > SHA256SUMS
+          ls -la
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          PRERELEASE_FLAG=""
+          case "$TAG" in
+            *-*) PRERELEASE_FLAG="--prerelease" ;;
+          esac
+          gh release create "$TAG" \
+            $PRERELEASE_FLAG \
+            --title "$TAG" \
+            --generate-notes \
+            release-assets/*

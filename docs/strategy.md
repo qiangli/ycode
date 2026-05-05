@@ -570,7 +570,7 @@ This is the **strategic** roadmap. For the tactical feature-gap inventory (P0/P1
 
 **Goal:** Reduce time-from-discovery-to-first-success to under 5 minutes.
 
-- [ ] Prebuilt binaries on GitHub Releases (driven from `make cross`)
+- [x] Prebuilt binaries on GitHub Releases — `.github/workflows/release.yml` matrix-builds linux/darwin/windows × amd64/arm64 on each `v*` tag push, packages tar.gz/zip with SHA256SUMS, creates the Release
 - [ ] Homebrew tap: `brew install ycode/tap/ycode`
 - [ ] `go install github.com/.../ycode/cmd/ycode@latest` validated
 - [ ] `npx ycode` wrapper that downloads platform binary on first run
@@ -663,7 +663,7 @@ Sequenced sub-phases:
 |---|---|---|---|---|
 | 0 — Credibility floor | W1–2 | 2026-05-05 | — | 5/7 done: strategy doc, feature-tier mechanism + CI gate, chat-adapter stubs gated, TUI permission flow wired with regression test. Remaining: full tool audit + README auto-gen. |
 | 1 — Wedge & proof | W3–6 | — | — | |
-| 2 — On-ramp | W5–10 | — | — | |
+| 2 — On-ramp | W5–10 | 2026-05-05 | — | release workflow landed; tag any `v*` to publish binaries |
 | 3 — Daily ergonomics | W8–14 | — | — | |
 | 4 — Differentiators | W14+ | — | — | |
 | 5 — Compounding | Ongoing | — | — | |
