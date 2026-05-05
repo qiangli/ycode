@@ -11,45 +11,52 @@
 # Graduation: a feature moves wip → experimental → stable via PR. CI fails if
 # tier=stable without graduation criteria satisfied.
 #
-# This file is the audit baseline as of 2026-05-05. Not exhaustive; new
-# features get added here as part of their landing PR.
+# The README "Features" section is auto-generated from this file
+# (filtered to tier: stable) — keep `description` short and user-facing.
+# Run `make readme-features` after editing to refresh the README.
 
 features:
-  # ---- stable anchors (initial set) ----
+  # ─── core agent loop ──────────────────────────────────────────────────────
   - name: bash-tool
     tier: stable
+    description: "in-process bash via mvdan/sh — no host shell exec, with security middleware (Setpgid, pre-exec validation)"
     files: [internal/runtime/bash]
     graduation:
       integration_test: true
       dogfood_weeks: 8
-      failure_mode_doc: false  # backfill: docs/failures.md not yet present
+      failure_mode_doc: false
 
   - name: file-ops
     tier: stable
+    description: "read, write, edit, glob — file operations bounded by the per-session VFS"
     files: [internal/tools]
     graduation:
       integration_test: true
       dogfood_weeks: 8
       failure_mode_doc: false
 
-  - name: git-tools
+  - name: search-tools
     tier: stable
-    files: [internal/runtime/toolexec]
+    description: "Grep, Glob, semantic search, symbol search, AST search across the project"
+    files: [internal/tools, internal/runtime/treesitter]
     graduation:
       integration_test: true
       dogfood_weeks: 8
       failure_mode_doc: false
 
-  - name: ollama-runtime
+  - name: web-tools
     tier: stable
-    files: [internal/inference]
+    description: "WebFetch, WebSearch — auto-routes between Brave / Tavily / SearXNG / DuckDuckGo"
+    files: [internal/tools, internal/runtime/searxng]
     graduation:
       integration_test: true
       dogfood_weeks: 4
       failure_mode_doc: false
 
+  # ─── code intelligence ────────────────────────────────────────────────────
   - name: repomap
     tier: stable
+    description: "token-budgeted file→symbol overview for LLM context (PageRank-scored)"
     files: [internal/runtime/repomap]
     graduation:
       integration_test: true
@@ -58,7 +65,54 @@ features:
 
   - name: ast-search
     tier: stable
+    description: "pure-Go tree-sitter for Go, Python, JS/TS, Rust, Java, C, Ruby — structural code search and impact analysis"
     files: [internal/runtime/treesitter]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: lsp
+    tier: stable
+    description: "auto-detected LSP servers per language — hover, definition, references, symbol search"
+    files: [internal/runtime/lsp]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: bonsai-graph
+    tier: stable
+    description: "embeddable Dgraph (bonsai) for memory relations + code-knowledge mirror; DQL-queryable; Explorer UI mounted at /graph/ in `ycode serve`"
+    files: [pkg/memex/graph]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 0
+      failure_mode_doc: false
+
+  # ─── git & integrations ───────────────────────────────────────────────────
+  - name: git-tools
+    tier: stable
+    description: "31 native go-git operations (branch, worktree, push, stash, log, …) — no shell-out required"
+    files: [internal/runtime/toolexec]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 8
+      failure_mode_doc: false
+
+  - name: gitea-server
+    tier: stable
+    description: "embedded Gitea git server — no external git host needed for agent workspaces"
+    files: [internal/gitserver]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: github-tools
+    tier: stable
+    description: "PR / issue / review / CI-checks via GitHub API — no `gh` binary, auth via GITHUB_TOKEN or ~/.config/gh"
+    files: [internal/runtime/github]
     graduation:
       integration_test: true
       dogfood_weeks: 4
@@ -66,59 +120,180 @@ features:
 
   - name: mcp-client
     tier: stable
+    description: "full MCP client (stdio + SSE) for external tool servers; also exposes ycode tools via `ycode mcp serve`"
     files: [internal/runtime/mcp]
     graduation:
       integration_test: true
       dogfood_weeks: 4
       failure_mode_doc: false
 
-  - name: gitea-server
+  # ─── execution & runtime ──────────────────────────────────────────────────
+  - name: container-runtime
     tier: stable
-    files: [internal/gitserver]
+    description: "embedded podman for sandboxed bash execution and per-agent isolation (cgroups, network namespace, overlay FS)"
+    files: [internal/container]
     graduation:
       integration_test: true
       dogfood_weeks: 4
       failure_mode_doc: false
 
+  - name: ollama-runtime
+    tier: stable
+    description: "embedded Ollama inference runner for fully-local model execution (HuggingFace GGUF supported)"
+    files: [internal/inference]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: multi-provider
+    tier: stable
+    description: "Anthropic native + OpenAI-compatible covers OpenAI, xAI/Grok, DashScope/Qwen, Ollama, OpenRouter"
+    files: [internal/api]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 8
+      failure_mode_doc: false
+
+  - name: serve-mode
+    tier: stable
+    description: "`ycode serve` exposes HTTP/WebSocket + NATS endpoints with embedded observability (Prometheus, Jaeger, VictoriaLogs, Perses)"
+    files: [cmd/ycode/serve.go, internal/server]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: observability
+    tier: stable
+    description: "OTEL traces + metrics + logs out of the box; agent-facing query tools (query_metrics, query_traces, query_logs)"
+    files: [internal/telemetry, internal/observability]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  # ─── orchestration ────────────────────────────────────────────────────────
+  - name: agent-delegation
+    tier: stable
+    description: "recursive child agent spawning with depth limits; team, parallel, handoff, cron primitives"
+    files: [internal/tools, internal/runtime/team]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: skills-system
+    tier: stable
+    description: "hierarchical /-prefixed skills (audit, autopilot, build, deploy, eval, …) plus embedded /init, /commit, /review, /pr"
+    files: [skills, internal/tools/skill.go]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: plugin-system
+    tier: stable
+    description: "manifest-based plugins with hook lifecycle (PreToolUse, PostToolUse)"
+    files: [internal/plugins]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  # ─── memory & persistence ─────────────────────────────────────────────────
   - name: memory-system
     tier: stable
+    description: "five-layer memory (working, episodic, compaction, procedural, persistent) with RRF-fused vector + Bleve + keyword + entity retrieval"
     files: [pkg/memex/memory]
     graduation:
       integration_test: true
       dogfood_weeks: 4
       failure_mode_doc: false
 
+  - name: session-management
+    tier: stable
+    description: "JSONL persistence, auto-compaction at 100K tokens, semantic summaries"
+    files: [internal/runtime/session]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 8
+      failure_mode_doc: false
+
+  # ─── safety & operability ─────────────────────────────────────────────────
   - name: permission-tiers
     tier: stable
+    description: "three modes (ReadOnly, WorkspaceWrite, DangerFullAccess) with VFS-bounded path resolution and per-tool policy rules"
     files: [internal/runtime/permission]
     graduation:
       integration_test: true
       dogfood_weeks: 8
       failure_mode_doc: false
 
-  # ---- experimental (compiles + tests, but rough or unproven) ----
+  - name: self-healing
+    tier: stable
+    description: "automatic error recovery with classification and retry — no panic kills the loop"
+    files: [internal/selfheal]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: oauth-login
+    tier: stable
+    description: "PKCE OAuth flow for Claude authentication (`ycode login`)"
+    files: [internal/runtime/oauth]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  # ─── distribution ─────────────────────────────────────────────────────────
+  - name: embeddable-api
+    tier: stable
+    description: "`pkg/ycode/` exposes a public Go API for embedding the agent harness in other binaries"
+    files: [pkg/ycode]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  - name: cross-platform
+    tier: stable
+    description: "single static Go binary; v0.1.0 ships linux/amd64 and darwin/arm64 (other platforms require code work — see release.yml matrix)"
+    files: [.github/workflows/release.yml]
+    graduation:
+      integration_test: true
+      dogfood_weeks: 4
+      failure_mode_doc: false
+
+  # ─── experimental (compiles + tests, but rough or unproven) ───────────────
   - name: chat-adapter-slack
     tier: experimental
+    description: "Slack channel adapter (Send returns ErrNotImplemented; gated behind -tags experimental)"
     files: [internal/chat]
     notes: "adapter scaffold present; not wired end-to-end"
     blocked_by: [chat-hub-routing]
 
   - name: chat-adapter-matrix
     tier: experimental
+    description: "Matrix channel adapter (Send returns ErrNotImplemented; gated behind -tags experimental)"
     files: [internal/chat]
     notes: "adapter scaffold present; not wired end-to-end"
 
   - name: chat-adapter-email
     tier: experimental
+    description: "IMAP/SMTP channel adapter (Send returns ErrNotImplemented; gated behind -tags experimental)"
     files: [internal/chat]
     notes: "adapter scaffold present; not wired end-to-end"
 
   - name: mesh-auto-start
     tier: experimental
+    description: "auto-engage background mesh agents (fixer, researcher, learner) from the main runtime"
     files: [internal/mesh]
     notes: "background agents wired in wire.go but do not auto-engage in main loop"
 
-  # ---- wip (placeholder or active dev; not user-facing) ----
+  # ─── wip (placeholder or active dev; not user-facing) ─────────────────────
   - name: trainer-agent
     tier: wip
     files: [internal/training]

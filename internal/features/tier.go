@@ -41,13 +41,17 @@ type Graduation struct {
 
 // Feature is a single registry entry.
 type Feature struct {
-	Name       string     `yaml:"name"`
-	Tier       Tier       `yaml:"tier"`
-	Files      []string   `yaml:"files,omitempty"`
-	BlockedBy  []string   `yaml:"blocked_by,omitempty"`
-	Notes      string     `yaml:"notes,omitempty"`
-	Owner      string     `yaml:"owner,omitempty"`
-	Graduation Graduation `yaml:"graduation,omitempty"`
+	Name string `yaml:"name"`
+	Tier Tier   `yaml:"tier"`
+	// Description is a single short phrase for user-facing surfaces (README,
+	// website, marketing). Stable features should have a non-empty
+	// description; experimental/wip may omit it.
+	Description string     `yaml:"description,omitempty"`
+	Files       []string   `yaml:"files,omitempty"`
+	BlockedBy   []string   `yaml:"blocked_by,omitempty"`
+	Notes       string     `yaml:"notes,omitempty"`
+	Owner       string     `yaml:"owner,omitempty"`
+	Graduation  Graduation `yaml:"graduation,omitempty"`
 }
 
 // Registry holds the parsed feature list.

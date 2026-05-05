@@ -14,24 +14,37 @@ export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY
 
 ## Features
 
-- **50 tools**: file operations, bash execution, web fetch/search, code intelligence, git operations, agent spawning, task management, memory, observability queries
-- **Multi-provider LLM**: Anthropic (native), OpenAI-compatible (OpenAI, xAI/Grok, DashScope/Qwen, Ollama, OpenRouter)
-- **Local inference**: embedded Ollama runner, HuggingFace GGUF model support
-- **Serve mode**: HTTP/WebSocket/NATS server (`ycode serve`) with embedded observability (Prometheus, Jaeger, VictoriaLogs, Perses)
-- **Container management**: embedded Podman integration for sandbox and workspace isolation
-- **Git server**: embedded Gitea for agent workspace operations
-- **MCP/LSP integration**: MCP client/server (stdio transport), LSP for code intelligence
-- **Plugin system**: manifest-based plugins with hook lifecycle (PreToolUse, PostToolUse)
-- **Permission enforcement**: three modes (ReadOnly, WorkspaceWrite, DangerFullAccess) with policy rules
-- **Multi-layered memory**: working, short-term (session), long-term (compaction), contextual (instruction files), persistent (file-based), plus Memos integration
-- **Session management**: JSONL persistence, auto-compaction at 100K tokens, semantic summaries
-- **Agent delegation**: recursive child agent spawning with configurable depth, team and cron management
-- **Skills system**: hierarchical discovery, bundled skills (review, commit, pr, simplify, loop, remember)
-- **Self-healing**: automatic error recovery with classification and retry
-- **Chat hub**: multi-channel messaging bridges
-- **OAuth login**: PKCE flow for Claude authentication
-- **Embeddable**: `pkg/ycode/` provides a public Go API
-- **Cross-platform**: Linux, macOS, Windows (amd64 and arm64)
+The list below is auto-generated from `internal/features/registry.yaml` (filtered to `tier: stable`). To update, edit the registry and run `make readme-features`.
+
+<!-- BEGIN FEATURES -->
+- **bash-tool** — in-process bash via mvdan/sh — no host shell exec, with security middleware (Setpgid, pre-exec validation)
+- **file-ops** — read, write, edit, glob — file operations bounded by the per-session VFS
+- **search-tools** — Grep, Glob, semantic search, symbol search, AST search across the project
+- **web-tools** — WebFetch, WebSearch — auto-routes between Brave / Tavily / SearXNG / DuckDuckGo
+- **repomap** — token-budgeted file→symbol overview for LLM context (PageRank-scored)
+- **ast-search** — pure-Go tree-sitter for Go, Python, JS/TS, Rust, Java, C, Ruby — structural code search and impact analysis
+- **lsp** — auto-detected LSP servers per language — hover, definition, references, symbol search
+- **bonsai-graph** — embeddable Dgraph (bonsai) for memory relations + code-knowledge mirror; DQL-queryable; Explorer UI mounted at /graph/ in `ycode serve`
+- **git-tools** — 31 native go-git operations (branch, worktree, push, stash, log, …) — no shell-out required
+- **gitea-server** — embedded Gitea git server — no external git host needed for agent workspaces
+- **github-tools** — PR / issue / review / CI-checks via GitHub API — no `gh` binary, auth via GITHUB_TOKEN or ~/.config/gh
+- **mcp-client** — full MCP client (stdio + SSE) for external tool servers; also exposes ycode tools via `ycode mcp serve`
+- **container-runtime** — embedded podman for sandboxed bash execution and per-agent isolation (cgroups, network namespace, overlay FS)
+- **ollama-runtime** — embedded Ollama inference runner for fully-local model execution (HuggingFace GGUF supported)
+- **multi-provider** — Anthropic native + OpenAI-compatible covers OpenAI, xAI/Grok, DashScope/Qwen, Ollama, OpenRouter
+- **serve-mode** — `ycode serve` exposes HTTP/WebSocket + NATS endpoints with embedded observability (Prometheus, Jaeger, VictoriaLogs, Perses)
+- **observability** — OTEL traces + metrics + logs out of the box; agent-facing query tools (query_metrics, query_traces, query_logs)
+- **agent-delegation** — recursive child agent spawning with depth limits; team, parallel, handoff, cron primitives
+- **skills-system** — hierarchical /-prefixed skills (audit, autopilot, build, deploy, eval, …) plus embedded /init, /commit, /review, /pr
+- **plugin-system** — manifest-based plugins with hook lifecycle (PreToolUse, PostToolUse)
+- **memory-system** — five-layer memory (working, episodic, compaction, procedural, persistent) with RRF-fused vector + Bleve + keyword + entity retrieval
+- **session-management** — JSONL persistence, auto-compaction at 100K tokens, semantic summaries
+- **permission-tiers** — three modes (ReadOnly, WorkspaceWrite, DangerFullAccess) with VFS-bounded path resolution and per-tool policy rules
+- **self-healing** — automatic error recovery with classification and retry — no panic kills the loop
+- **oauth-login** — PKCE OAuth flow for Claude authentication (`ycode login`)
+- **embeddable-api** — `pkg/ycode/` exposes a public Go API for embedding the agent harness in other binaries
+- **cross-platform** — single static Go binary; v0.1.0 ships linux/amd64 and darwin/arm64 (other platforms require code work — see release.yml matrix)
+<!-- END FEATURES -->
 
 ## Prerequisites
 

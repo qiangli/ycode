@@ -83,6 +83,40 @@ func newFeaturesCmd() *cobra.Command {
 		},
 	})
 
+	var readmeWrite string
+	readmeCmd := &cobra.Command{
+		Use:   "readme",
+		Short: "Print the stable features as a markdown bullet list (or write into a file via --write)",
+		Long: "Renders the stable-tier features from the registry as the bullet list embedded between\n" +
+			"<!-- BEGIN FEATURES --> and <!-- END FEATURES --> sentinels in README.md.\n\n" +
+			"With no flags, prints the rendered list to stdout.\n" +
+			"With --write README.md, replaces the section in-place (idempotent — exits 0\n" +
+			"with no change if the file is already in sync).",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			reg, err := features.Load()
+			if err != nil {
+				return err
+			}
+			rendered := features.RenderReadmeFeatures(reg)
+			if readmeWrite == "" {
+				fmt.Print(rendered)
+				return nil
+			}
+			changed, err := features.ReplaceSection(readmeWrite, rendered)
+			if err != nil {
+				return err
+			}
+			if changed {
+				fmt.Printf("updated: %s\n", readmeWrite)
+			} else {
+				fmt.Printf("up to date: %s\n", readmeWrite)
+			}
+			return nil
+		},
+	}
+	readmeCmd.Flags().StringVar(&readmeWrite, "write", "", "Path to a file containing BEGIN/END FEATURES markers; replaces the section in-place")
+	cmd.AddCommand(readmeCmd)
+
 	cmd.AddCommand(&cobra.Command{
 		Use:   "verify",
 		Short: "Verify the registry structure (and codebase paths if run from the ycode source tree)",

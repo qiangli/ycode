@@ -56,8 +56,12 @@ compile-wip: ## Compile with experimental + wip features enabled (-tags experime
 	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata,experimental,wip" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 	@echo "Built with experimental + wip features: bin/ycode"
 
-verify-features: ## Verify the feature registry vs. the working tree
+verify-features: ## Verify the feature registry vs. the working tree (and README drift)
 	go test -count=1 ./internal/features/...
+	@./scripts/verify-readme-features.sh
+
+readme-features: ## Regenerate the README Features section from internal/features/registry.yaml
+	go run -tags "sqlite,sqlite_unlock_notify,bindata" ./cmd/ycode/ features readme --write README.md
 
 compile-full: ## Compile with embedded podman + runner (single binary, all-in-one)
 	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata,embed_podman,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
