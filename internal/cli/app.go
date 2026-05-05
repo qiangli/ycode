@@ -785,6 +785,10 @@ func (a *App) Storage() *store.Manager { return a.storage }
 // constructed without a memory subsystem.
 func (a *App) Memory() *memory.Manager { return a.memoryManager }
 
+// Graph returns the underlying memex queryable graph store. May be nil
+// if the App was constructed without one.
+func (a *App) Graph() *memexgraph.Graph { return a.memexGraph }
+
 // InPlanMode returns whether plan mode is active.
 func (a *App) InPlanMode() bool {
 	if a.planMode == nil {

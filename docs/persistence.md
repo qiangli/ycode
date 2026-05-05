@@ -952,3 +952,59 @@ http.Handle("/memos/", mx.HTTPHandler())  // optional web UI
 
 Smoke tests in `examples/memex_store/` and `examples/memex_full/` build
 without any `internal/` dependencies and serve as the public-API contract.
+
+### Graph layer (`pkg/memex/graph`)
+
+Backed by [bonsai](https://github.com/qiangli/bonsai) — a trimmed-down
+embeddable build of Dgraph (single process, no Raft, Apache-2.0). Adds
+DQL queryability over both the file-based memory layer and the gfy
+code-knowledge graph.
+
+```go
+import "github.com/qiangli/ycode/pkg/memex/graph"
+
+g, _ := graph.Open(graph.Options{Dir: "/var/lib/myagent/graph"})
+defer g.Close()
+
+// Insert N-Quads.
+g.Mutate(ctx, []byte(`_:a <code.label> "main" . _:a <dgraph.type> "CodeNode" .`))
+
+// Query with DQL.
+body, _ := g.Query(ctx, `{ q(func: eq(code.label, "main")) { code.kind } }`, nil)
+```
+
+Two ingest bridges are wired by default when using the umbrella:
+
+- **Memory edges**: every `MemoryGraph.AddEdge` writes both the JSON
+  adjacency file (gitfriendly) and an N-Quad pair into bonsai. Query
+  via `MemoryGraph.Query(dql)`.
+- **Code knowledge graph**: `codegraph.Manager.SetGraphTwin(g)` mirrors
+  every gfy build/rebuild into bonsai (CodeNode + code.calls/code.uses
+  predicates). The `query_graph_dql` agent tool exposes DQL traversal
+  alongside the existing 7 gfy-backed tools.
+
+In `ycode serve`, bonsai's embedded Explorer UI is mounted at
+`/graph/` and the JSON DQL endpoint at `/graph/query`. The same store
+is reachable from external embedders via `pkg/ycode.Agent.Graph()` and
+`Agent.GraphHandler()`.
+
+Smoke test: `examples/memex_graph/` opens bonsai, inserts memory edges,
+runs a DQL traversal, and prints the JSON response.
+
+### Org-internal projects: the `peers/` convention
+
+When you need to iterate on a `qiangli/*` project alongside ycode (e.g.
+patching bonsai or gfy without yet publishing a release), clone it
+under `peers/<name>/`:
+
+```sh
+git clone https://github.com/qiangli/bonsai peers/bonsai
+```
+
+`peers/` is gitignored (alongside `priorart/` and `reference/`). To
+activate a peer for development, add `./peers/<name>` to the `use` block
+in `go.work`. Once the upstream change is published, remove the line
+and run `go get github.com/qiangli/<name>@latest`.
+
+Distinct from `external/` (which is for vendored submodules that *are*
+hard build deps, like the embedded podman/ollama/jaeger).

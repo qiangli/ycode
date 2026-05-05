@@ -260,6 +260,11 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		fmt.Printf("Memos at           http://127.0.0.1:%d/memos/\n", port)
 	}
 
+	// Bonsai graph Explorer + DQL endpoint.
+	if stack.bonsai != nil && stack.bonsai.Healthy() {
+		fmt.Printf("Graph at           http://127.0.0.1:%d/graph/\n", port)
+	}
+
 	// Wire Git server client for agent collaboration tools.
 	if stack.gitServer != nil && stack.gitServer.Healthy() {
 		giteaClient := gitserver.NewClient(stack.gitServer.BaseURL(), fullCfg.GitServer.Token)
@@ -439,6 +444,7 @@ func detachServer(cfg *config.ObservabilityConfig, dataDir string) error {
 type stackComponents struct {
 	mgr           *observability.StackManager
 	memos         *observability.MemosComponent
+	bonsai        *observability.BonsaiComponent
 	ollama        *inference.OllamaComponent
 	containers    *container.ContainerComponent
 	gitServer     *gitserver.GitServerComponent
@@ -517,6 +523,10 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 	memosComp := observability.NewMemosComponent(filepath.Join(dataDir, "memos"))
 	mgr.AddComponent(memosComp)
 
+	// Bonsai — embeddable graph DB for memex DQL queries + Explorer UI.
+	bonsaiComp := observability.NewBonsaiComponent(filepath.Join(dataDir, "graph"))
+	mgr.AddComponent(bonsaiComp)
+
 	// Ollama — local inference engine (optional managed runner).
 	var ollamaComp *inference.OllamaComponent
 	if inferCfg != nil && inferCfg.Enabled {
@@ -568,6 +578,7 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 	return &stackComponents{
 		mgr:           mgr,
 		memos:         memosComp,
+		bonsai:        bonsaiComp,
 		ollama:        ollamaComp,
 		containers:    containerComp,
 		gitServer:     gitComp,

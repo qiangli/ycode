@@ -201,6 +201,7 @@ var componentPathMap = map[string]string{
 	"jaeger":         "/traces/",
 	"ycode":          "/ycode/",
 	"memos":          "/memos/",
+	"bonsai":         "/graph/",
 	"ollama":         "/ollama/",
 	"chat":           "/chat/",
 	"pulse":          "/pulse/",

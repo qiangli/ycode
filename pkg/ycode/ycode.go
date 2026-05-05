@@ -17,6 +17,7 @@ import (
 	"github.com/qiangli/ycode/internal/server"
 	"github.com/qiangli/ycode/internal/service"
 	"github.com/qiangli/ycode/internal/tools"
+	memexgraph "github.com/qiangli/ycode/pkg/memex/graph"
 	"github.com/qiangli/ycode/pkg/memex/memory"
 	"github.com/qiangli/ycode/pkg/memex/store"
 )
@@ -150,6 +151,20 @@ func (a *Agent) Memory() *memory.Manager { return a.app.Memory() }
 // Storage returns the underlying memex store.Manager (KV/SQL/search/vector).
 // May be nil for agents that don't carry a persistent store.
 func (a *Agent) Storage() *store.Manager { return a.app.Storage() }
+
+// Graph returns the underlying memex queryable graph store (bonsai). May
+// be nil if the agent was constructed without one. Callers can issue DQL
+// queries directly via Graph().Query.
+func (a *Agent) Graph() *memexgraph.Graph { return a.app.Graph() }
+
+// GraphHandler returns the bonsai HTTP handler (DQL query endpoint).
+// Mountable on any HTTP mux. Returns nil if no graph is configured.
+func (a *Agent) GraphHandler() http.Handler {
+	if g := a.Graph(); g != nil {
+		return g.HTTPHandler()
+	}
+	return nil
+}
 
 // Event represents a streaming event from the agent.
 type Event struct {
