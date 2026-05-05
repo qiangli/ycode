@@ -530,6 +530,38 @@ The risk: portal expansion = more half-baked feature surface. Mitigations:
 - Earning portal language after dominating coding-agent benchmarks = category creation. (See: how Notion expanded from "notes" to "all-in-one workspace" only after notes was undeniably good.)
 - The roadmap phases reflect this: Phases 0–3 establish coding-agent dominance + on-ramp. Phase 6 (portal) only begins after Phase 3's exit gate is hit.
 
+## Versioning & releases
+
+ycode follows **semver**. The current major is `0`, meaning the API, CLI surface, config schema, and persisted on-disk formats are all subject to breaking changes between minor versions. Stability promises start at `1.0.0` — and `1.0.0` is gated on Phase 3 exit (see roadmap).
+
+### Tagging convention
+
+| Tag form | Meaning | When |
+|---|---|---|
+| `v0.0.x` | Patch — bug fix, doc fix, dependency bump | Frequent (≥ weekly during active dev) |
+| `v0.x.0` | Minor — new feature graduates to `stable`, or new user-facing capability | Whenever a tracked Phase 0–3 item exits its gate |
+| `v1.0.0` | Major — first stable release. Breaking changes promise begins here | Gated on Phase 3 exit (see roadmap) |
+| `v*.*.*-rc.N` / `-alpha.N` | Pre-release | Before risky cuts — auto-marked as pre-release in GitHub Releases |
+
+Tags are annotated (`git tag -a`) so the message becomes part of the GitHub Release body. The `v` prefix is required — the release workflow trigger is `v*`.
+
+### Release cadence
+
+Aligned with [Operating principle 1](#1-ship-every-2-weeks-no-exceptions): **every two weeks at minimum**, more often if a load-bearing fix is ready. A long gap between tags is a signal to audit — either the work isn't shipping or the tagging discipline has slipped. Both deserve attention.
+
+### What a release contains
+
+The `release.yml` workflow on every `v*` tag push:
+- Builds binaries natively per platform (linux-amd64 on ubuntu, darwin-amd64/arm64 on macos, windows-amd64 on windows)
+- Packages tar.gz for Unix and zip for Windows
+- Publishes a `SHA256SUMS` file alongside the archives
+- Creates a GitHub Release with auto-generated notes from the commit log between tags
+- Auto-marks anything tagged `vX.Y.Z-...` as pre-release
+
+### Promotion-to-stable triggers a tag
+
+Per the [feature-tier policy](#mechanism-to-enforce-the-floor-feature-tiers-via-go-build-tags), promoting a feature from `experimental` to `stable` is a user-visible behavior change. It must ship in a tagged release — bumping the minor version. This binds the tier-graduation discipline to the release discipline so the README's "stable features" list is always reproducible from a known tag.
+
 ## Roadmap
 
 Phased, dependency-ordered. Weeks are indicative, not contractual; the order is the load-bearing part. Each phase has an exit gate — do not start the next phase until the current gate passes.
