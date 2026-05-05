@@ -1,12 +1,17 @@
 package memory
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/qiangli/ycode/pkg/memex/graph"
 )
 
 // GraphEdge represents a typed relationship between two entities or memories.
@@ -19,11 +24,17 @@ type GraphEdge struct {
 }
 
 // MemoryGraph provides a lightweight in-process graph for relational reasoning.
-// Stored as an adjacency list in a JSON file.
+// Stored as an adjacency list in a JSON file. Optionally mirrors writes
+// into a *graph.Graph (bonsai) so callers can issue DQL queries against
+// the same edges via Query.
 type MemoryGraph struct {
 	edges map[string][]GraphEdge // keyed by "from" node
 	path  string
 	mu    sync.RWMutex
+
+	// Optional bonsai twin. When set, AddEdge / BuildEntityCooccurrenceEdges
+	// dual-write to it. Wired by the memex umbrella; never required.
+	twin *graph.Graph
 }
 
 // NewMemoryGraph creates a new memory graph backed by a JSON file.
@@ -32,6 +43,92 @@ func NewMemoryGraph(dir string) *MemoryGraph {
 		edges: make(map[string][]GraphEdge),
 		path:  filepath.Join(dir, "_graph.json"),
 	}
+}
+
+// WithGraph wires an optional bonsai twin so subsequent edge writes are
+// also persisted as N-Quads in the queryable graph store. Returns the
+// receiver for chaining. Pass nil to detach.
+func (g *MemoryGraph) WithGraph(twin *graph.Graph) *MemoryGraph {
+	g.mu.Lock()
+	g.twin = twin
+	g.mu.Unlock()
+	return g
+}
+
+// Query runs a DQL query against the bonsai twin. Returns an error if no
+// twin is wired. Vars may be nil.
+func (g *MemoryGraph) Query(ctx context.Context, dql string, vars map[string]string) ([]byte, error) {
+	g.mu.RLock()
+	twin := g.twin
+	g.mu.RUnlock()
+	if twin == nil {
+		return nil, fmt.Errorf("memory.MemoryGraph: no graph twin wired; call WithGraph first")
+	}
+	return twin.Query(ctx, dql, vars)
+}
+
+// sinkEdge dual-writes a single edge into the bonsai twin if set. Errors
+// are logged best-effort and never returned: the JSON file remains the
+// source of truth, the twin is for query convenience.
+func (g *MemoryGraph) sinkEdge(e GraphEdge) {
+	if g.twin == nil {
+		return
+	}
+	nquads := edgeToNQuads(e)
+	if len(nquads) == 0 {
+		return
+	}
+	if _, err := g.twin.Mutate(context.Background(), nquads); err != nil {
+		slog.Debug("memory.MemoryGraph: twin sink failed", "err", err, "from", e.From, "to", e.To)
+	}
+}
+
+// edgeToNQuads renders one memory.GraphEdge as N-Quads RDF text.
+//
+// Schema mapping (see pkg/memex/graph/schema.go):
+//   - Memory nodes are addressed by memory.name (which has @upsert).
+//   - Outgoing edges become memory.related_to / memory.supersedes /
+//     memory.derived_from depending on the Relation field.
+//   - Other relations (authored_by, depends_on, decided_in, replaced_by)
+//     are mapped to memory.related_to with a facet `relation=<original>`
+//     so the original semantic is recoverable on read.
+func edgeToNQuads(e GraphEdge) []byte {
+	if e.From == "" || e.To == "" {
+		return nil
+	}
+	from := nquadEscape(e.From)
+	to := nquadEscape(e.To)
+	pred := relationToPredicate(e.Relation)
+	var b strings.Builder
+	// Upsert nodes by name (the schema marks memory.name as @upsert, so
+	// repeated writes converge on the same UID).
+	fmt.Fprintf(&b, "_:from <memory.name> %q .\n", from)
+	fmt.Fprintf(&b, "_:from <dgraph.type> \"Memory\" .\n")
+	fmt.Fprintf(&b, "_:to <memory.name> %q .\n", to)
+	fmt.Fprintf(&b, "_:to <dgraph.type> \"Memory\" .\n")
+	if pred == "memory.related_to" && e.Relation != "related_to" && e.Relation != "" {
+		fmt.Fprintf(&b, "_:from <%s> _:to (relation=%q, weight=%g) .\n", pred, e.Relation, e.Weight)
+	} else {
+		fmt.Fprintf(&b, "_:from <%s> _:to .\n", pred)
+	}
+	return []byte(b.String())
+}
+
+func relationToPredicate(rel string) string {
+	switch rel {
+	case "supersedes":
+		return "memory.supersedes"
+	case "derived_from":
+		return "memory.derived_from"
+	default:
+		return "memory.related_to"
+	}
+}
+
+// nquadEscape escapes characters that would break N-Quad string literals.
+func nquadEscape(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`)
+	return r.Replace(s)
 }
 
 // Load reads the graph from disk.
@@ -76,14 +173,16 @@ func (g *MemoryGraph) AddEdge(from, to, relation string, weight float64) error {
 			return nil // already exists
 		}
 	}
-	g.edges[from] = append(g.edges[from], GraphEdge{
+	edge := GraphEdge{
 		From:      from,
 		To:        to,
 		Relation:  relation,
 		Weight:    weight,
 		CreatedAt: time.Now(),
-	})
+	}
+	g.edges[from] = append(g.edges[from], edge)
 	g.mu.Unlock()
+	g.sinkEdge(edge)
 	return g.Save()
 }
 
@@ -204,17 +303,24 @@ func (g *MemoryGraph) BuildEntityCooccurrenceEdges(store *PersistentEntityStore)
 						break
 					}
 				}
+				var newEdge GraphEdge
+				inserted := false
 				if !exists {
-					g.edges[refs[i]] = append(g.edges[refs[i]], GraphEdge{
+					newEdge = GraphEdge{
 						From:      refs[i],
 						To:        refs[j],
 						Relation:  "related_to",
 						Weight:    weight,
 						CreatedAt: time.Now(),
-					})
+					}
+					g.edges[refs[i]] = append(g.edges[refs[i]], newEdge)
 					added++
+					inserted = true
 				}
 				g.mu.Unlock()
+				if inserted {
+					g.sinkEdge(newEdge)
+				}
 			}
 		}
 	}

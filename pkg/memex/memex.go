@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 
+	"github.com/qiangli/ycode/pkg/memex/graph"
 	"github.com/qiangli/ycode/pkg/memex/memory"
 	"github.com/qiangli/ycode/pkg/memex/memos"
 	"github.com/qiangli/ycode/pkg/memex/store"
@@ -17,12 +18,14 @@ import (
 // Memex bundles the memex subpackages behind a single handle. All accessors
 // are safe for concurrent use; close once via Close when shutting down.
 type Memex struct {
-	cfg     config
-	storage *store.Manager
-	memory  *memory.Manager
-	memos   memos.Store
-	vfs     VFS
-	handler http.Handler
+	cfg      config
+	storage  *store.Manager
+	memory   *memory.Manager
+	memos    memos.Store
+	graph    *graph.Graph
+	memGraph *memory.MemoryGraph
+	vfs      VFS
+	handler  http.Handler
 }
 
 type config struct {
@@ -101,11 +104,27 @@ func Open(dir string, opts ...Option) (*Memex, error) {
 		memoStore = memos.NewSQLStore(sql)
 	}
 
+	graphDir := filepath.Join(dir, "graph")
+	gr, err := graph.Open(graph.Options{Dir: graphDir, Logger: cfg.logger})
+	if err != nil {
+		_ = sm.Close()
+		return nil, fmt.Errorf("memex open: graph: %w", err)
+	}
+
+	memGraph := memory.NewMemoryGraph(memoryDir).WithGraph(gr)
+	if err := memGraph.Load(); err != nil {
+		_ = gr.Close()
+		_ = sm.Close()
+		return nil, fmt.Errorf("memex open: load memory graph: %w", err)
+	}
+
 	m := &Memex{
-		cfg:     cfg,
-		storage: sm,
-		memory:  mem,
-		memos:   memoStore,
+		cfg:      cfg,
+		storage:  sm,
+		memory:   mem,
+		memos:    memoStore,
+		graph:    gr,
+		memGraph: memGraph,
 	}
 	m.vfs = NewVFS(mem, memoStore)
 	if memoStore != nil {
@@ -130,10 +149,36 @@ func (m *Memex) VFS() VFS { return m.vfs }
 // is nil. Mountable on any HTTP mux.
 func (m *Memex) HTTPHandler() http.Handler { return m.handler }
 
+// Graph returns the bonsai-backed queryable graph store. Always non-nil
+// after a successful Open.
+func (m *Memex) Graph() *graph.Graph { return m.graph }
+
+// MemoryGraph returns the memory-edge convenience layer wired to the
+// graph twin. AddEdge writes both the JSON file and the bonsai store;
+// Query proxies DQL queries to the twin.
+func (m *Memex) MemoryGraph() *memory.MemoryGraph { return m.memGraph }
+
+// GraphHandler returns the bonsai HTTP query handler. Mountable at any
+// path prefix; serves POST /query for DQL.
+func (m *Memex) GraphHandler() http.Handler {
+	if m.graph == nil {
+		return nil
+	}
+	return m.graph.HTTPHandler()
+}
+
 // Close shuts down all underlying backends.
 func (m *Memex) Close() error {
-	if m.storage != nil {
-		return m.storage.Close()
+	var firstErr error
+	if m.graph != nil {
+		if err := m.graph.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
-	return nil
+	if m.storage != nil {
+		if err := m.storage.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }

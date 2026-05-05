@@ -83,6 +83,57 @@ func RegisterGraphHandlers(r *Registry, mgr *codegraph.Manager) {
 	})
 }
 
+// RegisterGraphDQLHandler registers the query_graph_dql tool. The tool
+// runs an arbitrary DQL query against the bonsai-backed memex graph (which
+// mirrors gfy's code-knowledge graph and the memory edge graph). Callers
+// pass the *pkg/memex/graph.Graph from the umbrella Memex.
+//
+// graph is structurally typed here so this package doesn't import
+// pkg/memex/graph directly — the wiring layer (cli.NewApp / cmd/ycode)
+// owns that import.
+func RegisterGraphDQLHandler(r *Registry, mg DQLQuerier) {
+	if mg == nil || r == nil {
+		return
+	}
+	spec := &ToolSpec{
+		Name:        "query_graph_dql",
+		Description: "Run a DQL (Dgraph Query Language) query against the memex code+memory graph. Returns the raw JSON response. Useful for ad-hoc traversal beyond the predefined graph tools.",
+		InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "dql":  {"type": "string", "description": "DQL query string"},
+    "vars": {"type": "object", "description": "Optional variables map (string→string)"}
+  },
+  "required": ["dql"]
+}`),
+		AlwaysAvailable: false,
+		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
+			var params struct {
+				DQL  string            `json:"dql"`
+				Vars map[string]string `json:"vars"`
+			}
+			if err := json.Unmarshal(input, &params); err != nil {
+				return "", fmt.Errorf("parse query_graph_dql input: %w", err)
+			}
+			if params.DQL == "" {
+				return "", fmt.Errorf("query_graph_dql: dql parameter is required")
+			}
+			body, err := mg.Query(ctx, params.DQL, params.Vars)
+			if err != nil {
+				return "", err
+			}
+			return string(body), nil
+		},
+	}
+	_ = r.Register(spec)
+}
+
+// DQLQuerier is the minimal interface query_graph_dql needs from a memex
+// graph store. *pkg/memex/graph.Graph satisfies it.
+type DQLQuerier interface {
+	Query(ctx context.Context, dql string, vars map[string]string) ([]byte, error)
+}
+
 type graphToolFunc func(gc *codegraph.GraphContext, input json.RawMessage) (string, error)
 
 func registerGraphTool(r *Registry, name string, mgr *codegraph.Manager, noGraphMsg string, fn graphToolFunc) {

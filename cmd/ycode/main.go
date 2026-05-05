@@ -41,6 +41,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/vfs"
 	"github.com/qiangli/ycode/internal/selfheal"
 	"github.com/qiangli/ycode/internal/tools"
+	memexgraph "github.com/qiangli/ycode/pkg/memex/graph"
 	"github.com/qiangli/ycode/pkg/memex/memory"
 	"github.com/qiangli/ycode/pkg/memex/store"
 	"github.com/qiangli/ycode/pkg/memex/store/kv"
@@ -212,6 +213,18 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	memManager, err := memory.NewManagerWithGlobal(globalMemDir, memoryDir)
 	if err != nil {
 		return nil, fmt.Errorf("create memory manager: %w", err)
+	}
+
+	// Memex queryable graph (bonsai). Lives next to the SQLite/KV stores
+	// under storageDataDir so all persistence shares one root. Best-effort:
+	// failure to open is logged but does not block startup; the codegraph
+	// gfy pipeline keeps working without DQL queryability.
+	memGraph, err := memexgraph.Open(memexgraph.Options{
+		Dir: filepath.Join(storageDataDir, "graph"),
+	})
+	if err != nil {
+		slog.Warn("memex graph unavailable; query_graph_dql disabled", "error", err)
+		memGraph = nil
 	}
 
 	// Plan mode manager.
@@ -569,6 +582,7 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 		OllamaLister:    inference.NewOllamaLister(),
 		InferenceRouter: inferenceRouter,
 		MemoryManager:   memManager,
+		MemexGraph:      memGraph,
 	})
 	if err != nil {
 		return nil, err

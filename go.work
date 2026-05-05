@@ -16,3 +16,8 @@ replace (
 	github.com/VictoriaMetrics/VictoriaLogs => ./external/victorialogs
 	github.com/perses/perses => ./external/perses
 )
+
+// peers/ convention (gitignored): clone qiangli/* repos under peers/<name>
+// when you need to iterate on them alongside ycode. To activate a peer,
+// add `./peers/<name>` to the `use` directive above. Remove the line and
+// run `go get github.com/qiangli/<name>@latest` once upstream is current.

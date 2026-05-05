@@ -33,6 +33,8 @@ debug/
 tmp/
 priorart/
 reference/
+peers/
+go.work.local
 evals/results/
 #
 .gfy-out/

@@ -35,6 +35,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/usage"
 	"github.com/qiangli/ycode/internal/runtime/worker"
 	"github.com/qiangli/ycode/internal/tools"
+	memexgraph "github.com/qiangli/ycode/pkg/memex/graph"
 	"github.com/qiangli/ycode/pkg/memex/memory"
 	"github.com/qiangli/ycode/pkg/memex/store"
 )
@@ -58,6 +59,11 @@ type App struct {
 
 	// Storage manager for persistence layer.
 	storage *store.Manager
+
+	// Optional memex queryable graph store. May be nil; when set, the
+	// codegraph mirror writes to it after each Rebuild and the
+	// query_graph_dql tool is registered.
+	memexGraph *memexgraph.Graph
 
 	// Task registry for background tasks (including background agents).
 	taskRegistry *task.Registry
@@ -120,6 +126,7 @@ type AppOptions struct {
 	PromptCtx       *prompt.ProjectContext
 	UserConfigPath  string
 	Storage         *store.Manager
+	MemexGraph      *memexgraph.Graph
 	ConvOTEL        *conversation.OTELConfig
 	OllamaLister    api.OllamaLister
 	AgentDefsDir    string // directory containing custom agent YAML definitions
@@ -192,6 +199,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		workDir:         o.WorkDir,
 		userConfigPath:  o.UserConfigPath,
 		storage:         o.Storage,
+		memexGraph:      o.MemexGraph,
 		usageTracker:    usage.NewTracker(),
 		sessionStart:    time.Now(),
 		convOTEL:        o.ConvOTEL,
@@ -251,6 +259,13 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 
 		// Register code graph query tools with live manager.
 		tools.RegisterGraphHandlers(app.toolRegistry, app.graphManager)
+
+		// If a memex graph is wired, mirror gfy results into it after each
+		// rebuild and register the query_graph_dql tool for ad-hoc DQL.
+		if app.memexGraph != nil {
+			app.graphManager.SetGraphTwin(app.memexGraph)
+			tools.RegisterGraphDQLHandler(app.toolRegistry, app.memexGraph)
+		}
 
 		// Chain graph invalidation onto the file write hook so the graph
 		// rebuilds automatically when code changes during the session.

@@ -507,6 +507,26 @@ type Manager struct {
 	cachePath  string
 	dirty      atomic.Bool
 	rebuilding atomic.Bool
+
+	// Optional bonsai twin. When set (via WithGraphTwin), each successful
+	// Set/Rebuild also mirrors the graph into the queryable store so the
+	// query_graph_dql tool can issue DQL traversals.
+	twin twinSink
+}
+
+// twinSink is the minimal interface Manager needs from a memex graph store.
+// Defined as an interface here so internal/runtime/codegraph does not need
+// a hard import of pkg/memex/graph (the wiring caller owns that import).
+type twinSink interface {
+	MirrorTarget()
+}
+
+// MirrorSink is implemented by *pkg/memex/graph.Graph (or anything else
+// that can serve as a target for codegraph mirroring). The receiver method
+// is unexported as a tag — actual writes go through GraphContext.MirrorTo
+// which the wiring layer invokes.
+type MirrorSink interface {
+	twinSink
 }
 
 // NewManager creates a graph manager for the given project root.
@@ -536,16 +556,23 @@ func (m *Manager) Get() *GraphContext {
 	return m.gc
 }
 
-// Set atomically replaces the graph and saves the cache.
+// Set atomically replaces the graph and saves the cache. If a graph twin
+// has been wired via SetGraphTwin, the new graph is also mirrored to it.
+// Mirror failures are logged, not returned: the gfy cache remains the
+// source of truth.
 func (m *Manager) Set(gc *GraphContext) {
 	m.mu.Lock()
 	m.gc = gc
 	m.dirty.Store(false)
+	twin := m.twin
 	m.mu.Unlock()
 
 	if gc != nil {
 		if err := gc.Save(m.cachePath); err != nil {
 			slog.Warn("codegraph: failed to save cache", "error", err)
+		}
+		if twin != nil {
+			m.mirrorAsync(gc, twin)
 		}
 	}
 }
@@ -596,6 +623,43 @@ func (m *Manager) RebuildWithProgress(ctx context.Context, progress ProgressFunc
 	m.Set(gc)
 	slog.Info("codegraph: rebuild complete", "nodes", gc.Stats.NodeCount, "edges", gc.Stats.EdgeCount)
 	return nil
+}
+
+// SetGraphTwin wires an optional bonsai mirror target. After each Set
+// (which fires after Rebuild), the new graph is mirrored asynchronously
+// into the twin so DQL queries see fresh data. Pass nil to detach.
+func (m *Manager) SetGraphTwin(twin MirrorSink) {
+	m.mu.Lock()
+	m.twin = twin
+	m.mu.Unlock()
+	// Mirror existing graph immediately so a freshly-wired twin reflects
+	// any cache loaded at startup.
+	gc := m.Get()
+	if gc != nil && twin != nil {
+		m.mirrorAsync(gc, twin)
+	}
+}
+
+// mirrorAsync runs the mirror in a background goroutine so the calling
+// path (Set / Rebuild) is not blocked by the queryable store's write
+// latency. The twin is responsible for serializing its own concurrent
+// writes if needed.
+func (m *Manager) mirrorAsync(gc *GraphContext, twin twinSink) {
+	go func() {
+		// The twin interface is intentionally minimal here so that
+		// internal/runtime/codegraph doesn't import pkg/memex/graph.
+		// The real mirror call lives in mirror.go and accepts the
+		// concrete *graph.Graph; we cast back via the helper interface.
+		mirror, ok := twin.(graphMirror)
+		if !ok {
+			slog.Warn("codegraph: twin does not implement graphMirror")
+			return
+		}
+		ctx := context.Background()
+		if err := gc.mirrorTo(ctx, mirror); err != nil {
+			slog.Warn("codegraph: mirror to twin failed", "error", err)
+		}
+	}()
 }
 
 // IsDirty returns whether the graph needs rebuilding.
