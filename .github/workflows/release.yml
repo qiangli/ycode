@@ -40,21 +40,21 @@ jobs:
             goos: linux
             goarch: amd64
             ext: ""
-          - target: darwin-amd64
-            runs-on: macos-latest
-            goos: darwin
-            goarch: amd64
-            ext: ""
           - target: darwin-arm64
             runs-on: macos-latest
             goos: darwin
             goarch: arm64
             ext: ""
-          # Windows is intentionally absent: the vendored podman in
-          # external/podman uses Unix-only syscalls (unix.Rlimit, etc.).
-          # Adding Windows requires either build constraints around the
-          # container code or a Windows-compatible podman fork. Tracked as
-          # a follow-up.
+          # Excluded for v0.0.x — each requires code work, not just CI fix:
+          #   darwin-amd64: pkg/oci/machine → podman libkrun has
+          #     //go:build darwin && arm64 — internal/container/machine.go
+          #     imports it unconditionally, so darwin-amd64 fails to compile.
+          #   windows-amd64: external/podman/pkg/util/rlimit.go uses
+          #     unix.Rlimit/Getrlimit — Unix-only.
+          #   linux-arm64: not yet tested; CGO cross-compile from amd64
+          #     runner needs gcc-aarch64-linux-gnu setup.
+          # Tracked as follow-up. Don't add a target back to this matrix
+          # until a successful native build has been confirmed.
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v4
