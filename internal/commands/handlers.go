@@ -313,43 +313,51 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		}
 
 		var outputParts []string
+		// emit appends to the tool result and, when the TUI has wired a
+		// LogProgress callback, streams the line live so the user sees
+		// each step as it happens (the gfy graph build can take minutes
+		// on large repos with no cache).
+		emit := func(msg string) {
+			outputParts = append(outputParts, msg)
+			if deps.LogProgress != nil {
+				deps.LogProgress(msg)
+			}
+		}
 
 		// Phase 1: Scaffold (always shown first).
 		report, err := InitializeRepo(cwd)
 		if err != nil {
 			return "", fmt.Errorf("init scaffold failed: %w", err)
 		}
-		outputParts = append(outputParts, report.Render())
+		emit(report.Render())
 
 		// Phase 2: Single-shot enhancement if provider available.
 		// Uses opencode-style template with structured investigation guidance.
 		if deps.Provider == nil || deps.Config == nil {
-			outputParts = append(outputParts, "⚠ Skipped LLM enhancement (no API provider configured)")
+			emit("⚠ Skipped LLM enhancement (no API provider configured)")
 		} else {
 			chain := builtin.ResolveModelChain(deps.Config, deps.Provider)
 
 			// Gather context using opencode-style investigation.
-			outputParts = append(outputParts, "⧗ Analyzing project structure...")
+			emit("⧗ Analyzing project structure...")
 			gen := builtin.NewInitGenerator(cwd)
-			gen.SetProgressFunc(func(msg string) {
-				outputParts = append(outputParts, msg)
-			})
+			gen.SetProgressFunc(emit)
 			if deps.GraphManager != nil {
 				gen.SetGraphManager(deps.GraphManager)
 			}
 			initResult, genErr := gen.Generate(args)
 			if genErr != nil {
-				outputParts = append(outputParts, fmt.Sprintf("⚠ Failed to gather project context: %v", genErr))
+				emit(fmt.Sprintf("⚠ Failed to gather project context: %v", genErr))
 			} else if initResult == nil {
-				outputParts = append(outputParts, "⚠ Failed to gather project context (no result)")
+				emit("⚠ Failed to gather project context (no result)")
 			} else {
 				// Generate AGENTS.md via single LLM call.
-				outputParts = append(outputParts, "⧗ Generating AGENTS.md via LLM...")
+				emit("⧗ Generating AGENTS.md via LLM...")
 				llmResult, llmErr := chain.SingleShotWithUsageAndTimeout(ctx, initResult.SystemPrompt, initResult.UserPrompt, 4096, builtin.InitSingleShotTimeout)
 				if llmErr != nil {
-					outputParts = append(outputParts, fmt.Sprintf("⚠ LLM generation failed: %v", llmErr))
+					emit(fmt.Sprintf("⚠ LLM generation failed: %v", llmErr))
 				} else if llmResult == nil || llmResult.Text == "" {
-					outputParts = append(outputParts, "⚠ LLM returned empty response — AGENTS.md not updated")
+					emit("⚠ LLM returned empty response — AGENTS.md not updated")
 				} else {
 					agentsPath := filepath.Join(cwd, "AGENTS.md")
 					cleaned := builtin.CleanInitOutput(llmResult.Text)
@@ -357,16 +365,16 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 					// Compare against existing content to detect no-op updates.
 					existing, _ := os.ReadFile(agentsPath)
 					if len(existing) > 0 && builtin.ContentUnchanged(string(existing), cleaned) {
-						outputParts = append(outputParts, "✓ AGENTS.md is already well-structured — no changes needed")
+						emit("✓ AGENTS.md is already well-structured — no changes needed")
 					} else if err := os.WriteFile(agentsPath, []byte(cleaned), 0o644); err != nil {
-						outputParts = append(outputParts, fmt.Sprintf("⚠ Failed to write AGENTS.md: %v", err))
+						emit(fmt.Sprintf("⚠ Failed to write AGENTS.md: %v", err))
 					} else {
-						outputParts = append(outputParts, fmt.Sprintf("✓ Updated AGENTS.md (analyzed: %v)", initResult.FilesRead))
+						emit(fmt.Sprintf("✓ Updated AGENTS.md (analyzed: %v)", initResult.FilesRead))
 						if len(initResult.Questions) > 0 {
-							outputParts = append(outputParts, "")
-							outputParts = append(outputParts, "Consider answering these questions to improve AGENTS.md:")
+							emit("")
+							emit("Consider answering these questions to improve AGENTS.md:")
 							for _, q := range initResult.Questions {
-								outputParts = append(outputParts, fmt.Sprintf("  - %s", q))
+								emit(fmt.Sprintf("  - %s", q))
 							}
 						}
 					}
@@ -376,7 +384,7 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 					}
 					if llmResult.InputTokens > 0 || llmResult.OutputTokens > 0 {
 						totalTokens := llmResult.InputTokens + llmResult.OutputTokens
-						outputParts = append(outputParts, fmt.Sprintf("  Tokens: %d in, %d out (%d total)",
+						emit(fmt.Sprintf("  Tokens: %d in, %d out (%d total)",
 							llmResult.InputTokens, llmResult.OutputTokens, totalTokens))
 					}
 				}

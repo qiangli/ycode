@@ -7,6 +7,7 @@ package codegraph
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -46,56 +47,138 @@ type Stats struct {
 	FilesAnalyzed  int
 }
 
+// ProgressFunc receives human-readable status messages emitted at each phase
+// of the build pipeline. May be nil. Implementations must be non-blocking.
+type ProgressFunc func(msg string)
+
+func emit(p ProgressFunc, msg string) {
+	if p != nil {
+		p(msg)
+	}
+}
+
+// stdioMu serializes stdout/stderr swaps. The gfy library writes progress
+// directly to os.Stdout/os.Stderr via fmt.Printf, which corrupts the Bubble
+// Tea alt-screen and — far worse — competes for the program's unbuffered
+// message channel when forwarded as progress events, starving keyboard input
+// (the channel is `make(chan Msg)` in bubbletea v1.3, see tea.go:244).
+//
+// captureStdio swaps both streams for a pipe whose read end is drained
+// straight into io.Discard for the duration of fn. The captured bytes never
+// reach the TUI: ycode's per-phase markers are sufficient progress, and the
+// terminal alt-screen stays clean. The drainer also keeps the pipe's kernel
+// buffer empty so gfy's fmt.Printf never blocks the build goroutine.
+var stdioMu sync.Mutex
+
+func captureStdio(_ ProgressFunc, fn func() error) (err error) {
+	stdioMu.Lock()
+	defer stdioMu.Unlock()
+
+	origOut, origErr := os.Stdout, os.Stderr
+	r, w, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		// Best-effort: run fn unwrapped rather than failing the build.
+		return fn()
+	}
+
+	os.Stdout = w
+	os.Stderr = w
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = io.Copy(io.Discard, r)
+	}()
+
+	defer func() {
+		os.Stdout = origOut
+		os.Stderr = origErr
+		_ = w.Close()
+		<-done
+		_ = r.Close()
+	}()
+
+	return fn()
+}
+
 // Build runs the full gfy pipeline: detect → extract → build → cluster → analyze.
-// Returns the graph context and caches the result to the given path.
+// Returns the graph context. Use BuildWithProgress to receive per-phase status.
 func Build(cwd string) (*GraphContext, error) {
-	// Phase 1: Detect files.
-	detection := detect.Detect(cwd, false)
-	if detection == nil {
-		return nil, fmt.Errorf("file detection returned no results")
+	return BuildWithProgress(cwd, nil)
+}
+
+// BuildWithProgress runs the full gfy pipeline and streams a status message
+// at the start and end of each phase via the optional progress callback.
+//
+// gfy writes its own progress directly to os.Stdout/os.Stderr; those streams
+// are intercepted for the duration of the build and forwarded through
+// progress so they don't corrupt a Bubble Tea alt-screen.
+func BuildWithProgress(cwd string, progress ProgressFunc) (*GraphContext, error) {
+	var ctx *GraphContext
+	err := captureStdio(progress, func() error {
+		// Phase 1: Detect files.
+		emit(progress, "  ⧗ [1/5] Detecting code files...")
+		detection := detect.Detect(cwd, false)
+		if detection == nil {
+			return fmt.Errorf("file detection returned no results")
+		}
+
+		codeFiles := detection.Files[types.Code]
+		if len(codeFiles) == 0 {
+			return fmt.Errorf("no code files found in %s", cwd)
+		}
+		languages := detectLanguages(codeFiles)
+		emit(progress, fmt.Sprintf("  ✓ [1/5] Detected %d code files (%d total, %d languages: %s)",
+			len(codeFiles), detection.TotalFiles, len(languages), strings.Join(languages, ", ")))
+
+		// Phase 2: Extract AST symbols.
+		emit(progress, fmt.Sprintf("  ⧗ [2/5] Extracting symbols from %d files...", len(codeFiles)))
+		extraction := extract.Extract(codeFiles, cwd)
+		if extraction == nil {
+			return fmt.Errorf("extraction returned no results")
+		}
+		emit(progress, fmt.Sprintf("  ✓ [2/5] Extracted %d nodes, %d edges",
+			len(extraction.Nodes), len(extraction.Edges)))
+
+		// Phase 3: Build graph.
+		emit(progress, "  ⧗ [3/5] Building graph...")
+		g := build.BuildFromResult(extraction, false)
+		if g == nil {
+			return fmt.Errorf("graph construction failed")
+		}
+		emit(progress, fmt.Sprintf("  ✓ [3/5] Graph built (%d nodes, %d edges)",
+			g.NodeCount(), g.EdgeCount()))
+
+		// Phase 4: Detect communities.
+		emit(progress, "  ⧗ [4/5] Detecting communities...")
+		communities := cluster.Cluster(g)
+		emit(progress, fmt.Sprintf("  ✓ [4/5] Found %d communities", len(communities)))
+
+		// Phase 5: Analyze.
+		emit(progress, "  ⧗ [5/5] Analyzing god nodes and surprising connections...")
+		godNodes := analyze.GodNodes(g, 15)
+		surprises := analyze.SurprisingConnections(g, communities, 10)
+		emit(progress, fmt.Sprintf("  ✓ [5/5] Analysis done (%d god nodes, %d surprising connections)",
+			len(godNodes), len(surprises)))
+
+		ctx = &GraphContext{
+			Graph:       g,
+			Communities: communities,
+			GodNodes:    godNodes,
+			Surprises:   surprises,
+			Stats: Stats{
+				NodeCount:      g.NodeCount(),
+				EdgeCount:      g.EdgeCount(),
+				CommunityCount: len(communities),
+				Languages:      languages,
+				FilesAnalyzed:  len(codeFiles),
+			},
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	codeFiles := detection.Files[types.Code]
-	if len(codeFiles) == 0 {
-		return nil, fmt.Errorf("no code files found in %s", cwd)
-	}
-
-	// Phase 2: Extract AST symbols.
-	extraction := extract.Extract(codeFiles, cwd)
-	if extraction == nil {
-		return nil, fmt.Errorf("extraction returned no results")
-	}
-
-	// Phase 3: Build graph.
-	g := build.BuildFromResult(extraction, false)
-	if g == nil {
-		return nil, fmt.Errorf("graph construction failed")
-	}
-
-	// Phase 4: Detect communities.
-	communities := cluster.Cluster(g)
-
-	// Phase 5: Analyze.
-	godNodes := analyze.GodNodes(g, 15)
-	surprises := analyze.SurprisingConnections(g, communities, 10)
-
-	// Detect languages from file extensions.
-	languages := detectLanguages(codeFiles)
-
-	ctx := &GraphContext{
-		Graph:       g,
-		Communities: communities,
-		GodNodes:    godNodes,
-		Surprises:   surprises,
-		Stats: Stats{
-			NodeCount:      g.NodeCount(),
-			EdgeCount:      g.EdgeCount(),
-			CommunityCount: len(communities),
-			Languages:      languages,
-			FilesAnalyzed:  len(codeFiles),
-		},
-	}
-
 	return ctx, nil
 }
 
@@ -497,9 +580,15 @@ func (m *Manager) RebuildIfDirty(ctx context.Context) {
 // Rebuild runs a synchronous full rebuild of the code knowledge graph.
 // The graph is atomically swapped and the cache is updated.
 func (m *Manager) Rebuild(ctx context.Context) error {
+	return m.RebuildWithProgress(ctx, nil)
+}
+
+// RebuildWithProgress runs a synchronous full rebuild and streams per-phase
+// status messages via the optional progress callback.
+func (m *Manager) RebuildWithProgress(ctx context.Context, progress ProgressFunc) error {
 	slog.Info("codegraph: rebuilding graph", "cwd", m.cwd)
 
-	gc, err := Build(m.cwd)
+	gc, err := BuildWithProgress(m.cwd, progress)
 	if err != nil {
 		return fmt.Errorf("rebuild graph: %w", err)
 	}

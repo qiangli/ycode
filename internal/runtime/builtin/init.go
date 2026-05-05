@@ -632,10 +632,11 @@ func (ig *InitGenerator) generateDirTree(ctx *initContext) {
 // so the graph is immediately available to tools in the current session.
 func (ig *InitGenerator) buildCodeGraph(ctx *initContext) {
 	ig.progress("⧗ Building code knowledge graph...")
+	graphProgress := codegraph.ProgressFunc(ig.progress)
 	if ig.graphManager != nil {
 		// Rebuild through the session manager — this atomically updates
 		// the live graph and saves the cache.
-		if err := ig.graphManager.Rebuild(context.Background()); err != nil {
+		if err := ig.graphManager.RebuildWithProgress(context.Background(), graphProgress); err != nil {
 			ctx.MissingContext = append(ctx.MissingContext, "code graph: "+err.Error())
 			ig.progress("⚠ Code graph build failed: " + err.Error())
 			return
@@ -649,7 +650,7 @@ func (ig *InitGenerator) buildCodeGraph(ctx *initContext) {
 	}
 
 	// Fallback: build directly and cache to disk.
-	gc, err := codegraph.Build(ig.cwd)
+	gc, err := codegraph.BuildWithProgress(ig.cwd, graphProgress)
 	if err != nil {
 		ctx.MissingContext = append(ctx.MissingContext, "code graph: "+err.Error())
 		ig.progress("⚠ Code graph build failed: " + err.Error())
