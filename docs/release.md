@@ -36,28 +36,69 @@ brew tap qiangli/ycode
 brew install ycode
 ```
 
-### One-time bootstrap
+### One-time bootstrap (already done for `qiangli/homebrew-ycode`)
 
-These are explicit destructive actions that need a human:
+The current bootstrap state:
+- Tap repo: <https://github.com/qiangli/homebrew-ycode> exists and is seeded with v0.1.0.
+- Deploy key (SSH, write access): titled "ycode-release-bot (auto-generated)" on the tap repo. Private half stored as the `HOMEBREW_TAP_DEPLOY_KEY` secret on this repo.
 
-1. **Create the tap repo:**
+To re-bootstrap on a different fork or after rotating the key:
+
+1. **Create the tap repo** (if it doesn't exist):
    ```bash
-   gh repo create qiangli/homebrew-ycode --public \
+   gh repo create <owner>/homebrew-ycode --public \
      --description "Homebrew tap for ycode"
    ```
    The repo's name *must* be `homebrew-<tap>` — Homebrew expects the prefix.
 
-2. **Mint a Personal Access Token (PAT)** with **only** the new tap repo's `contents: write` scope. Use a fine-grained PAT, not a classic one.
+2. **Generate a single-purpose SSH deploy key** locally (no passphrase since CI is non-interactive):
+   ```bash
+   ssh-keygen -t ed25519 -f /tmp/ycode-tap-deploy -N "" -C "ycode-release-bot"
+   ```
 
-3. **Add the token to this repo's secrets** as `HOMEBREW_TAP_TOKEN` (Settings → Secrets and variables → Actions → New repository secret).
+3. **Add the public key as a deploy key with write access** on the tap repo:
+   ```bash
+   gh repo deploy-key add /tmp/ycode-tap-deploy.pub \
+     --repo <owner>/homebrew-ycode \
+     --title "ycode-release-bot" --allow-write
+   ```
+   Deploy keys are scoped to a single repo, don't appear in account-wide token lists, and rotate independently of any user account — preferable to a PAT here.
 
-4. **Trigger an initial sync.** Once the token is set, dispatch the workflow against the latest release tag:
+4. **Add the private key as a secret** on this (ycode) repo:
+   ```bash
+   gh secret set HOMEBREW_TAP_DEPLOY_KEY --repo <owner>/ycode \
+     --body "$(cat /tmp/ycode-tap-deploy)"
+   ```
+
+5. **Securely delete the local copies** (the secret is now in two safe places and shouldn't be on the developer's filesystem):
+   ```bash
+   rm -P /tmp/ycode-tap-deploy /tmp/ycode-tap-deploy.pub
+   ```
+
+6. **Trigger an initial sync** (or just a dry validation against an existing release):
    ```bash
    gh workflow run update-homebrew-tap.yml -f tag=v0.1.0
+   gh run watch
    ```
-   The workflow will regenerate the formula, push it to the tap repo, and from that point forward fire automatically on every published release.
+   The workflow regenerates the formula, pushes it to the tap (or no-ops if already in sync), and from that point fires automatically on every `release: published` event.
 
-Until step 3 lands, `update-homebrew-tap.yml` exits cleanly with a notice on every release — it never fails the build.
+Until step 4 lands, `update-homebrew-tap.yml` exits cleanly with a notice on every release — it never fails the build.
+
+### Rotating the deploy key
+
+```bash
+# generate a new key, add it to the tap, swap the secret, then remove the old one
+ssh-keygen -t ed25519 -f /tmp/ycode-tap-deploy-new -N "" -C "ycode-release-bot"
+gh repo deploy-key add /tmp/ycode-tap-deploy-new.pub \
+  --repo qiangli/homebrew-ycode --title "ycode-release-bot $(date +%F)" --allow-write
+gh secret set HOMEBREW_TAP_DEPLOY_KEY --repo qiangli/ycode --body "$(cat /tmp/ycode-tap-deploy-new)"
+# verify with a dispatch
+gh workflow run update-homebrew-tap.yml -f tag=v0.1.0
+# once green, list and remove the old deploy key
+gh repo deploy-key list --repo qiangli/homebrew-ycode
+gh repo deploy-key delete <old-key-id> --repo qiangli/homebrew-ycode
+rm -P /tmp/ycode-tap-deploy-new*
+```
 
 ### Adding a new platform to the formula
 

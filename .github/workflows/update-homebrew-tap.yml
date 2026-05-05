@@ -4,14 +4,14 @@ name: update-homebrew-tap
 # workflow's publish job creates one). Generates a fresh Homebrew formula
 # from the release's SHA256SUMS and pushes it to the tap repo.
 #
-# Bootstrap once before this can succeed:
-#   1. Create a public repo: gh repo create qiangli/homebrew-ycode --public \
-#        --description "Homebrew tap for ycode"
-#   2. Generate a fine-grained PAT with contents:write on that repo only.
-#   3. Add it to this repo's secrets as HOMEBREW_TAP_TOKEN.
+# Auth: a deploy key (SSH) on the qiangli/homebrew-ycode repo, with the
+# private half stored here as the HOMEBREW_TAP_DEPLOY_KEY secret. Deploy
+# keys are scoped to a single repo and don't appear in account-wide token
+# lists — smaller blast radius than a PAT and cleaner to rotate. See
+# docs/release.md for the bootstrap.
 #
-# See docs/release.md for details. Until secrets are configured, this
-# workflow exits cleanly with a notice — it never fails the release.
+# Until the secret is configured, this workflow exits cleanly with a
+# notice — it never fails the release.
 
 on:
   release:
@@ -48,13 +48,13 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Check tap token is configured
+      - name: Check deploy key is configured
         id: token
         env:
-          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
         run: |
-          if [ -z "${TAP_TOKEN:-}" ]; then
-            echo "HOMEBREW_TAP_TOKEN secret not set — see docs/release.md to bootstrap" >&2
+          if [ -z "${DEPLOY_KEY:-}" ]; then
+            echo "HOMEBREW_TAP_DEPLOY_KEY secret not set — see docs/release.md to bootstrap" >&2
             echo "configured=false" >> "$GITHUB_OUTPUT"
           else
             echo "configured=true" >> "$GITHUB_OUTPUT"
@@ -84,16 +84,31 @@ jobs:
           echo "--- generated formula ---"
           cat generated/Formula/ycode.rb
 
+      - name: Configure SSH for deploy key
+        if: steps.token.outputs.configured == 'true'
+        env:
+          DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          # The secret is the literal private key (created with ssh-keygen);
+          # write it as-is and trust ssh's parser to validate.
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # Pin GitHub's host key to defend against TOFU-bypass attacks.
+          ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 600 ~/.ssh/known_hosts
+
       - name: Push formula to tap repo
         if: steps.token.outputs.configured == 'true'
         env:
-          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
           set -euo pipefail
           git config --global user.name "ycode-release-bot"
           git config --global user.email "ycode-release-bot@users.noreply.github.com"
-          git clone "https://x-access-token:${TAP_TOKEN}@github.com/qiangli/homebrew-ycode.git" tap
+          git clone git@github.com:qiangli/homebrew-ycode.git tap
           mkdir -p tap/Formula
           cp generated/Formula/ycode.rb tap/Formula/ycode.rb
           cd tap
