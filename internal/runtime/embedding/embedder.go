@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/qiangli/ycode/internal/runtime/fileops"
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 const (
@@ -28,13 +28,13 @@ const (
 // Embedder runs background embedding tasks for code, memory, and sessions.
 type Embedder struct {
 	provider Provider
-	vector   storage.VectorStore
-	kv       storage.KVStore // for tracking what's been embedded
+	vector   store.VectorStore
+	kv       store.KVStore // for tracking what's been embedded
 	workDir  string
 }
 
 // New creates a background embedder.
-func New(provider Provider, vector storage.VectorStore, kv storage.KVStore, workDir string) *Embedder {
+func New(provider Provider, vector store.VectorStore, kv store.KVStore, workDir string) *Embedder {
 	return &Embedder{
 		provider: provider,
 		vector:   vector,
@@ -51,15 +51,15 @@ func (e *Embedder) EmbedMemory(ctx context.Context, name, description, content s
 		return err
 	}
 
-	doc := storage.VectorDocument{
-		Document: storage.Document{
+	doc := store.VectorDocument{
+		Document: store.Document{
 			ID:       name,
 			Content:  text,
 			Metadata: metadata,
 		},
 		Embedding: emb,
 	}
-	return e.vector.AddDocuments(ctx, memoryCollection, []storage.VectorDocument{doc})
+	return e.vector.AddDocuments(ctx, memoryCollection, []store.VectorDocument{doc})
 }
 
 // EmbedSessionSummary computes and stores an embedding for a session compaction summary.
@@ -69,8 +69,8 @@ func (e *Embedder) EmbedSessionSummary(ctx context.Context, sessionID, summary s
 		return err
 	}
 
-	doc := storage.VectorDocument{
-		Document: storage.Document{
+	doc := store.VectorDocument{
+		Document: store.Document{
 			ID:      sessionID,
 			Content: summary,
 			Metadata: map[string]string{
@@ -80,7 +80,7 @@ func (e *Embedder) EmbedSessionSummary(ctx context.Context, sessionID, summary s
 		},
 		Embedding: emb,
 	}
-	return e.vector.AddDocuments(ctx, sessionCollection, []storage.VectorDocument{doc})
+	return e.vector.AddDocuments(ctx, sessionCollection, []store.VectorDocument{doc})
 }
 
 // EmbedCodeFile reads a source file and embeds its chunks.
@@ -102,7 +102,7 @@ func (e *Embedder) EmbedCodeFile(ctx context.Context, relPath string) error {
 		}
 	}
 
-	var docs []storage.VectorDocument
+	var docs []store.VectorDocument
 	for i, chunk := range chunks {
 		emb, err := e.provider.Embed(ctx, chunk)
 		if err != nil {
@@ -118,8 +118,8 @@ func (e *Embedder) EmbedCodeFile(ctx context.Context, relPath string) error {
 			docID = relPath + "#" + strconv.Itoa(i)
 		}
 
-		docs = append(docs, storage.VectorDocument{
-			Document: storage.Document{
+		docs = append(docs, store.VectorDocument{
+			Document: store.Document{
 				ID:      docID,
 				Content: chunk,
 				Metadata: map[string]string{
@@ -142,7 +142,7 @@ func (e *Embedder) EmbedCodeFile(ctx context.Context, relPath string) error {
 func (e *Embedder) EmbedDocFile(ctx context.Context, relPath, content string) error {
 	chunks := splitDocChunks(content, 2048)
 
-	var docs []storage.VectorDocument
+	var docs []store.VectorDocument
 	for i, chunk := range chunks {
 		emb, err := e.provider.Embed(ctx, chunk)
 		if err != nil {
@@ -154,8 +154,8 @@ func (e *Embedder) EmbedDocFile(ctx context.Context, relPath, content string) er
 			docID = relPath + "#" + strconv.Itoa(i)
 		}
 
-		docs = append(docs, storage.VectorDocument{
-			Document: storage.Document{
+		docs = append(docs, store.VectorDocument{
+			Document: store.Document{
 				ID:      docID,
 				Content: chunk,
 				Metadata: map[string]string{

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 const symbolIndexName = "symbols"
@@ -82,7 +82,7 @@ func RegisterSymbolSearchHandler(r *Registry) {
 			}
 
 			start := time.Now()
-			var results []storage.SearchResult
+			var results []store.SearchResult
 			var err error
 
 			if len(filters) > 0 {

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 // SearchScore represents a tool search result with relevance score.
@@ -129,19 +129,19 @@ const toolSearchIndexName = "tools"
 
 // ToolSearchIndex provides Bleve-backed tool discovery.
 type ToolSearchIndex struct {
-	index storage.SearchIndex
+	index store.SearchIndex
 }
 
 // NewToolSearchIndex creates a Bleve-backed tool search index.
-func NewToolSearchIndex(index storage.SearchIndex) *ToolSearchIndex {
+func NewToolSearchIndex(index store.SearchIndex) *ToolSearchIndex {
 	return &ToolSearchIndex{index: index}
 }
 
 // IndexTools indexes all registered tools in Bleve for semantic discovery.
 func (t *ToolSearchIndex) IndexTools(registry *Registry) {
-	var docs []storage.Document
+	var docs []store.Document
 	for _, spec := range registry.All() {
-		docs = append(docs, storage.Document{
+		docs = append(docs, store.Document{
 			ID:      spec.Name,
 			Content: spec.Name + " " + spec.Description,
 			Metadata: map[string]string{

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 func TestStore(t *testing.T) {
@@ -19,7 +19,7 @@ func TestStore(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("IndexAndSearch", func(t *testing.T) {
-		docs := []storage.Document{
+		docs := []store.Document{
 			{ID: "1", Content: "function handleLogin validates user credentials", Metadata: map[string]string{"path": "auth.go", "language": "go"}},
 			{ID: "2", Content: "function renderDashboard displays user metrics", Metadata: map[string]string{"path": "ui.go", "language": "go"}},
 			{ID: "3", Content: "database migration creates users table", Metadata: map[string]string{"path": "migrate.go", "language": "go"}},
@@ -43,7 +43,7 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("IndexSingle", func(t *testing.T) {
-		doc := storage.Document{
+		doc := store.Document{
 			ID:      "single-1",
 			Content: "unique snowflake document about quantum computing",
 		}
@@ -63,7 +63,7 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("Delete", func(t *testing.T) {
-		doc := storage.Document{ID: "del-1", Content: "deletable content about testing"}
+		doc := store.Document{ID: "del-1", Content: "deletable content about testing"}
 		s.Index(ctx, "deltest", doc)
 
 		if err := s.Delete(ctx, "deltest", "del-1"); err != nil {
@@ -80,7 +80,7 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("SearchWithFilter", func(t *testing.T) {
-		docs := []storage.Document{
+		docs := []store.Document{
 			{ID: "f1", Content: "handleAuth function validates user", Metadata: map[string]string{"path": "auth.go", "language": "go"}},
 			{ID: "f2", Content: "handleAuth function validates user", Metadata: map[string]string{"path": "auth.py", "language": "py"}},
 			{ID: "f3", Content: "renderPage function draws UI", Metadata: map[string]string{"path": "ui.go", "language": "go"}},
@@ -112,7 +112,7 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("DeleteIndex", func(t *testing.T) {
-		doc := storage.Document{ID: "di-1", Content: "entire index deletion"}
+		doc := store.Document{ID: "di-1", Content: "entire index deletion"}
 		s.Index(ctx, "todelete", doc)
 
 		if err := s.DeleteIndex(ctx, "todelete"); err != nil {

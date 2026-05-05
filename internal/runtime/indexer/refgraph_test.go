@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/qiangli/ycode/internal/storage/kv"
+	"github.com/qiangli/ycode/pkg/memex/store/kv"
 )
 
 func TestRefGraph_GoFile(t *testing.T) {

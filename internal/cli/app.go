@@ -35,8 +35,8 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/team"
 	"github.com/qiangli/ycode/internal/runtime/usage"
 	"github.com/qiangli/ycode/internal/runtime/worker"
-	"github.com/qiangli/ycode/internal/storage"
 	"github.com/qiangli/ycode/internal/tools"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 // App is the main interactive application.
@@ -57,7 +57,7 @@ type App struct {
 	userConfigPath string // path to user settings.json for persisting preferences
 
 	// Storage manager for persistence layer.
-	storage *storage.Manager
+	storage *store.Manager
 
 	// Task registry for background tasks (including background agents).
 	taskRegistry *task.Registry
@@ -119,7 +119,7 @@ type AppOptions struct {
 	ToolRegistry    *tools.Registry
 	PromptCtx       *prompt.ProjectContext
 	UserConfigPath  string
-	Storage         *storage.Manager
+	Storage         *store.Manager
 	ConvOTEL        *conversation.OTELConfig
 	OllamaLister    api.OllamaLister
 	AgentDefsDir    string // directory containing custom agent YAML definitions

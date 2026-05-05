@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 const (
@@ -41,7 +41,7 @@ type UsageStatsProvider func(ctx context.Context) ([]ToolUsageStats, error)
 
 // SmartRouter selects tools using semantic similarity and usage history.
 type SmartRouter struct {
-	vectorStore   storage.VectorStore
+	vectorStore   store.VectorStore
 	statsProvider UsageStatsProvider
 	indexed       bool
 }
@@ -49,7 +49,7 @@ type SmartRouter struct {
 // NewSmartRouter creates a smart tool router.
 // vectorStore may be nil (disables semantic matching, falls back to keyword scoring).
 // statsProvider may be nil (disables preference boosting).
-func NewSmartRouter(vectorStore storage.VectorStore, statsProvider UsageStatsProvider) *SmartRouter {
+func NewSmartRouter(vectorStore store.VectorStore, statsProvider UsageStatsProvider) *SmartRouter {
 	return &SmartRouter{
 		vectorStore:   vectorStore,
 		statsProvider: statsProvider,
@@ -63,11 +63,11 @@ func (sr *SmartRouter) IndexTools(ctx context.Context, registry *Registry) error
 		return nil
 	}
 
-	var docs []storage.VectorDocument
+	var docs []store.VectorDocument
 	for _, spec := range registry.All() {
 		content := spec.Name + ": " + spec.Description
-		docs = append(docs, storage.VectorDocument{
-			Document: storage.Document{
+		docs = append(docs, store.VectorDocument{
+			Document: store.Document{
 				ID:      spec.Name,
 				Content: content,
 				Metadata: map[string]string{

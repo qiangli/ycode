@@ -6,7 +6,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/qiangli/ycode/internal/storage/kv"
+	"github.com/qiangli/ycode/pkg/memex/store/kv"
 )
 
 func TestTrigramIndex_BasicSearch(t *testing.T) {

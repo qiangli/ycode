@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 const trigramBucket = "trigrams"
@@ -16,7 +16,7 @@ const trigramBucket = "trigrams"
 // extract trigrams from the search pattern to intersect candidate file sets.
 type TrigramIndex struct {
 	mu sync.RWMutex
-	kv storage.KVStore
+	kv store.KVStore
 
 	// In-memory cache for fast lookups during a session.
 	// Trigram -> set of file paths.
@@ -24,7 +24,7 @@ type TrigramIndex struct {
 }
 
 // NewTrigramIndex creates a trigram index backed by a KV store.
-func NewTrigramIndex(kv storage.KVStore) *TrigramIndex {
+func NewTrigramIndex(kv store.KVStore) *TrigramIndex {
 	if kv == nil {
 		return nil
 	}

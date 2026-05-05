@@ -1,4 +1,4 @@
-package storage_test
+package store_test
 
 import (
 	"context"
@@ -6,11 +6,11 @@ import (
 	"math"
 	"testing"
 
-	"github.com/qiangli/ycode/internal/storage"
-	"github.com/qiangli/ycode/internal/storage/kv"
-	"github.com/qiangli/ycode/internal/storage/search"
-	"github.com/qiangli/ycode/internal/storage/sqlite"
-	"github.com/qiangli/ycode/internal/storage/vector"
+	store "github.com/qiangli/ycode/pkg/memex/store"
+	"github.com/qiangli/ycode/pkg/memex/store/kv"
+	"github.com/qiangli/ycode/pkg/memex/store/search"
+	"github.com/qiangli/ycode/pkg/memex/store/sqlite"
+	"github.com/qiangli/ycode/pkg/memex/store/vector"
 )
 
 // BenchmarkKVPut measures bbolt write throughput.
@@ -140,7 +140,7 @@ func BenchmarkBleveIndex(b *testing.B) {
 	i := 0
 	b.ResetTimer()
 	for b.Loop() {
-		doc := storage.Document{
+		doc := store.Document{
 			ID:      fmt.Sprintf("doc-%d", i),
 			Content: "The quick brown fox jumps over the lazy dog in a persistent storage benchmark test.",
 			Metadata: map[string]string{
@@ -167,9 +167,9 @@ func BenchmarkBleveSearch(b *testing.B) {
 	ctx := context.Background()
 
 	// Seed data.
-	docs := make([]storage.Document, 500)
+	docs := make([]store.Document, 500)
 	for i := range docs {
-		docs[i] = storage.Document{
+		docs[i] = store.Document{
 			ID:      fmt.Sprintf("doc-%d", i),
 			Content: fmt.Sprintf("Function number %d handles authentication and authorization for the API gateway service", i),
 			Metadata: map[string]string{
@@ -215,14 +215,14 @@ func BenchmarkVectorAdd(b *testing.B) {
 	i := 0
 	b.ResetTimer()
 	for b.Loop() {
-		doc := storage.VectorDocument{
-			Document: storage.Document{
+		doc := store.VectorDocument{
+			Document: store.Document{
 				ID:      fmt.Sprintf("doc-%d", i),
 				Content: fmt.Sprintf("Function %d handles authentication and authorization", i),
 			},
 			Embedding: deterministicEmbedding(i, dims),
 		}
-		if err := s.AddDocuments(ctx, "bench", []storage.VectorDocument{doc}); err != nil {
+		if err := s.AddDocuments(ctx, "bench", []store.VectorDocument{doc}); err != nil {
 			b.Fatalf("AddDocuments: %v", err)
 		}
 		i++
@@ -242,10 +242,10 @@ func BenchmarkVectorQuery(b *testing.B) {
 	dims := 128
 
 	// Seed data.
-	docs := make([]storage.VectorDocument, 500)
+	docs := make([]store.VectorDocument, 500)
 	for i := range docs {
-		docs[i] = storage.VectorDocument{
-			Document: storage.Document{
+		docs[i] = store.VectorDocument{
+			Document: store.Document{
 				ID:      fmt.Sprintf("doc-%d", i),
 				Content: fmt.Sprintf("Function %d handles authentication and authorization", i),
 			},

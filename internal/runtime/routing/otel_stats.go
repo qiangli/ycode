@@ -5,20 +5,20 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 // SQLStatsProvider queries the tool_usage table for observed performance data.
 // Falls back to empty stats when the store is unavailable or has no data.
 type SQLStatsProvider struct {
-	Store     storage.SQLStore
+	Store     store.SQLStore
 	Logger    *slog.Logger
 	LookBack  time.Duration // how far back to look for stats (default: 1 hour)
 	MaxSample int           // max rows to consider (default: 50)
 }
 
 // NewSQLStatsProvider creates a stats provider backed by SQLite tool_usage data.
-func NewSQLStatsProvider(store storage.SQLStore) *SQLStatsProvider {
+func NewSQLStatsProvider(store store.SQLStore) *SQLStatsProvider {
 	return &SQLStatsProvider{
 		Store:     store,
 		Logger:    slog.Default(),

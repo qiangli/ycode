@@ -13,12 +13,12 @@ import (
 
 	"github.com/qiangli/ycode/internal/runtime/fileops"
 	"github.com/qiangli/ycode/internal/runtime/vfs"
-	"github.com/qiangli/ycode/internal/storage"
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 // codeSearchIndex is an optional Bleve index for natural-language code search fallback.
-var codeSearchIndex storage.SearchIndex
+var codeSearchIndex store.SearchIndex
 
 // searchInstruments holds optional OTEL instruments for search metrics.
 var searchInstruments *yotel.Instruments
@@ -26,7 +26,7 @@ var searchInstruments *yotel.Instruments
 const codeIndexName = "code"
 
 // SetCodeSearchIndex sets the Bleve index used for natural-language grep fallback.
-func SetCodeSearchIndex(idx storage.SearchIndex) {
+func SetCodeSearchIndex(idx store.SearchIndex) {
 	codeSearchIndex = idx
 }
 

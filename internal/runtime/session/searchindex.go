@@ -6,19 +6,19 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 const sessionIndexName = "sessions"
 
 // SearchIndexer indexes session messages and compaction summaries into Bleve.
 type SearchIndexer struct {
-	index     storage.SearchIndex
+	index     store.SearchIndex
 	sessionID string
 }
 
 // NewSearchIndexer creates a Bleve indexer for session content.
-func NewSearchIndexer(index storage.SearchIndex, sessionID string) *SearchIndexer {
+func NewSearchIndexer(index store.SearchIndex, sessionID string) *SearchIndexer {
 	return &SearchIndexer{index: index, sessionID: sessionID}
 }
 
@@ -26,11 +26,11 @@ func NewSearchIndexer(index storage.SearchIndex, sessionID string) *SearchIndexe
 func (si *SearchIndexer) IndexCompaction(result *CompactionResult, compactedMessages []ConversationMessage) {
 	ctx := context.Background()
 
-	var docs []storage.Document
+	var docs []store.Document
 
 	// Index the compaction summary.
 	if result.FormattedSummary != "" {
-		docs = append(docs, storage.Document{
+		docs = append(docs, store.Document{
 			ID:      fmt.Sprintf("%s/compaction-summary", si.sessionID),
 			Content: result.FormattedSummary,
 			Metadata: map[string]string{
@@ -47,7 +47,7 @@ func (si *SearchIndexer) IndexCompaction(result *CompactionResult, compactedMess
 			continue
 		}
 
-		docs = append(docs, storage.Document{
+		docs = append(docs, store.Document{
 			ID:      fmt.Sprintf("%s/%s", si.sessionID, msg.UUID),
 			Content: text,
 			Metadata: map[string]string{
@@ -74,7 +74,7 @@ func (si *SearchIndexer) IndexMessage(msg ConversationMessage) {
 	}
 
 	ctx := context.Background()
-	doc := storage.Document{
+	doc := store.Document{
 		ID:      fmt.Sprintf("%s/%s", si.sessionID, msg.UUID),
 		Content: text,
 		Metadata: map[string]string{

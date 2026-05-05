@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 const (
@@ -20,13 +20,13 @@ const (
 // It stores the serialized Config and a fingerprint of the source files
 // so stale detection works across process restarts.
 type Cache struct {
-	kv          storage.KVStore
+	kv          store.KVStore
 	sourcePaths []string
 }
 
 // NewCache creates a config cache backed by the given KV store.
 // sourcePaths are the config file paths used to compute staleness fingerprints.
-func NewCache(kv storage.KVStore, sourcePaths []string) *Cache {
+func NewCache(kv store.KVStore, sourcePaths []string) *Cache {
 	return &Cache{kv: kv, sourcePaths: sourcePaths}
 }
 

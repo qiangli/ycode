@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/qiangli/ycode/internal/runtime/fileops"
-	"github.com/qiangli/ycode/internal/storage"
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 const (
@@ -41,15 +41,15 @@ const (
 // Indexer scans workspace files and indexes them in Bleve.
 type Indexer struct {
 	workDir  string
-	search   storage.SearchIndex
-	kv       storage.KVStore    // for tracking file mtimes
+	search   store.SearchIndex
+	kv       store.KVStore      // for tracking file mtimes
 	RefGraph *RefGraph          // optional reference graph for Go files
 	Trigrams *TrigramIndex      // optional trigram index for regex acceleration
 	Inst     *yotel.Instruments // optional OTEL instruments
 }
 
 // New creates a codebase indexer.
-func New(workDir string, search storage.SearchIndex, kv storage.KVStore) *Indexer {
+func New(workDir string, search store.SearchIndex, kv store.KVStore) *Indexer {
 	return &Indexer{
 		workDir:  workDir,
 		search:   search,
@@ -146,7 +146,7 @@ func (idx *Indexer) indexFile(ctx context.Context, relPath, content, ext string)
 
 	// For small files, index as a single document.
 	if len(content) <= ChunkSize {
-		doc := storage.Document{
+		doc := store.Document{
 			ID:      relPath,
 			Content: content,
 			Metadata: map[string]string{
@@ -159,7 +159,7 @@ func (idx *Indexer) indexFile(ctx context.Context, relPath, content, ext string)
 
 	// Split into chunks for larger files.
 	lines := strings.Split(content, "\n")
-	var docs []storage.Document
+	var docs []store.Document
 	var chunk strings.Builder
 	chunkStart := 1
 
@@ -169,7 +169,7 @@ func (idx *Indexer) indexFile(ctx context.Context, relPath, content, ext string)
 
 		if chunk.Len() >= ChunkSize || i == len(lines)-1 {
 			docID := fmt.Sprintf("%s#L%d", relPath, chunkStart)
-			docs = append(docs, storage.Document{
+			docs = append(docs, store.Document{
 				ID:      docID,
 				Content: chunk.String(),
 				Metadata: map[string]string{

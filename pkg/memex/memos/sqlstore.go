@@ -7,18 +7,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 const snippetMaxLen = 200
 
 // SQLStore implements Store backed by ycode's SQLite database.
 type SQLStore struct {
-	db storage.SQLStore
+	db store.SQLStore
 }
 
 // NewSQLStore creates a memo store using the given SQLite store.
-func NewSQLStore(db storage.SQLStore) *SQLStore {
+func NewSQLStore(db store.SQLStore) *SQLStore {
 	return &SQLStore{db: db}
 }
 
@@ -41,7 +41,7 @@ func (s *SQLStore) Create(ctx context.Context, memo *Memo) error {
 	memo.Property = computeProperty(memo.Content)
 	memo.Snippet = generateSnippet(memo.Content, snippetMaxLen)
 
-	return s.db.Tx(ctx, func(tx storage.SQLStore) error {
+	return s.db.Tx(ctx, func(tx store.SQLStore) error {
 		_, err := tx.Exec(ctx,
 			`INSERT INTO memos (id, content, visibility, state, pinned, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -69,7 +69,7 @@ func (s *SQLStore) Update(ctx context.Context, id string, content string) (*Memo
 	now := time.Now().UTC()
 	tags := extractTags(content)
 
-	err := s.db.Tx(ctx, func(tx storage.SQLStore) error {
+	err := s.db.Tx(ctx, func(tx store.SQLStore) error {
 		res, err := tx.Exec(ctx,
 			`UPDATE memos SET content = ?, updated_at = ? WHERE id = ?`,
 			content, now.Format(time.RFC3339), id,
@@ -220,7 +220,7 @@ func (s *SQLStore) SearchByTag(ctx context.Context, tag string, maxResults int) 
 
 // --- helpers ---
 
-func insertTags(ctx context.Context, tx storage.SQLStore, memoID string, tags []string) error {
+func insertTags(ctx context.Context, tx store.SQLStore, memoID string, tags []string) error {
 	for _, tag := range tags {
 		if _, err := tx.Exec(ctx,
 			`INSERT OR IGNORE INTO memo_tags (memo_id, tag) VALUES (?, ?)`,
@@ -232,7 +232,7 @@ func insertTags(ctx context.Context, tx storage.SQLStore, memoID string, tags []
 	return nil
 }
 
-func loadTags(ctx context.Context, db storage.SQLStore, memoID string) ([]string, error) {
+func loadTags(ctx context.Context, db store.SQLStore, memoID string) ([]string, error) {
 	rows, err := db.Query(ctx, `SELECT tag FROM memo_tags WHERE memo_id = ? ORDER BY tag`, memoID)
 	if err != nil {
 		return nil, err
@@ -249,7 +249,7 @@ func loadTags(ctx context.Context, db storage.SQLStore, memoID string) ([]string
 	return tags, nil
 }
 
-func scanMemo(row storage.Row) (*Memo, error) {
+func scanMemo(row store.Row) (*Memo, error) {
 	m := &Memo{}
 	var createdAt, updatedAt string
 	var pinned int
@@ -286,7 +286,7 @@ func scanMemoRows(row scannable) (*Memo, error) {
 	return m, nil
 }
 
-func collectMemos(ctx context.Context, db storage.SQLStore, rows storage.Rows) ([]*Memo, error) {
+func collectMemos(ctx context.Context, db store.SQLStore, rows store.Rows) ([]*Memo, error) {
 	var memos []*Memo
 	for rows.Next() {
 		m, err := scanMemoRows(rows)

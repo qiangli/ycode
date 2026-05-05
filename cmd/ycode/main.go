@@ -41,12 +41,12 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/vfs"
 	"github.com/qiangli/ycode/internal/selfheal"
-	"github.com/qiangli/ycode/internal/storage"
-	"github.com/qiangli/ycode/internal/storage/kv"
-	"github.com/qiangli/ycode/internal/storage/search"
-	sqlstore "github.com/qiangli/ycode/internal/storage/sqlite"
-	"github.com/qiangli/ycode/internal/storage/vector"
 	"github.com/qiangli/ycode/internal/tools"
+	"github.com/qiangli/ycode/pkg/memex/store"
+	"github.com/qiangli/ycode/pkg/memex/store/kv"
+	"github.com/qiangli/ycode/pkg/memex/store/search"
+	sqlstore "github.com/qiangli/ycode/pkg/memex/store/sqlite"
+	"github.com/qiangli/ycode/pkg/memex/store/vector"
 )
 
 // Set via -ldflags at build time.
@@ -151,18 +151,18 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	}
 	// Initialize storage manager (Phase 1: KV store is instant).
 	storageDataDir := filepath.Join(home, ".agents", "ycode", "projects", "data")
-	storageMgr, err := storage.NewManager(context.Background(), storage.Config{
+	storageMgr, err := store.NewManager(context.Background(), store.Config{
 		DataDir: storageDataDir,
-		KVFactory: func(ctx context.Context) (storage.KVStore, error) {
+		KVFactory: func(ctx context.Context) (store.KVStore, error) {
 			return kv.Open(storageDataDir)
 		},
-		SQLFactory: func(ctx context.Context) (storage.SQLStore, error) {
+		SQLFactory: func(ctx context.Context) (store.SQLStore, error) {
 			return sqlstore.Open(storageDataDir)
 		},
-		VectorFactory: func(ctx context.Context) (storage.VectorStore, error) {
+		VectorFactory: func(ctx context.Context) (store.VectorStore, error) {
 			return vector.Open(storageDataDir)
 		},
-		SearchFactory: func(ctx context.Context) (storage.SearchIndex, error) {
+		SearchFactory: func(ctx context.Context) (store.SearchIndex, error) {
 			return search.Open(storageDataDir)
 		},
 	})

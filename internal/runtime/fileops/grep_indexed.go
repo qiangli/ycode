@@ -5,7 +5,7 @@ import (
 	"regexp/syntax"
 	"strings"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 const codeIndexName = "code"
@@ -14,7 +14,7 @@ const codeIndexName = "code"
 // candidate files, then run the regex only on those files. Falls back to a
 // full walk when no useful literals can be extracted from the pattern or
 // when the index is unavailable.
-func IndexedGrepSearch(params GrepParams, searchIdx storage.SearchIndex) (*GrepResult, error) {
+func IndexedGrepSearch(params GrepParams, searchIdx store.SearchIndex) (*GrepResult, error) {
 	if searchIdx == nil {
 		return GrepSearch(params)
 	}
@@ -38,7 +38,7 @@ func IndexedGrepSearch(params GrepParams, searchIdx storage.SearchIndex) (*GrepR
 	}
 
 	maxCandidates := 500 // fetch more candidates than we need
-	var candidates []storage.SearchResult
+	var candidates []store.SearchResult
 	var err error
 
 	if len(filters) > 0 {

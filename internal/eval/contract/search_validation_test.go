@@ -17,8 +17,8 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/fileops"
 	"github.com/qiangli/ycode/internal/runtime/indexer"
 	"github.com/qiangli/ycode/internal/runtime/repomap"
-	"github.com/qiangli/ycode/internal/storage/kv"
-	"github.com/qiangli/ycode/internal/storage/search"
+	"github.com/qiangli/ycode/pkg/memex/store/kv"
+	"github.com/qiangli/ycode/pkg/memex/store/search"
 )
 
 // repoRoot returns the ycode repository root for use as a test fixture.
@@ -96,7 +96,7 @@ func TestGrepSearch_FindsKnownPatterns(t *testing.T) {
 			pattern: "type SearchIndex interface",
 			typ:     "go",
 			wantMin: 1,
-			wantAny: "storage.go",
+			wantAny: "store.go",
 		},
 	}
 

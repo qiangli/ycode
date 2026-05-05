@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 func TestOpen(t *testing.T) {
@@ -109,7 +109,7 @@ func TestCRUD(t *testing.T) {
 	})
 
 	t.Run("Transaction", func(t *testing.T) {
-		err := s.Tx(ctx, func(tx storage.SQLStore) error {
+		err := s.Tx(ctx, func(tx store.SQLStore) error {
 			_, err := tx.Exec(ctx,
 				`INSERT INTO sessions (id, title, model) VALUES (?, ?, ?)`,
 				"sess-tx", "TX Session", "model",

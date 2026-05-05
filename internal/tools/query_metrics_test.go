@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/qiangli/ycode/internal/runtime/session"
-	"github.com/qiangli/ycode/internal/storage/sqlite"
+	"github.com/qiangli/ycode/pkg/memex/store/sqlite"
 )
 
 // setupTestMetricsDB creates an in-memory SQLite store with migrations and test data.

@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 // vectorStore is an optional vector store for semantic search.
-var vectorStore storage.VectorStore
+var vectorStore store.VectorStore
 
 // SetVectorStore sets the vector store used for semantic code search.
-func SetVectorStore(store storage.VectorStore) {
+func SetVectorStore(store store.VectorStore) {
 	vectorStore = store
 }
 

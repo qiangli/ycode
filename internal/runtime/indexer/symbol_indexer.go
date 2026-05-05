@@ -12,7 +12,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 const symbolIndexName = "symbols"
@@ -43,14 +43,14 @@ func (idx *Indexer) IndexSymbols(ctx context.Context, relPath, absPath, lang str
 		return nil
 	}
 
-	var docs []storage.Document
+	var docs []store.Document
 	for _, sym := range symbols {
 		docID := fmt.Sprintf("%s:%s:%d", relPath, sym.Name, sym.Line)
 		exported := "false"
 		if sym.Exported {
 			exported = "true"
 		}
-		docs = append(docs, storage.Document{
+		docs = append(docs, store.Document{
 			ID:      docID,
 			Content: sym.Name + " " + sym.Signature,
 			Metadata: map[string]string{

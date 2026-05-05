@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 const (
@@ -17,11 +17,11 @@ const (
 // This allows permission decisions to survive process restarts, so users
 // don't have to re-approve the same tools every session.
 type Cache struct {
-	kv storage.KVStore
+	kv store.KVStore
 }
 
 // NewCache creates a permission cache backed by the given KV store.
-func NewCache(kv storage.KVStore) *Cache {
+func NewCache(kv store.KVStore) *Cache {
 	return &Cache{kv: kv}
 }
 

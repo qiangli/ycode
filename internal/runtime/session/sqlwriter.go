@@ -6,18 +6,18 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 // SQLWriter writes session metadata and messages to a SQLite store.
 // It runs as a best-effort secondary persistence layer alongside JSONL.
 type SQLWriter struct {
-	store     storage.SQLStore
+	store     store.SQLStore
 	sessionID string
 }
 
 // NewSQLWriter creates a writer that persists session data to SQLite.
-func NewSQLWriter(store storage.SQLStore, sessionID string) *SQLWriter {
+func NewSQLWriter(store store.SQLStore, sessionID string) *SQLWriter {
 	return &SQLWriter{store: store, sessionID: sessionID}
 }
 

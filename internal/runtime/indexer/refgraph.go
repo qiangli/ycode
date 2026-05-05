@@ -7,7 +7,7 @@ import (
 	"go/token"
 	"strings"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 const (
@@ -25,11 +25,11 @@ type RefEdge struct {
 
 // RefGraph provides reference graph operations backed by a KV store.
 type RefGraph struct {
-	kv storage.KVStore
+	kv store.KVStore
 }
 
 // NewRefGraph creates a reference graph backed by the given KV store.
-func NewRefGraph(kv storage.KVStore) *RefGraph {
+func NewRefGraph(kv store.KVStore) *RefGraph {
 	if kv == nil {
 		return nil
 	}

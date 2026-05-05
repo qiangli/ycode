@@ -6,17 +6,17 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 // MetricsRecorder records tool invocation metrics to SQLite.
 type MetricsRecorder struct {
-	store     storage.SQLStore
+	store     store.SQLStore
 	sessionID string
 }
 
 // NewMetricsRecorder creates a tool metrics recorder.
-func NewMetricsRecorder(store storage.SQLStore, sessionID string) *MetricsRecorder {
+func NewMetricsRecorder(store store.SQLStore, sessionID string) *MetricsRecorder {
 	return &MetricsRecorder{store: store, sessionID: sessionID}
 }
 

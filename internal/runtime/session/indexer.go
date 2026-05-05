@@ -9,18 +9,18 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 // Indexer scans existing JSONL session files and indexes their metadata into SQLite.
 // It is designed to run once on first startup (or when new unindexed sessions are found).
 type Indexer struct {
-	store       storage.SQLStore
+	store       store.SQLStore
 	sessionsDir string
 }
 
 // NewIndexer creates a session indexer.
-func NewIndexer(store storage.SQLStore, sessionsDir string) *Indexer {
+func NewIndexer(store store.SQLStore, sessionsDir string) *Indexer {
 	return &Indexer{store: store, sessionsDir: sessionsDir}
 }
 
@@ -112,7 +112,7 @@ func (idx *Indexer) indexSession(ctx context.Context, sessionID string) error {
 		}
 	}
 
-	return idx.store.Tx(ctx, func(tx storage.SQLStore) error {
+	return idx.store.Tx(ctx, func(tx store.SQLStore) error {
 		// Insert session row.
 		_, err := tx.Exec(ctx, `
 			INSERT INTO sessions (id, model, created_at, updated_at, token_input, token_output)

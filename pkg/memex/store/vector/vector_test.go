@@ -5,7 +5,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 // mockEmbedding returns a deterministic embedding based on the text content.
@@ -42,10 +42,10 @@ func TestStore(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("AddAndQueryByText", func(t *testing.T) {
-		docs := []storage.VectorDocument{
-			{Document: storage.Document{ID: "1", Content: "authentication login handler"}},
-			{Document: storage.Document{ID: "2", Content: "database migration schema"}},
-			{Document: storage.Document{ID: "3", Content: "authentication password reset"}},
+		docs := []store.VectorDocument{
+			{Document: store.Document{ID: "1", Content: "authentication login handler"}},
+			{Document: store.Document{ID: "2", Content: "database migration schema"}},
+			{Document: store.Document{ID: "3", Content: "authentication password reset"}},
 		}
 
 		if err := s.AddDocuments(ctx, "test", docs); err != nil {
@@ -130,9 +130,9 @@ func TestQueryWithEmbedding(t *testing.T) {
 
 	// Add with pre-computed embeddings.
 	emb, _ := mockEmbedding(ctx, "hello world")
-	docs := []storage.VectorDocument{
+	docs := []store.VectorDocument{
 		{
-			Document:  storage.Document{ID: "pre-1", Content: "hello world"},
+			Document:  store.Document{ID: "pre-1", Content: "hello world"},
 			Embedding: emb,
 		},
 	}

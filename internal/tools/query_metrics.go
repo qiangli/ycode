@@ -7,17 +7,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qiangli/ycode/internal/storage"
+	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
 // metricsStore is the module-level SQL store, set via SetMetricsStore.
-var metricsStore storage.SQLStore
+var metricsStore store.SQLStore
 
 // metricsSessionID is the current session ID, set via SetMetricsSessionID.
 var metricsSessionID string
 
 // SetMetricsStore injects the SQL store for the query_metrics tool.
-func SetMetricsStore(s storage.SQLStore) {
+func SetMetricsStore(s store.SQLStore) {
 	metricsStore = s
 }
 
