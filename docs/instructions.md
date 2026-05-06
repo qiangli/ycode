@@ -110,8 +110,57 @@ When asked to commit changes in this project, follow the `/commit` skill (embedd
 - **Only stage your own changes.** If the working tree was already dirty at session start, do not stage pre-existing modifications — only stage files you changed.
 - **Match the repo's commit style.** Use the prefix convention from `git log` (e.g. `fix:`, `feat:`, `docs:`).
 
+## Development Pipeline
+
+Non-trivial fixes and features follow the documented six-step pipeline:
+**research → plan → build/test → evaluate → commit → codify**. Each step
+has a concrete output and verification gate. Telemetry across all three
+OTel pillars (metrics, traces, logs) is part of the evaluate gate — a
+change isn't done if its panels can't populate. See
+[pipeline.md](./pipeline.md) for the full process and where each artifact
+lives.
+
+The pipeline mirrors the autonomous loop in
+[autonomous-loop.md](./autonomous-loop.md); steps that are
+machine-checkable today graduate from human-driven runs to autonomous
+ones.
+
+### Eval targets
+
+```bash
+make eval-init       # aperio replay of /init against a recorded cassette
+make eval-contract   # contract-tier (no LLM, deterministic)
+make eval-smoke      # smoke-tier (real LLM, requires provider)
+make eval-behavioral # behavioral (trajectory analysis)
+make eval-e2e        # full coding tasks
+make eval-all-evals  # all of the above
+```
+
+## Documentation security
+
+Hard rule for any artifact that leaves the local machine — files under
+version control, **git commit messages, tag bodies**, PR/issue titles and
+bodies, release notes. Never include real provider env-var aliases
+(use the conventional public names like `ANTHROPIC_API_KEY` or a
+placeholder), absolute paths revealing a username (use `~/`), internal
+IPs/hostnames/ports beyond the documented public defaults, user
+identifiers, or any credential material (API keys, OAuth tokens, signed
+URLs, JWTs) even if rotated. Plan files under the per-user agent state
+directory and auto-memory files are exempt — they're local-only.
+
+Pre-commit and pre-PR check:
+
+```bash
+git diff --cached | grep -nE '(/Users/|/home/[^/]+/|sk-[A-Za-z0-9_-]{20,}|gh[ps]_[A-Za-z0-9]{30,}|[A-Z][A-Z0-9_]+_API_KEY|[A-Z][A-Z0-9_]+_TOKEN)' \
+  && { echo "FOUND — sanitize before committing"; exit 1; } || true
+```
+
+If a leak ships, rotate immediately and treat history rewrite as a
+separate explicitly-approved action.
+
 ## For More Detail
 
 Read these on demand, not upfront:
+- [pipeline.md](./pipeline.md) — six-step development pipeline, telemetry verification, sanitization rule
 - [usage.md](./usage.md) — CLI modes, config, tools, workflows
 - [architecture.md](./architecture.md) — full architecture, design decisions, component details

@@ -2,6 +2,20 @@
 
 Implementation of the complete RESEARCH → PLAN → BUILD → EVALUATE → LEARN loop for ycode. This document covers the architecture, components, and patterns adopted from 9 prior-art projects.
 
+## Relationship to the human development pipeline
+
+[`pipeline.md`](./pipeline.md) describes the same RESEARCH → PLAN → BUILD →
+EVALUATE → LEARN cycle as a **human-driven** process (explore agents,
+plan files, manual evals, codified docs). The autonomous loop in this
+document is the same cycle running **without a human in the inner
+loop** — each step graduates from human-driven to machine-driven once
+its gate becomes machine-checkable. Today the build/test step is the
+most graduated (Ralph already runs full runtime iterations); the
+evaluate step is partially graduated (`eval-init` runs offline via
+aperio replay); the research and plan steps are still primarily
+human-driven. As more steps graduate, the human pipeline becomes the
+fallback rather than the default.
+
 ## Overview
 
 The autonomous loop enables ycode to:
