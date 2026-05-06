@@ -14,7 +14,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL
 
-.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
+.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
 
 .DEFAULT_GOAL := help
 
@@ -128,7 +128,10 @@ eval-behavioral: ## Run behavioral evals (trajectory analysis, requires provider
 eval-e2e: ## Run E2E evals (full coding tasks, requires provider)
 	go test -tags eval_e2e -count=1 -timeout 45m ./internal/eval/e2e/...
 
-eval-all-evals: eval-contract eval-smoke eval-behavioral eval-e2e ## Run all eval tiers
+eval-init: compile ## Replay /init via aperio (offline; skips if cassette unrecorded)
+	go test -count=1 -timeout 120s ./internal/eval/init/...
+
+eval-all-evals: eval-contract eval-smoke eval-behavioral eval-e2e eval-init ## Run all eval tiers
 
 # ─── Memory Benchmarks ───────────────────────────────────────────────────────
 
