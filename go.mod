@@ -57,6 +57,7 @@ require (
 	github.com/nguyenthenguyen/docx v0.0.0-20230621112118-9c8e795a11db
 	github.com/odvcencio/gotreesitter v0.15.3
 	github.com/philippgille/chromem-go v0.7.0
+	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
 	github.com/qiangli/bonsai v0.0.0-20260505184649-a3cb69dbf211
 	github.com/qiangli/gfy v0.0.0-20260504062854-764095a2877d
 	github.com/qiangli/ycode/pkg/oci v0.0.0-00010101000000-000000000000
@@ -280,6 +281,7 @@ require (
 	github.com/elastic/go-elasticsearch/v9 v9.3.1 // indirect
 	github.com/elastic/go-grok v0.3.1 // indirect
 	github.com/elastic/lunes v0.2.0 // indirect
+	github.com/elazarl/goproxy v1.8.3 // indirect
 	github.com/emersion/go-imap v1.2.1 // indirect
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 // indirect
 	github.com/emicklei/go-restful/v3 v3.12.2 // indirect
@@ -601,6 +603,7 @@ require (
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/rs/cors v1.11.1 // indirect
 	github.com/rs/xid v1.6.0 // indirect
+	github.com/rs/zerolog v1.35.1 // indirect
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/sassoftware/go-rpmutils v0.4.0 // indirect
