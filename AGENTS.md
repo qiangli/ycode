@@ -30,7 +30,7 @@ Manual `go build` requires build tags (handled automatically by `make compile`):
 go build -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/
 ```
 
-Single test and integration test:
+Single test and integration test (use the first for fast unit iteration; the second when the test needs container/network setup):
 ```bash
 go test -short -race -run TestName ./internal/path/to/package/
 go test -tags integration -v -count=1 ./internal/integration/...
@@ -70,7 +70,8 @@ Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one
 - Tool system: `internal/tools/registry.go` — `Registry` maps tool names to `ToolSpec` handlers. Tools are either always-available (sent every request: bash, file ops, search) or deferred (discovered via `ToolSearch`, activated with TTL=8 turns). New tools: add a `RegisterXxxHandlers(r *Registry)` function.
 - Prompt assembly: `internal/runtime/prompt/builder.go` — static sections (cacheable) above a dynamic boundary (environment, git, instructions, memories).
 - Config: `internal/runtime/config/config.go` — merges four files in order: `~/.config/ycode/settings.json` (user) → `<project>/.agents/ycode/settings.json` → `<cwd>/.agents/ycode/settings.json` (local) → `settings.local.json` (gitignored). `Instructions` and `AllowedDirectories` append; all other fields override.
-- Permission modes: ReadOnly (read/search only) → WorkspaceWrite (file modifications within VFS boundaries) → DangerFullAccess (shell, process control, MCP). Each tool declares its required mode in `ToolSpec.RequiredMode`.
+- Permission modes: ReadOnly (read/search only) → WorkspaceWrite (file modifications within VFS boundaries) → DangerFullAccess (shell, process control, MCP). Each tool declares its required mode in `ToolSpec.RequiredMode`. The `Registry`'s `PermissionPrompter` is interface-shaped — direct mode installs a TUI prompter; `ycode serve` installs a remote prompter (`internal/service/permission.go`) that publishes `permission.request` over the bus and blocks on the connected client's response. Do not install an in-process prompter on the server-side `App` — it must be the remote one so web/IDE clients see the request.
+- Client/server topology: `cmd/ycode/autoserve.go` auto-spawns a server when no client URL is given; the TUI then connects via `WSClient`. Slash commands in this mode are not dispatched locally — the TUI sends the raw `/<name> <args>` text via `SendMessage`, the server's `LocalService.SendMessage` detects the leading `/` and routes to `executeCommandFromMessage`, which streams progress back as `EventCommandProgress`/`EventCommandDelta`/`EventCommandComplete` bus events. Direct mode (`m.cl == nil`) dispatches via the local `commands.Registry`.
 - AST search: `internal/runtime/treesitter/` — pure Go tree-sitter (gotreesitter) for Go, Python, JS/TS, Rust, Java, C, Ruby. Structural code search, symbol extraction, impact analysis. No CGO required. Container fallback via `internal/runtime/astgrep/` for rewrite operations only.
 - MCP: `internal/runtime/mcp/` — full MCP client (stdio + SSE transports) for connecting to external tool servers, and MCP server mode (`ycode mcp serve`) to expose ycode tools. Config: `~/.config/ycode/mcp.json` or `.agents/ycode/mcp.json`.
 - GitHub: `internal/runtime/github/` — PR create/list/review/comment, issue list/get/comment, CI check status. Auth: `GITHUB_TOKEN` → `GH_TOKEN` → `~/.config/gh/hosts.yml` (no external `gh` binary). Tools registered as deferred (via ToolSearch).
@@ -128,6 +129,7 @@ Never use bare `./...` — it hits read-only `priorart/` packages. All steps mus
 
 - **`priorart/`** — **read-only.** Never modify, create, or delete anything under `priorart/`. Use `$(go list ./... | grep -v '/priorart/')` instead of `./...` for manual Go commands.
 - **`external/`** — vendored submodules for the ycode build. Do not modify directly; vendor new code with attribution.
+- **`peers/`** — peer Go modules wired into `go.work` (e.g. `peers/bonsai`, the embedded graph database backing `pkg/memex/graph/`). Modules here are owned by this project and editable, but they are independent `go.mod`s — run `go mod tidy` inside the peer directory, not at the repo root.
 
 ## Evaluation
 
