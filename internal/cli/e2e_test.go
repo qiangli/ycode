@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -152,6 +153,107 @@ func TestE2E_InvalidFlag(t *testing.T) {
 	if !strings.Contains(string(out), "unknown flag") {
 		t.Errorf("expected 'unknown flag' in error output, got: %s", out)
 	}
+}
+
+// TestE2E_PTY_InitStreamsScaffoldOutput verifies that /init in the TUI
+// produces visible progress output before any LLM call. This is the e2e
+// counterpart to the unit-level repaint test — it drives the actual
+// binary in a PTY and checks that the deterministic InitializeRepo phase
+// streams to the screen.
+//
+// Pre-fix symptom: "Sending to LLM..." was the only line shown; the
+// scaffold output never rendered because the bus-event handlers didn't
+// repaint. Post-fix: the user sees the scaffold immediately.
+//
+// Runs in YCODE_NO_SERVER=1 (direct mode) inside a fresh tempdir so it
+// can't accidentally scaffold the live ycode repo. No API key is set;
+// the LLM-enhancement phase prints "Skipped LLM enhancement" or
+// generates output via the stub-on-failure path. Either is fine — we
+// only assert that *some* scaffold-shaped progress line lands.
+func TestE2E_PTY_InitStreamsScaffoldOutput(t *testing.T) {
+	if _, err := os.Stat(e2eBinaryPath); os.IsNotExist(err) {
+		t.Skipf("binary not found at %s; run 'make compile' first", e2eBinaryPath)
+	}
+	if testing.Short() {
+		t.Skip("e2e test skipped in -short")
+	}
+
+	tmp := t.TempDir()
+	binAbs, err := filepath.Abs(e2eBinaryPath)
+	if err != nil {
+		t.Fatalf("filepath.Abs: %v", err)
+	}
+	cmd := exec.Command(binAbs)
+	cmd.Dir = tmp
+	cmd.Env = append(os.Environ(),
+		"TERM=xterm-256color",
+		"YCODE_NO_SERVER=1",
+		"ANTHROPIC_API_KEY=",
+		"OPENAI_API_KEY=",
+		"KIMI_API_KEY=",
+		"MOONSHOT_API_KEY=",
+	)
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
+	if err != nil {
+		t.Fatalf("pty.StartWithSize: %v", err)
+	}
+	t.Cleanup(func() {
+		ptmx.Close()
+		cmd.Process.Kill()
+		cmd.Wait()
+	})
+
+	// Let the TUI initialize. bubbletea renders the welcome banner and
+	// alt-screen header during this window.
+	time.Sleep(1500 * time.Millisecond)
+
+	// Type /init and submit.
+	if _, err := ptmx.Write([]byte("/init\r")); err != nil {
+		t.Fatalf("write /init: %v", err)
+	}
+
+	// Read for up to 15 seconds, accumulating output. We expect at least one
+	// of the deterministic scaffold markers to appear: a checkmark, the
+	// hourglass, the "Initialized" line from InitializeRepo.Render, "AGENTS.md"
+	// anywhere (the scaffold report names files it touched), or ".agents/"
+	// (the directory it creates). Skipping the LLM phase entirely is fine —
+	// no API key is set, the scaffold itself still emits before LLM is tried.
+	deadline := time.Now().Add(15 * time.Second)
+	var acc bytes.Buffer
+	buf := make([]byte, e2eReadSize)
+	want := []string{"⧗", "✓", "Initialized", "AGENTS.md", ".agents"}
+	matched := ""
+	for time.Now().Before(deadline) && matched == "" {
+		ptmx.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+		n, _ := ptmx.Read(buf)
+		if n > 0 {
+			acc.Write(buf[:n])
+			for _, w := range want {
+				if strings.Contains(acc.String(), w) {
+					matched = w
+					break
+				}
+			}
+		}
+	}
+
+	if matched == "" {
+		// Trim ANSI for a more readable failure message.
+		dump := acc.String()
+		if len(dump) > 4000 {
+			dump = dump[:2000] + "\n...[truncated]...\n" + dump[len(dump)-2000:]
+		}
+		t.Errorf("no scaffold output appeared within timeout; expected one of %v\nbuffer:\n%s",
+			want, dump)
+	} else {
+		t.Logf("found scaffold marker %q in PTY output", matched)
+	}
+
+	// Send Ctrl-D to exit. Don't fail on non-zero exit — bubbletea may
+	// not unwind cleanly when killed via signal.
+	_, _ = ptmx.Write([]byte{4})
+	time.Sleep(500 * time.Millisecond)
+	cmd.Process.Kill()
 }
 
 func TestE2E_PTY_StartAndCtrlD(t *testing.T) {
