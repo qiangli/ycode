@@ -5,6 +5,7 @@ use (
 	./pkg/oci
 	./pkg/ollm
 	./pkg/otel
+	./peers/aperio
 	./peers/bonsai
 )
 
