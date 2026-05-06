@@ -230,7 +230,13 @@ func (r *Runtime) InstrumentedTurn(ctx context.Context, messages []api.Message, 
 	return result, nil
 }
 
-// InstrumentedTurnWithRecovery wraps TurnWithRecovery with compaction span and metrics.
+// InstrumentedTurnWithRecovery wraps TurnWithRecovery with the same span,
+// turn, and LLM-call metrics that InstrumentedTurn records — server-side
+// chat goes through this path (LocalService.SendMessage) and we used to
+// only record compaction here, which left ycode_session_turns,
+// ycode_llm_call_total, ycode_turn_duration, and ycode_turn_tool_count
+// silently uninstrumented for every chat turn — that's why no panel
+// driven by those series ever populated.
 func (r *Runtime) InstrumentedTurnWithRecovery(ctx context.Context, messages []api.Message, turnIndex int) (*TurnResult, *RecoveryResult, error) {
 	if r.otel == nil || r.otel.Tracer == nil {
 		return r.TurnWithRecovery(ctx, messages)
@@ -241,7 +247,9 @@ func (r *Runtime) InstrumentedTurnWithRecovery(ctx context.Context, messages []a
 	)
 	defer span.End()
 
+	start := time.Now()
 	result, recovery, err := r.TurnWithRecovery(ctx, messages)
+	dur := time.Since(start)
 
 	if err != nil {
 		span.RecordError(err)
@@ -262,6 +270,23 @@ func (r *Runtime) InstrumentedTurnWithRecovery(ctx context.Context, messages []a
 				attribute.Int("pruned_count", recovery.PrunedCount),
 			))
 		}
+	}
+
+	// Turn-level metrics (mirrors InstrumentedTurn line 219-228).
+	if err == nil && result != nil && r.otel.Inst != nil {
+		span.SetAttributes(
+			attribute.Int("turn.tool_calls", len(result.ToolCalls)),
+			attribute.String("llm.stop_reason", result.StopReason),
+			attribute.Int("llm.tokens.input", result.Usage.InputTokens+result.Usage.PromptTokens),
+			attribute.Int("llm.tokens.output", result.Usage.OutputTokens+result.Usage.CompletionTokens),
+		)
+		r.otel.Inst.TurnDuration.Record(ctx, float64(dur.Milliseconds()))
+		r.otel.Inst.TurnToolCount.Record(ctx, int64(len(result.ToolCalls)))
+		r.otel.Inst.SessionTurns.Add(ctx, 1)
+
+		// LLM call metrics (tokens, cost, latency) — same as InstrumentedTurn.
+		result.Duration = dur
+		r.recordTurnMetrics(ctx, result)
 	}
 
 	return result, recovery, err

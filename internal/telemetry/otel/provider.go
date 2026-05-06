@@ -292,6 +292,8 @@ func (p *Provider) TryConnectCollector(ctx context.Context, addr string) bool {
 	// call (e.g. the bus counters).
 	if inst, err := NewInstruments(newMeter.Meter("ycode")); err == nil {
 		*p.Instruments = *inst
+	} else {
+		slog.Warn("otel: instrument rebuild on collector connect failed", "error", err)
 	}
 
 	// Set up log provider with the original resource (preserves service.instance.id).
