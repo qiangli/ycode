@@ -54,10 +54,10 @@ func TestInstrumentedTurnWithRecovery_RecordsTurnAndLLMMetrics(t *testing.T) {
 	}
 
 	want := map[string]bool{
-		"ycode.session.turns":         false,
-		"ycode.llm.call.total":        false,
-		"ycode.turn.duration":         false,
-		"ycode.turn.tool_count":       false,
+		"ycode.session.turns":   false,
+		"ycode.llm.call.total":  false,
+		"ycode.turn.duration":   false,
+		"ycode.turn.tool_count": false,
 	}
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
