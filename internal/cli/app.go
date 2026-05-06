@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -34,6 +35,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/team"
 	"github.com/qiangli/ycode/internal/runtime/usage"
 	"github.com/qiangli/ycode/internal/runtime/worker"
+	"github.com/qiangli/ycode/internal/service"
 	"github.com/qiangli/ycode/internal/tools"
 	memexgraph "github.com/qiangli/ycode/pkg/memex/graph"
 	"github.com/qiangli/ycode/pkg/memex/memory"
@@ -491,7 +493,7 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 	// message directing the user to use --dangerously-skip-permissions or
 	// interactive mode.
 	if a.toolRegistry != nil {
-		a.toolRegistry.SetPermissionPrompter(func(_ context.Context, toolName string, requiredMode permission.Mode) (bool, error) {
+		a.toolRegistry.SetPermissionPrompter(func(_ context.Context, toolName string, requiredMode permission.Mode, _ json.RawMessage) (bool, error) {
 			return false, fmt.Errorf("tool %q requires %s permission; use --dangerously-skip-permissions or run in interactive mode to approve",
 				toolName, requiredMode)
 		})
@@ -1043,6 +1045,21 @@ func (a *App) SetUsageFunc(fn func(inputTokens, outputTokens, cacheCreate, cache
 // SetAgentEventFunc sets the agent lifecycle event callback (called by TUI).
 func (a *App) SetAgentEventFunc(fn func(eventType string, data map[string]any)) {
 	a.agentEventFunc = fn
+}
+
+// InstallRemotePermissionPrompter wires a service-level permission requester
+// into the App's tool registry. Used by the API server (`ycode serve`) to
+// route permission checks for elevated tools over the bus to remote clients
+// (web UI, VS Code extension) instead of prompting the local TUI. Called
+// after the App is constructed and before the agent runs any tools.
+func (a *App) InstallRemotePermissionPrompter(requester service.PermissionRequester) {
+	if a.toolRegistry == nil {
+		return
+	}
+	sessionID := a.SessionID()
+	a.toolRegistry.SetPermissionPrompter(func(ctx context.Context, toolName string, mode permission.Mode, input json.RawMessage) (bool, error) {
+		return requester(ctx, sessionID, toolName, mode.String(), input)
+	})
 }
 
 // TurnIndex returns the current turn index and increments it.

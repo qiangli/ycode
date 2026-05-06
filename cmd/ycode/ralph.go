@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -218,7 +219,7 @@ func newRalphDeps(cmd *cobra.Command) (*ralph.RuntimeDeps, error) {
 	})
 
 	// Auto-approve tool permissions in Ralph mode (non-interactive).
-	toolReg.SetPermissionPrompter(func(_ context.Context, toolName string, requiredMode permission.Mode) (bool, error) {
+	toolReg.SetPermissionPrompter(func(_ context.Context, toolName string, requiredMode permission.Mode, _ json.RawMessage) (bool, error) {
 		slog.Info("ralph: auto-approving tool", "tool", toolName, "mode", requiredMode)
 		return true, nil
 	})

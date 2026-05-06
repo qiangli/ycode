@@ -96,7 +96,7 @@ func TestInvoke_PermissionPrompterApproves(t *testing.T) {
 	})
 
 	prompted := false
-	r.SetPermissionPrompter(func(ctx context.Context, toolName string, requiredMode permission.Mode) (bool, error) {
+	r.SetPermissionPrompter(func(ctx context.Context, toolName string, requiredMode permission.Mode, _ json.RawMessage) (bool, error) {
 		prompted = true
 		if toolName != "edit_file" {
 			t.Errorf("expected tool name 'edit_file', got %q", toolName)
@@ -129,7 +129,7 @@ func TestInvoke_PermissionPrompterDenies(t *testing.T) {
 	r.SetPermissionResolver(func() permission.Mode {
 		return permission.ReadOnly
 	})
-	r.SetPermissionPrompter(func(ctx context.Context, toolName string, requiredMode permission.Mode) (bool, error) {
+	r.SetPermissionPrompter(func(ctx context.Context, toolName string, requiredMode permission.Mode, _ json.RawMessage) (bool, error) {
 		return false, nil // user denies
 	})
 

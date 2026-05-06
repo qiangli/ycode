@@ -48,6 +48,14 @@ type AppBackend interface {
 	SetUsageFunc(fn func(inputTokens, outputTokens, cacheCreate, cacheRead int))
 	SetAgentEventFunc(fn func(eventType string, data map[string]any))
 
+	// InstallRemotePermissionPrompter wires a service-level requester into
+	// the App's tool registry so permission checks for elevated tools
+	// publish a permission.request bus event and wait for the client's
+	// permission.response, instead of prompting an in-process TUI. Used by
+	// the `ycode serve` API stack when the consumer is a remote client
+	// (web UI, VS Code extension, ...).
+	InstallRemotePermissionPrompter(requester PermissionRequester)
+
 	// Lifecycle.
 	Close() error
 }

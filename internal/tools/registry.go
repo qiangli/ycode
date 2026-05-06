@@ -19,7 +19,12 @@ type PermissionResolver func() permission.Mode
 
 // PermissionPrompter asks the user whether to allow a tool invocation
 // that requires elevated permissions. Returns true if the user approves.
-type PermissionPrompter func(ctx context.Context, toolName string, requiredMode permission.Mode) (bool, error)
+//
+// input is the tool's raw JSON input (same payload that will be passed to the
+// handler). Prompters that need to render rich previews — for example, a VS
+// Code edit-proposal showing the proposed diff — can parse it; simpler
+// prompters can ignore it.
+type PermissionPrompter func(ctx context.Context, toolName string, requiredMode permission.Mode, input json.RawMessage) (bool, error)
 
 // contextKey is an unexported type for context keys in this package.
 type contextKey string
@@ -256,7 +261,7 @@ func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessag
 		if !currentMode.Allows(spec.RequiredMode) {
 			// Current mode doesn't allow this tool. Try prompting the user.
 			if prompter != nil {
-				allowed, err := prompter(ctx, name, spec.RequiredMode)
+				allowed, err := prompter(ctx, name, spec.RequiredMode, input)
 				if err != nil {
 					return "", fmt.Errorf("permission prompt for %q: %w", name, err)
 				}

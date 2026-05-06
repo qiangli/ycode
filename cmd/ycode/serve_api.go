@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -47,16 +49,38 @@ func buildAPIStack(noNATS bool) (*apiStack, error) {
 	memBus := bus.NewMemoryBus()
 	ollamaLister := inference.NewOllamaLister()
 
-	// Build a session pool with a factory that creates new App instances per workDir.
+	// The remote permission prompter routes elevated-tool checks over the bus
+	// to whichever client is attached to the session (web UI, VS Code
+	// extension, ...). multiSvc is created below; we capture it via a pointer
+	// so the closure can be installed on apps before multiSvc exists. By the
+	// time a tool actually invokes the prompter, multiSvc is set.
+	var multiSvc *service.MultiService
+	installRemotePrompter := func(b service.AppBackend) {
+		b.InstallRemotePermissionPrompter(func(ctx context.Context, sessionID, toolName, mode string, input json.RawMessage) (bool, error) {
+			if multiSvc == nil {
+				return false, fmt.Errorf("permission requester not yet ready")
+			}
+			return multiSvc.RequestPermission(ctx, sessionID, toolName, mode, input)
+		})
+	}
+
+	// Build a session pool with a factory that creates new App instances per
+	// workDir, with the remote prompter installed before any tool runs.
 	pool := service.NewSessionPool(func(workDir string) (service.AppBackend, error) {
-		return newApp(workDir)
+		b, err := newApp(workDir)
+		if err != nil {
+			return nil, err
+		}
+		installRemotePrompter(b)
+		return b, nil
 	})
 
 	// Seed the pool with the primary app's session.
+	installRemotePrompter(app)
 	pool.SeedSession(app)
 
 	// Create the multi-session service.
-	multiSvc := service.NewMultiService(pool, memBus)
+	multiSvc = service.NewMultiService(pool, memBus)
 	multiSvc.SetOllamaLister(ollamaLister)
 
 	token, err := generateToken()

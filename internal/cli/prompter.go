@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -39,7 +40,11 @@ func NewTUIPrompter(p *tea.Program) *TUIPrompter {
 // Prompt asks the user for permission to execute a tool.
 // It sends a message to the TUI and blocks until the user responds y/n.
 // The mutex serializes prompts so parallel tool executions don't overlap.
-func (tp *TUIPrompter) Prompt(ctx context.Context, toolName string, requiredMode permission.Mode) (bool, error) {
+//
+// The input parameter is part of the PermissionPrompter contract (so remote
+// prompters can render rich previews like edit diffs); the TUI prompter
+// doesn't need it and ignores it.
+func (tp *TUIPrompter) Prompt(ctx context.Context, toolName string, requiredMode permission.Mode, _ json.RawMessage) (bool, error) {
 	tracer := otel.Tracer("ycode.permission")
 	ctx, span := tracer.Start(ctx, "ycode.permission.prompt",
 		trace.WithAttributes(

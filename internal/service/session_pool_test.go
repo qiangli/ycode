@@ -22,25 +22,26 @@ type fakeApp struct {
 	closed       bool
 }
 
-func (a *fakeApp) Session() *session.Session                      { return &session.Session{ID: a.sessionID} }
-func (a *fakeApp) SessionID() string                              { return a.sessionID }
-func (a *fakeApp) SessionMessages() []api.Message                 { return nil }
-func (a *fakeApp) MessageCount() int                              { return a.messageCount }
-func (a *fakeApp) Config() *config.Config                         { return &config.Config{Model: a.model} }
-func (a *fakeApp) Model() string                                  { return a.model }
-func (a *fakeApp) ProviderKind() string                           { return a.providerKind }
-func (a *fakeApp) Version() string                                { return "test" }
-func (a *fakeApp) WorkDir() string                                { return a.workDir }
-func (a *fakeApp) InPlanMode() bool                               { return false }
-func (a *fakeApp) SwitchModel(string) (string, error)             { return "", nil }
-func (a *fakeApp) UsageTracker() *usage.Tracker                   { return usage.NewTracker() }
-func (a *fakeApp) NextTurnIndex() int                             { return 0 }
-func (a *fakeApp) HasCommand(string) bool                         { return false }
-func (a *fakeApp) SetProgressFunc(func(string))                   {}
-func (a *fakeApp) SetDeltaFunc(func(string))                      {}
-func (a *fakeApp) SetUsageFunc(func(int, int, int, int))          {}
-func (a *fakeApp) SetAgentEventFunc(func(string, map[string]any)) {}
-func (a *fakeApp) Close() error                                   { a.closed = true; return nil }
+func (a *fakeApp) Session() *session.Session                           { return &session.Session{ID: a.sessionID} }
+func (a *fakeApp) SessionID() string                                   { return a.sessionID }
+func (a *fakeApp) SessionMessages() []api.Message                      { return nil }
+func (a *fakeApp) MessageCount() int                                   { return a.messageCount }
+func (a *fakeApp) Config() *config.Config                              { return &config.Config{Model: a.model} }
+func (a *fakeApp) Model() string                                       { return a.model }
+func (a *fakeApp) ProviderKind() string                                { return a.providerKind }
+func (a *fakeApp) Version() string                                     { return "test" }
+func (a *fakeApp) WorkDir() string                                     { return a.workDir }
+func (a *fakeApp) InPlanMode() bool                                    { return false }
+func (a *fakeApp) SwitchModel(string) (string, error)                  { return "", nil }
+func (a *fakeApp) UsageTracker() *usage.Tracker                        { return usage.NewTracker() }
+func (a *fakeApp) NextTurnIndex() int                                  { return 0 }
+func (a *fakeApp) HasCommand(string) bool                              { return false }
+func (a *fakeApp) SetProgressFunc(func(string))                        {}
+func (a *fakeApp) SetDeltaFunc(func(string))                           {}
+func (a *fakeApp) SetUsageFunc(func(int, int, int, int))               {}
+func (a *fakeApp) SetAgentEventFunc(func(string, map[string]any))      {}
+func (a *fakeApp) InstallRemotePermissionPrompter(PermissionRequester) {}
+func (a *fakeApp) Close() error                                        { a.closed = true; return nil }
 
 func (a *fakeApp) ExecuteCommand(ctx context.Context, name, args string) (string, error) {
 	return "", nil
