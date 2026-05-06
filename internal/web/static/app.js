@@ -147,6 +147,18 @@
       case 'permission.request':
         onPermissionRequest(data);
         break;
+      case 'command.progress':
+        onCommandProgress(data);
+        break;
+      case 'command.delta':
+        onCommandDelta(data);
+        break;
+      case 'command.complete':
+        onCommandComplete(data);
+        break;
+      case 'command.error':
+        onCommandError(data);
+        break;
     }
   }
 
@@ -249,6 +261,86 @@
     totalInputTokens += (data.input_tokens || 0);
     totalOutputTokens += (data.output_tokens || 0);
     tokenCount.textContent = totalInputTokens + ' / ' + totalOutputTokens + ' tokens';
+  }
+
+  // --- Slash-command stream handlers (e.g. /init) ---
+  // Server-side commands stream progress lines, optional LLM text deltas,
+  // and a complete/error event. The streaming-element pattern mirrors
+  // onTextDelta so that command output appears in the same chat-message
+  // shape as a normal assistant turn.
+  let currentCommandEl = null;
+
+  function ensureCommandEl() {
+    if (!currentCommandEl) {
+      currentCommandEl = addMessage('assistant', '');
+      if (welcomeEl) welcomeEl.remove();
+      isWorking = true;
+      sendBtn.disabled = true;
+    }
+    return currentCommandEl;
+  }
+
+  function onCommandProgress(data) {
+    const msg = data.message || '';
+    if (!msg) return;
+    const el = ensureCommandEl();
+    const content = el.querySelector('.message-content');
+    const cursor = content.querySelector('.streaming-cursor');
+    if (cursor) cursor.remove();
+    content.appendChild(document.createTextNode(msg + '\n'));
+    const newCursor = document.createElement('span');
+    newCursor.className = 'streaming-cursor';
+    content.appendChild(newCursor);
+    scrollToBottom();
+  }
+
+  function onCommandDelta(data) {
+    const text = data.text || '';
+    if (!text) return;
+    const el = ensureCommandEl();
+    const content = el.querySelector('.message-content');
+    const cursor = content.querySelector('.streaming-cursor');
+    if (cursor) cursor.remove();
+    content.appendChild(document.createTextNode(text));
+    const newCursor = document.createElement('span');
+    newCursor.className = 'streaming-cursor';
+    content.appendChild(newCursor);
+    scrollToBottom();
+  }
+
+  function onCommandComplete(data) {
+    isWorking = false;
+    sendBtn.disabled = false;
+    if (currentCommandEl) {
+      const cursor = currentCommandEl.querySelector('.streaming-cursor');
+      if (cursor) cursor.remove();
+      const content = currentCommandEl.querySelector('.message-content');
+      if (content) {
+        const result = data.result || '';
+        if (result) {
+          content.appendChild(document.createTextNode('\n' + result));
+        }
+        renderMarkdown(content);
+      }
+    }
+    currentCommandEl = null;
+    inputEl.focus();
+  }
+
+  function onCommandError(data) {
+    isWorking = false;
+    sendBtn.disabled = false;
+    if (currentCommandEl) {
+      const cursor = currentCommandEl.querySelector('.streaming-cursor');
+      if (cursor) cursor.remove();
+    }
+    const errorEl = document.createElement('div');
+    errorEl.className = 'error-msg';
+    errorEl.textContent = 'Command error: ' + (data.error || 'Unknown error');
+    messagesEl.appendChild(errorEl);
+    scrollToBottom();
+    currentCommandEl = null;
+    inputEl.focus();
   }
 
   function onPermissionRequest(data) {
