@@ -26,3 +26,33 @@ jobs:
 
       - name: Test
         run: docker run --rm ycode-builder make test
+
+  pipeline-gate:
+    # Pipeline gate: tests beyond the unit tier that catch regressions in
+    # the slash-command bus stream, /init scaffold, and any other pipeline
+    # artifact that has e2e coverage. See docs/pipeline.md for the full
+    # gate matrix; targets that need additional infrastructure (running
+    # server, Playwright browsers, recorded eval cassette) are added as
+    # they come online.
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Build image
+        run: docker build -t ycode-builder .
+
+      - name: TUI teatest (integration tag)
+        run: docker run --rm ycode-builder make test-tui
+
+      - name: TUI e2e (PTY)
+        run: docker run --rm ycode-builder make test-tui-e2e
+
+      # TODO: enable once their make targets ship and the supporting
+      # infrastructure is wired in this workflow:
+      #   make test-integration   (needs running ycode serve)
+      #   make eval-init          (needs aperio cassette under testdata/)
+      #   make test-ui            (needs Playwright + browser install)
