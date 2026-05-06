@@ -930,6 +930,25 @@ func (a *App) runAgenticInit(ctx context.Context, systemPrompt, userPrompt strin
 		a.promptCtx,
 	)
 
+	// Forward LLM text deltas to onDelta so the user sees the AGENTS.md
+	// stream in as it's generated. Without this the TUI sits at
+	// "Generating AGENTS.md via LLM..." for the full turn duration with
+	// no status updates.
+	streamed := false
+	if onDelta != nil {
+		rt.SetEventCallback(func(eventType string, data map[string]any) {
+			if eventType != "text.delta" {
+				return
+			}
+			text, _ := data["text"].(string)
+			if text == "" {
+				return
+			}
+			streamed = true
+			onDelta(text)
+		})
+	}
+
 	// Build initial messages with system prompt in user message
 	// (single-shot pattern: system role handled by the runtime's system prompt assembly).
 	messages := []api.Message{
@@ -944,15 +963,17 @@ func (a *App) runAgenticInit(ctx context.Context, systemPrompt, userPrompt strin
 	// Run the mini agentic loop.
 	var allText strings.Builder
 	for i := 0; i < maxInitToolIterations; i++ {
+		streamed = false
 		result, _, err := rt.TurnWithRecovery(ctx, messages)
 		if err != nil {
 			return allText.String(), fmt.Errorf("init turn %d: %w", i+1, err)
 		}
 
-		// Collect text output.
+		// Collect text output. Only emit via onDelta if streaming didn't
+		// already deliver it (e.g., provider returned a non-streaming response).
 		if result.TextContent != "" {
 			allText.WriteString(result.TextContent)
-			if onDelta != nil {
+			if onDelta != nil && !streamed {
 				onDelta(result.TextContent)
 			}
 		}
