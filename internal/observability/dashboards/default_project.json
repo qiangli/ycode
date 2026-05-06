@@ -239,12 +239,12 @@
       {
         "name": "Bus & Slash Commands",
         "panels": [
-          {"title": "Events Published Rate", "query": "sum by (type) (rate(ycode_bus_events_published[5m]))", "type": "timeseries"},
-          {"title": "Events Dropped Rate", "query": "sum by (site, type) (rate(ycode_bus_events_dropped[5m]))", "type": "timeseries"},
-          {"title": "Total Events Published", "query": "sum(ycode_bus_events_published)", "type": "stat"},
-          {"title": "Total Events Dropped", "query": "sum(ycode_bus_events_dropped)", "type": "stat"},
-          {"title": "Command-Stream Events Published", "query": "sum by (type) (rate(ycode_bus_events_published{type=~\"command\\\\..*\"}[5m]))", "type": "timeseries"},
-          {"title": "Command-Stream Drops by Site", "query": "sum by (site) (rate(ycode_bus_events_dropped{type=~\"command\\\\..*\"}[5m]))", "type": "timeseries"}
+          {"title": "Events Published Rate", "query": "sum by (type) (rate(ycode_bus_events_published_total[5m]))", "type": "timeseries"},
+          {"title": "Events Dropped Rate", "query": "sum by (site, type) (rate(ycode_bus_events_dropped_total[5m]))", "type": "timeseries"},
+          {"title": "Total Events Published", "query": "sum(ycode_bus_events_published_total)", "type": "stat"},
+          {"title": "Total Events Dropped", "query": "sum(ycode_bus_events_dropped_total)", "type": "stat"},
+          {"title": "Command-Stream Events Published", "query": "sum by (type) (rate(ycode_bus_events_published_total{type=~\"command\\\\..*\"}[5m]))", "type": "timeseries"},
+          {"title": "Command-Stream Drops by Site", "query": "sum by (site) (rate(ycode_bus_events_dropped_total{type=~\"command\\\\..*\"}[5m]))", "type": "timeseries"}
         ]
       }
     ]

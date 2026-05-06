@@ -279,9 +279,19 @@ func (p *Provider) TryConnectCollector(ctx context.Context, addr string) bool {
 	p.shutdownFuncs = append(p.shutdownFuncs, newMeter.Shutdown)
 	otel.SetMeterProvider(newMeter)
 
-	// Rebuild instruments on the new meter so subsequent recordings go to both exporters.
+	// Rebuild instruments on the new meter so subsequent recordings go to
+	// both exporters. Mutate the existing struct in place rather than
+	// replacing p.Instruments — every consumer that captured the pointer
+	// before TryConnectCollector ran (cmd/ycode/otel.go:96, :114, :216,
+	// :230, internal/telemetry/otel/bridge.go) holds the same *Instruments
+	// they always had, but its fields now point to counters bound to the
+	// new MeterProvider (which has both file and gRPC readers). Without
+	// this mutation, those captures stay bound to the file-only provider
+	// and never reach Prometheus — that produced the systemic "No data"
+	// panel issue across every ycode metric except those resolved per
+	// call (e.g. the bus counters).
 	if inst, err := NewInstruments(newMeter.Meter("ycode")); err == nil {
-		p.Instruments = inst
+		*p.Instruments = *inst
 	}
 
 	// Set up log provider with the original resource (preserves service.instance.id).
