@@ -3,41 +3,50 @@ package bus
 import (
 	"context"
 	"log/slog"
-	"sync"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
-// Per-package OTel instruments for the bus. Created lazily on first use so
-// the bus package has no init-order dependency on the OTel SDK setup. When
-// no exporter is wired, otel.Meter returns a no-op meter and the counters
-// are silent — but the slog.Debug records still land in the log stream so
-// post-hoc diagnosis (e.g., "did the server publish command.complete?")
-// works even without a collector.
-var (
-	instrOnce  sync.Once
-	publishedC metric.Int64Counter
-	droppedC   metric.Int64Counter
+// Bus instrumentation. We resolve the counters from the global meter
+// provider on every call rather than caching them. ycode's startup
+// calls otel.SetMeterProvider twice — once with file-only exporters,
+// then again after TryConnectCollector wires the gRPC pipeline to the
+// embedded OTel collector. The global package's instrument delegation
+// only binds the first time, so a cached counter would stay attached
+// to the file-only provider and never reach Prometheus. Resolving
+// per call sidesteps that entirely; the SDK caches Meter and Counter
+// instances internally by name, so the steady-state cost is two map
+// lookups + a mutex acquire — well under 100ns per event, which is
+// invisible at our event rate.
+
+const (
+	meterName     = "ycode.bus"
+	publishedName = "ycode.bus.events.published"
+	droppedName   = "ycode.bus.events.dropped"
 )
 
-func initInstruments() {
-	m := otel.Meter("ycode.bus")
-	publishedC, _ = m.Int64Counter("ycode.bus.events.published",
+func publishedCounter() metric.Int64Counter {
+	c, _ := otel.Meter(meterName).Int64Counter(publishedName,
 		metric.WithDescription("Bus events published, by event type"))
-	droppedC, _ = m.Int64Counter("ycode.bus.events.dropped",
+	return c
+}
+
+func droppedCounter() metric.Int64Counter {
+	c, _ := otel.Meter(meterName).Int64Counter(droppedName,
 		metric.WithDescription("Bus events dropped due to slow consumer, by event type and drop site"))
+	return c
 }
 
 // recordPublish increments the published-events counter for an event.
 // Safe to call from any goroutine; no-op if instrumentation init failed.
 func recordPublish(ev Event) {
-	instrOnce.Do(initInstruments)
-	if publishedC == nil {
+	c := publishedCounter()
+	if c == nil {
 		return
 	}
-	publishedC.Add(context.Background(), 1, metric.WithAttributes(
+	c.Add(context.Background(), 1, metric.WithAttributes(
 		attribute.String("type", string(ev.Type)),
 	))
 }
@@ -51,9 +60,8 @@ func recordPublish(ev Event) {
 // "ws_client" (client-side broadcast to TUI subscribers), etc. Filterable
 // in metrics queries.
 func RecordDrop(ev Event, site string) {
-	instrOnce.Do(initInstruments)
-	if droppedC != nil {
-		droppedC.Add(context.Background(), 1, metric.WithAttributes(
+	if c := droppedCounter(); c != nil {
+		c.Add(context.Background(), 1, metric.WithAttributes(
 			attribute.String("type", string(ev.Type)),
 			attribute.String("site", site),
 		))
@@ -63,13 +71,4 @@ func RecordDrop(ev Event, site string) {
 		"session", ev.SessionID,
 		"site", site,
 	)
-}
-
-// resetInstrumentsForTest re-runs the lazy init so a test can swap in a
-// fresh meter provider and observe its own counter increments. Not for
-// production use — there is no reason to reset instruments at runtime.
-func resetInstrumentsForTest() {
-	instrOnce = sync.Once{}
-	publishedC = nil
-	droppedC = nil
 }
