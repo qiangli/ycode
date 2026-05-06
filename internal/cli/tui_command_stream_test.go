@@ -68,6 +68,49 @@ func TestTUI_CommandDelta_LLMStreamShown(t *testing.T) {
 	}
 }
 
+// TestTUI_CommandProgress_RepaintsImmediately verifies that EventCommandProgress
+// returns a repaint command so progress lines surface without waiting for the
+// next workingTickMsg cadence. Fast commands (e.g. cached /init scaffold) can
+// otherwise complete before any tick fires, leaving the screen blank.
+func TestTUI_CommandProgress_RepaintsImmediately(t *testing.T) {
+	m := newTestTUIModel(t)
+
+	data, _ := json.Marshal(map[string]string{"message": "⧗ Building code knowledge graph..."})
+	_, cmd := m.Update(busEventMsg{Event: bus.Event{
+		Type: bus.EventCommandProgress,
+		Data: data,
+	}})
+
+	if cmd == nil {
+		t.Fatal("expected repaint command from EventCommandProgress")
+	}
+	msg := cmd()
+	if _, ok := msg.(repaintMsg); !ok {
+		t.Errorf("expected repaintMsg from EventCommandProgress, got %T", msg)
+	}
+}
+
+// TestTUI_CommandDelta_RepaintsImmediately verifies the same for streaming
+// LLM deltas — an early /init delta must trigger a redraw so the user sees
+// AGENTS.md content stream in.
+func TestTUI_CommandDelta_RepaintsImmediately(t *testing.T) {
+	m := newTestTUIModel(t)
+
+	data, _ := json.Marshal(map[string]string{"text": "# AGENTS.md\n"})
+	_, cmd := m.Update(busEventMsg{Event: bus.Event{
+		Type: bus.EventCommandDelta,
+		Data: data,
+	}})
+
+	if cmd == nil {
+		t.Fatal("expected repaint command from EventCommandDelta")
+	}
+	msg := cmd()
+	if _, ok := msg.(repaintMsg); !ok {
+		t.Errorf("expected repaintMsg from EventCommandDelta, got %T", msg)
+	}
+}
+
 // TestTUI_ToolUseStart_ShowsDetail verifies that tool use events display
 // tool name and input summary (e.g., file path, command, pattern).
 func TestTUI_ToolUseStart_ShowsDetail(t *testing.T) {

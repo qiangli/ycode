@@ -2220,11 +2220,16 @@ func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
 		if message := str("message"); message != "" {
 			m.appendOutput(message + "\n")
 		}
+		// Repaint immediately so progress lines surface without waiting
+		// for the next workingTickMsg cadence — fast commands can complete
+		// before that tick fires, which previously left the screen blank.
+		return m, func() tea.Msg { return repaintMsg{} }
 
 	case bus.EventCommandDelta:
 		if text := str("text"); text != "" {
 			m.appendOutput(text)
 		}
+		return m, func() tea.Msg { return repaintMsg{} }
 
 	case bus.EventCommandComplete:
 		m.working = false
