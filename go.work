@@ -5,6 +5,7 @@ use (
 	./pkg/oci
 	./pkg/ollm
 	./pkg/otel
+	./peers/bonsai
 )
 
 // Workspace-level replace directives override sub-module replaces
