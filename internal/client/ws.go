@@ -120,6 +120,9 @@ func (c *WSClient) fanOut(ev bus.Event) {
 		select {
 		case ch <- ev:
 		default:
+			// Slow subscriber — drop event. Recorded so a missing UI
+			// update can be distinguished from a server-side publish bug.
+			bus.RecordDrop(ev, "ws_client")
 		}
 	}
 }

@@ -1601,8 +1601,19 @@ func (m *TUIModel) startAgentTurnViaClient(ctx context.Context, userPrompt strin
 			}
 		}()
 
-		// Forward bus events to TUI until turn completes.
+		// Forward bus events to TUI until turn completes. Command-stream
+		// events get a debug log so a "no progress shown" report can be
+		// pinned to publish (server) vs receive (client) vs render (TUI).
 		for ev := range evCh {
+			switch ev.Type {
+			case bus.EventCommandProgress, bus.EventCommandDelta,
+				bus.EventCommandComplete, bus.EventCommandError:
+				slog.Debug("bus.event.received",
+					"type", ev.Type,
+					"session", ev.SessionID,
+					"site", "tui_thinclient",
+				)
+			}
 			if prog != nil {
 				prog.Send(busEventMsg{ev})
 			}

@@ -46,7 +46,9 @@ func NewMemoryBus() *MemoryBus {
 }
 
 // Publish sends an event to all matching subscribers.
-// Slow consumers are skipped (non-blocking send).
+// Slow consumers are skipped (non-blocking send) and recorded as drops so
+// post-hoc diagnosis can distinguish "never published" from "published but
+// dropped en route to a slow subscriber".
 func (b *MemoryBus) Publish(event Event) {
 	if event.ID == 0 {
 		event.ID = NextEventID()
@@ -54,6 +56,8 @@ func (b *MemoryBus) Publish(event Event) {
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
+
+	recordPublish(event)
 
 	// Store in ring buffer.
 	b.ringMu.Lock()
@@ -71,6 +75,7 @@ func (b *MemoryBus) Publish(event Event) {
 			case sub.ch <- event:
 			default:
 				// Slow consumer — drop event to avoid blocking.
+				RecordDrop(event, "memory_bus")
 			}
 		}
 	}
