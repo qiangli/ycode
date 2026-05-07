@@ -1,6 +1,6 @@
 //go:build integration
 
-package collector
+package observability
 
 import (
 	"context"
@@ -29,7 +29,7 @@ import (
 // would land in a single unlabeled stream and the hub role (signals
 // from third-party tools kept separately queryable) would be broken.
 func TestSourceAttribution_PrometheusLabels(t *testing.T) {
-	cfg := Config{
+	cfg := CollectorConfig{
 		GRPCPort:       allocFreePort(t),
 		HTTPPort:       allocFreePort(t),
 		PrometheusPort: allocFreePort(t),

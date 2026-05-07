@@ -15,7 +15,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/qiangli/ycode/internal/collector"
 	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/gitserver"
 	"github.com/qiangli/ycode/internal/inference"
@@ -492,7 +491,7 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 	if err != nil {
 		return nil, fmt.Errorf("collector prometheus port: %w", err)
 	}
-	collCfg := collector.Config{
+	collCfg := observability.CollectorConfig{
 		GRPCPort:               collGRPCPort,
 		HTTPPort:               collHTTPPort,
 		PrometheusPort:         collPromPort,
@@ -500,7 +499,7 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 		VictoriaLogsPathPrefix: "/logs",
 		JaegerOTLPPort:         jaegerOTLPPort,
 	}
-	coll := collector.NewEmbeddedCollector(collCfg, filepath.Join(dataDir, "collector"))
+	coll := observability.NewEmbeddedCollector(collCfg, filepath.Join(dataDir, "collector"))
 	mgr.AddComponent(coll)
 
 	mgr.AddComponent(observability.NewPrometheusComponent(

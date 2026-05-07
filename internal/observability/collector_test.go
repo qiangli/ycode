@@ -1,6 +1,6 @@
 //go:build integration
 
-package collector
+package observability
 
 import (
 	"context"
@@ -24,7 +24,7 @@ func allocFreePort(t *testing.T) int {
 }
 
 func TestEmbeddedCollector_StartStop(t *testing.T) {
-	cfg := Config{
+	cfg := CollectorConfig{
 		GRPCPort:       allocFreePort(t),
 		HTTPPort:       allocFreePort(t),
 		PrometheusPort: allocFreePort(t),
@@ -71,7 +71,7 @@ func TestEmbeddedCollector_StartStop(t *testing.T) {
 }
 
 func TestEmbeddedCollector_HTTPHandler(t *testing.T) {
-	cfg := Config{
+	cfg := CollectorConfig{
 		GRPCPort:       allocFreePort(t),
 		HTTPPort:       allocFreePort(t),
 		PrometheusPort: allocFreePort(t),
@@ -95,7 +95,7 @@ func TestEmbeddedCollector_PortConflict(t *testing.T) {
 	defer ln.Close()
 	occupiedPort := ln.Addr().(*net.TCPAddr).Port
 
-	cfg := Config{
+	cfg := CollectorConfig{
 		GRPCPort:       occupiedPort, // will conflict
 		HTTPPort:       allocFreePort(t),
 		PrometheusPort: allocFreePort(t),
@@ -110,7 +110,7 @@ func TestEmbeddedCollector_PortConflict(t *testing.T) {
 }
 
 func TestEmbeddedCollector_PrometheusMetrics(t *testing.T) {
-	cfg := Config{
+	cfg := CollectorConfig{
 		GRPCPort:       allocFreePort(t),
 		HTTPPort:       allocFreePort(t),
 		PrometheusPort: allocFreePort(t),
@@ -149,15 +149,15 @@ func TestEmbeddedCollector_PrometheusMetrics(t *testing.T) {
 	}
 }
 
-func TestGenerateYAML_Pipelines(t *testing.T) {
-	cfg := Config{
+func TestGenerateCollectorYAML_Pipelines(t *testing.T) {
+	cfg := CollectorConfig{
 		GRPCPort:       4317,
 		HTTPPort:       4318,
 		PrometheusPort: 8888,
 		JaegerOTLPPort: 4320,
 	}
 
-	yaml := GenerateYAML(cfg)
+	yaml := GenerateCollectorYAML(cfg)
 
 	// Verify key sections exist.
 	for _, want := range []string{
@@ -174,13 +174,13 @@ func TestGenerateYAML_Pipelines(t *testing.T) {
 	}
 }
 
-func TestGenerateYAML_PreservesResourceAttrs(t *testing.T) {
-	cfg := Config{
+func TestGenerateCollectorYAML_PreservesResourceAttrs(t *testing.T) {
+	cfg := CollectorConfig{
 		GRPCPort:       4317,
 		HTTPPort:       4318,
 		PrometheusPort: 8888,
 	}
-	yaml := GenerateYAML(cfg)
+	yaml := GenerateCollectorYAML(cfg)
 	// Without resource_to_telemetry_conversion, the Prometheus exporter
 	// collapses all OTel resource attributes (service.name, service.instance.id,
 	// etc.) into a single unlabeled stream, so different OTLP publishers
@@ -190,15 +190,15 @@ func TestGenerateYAML_PreservesResourceAttrs(t *testing.T) {
 	}
 }
 
-func TestGenerateYAML_NoOptionalExporters(t *testing.T) {
-	cfg := Config{
+func TestGenerateCollectorYAML_NoOptionalExporters(t *testing.T) {
+	cfg := CollectorConfig{
 		GRPCPort:       4317,
 		HTTPPort:       4318,
 		PrometheusPort: 8888,
 		// No Jaeger, no VictoriaLogs
 	}
 
-	yaml := GenerateYAML(cfg)
+	yaml := GenerateCollectorYAML(cfg)
 
 	// Should not have traces pipeline or log pipeline.
 	if contains(yaml, "otlp/jaeger") {

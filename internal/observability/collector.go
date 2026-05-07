@@ -1,11 +1,9 @@
-// Package collector provides an embedded OpenTelemetry Collector.
-package collector
+package observability
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -18,7 +16,7 @@ import (
 
 // EmbeddedCollector runs an OTEL Collector in-process as a goroutine.
 type EmbeddedCollector struct {
-	cfg     Config
+	cfg     CollectorConfig
 	dataDir string
 
 	mu      sync.Mutex
@@ -28,7 +26,7 @@ type EmbeddedCollector struct {
 }
 
 // NewEmbeddedCollector creates an embedded collector with the given configuration.
-func NewEmbeddedCollector(cfg Config, dataDir string) *EmbeddedCollector {
+func NewEmbeddedCollector(cfg CollectorConfig, dataDir string) *EmbeddedCollector {
 	return &EmbeddedCollector{
 		cfg:     cfg,
 		dataDir: dataDir,
@@ -52,7 +50,7 @@ func (c *EmbeddedCollector) Start(ctx context.Context) error {
 		{"HTTP", c.cfg.HTTPPort},
 		{"prometheus", c.cfg.PrometheusPort},
 	} {
-		if !isPortAvailable(p.port) {
+		if !IsPortAvailable(p.port) {
 			return fmt.Errorf("collector: %s port %d already in use", p.name, p.port)
 		}
 	}
@@ -60,7 +58,7 @@ func (c *EmbeddedCollector) Start(ctx context.Context) error {
 	if err := os.MkdirAll(c.dataDir, 0o755); err != nil {
 		return fmt.Errorf("create collector data dir: %w", err)
 	}
-	configYAML := GenerateYAML(c.cfg)
+	configYAML := GenerateCollectorYAML(c.cfg)
 
 	factories, err := c.factories()
 	if err != nil {
@@ -244,15 +242,6 @@ background:rgba(255,255,255,0.08)}
 // GRPCAddr returns the collector's gRPC OTLP receiver address.
 func (c *EmbeddedCollector) GRPCAddr() string {
 	return fmt.Sprintf("127.0.0.1:%d", c.cfg.GRPCPort)
-}
-
-func isPortAvailable(port int) bool {
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		return false
-	}
-	ln.Close()
-	return true
 }
 
 // factories builds the component factories for the embedded collector.

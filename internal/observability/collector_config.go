@@ -1,5 +1,4 @@
-// Package collector manages the OpenTelemetry Collector.
-package collector
+package observability
 
 import (
 	"fmt"
@@ -8,8 +7,10 @@ import (
 	"strings"
 )
 
-// Config holds the collector configuration parameters.
-type Config struct {
+// CollectorConfig holds the embedded OpenTelemetry Collector's
+// configuration parameters: receiver ports, exporter targets, and the
+// optional remote OTLP endpoint.
+type CollectorConfig struct {
 	// Receiver ports (allocated dynamically).
 	GRPCPort int
 	HTTPPort int
@@ -26,9 +27,10 @@ type Config struct {
 	RemoteOTLPHeaders  map[string]string
 }
 
-// GenerateYAML produces the collector config YAML from the given parameters.
-// Pipeline routing: metrics→Prometheus, logs→VictoriaLogs, traces→Jaeger.
-func GenerateYAML(cfg Config) string {
+// GenerateCollectorYAML produces the embedded collector config YAML from
+// the given parameters. Pipeline routing: metrics→Prometheus,
+// logs→VictoriaLogs, traces→Jaeger.
+func GenerateCollectorYAML(cfg CollectorConfig) string {
 	var b strings.Builder
 
 	b.WriteString("receivers:\n")
@@ -139,13 +141,15 @@ func GenerateYAML(cfg Config) string {
 	return b.String()
 }
 
-// WriteConfig writes the collector config YAML to the given directory.
-func WriteConfig(dir string, cfg Config) (string, error) {
+// WriteCollectorConfig writes the collector config YAML to the given directory.
+// Currently unused at runtime (the embedded collector is fed YAML directly
+// in-memory) but retained for testing and ad-hoc inspection.
+func WriteCollectorConfig(dir string, cfg CollectorConfig) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create collector dir: %w", err)
 	}
 	path := filepath.Join(dir, "config.yaml")
-	data := GenerateYAML(cfg)
+	data := GenerateCollectorYAML(cfg)
 	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 		return "", fmt.Errorf("write collector config: %w", err)
 	}
