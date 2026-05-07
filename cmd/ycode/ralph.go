@@ -13,6 +13,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/bash"
+	"github.com/qiangli/ycode/internal/runtime/computer"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/ralph"
@@ -196,13 +197,14 @@ func newRalphDeps(cmd *cobra.Command) (*ralph.RuntimeDeps, error) {
 	toolReg := tools.NewRegistry()
 	tools.RegisterBuiltins(toolReg)
 
-	// Register tool handlers.
+	// Register tool handlers via the Computer gateway.
 	jobRegistry := bash.NewJobRegistry()
-	tools.RegisterBashHandler(toolReg, cwd, jobRegistry)
-	tools.RegisterFileHandlers(toolReg, v)
+	gateway := computer.NewLocal(v)
+	tools.RegisterBashHandler(toolReg, cwd, jobRegistry, gateway.Shell())
+	tools.RegisterFileHandlers(toolReg, gateway.Files())
 	tools.RegisterSearchHandlers(toolReg, v)
 	tools.RegisterVFSHandlers(toolReg, v)
-	tools.RegisterWebHandlers(toolReg)
+	tools.RegisterWebHandlers(toolReg, gateway.Web())
 	tools.RegisterNetscanHandler(toolReg)
 	tools.RegisterToolSearchHandler(toolReg)
 	tools.RegisterSkillHandler(toolReg)

@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"github.com/qiangli/ycode/internal/runtime/bash"
+	"github.com/qiangli/ycode/internal/runtime/computer"
 	"github.com/qiangli/ycode/internal/runtime/permission"
 )
 
@@ -17,20 +18,14 @@ type bashInput struct {
 	Signal string `json:"signal,omitempty"`
 }
 
-// RegisterBashHandler registers the bash tool handler.
-// An optional executor can be provided to route commands through a container
-// sandbox. When executor is nil, commands run directly on the host.
-// The jobs registry enables background execution; the session tracks working
-// directory across invocations. Both may be nil.
-func RegisterBashHandler(r *Registry, workDir string, jobs *bash.JobRegistry, executor ...bash.Executor) {
+// RegisterBashHandler registers the bash tool handler. Commands are
+// executed through the Computer's Shell surface, which centralizes
+// host vs. container routing, OTEL spans, and (in a follow-up
+// commit) builtin fork-avoidance.
+func RegisterBashHandler(r *Registry, workDir string, jobs *bash.JobRegistry, shell computer.Shell) {
 	spec, ok := r.Get("bash")
 	if !ok {
 		return
-	}
-
-	var exec bash.Executor
-	if len(executor) > 0 {
-		exec = executor[0]
 	}
 
 	// Session tracks working directory across invocations.
@@ -79,7 +74,7 @@ func RegisterBashHandler(r *Registry, workDir string, jobs *bash.JobRegistry, ex
 			params.Command = session.WrapCommand(params.Command)
 		}
 
-		result, err := bash.ExecuteWith(ctx, exec, params.ExecParams)
+		result, err := shell.Run(ctx, params.ExecParams)
 		if err != nil {
 			return "", err
 		}

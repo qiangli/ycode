@@ -24,6 +24,7 @@ import (
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/runtime/bash"
 	"github.com/qiangli/ycode/internal/runtime/browseruse"
+	"github.com/qiangli/ycode/internal/runtime/computer"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/embedding"
@@ -321,12 +322,20 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	}
 
 	jobRegistry := bash.NewJobRegistry()
+	// Construct the unified Computer gateway. All agent-driven shell,
+	// fs, and web operations route through its surfaces; host vs.
+	// container exec is selected by the bash.Executor option.
+	var localOpts []computer.LocalOption
 	if bashExecutor != nil {
-		tools.RegisterBashHandler(toolReg, "/workspace", jobRegistry, bashExecutor)
-	} else {
-		tools.RegisterBashHandler(toolReg, cwd, jobRegistry)
+		localOpts = append(localOpts, computer.WithExecutor(bashExecutor))
 	}
-	tools.RegisterFileHandlers(toolReg, v)
+	gateway := computer.NewLocal(v, localOpts...)
+	bashWorkDir := cwd
+	if bashExecutor != nil {
+		bashWorkDir = "/workspace"
+	}
+	tools.RegisterBashHandler(toolReg, bashWorkDir, jobRegistry, gateway.Shell())
+	tools.RegisterFileHandlers(toolReg, gateway.Files())
 	tools.RegisterSearchHandlers(toolReg, v)
 	tools.RegisterSymbolSearchHandler(toolReg)
 	tools.RegisterReferenceHandlers(toolReg)
@@ -336,7 +345,7 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	})
 	tools.RegisterVFSHandlers(toolReg, v)
 	tools.RegisterSleepHandler(toolReg)
-	tools.RegisterWebHandlers(toolReg)
+	tools.RegisterWebHandlers(toolReg, gateway.Web())
 	tools.RegisterNetscanHandler(toolReg)
 	tools.RegisterBrowserHandlers(toolReg)
 	tools.RegisterToolSearchHandler(toolReg)

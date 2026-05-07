@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/qiangli/ycode/internal/runtime/bash"
+	"github.com/qiangli/ycode/internal/runtime/computer"
 	"github.com/qiangli/ycode/internal/runtime/permission"
 )
 
@@ -23,6 +24,30 @@ func (m *mockExecutor) Execute(ctx context.Context, params bash.ExecParams) (*ba
 		return nil, m.err
 	}
 	return m.result, nil
+}
+
+// mockShell adapts a mockExecutor to computer.Shell for tests.
+type mockShell struct{ exec *mockExecutor }
+
+func (s *mockShell) Run(ctx context.Context, p bash.ExecParams) (*bash.ExecResult, error) {
+	return s.exec.Execute(ctx, p)
+}
+
+func (s *mockShell) Session(context.Context, computer.SessionOpts) (computer.Session, error) {
+	return nil, computer.ErrNotSupported
+}
+
+// hostShell is a Shell that runs commands directly via bash.Execute.
+// Used by tests that exercise the real host-execution path without
+// constructing a full Computer.
+type hostShell struct{}
+
+func (hostShell) Run(ctx context.Context, p bash.ExecParams) (*bash.ExecResult, error) {
+	return bash.Execute(ctx, p)
+}
+
+func (hostShell) Session(context.Context, computer.SessionOpts) (computer.Session, error) {
+	return nil, computer.ErrNotSupported
 }
 
 func TestRegisterBashHandler_WithExecutor(t *testing.T) {
@@ -47,7 +72,7 @@ func TestRegisterBashHandler_WithExecutor(t *testing.T) {
 		},
 	}
 
-	RegisterBashHandler(reg, "/workspace", nil, mock)
+	RegisterBashHandler(reg, "/workspace", nil, &mockShell{exec: mock})
 
 	spec, ok := reg.Get("bash")
 	if !ok {
@@ -85,7 +110,7 @@ func TestRegisterBashHandler_WithoutExecutor(t *testing.T) {
 	})
 
 	// Register without executor — should use host execution.
-	RegisterBashHandler(reg, t.TempDir(), nil)
+	RegisterBashHandler(reg, t.TempDir(), nil, hostShell{})
 
 	spec, ok := reg.Get("bash")
 	if !ok {
@@ -121,7 +146,7 @@ func TestRegisterBashHandler_WorkDirDefault(t *testing.T) {
 	}
 
 	workDir := "/test/workspace"
-	RegisterBashHandler(reg, workDir, nil, mock)
+	RegisterBashHandler(reg, workDir, nil, &mockShell{exec: mock})
 
 	spec, _ := reg.Get("bash")
 	input := json.RawMessage(`{"command": "pwd"}`)
@@ -154,7 +179,7 @@ func TestRegisterBashHandler_ExitCode(t *testing.T) {
 		},
 	}
 
-	RegisterBashHandler(reg, "/workspace", nil, mock)
+	RegisterBashHandler(reg, "/workspace", nil, &mockShell{exec: mock})
 
 	spec, _ := reg.Get("bash")
 	input := json.RawMessage(`{"command": "false"}`)
