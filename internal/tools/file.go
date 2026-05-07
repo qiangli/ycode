@@ -7,6 +7,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/runtime/fileops"
 	"github.com/qiangli/ycode/internal/runtime/vfs"
+	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 // RegisterFileHandlers registers file tool handlers with VFS path validation.
@@ -35,6 +36,7 @@ func RegisterFileHandlers(r *Registry, v *vfs.VFS) {
 			action := fileops.CheckSensitiveFile(absPath)
 
 			result, err := fileops.ReadFile(params)
+			yotel.RecordFileop(ctx, "read", len(result), err == nil)
 			if err != nil {
 				return "", err
 			}
@@ -60,7 +62,9 @@ func RegisterFileHandlers(r *Registry, v *vfs.VFS) {
 			}
 			params.Path = absPath
 			// Pass empty workspace root since VFS already validated the path.
-			if err := fileops.WriteFile(params, ""); err != nil {
+			err = fileops.WriteFile(params, "")
+			yotel.RecordFileop(ctx, "write", len(params.Content), err == nil)
+			if err != nil {
 				return "", err
 			}
 			r.NotifyFileWrite(params.Path)
@@ -80,7 +84,11 @@ func RegisterFileHandlers(r *Registry, v *vfs.VFS) {
 				return "", err
 			}
 			params.Path = absPath
-			if err := fileops.EditFile(params); err != nil {
+			err = fileops.EditFile(params)
+			// Edits don't carry a clean "bytes" semantic (replace string ↔ new
+			// string of differing sizes); count the operation only.
+			yotel.RecordFileop(ctx, "edit", 0, err == nil)
+			if err != nil {
 				return "", err
 			}
 			r.NotifyFileWrite(params.Path)
