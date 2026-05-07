@@ -3,13 +3,10 @@ name: verify-features
 # Gates the feature-tier registry: every feature declared in
 # internal/features/registry.yaml must reference paths that exist, have a
 # valid tier, and (for stable features, eventually) meet graduation criteria.
-#
 # See docs/strategy.md#feature-tiers for policy.
 #
-# Runs inside the same ycode-builder Docker image that ci.yml uses, so the
-# CGO system deps (libbtrfs-dev / libgpgme-dev / libsqlite3-dev) come from
-# the image rather than apt-installed on the runner. `make ci` runs the
-# exact same commands locally — see Makefile.
+# Native ubuntu-latest + setup-go cache — same shape as ci.yml. The features
+# package has no CGO needs, so this stays minimal.
 
 on:
   push:
@@ -24,17 +21,16 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
-          fetch-depth: 0
 
-      - name: Build ycode-builder image
-        run: docker build -t ycode-builder .
-
-      - name: Verify feature registry
-        run: docker run --rm ycode-builder make verify-features
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: Run features package tests
-        run: docker run --rm ycode-builder go test -short -race ./internal/features/...
+        run: go test -short -count=1 -timeout 60s ./internal/features/...

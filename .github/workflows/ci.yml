@@ -1,5 +1,21 @@
 name: CI
 
+# Lean publish-shaped CI: prove the binary compiles, vet passes, and a small
+# fast test subset is green. That's the GH contract.
+#
+# Heavy work — full -race unit suite, TUI integration, TUI E2E, container
+# tests, evals — runs locally via `make ci` (Docker, parity with what GH used
+# to do here). The pre-push git hook (`make install-hooks`) enforces it
+# before push, so coverage on PR is preserved without paying the GH cost on
+# every push.
+#
+# Why native (no docker) on the runner?
+#   - Docker Hub rate-limits anonymous pulls of golang:1.26-bookworm. That's
+#     the source of the 47-min outlier builds.
+#   - actions/setup-go's module cache survives across runs. A clean docker
+#     build re-downloads the entire dep tree (including external/) every job.
+#   - Apt-installing the CGO deps natively is one layer instead of three.
+
 on:
   push:
     branches: [main]
@@ -9,50 +25,43 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
-          fetch-depth: 0
+          # Default fetch-depth (1) is enough — go build does not need history.
 
-      - name: Build image
-        run: docker build -t ycode-builder .
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
 
-      - name: Compile
-        run: docker run --rm ycode-builder make compile
+      # CGO deps required by the vendored podman/buildah and sqlite. Same set
+      # as Dockerfile and release.yml install.
+      - name: Install CGO build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libbtrfs-dev libgpgme-dev libsqlite3-dev
 
       - name: Vet
-        run: docker run --rm ycode-builder make vet
+        run: go vet $(go list ./... | grep -v '/priorart/')
 
-      - name: Test
-        run: docker run --rm ycode-builder make test
+      # Compile-only check — proves the binary builds. We don't need to
+      # install or run; release.yml is the canonical artifact path.
+      - name: Compile
+        run: |
+          go build -trimpath \
+            -tags "sqlite,sqlite_unlock_notify,bindata" \
+            -o /dev/null ./cmd/ycode/
 
-  pipeline-gate:
-    # Pipeline gate: tests beyond the unit tier that catch regressions in
-    # the slash-command bus stream, /init scaffold, and any other pipeline
-    # artifact that has e2e coverage. See docs/pipeline.md for the full
-    # gate matrix; targets that need additional infrastructure (running
-    # server, Playwright browsers, recorded eval cassette) are added as
-    # they come online.
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
-      - name: Build image
-        run: docker build -t ycode-builder .
-
-      - name: TUI teatest (integration tag)
-        run: docker run --rm ycode-builder make test-tui
-
-      - name: TUI e2e (PTY)
-        run: docker run --rm ycode-builder make test-tui-e2e
-
-      # TODO: enable once their make targets ship and the supporting
-      # infrastructure is wired in this workflow:
-      #   make test-integration   (needs running ycode serve)
-      #   make eval-init          (needs aperio cassette under testdata/)
-      #   make test-ui            (needs Playwright + browser install)
+      # Tiny fast test subset: deterministic, no network, no -race, no
+      # container, no LLM. Race detector + the rest of the suite live in
+      # `make ci` locally.
+      - name: Fast unit tests
+        run: |
+          go test -short -count=1 -timeout 120s \
+            ./internal/eval/contract/... \
+            ./internal/runtime/mcp/... \
+            ./internal/features/...
