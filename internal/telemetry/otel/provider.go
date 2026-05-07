@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	otellog "go.opentelemetry.io/otel/log/global"
@@ -39,6 +40,7 @@ type ProviderConfig struct {
 	InstanceDir    string // per-instance subdir (e.g. ~/.agents/ycode/otel/instances/{id}) — used for file exports
 	PersistTraces  bool
 	PersistMetrics bool
+	PersistLogs    bool       // also write structured logs to disk (parity with traces/metrics)
 	Opener         FileOpener // optional VFS-backed file opener for path validation
 }
 
@@ -183,7 +185,9 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 	p.shutdownFuncs = append(p.shutdownFuncs, p.MeterProvider.Shutdown)
 	otel.SetMeterProvider(p.MeterProvider)
 
-	// --- Log provider (for structured log records to VictoriaLogs) ---
+	// --- Log provider (structured records: gRPC to collector and/or rotating file) ---
+	var logProcessors []sdklog.Processor
+
 	if cfg.CollectorAddr != "" {
 		grpcCtx, grpcCancel := context.WithTimeout(ctx, grpcConnectTimeout)
 		grpcLogExp, err := otlploggrpc.New(grpcCtx,
@@ -194,14 +198,32 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 		if err != nil {
 			slog.Warn("OTEL log gRPC exporter unavailable, skipping", "addr", cfg.CollectorAddr, "error", err)
 		} else {
-			p.LoggerProvider = sdklog.NewLoggerProvider(
-				sdklog.WithResource(res),
-				sdklog.WithProcessor(sdklog.NewBatchProcessor(grpcLogExp)),
-			)
+			logProcessors = append(logProcessors, sdklog.NewBatchProcessor(grpcLogExp))
 			p.shutdownFuncs = append(p.shutdownFuncs, grpcLogExp.Shutdown)
-			p.shutdownFuncs = append(p.shutdownFuncs, p.LoggerProvider.Shutdown)
-			otellog.SetLoggerProvider(p.LoggerProvider)
 		}
+	}
+
+	if cfg.PersistLogs && cfg.DataDir != "" {
+		exportDir := cfg.InstanceDir
+		if exportDir == "" {
+			exportDir = cfg.DataDir
+		}
+		fileExp, shutdown, err := newRotatingLogExporter(exportDir, cfg.Opener)
+		if err != nil {
+			return nil, fmt.Errorf("create log file exporter: %w", err)
+		}
+		logProcessors = append(logProcessors, sdklog.NewBatchProcessor(fileExp))
+		p.shutdownFuncs = append(p.shutdownFuncs, shutdown)
+	}
+
+	if len(logProcessors) > 0 {
+		logOpts := []sdklog.LoggerProviderOption{sdklog.WithResource(res)}
+		for _, proc := range logProcessors {
+			logOpts = append(logOpts, sdklog.WithProcessor(proc))
+		}
+		p.LoggerProvider = sdklog.NewLoggerProvider(logOpts...)
+		p.shutdownFuncs = append(p.shutdownFuncs, p.LoggerProvider.Shutdown)
+		otellog.SetLoggerProvider(p.LoggerProvider)
 	}
 
 	// Create pre-built instruments.
@@ -330,6 +352,42 @@ func newRotatingTraceExporter(dataDir string, opener FileOpener) (sdktrace.SpanE
 		return nil, nil, err
 	}
 	exp, err := stdouttrace.New(stdouttrace.WithWriter(f))
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	shutdown := func(ctx context.Context) error {
+		if err := exp.Shutdown(ctx); err != nil {
+			f.Close()
+			return err
+		}
+		return f.Close()
+	}
+	return exp, shutdown, nil
+}
+
+// newRotatingLogExporter creates a file-based log exporter writing to dataDir/logs/.
+// File-mode parity with newRotatingTraceExporter / newRotatingMetricExporter:
+// without this, structured logs are dropped whenever the gRPC collector is
+// unreachable (the file-only mode common in standalone ycode runs).
+func newRotatingLogExporter(dataDir string, opener FileOpener) (sdklog.Exporter, func(context.Context) error, error) {
+	dir := filepath.Join(dataDir, "logs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, nil, err
+	}
+	filename := filepath.Join(dir, fmt.Sprintf("logs-%s.jsonl", time.Now().Format("2006-01-02")))
+
+	var f *os.File
+	var err error
+	if opener != nil {
+		f, err = opener.OpenFile(context.Background(), filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	} else {
+		f, err = os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	exp, err := stdoutlog.New(stdoutlog.WithWriter(f))
 	if err != nil {
 		f.Close()
 		return nil, nil, err

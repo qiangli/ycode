@@ -84,6 +84,7 @@ func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Reg
 		InstanceDir:    instanceDir,
 		PersistTraces:  true,
 		PersistMetrics: true,
+		PersistLogs:    true,
 		Opener:         opener,
 	})
 	if err != nil {
@@ -201,6 +202,7 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 		InstanceDir:    instanceDir,
 		PersistTraces:  obs.PersistTraces,
 		PersistMetrics: obs.PersistMetrics,
+		PersistLogs:    obs.PersistLogs,
 		Opener:         opener,
 	})
 	if err != nil {

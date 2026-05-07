@@ -146,6 +146,7 @@ type ObservabilityConfig struct {
 	LogToolDetails   bool   `json:"logToolDetails"`   // log full tool input/output, default true
 	PersistTraces    bool   `json:"persistTraces"`    // write traces to disk, default true when enabled
 	PersistMetrics   bool   `json:"persistMetrics"`   // write metrics to disk, default true when enabled
+	PersistLogs      bool   `json:"persistLogs"`      // write structured logs to disk, default true when enabled
 
 	// Auto-start: fork a detached `ycode serve` if no collector is running.
 	AutoPulse bool `json:"autoPulse,omitempty"`
@@ -237,6 +238,7 @@ func DefaultConfig() *Config {
 			LogToolDetails:   true,
 			PersistTraces:    true,
 			PersistMetrics:   true,
+			PersistLogs:      true,
 		},
 		GitServer: &GitServerConfig{
 			Enabled:  true, // On by default — agents use Gitea for branch isolation and collaboration.
@@ -413,6 +415,9 @@ func mergeFromFile(cfg *Config, path string) error {
 		}
 		if o.PersistMetrics {
 			cfg.Observability.PersistMetrics = true
+		}
+		if o.PersistLogs {
+			cfg.Observability.PersistLogs = true
 		}
 	}
 	if overlay.Chat != nil {
