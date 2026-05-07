@@ -300,6 +300,18 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Handler:     initHandler(deps),
 	})
 
+	// /netscan: discover servers on the local network via mDNS +
+	// optional TCP CONNECT scan + opportunistic system probes.
+	// First-class peer of /init and /commit — embedded in the binary,
+	// not a markdown skill file.
+	r.Register(&Spec{
+		Name:        "netscan",
+		Description: "Discover servers on the local network (mDNS + system probes)",
+		Usage:       "/netscan [list|json|scan]",
+		Category:    "workspace",
+		Handler:     netscanHandler(deps),
+	})
+
 	// Also register as a skill executor so the LLM can call Skill("init")
 	// during agentic turns. Uses the same optimized single-shot path.
 	builtin.RegisterSkillExecutor("init", func(ctx context.Context, args string) (string, error) {

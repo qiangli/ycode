@@ -203,6 +203,7 @@ func newRalphDeps(cmd *cobra.Command) (*ralph.RuntimeDeps, error) {
 	tools.RegisterSearchHandlers(toolReg, v)
 	tools.RegisterVFSHandlers(toolReg, v)
 	tools.RegisterWebHandlers(toolReg)
+	tools.RegisterNetscanHandler(toolReg)
 	tools.RegisterToolSearchHandler(toolReg)
 	tools.RegisterSkillHandler(toolReg)
 	tools.SetMemoryManager(memManager)

@@ -337,6 +337,7 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	tools.RegisterVFSHandlers(toolReg, v)
 	tools.RegisterSleepHandler(toolReg)
 	tools.RegisterWebHandlers(toolReg)
+	tools.RegisterNetscanHandler(toolReg)
 	tools.RegisterBrowserHandlers(toolReg)
 	tools.RegisterToolSearchHandler(toolReg)
 	tools.RegisterSkillHandler(toolReg)
@@ -1252,6 +1253,9 @@ func init() {
 	rootCmd.AddCommand(newAutoCmd())
 	rootCmd.AddCommand(newSprintCmd())
 	rootCmd.AddCommand(newSkillCmd())
+
+	// Local network discovery + SSH
+	rootCmd.AddCommand(newNetscanCmd())
 
 	// Feature registry (build tiers — see docs/strategy.md#feature-tiers)
 	rootCmd.AddCommand(newFeaturesCmd())
