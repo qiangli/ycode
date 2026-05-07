@@ -21,7 +21,8 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    # Same cold-cache reasoning as ci.yml — first run primes the build cache.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
         with:

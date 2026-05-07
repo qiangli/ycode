@@ -25,7 +25,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Cold-cache headroom: first run after this workflow lands has to compile
+    # every transitive dep of cmd/ycode (the build cache is empty until a run
+    # finishes). After actions/setup-go's cache primes, subsequent runs are
+    # ~1-2 min. 15 min is a hard cap, not a target.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
@@ -45,8 +49,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libbtrfs-dev libgpgme-dev libsqlite3-dev
 
-      - name: Vet
-        run: go vet $(go list ./... | grep -v '/priorart/')
+      # Note: `go vet` is intentionally NOT here. Vet's cold-cache cost is the
+      # same as a full compile (it builds every package to analyse it), which
+      # doubles the CI time for the same byte-paths the compile step already
+      # covers. Vet runs in `make ci` locally via the pre-push hook, where
+      # warm caches make it fast.
 
       # Compile-only check — proves the binary builds. We don't need to
       # install or run; release.yml is the canonical artifact path.
