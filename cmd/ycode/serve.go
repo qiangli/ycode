@@ -475,14 +475,19 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 	}
 	mgr.AddComponent(observability.NewJaegerComponent(jaegerOTLPPort, jaegerQueryPort, filepath.Join(dataDir, "jaeger")))
 
-	collGRPCPort, err := allocate()
+	// OTLP ingress ports are pinned to well-known defaults (4317 gRPC, 4318 HTTP)
+	// so any standard OTLP client (third-party or ycode-internal) can publish
+	// without lookup. Set OTLPGRPCPort / OTLPHTTPPort in observability config
+	// to override; set to a negative value to fall back to ephemeral allocation.
+	collGRPCPort, err := resolveOTLPPort(cfg.OTLPGRPCPort, 4317, "OTLP gRPC", allocate)
 	if err != nil {
-		return nil, fmt.Errorf("collector grpc port: %w", err)
+		return nil, err
 	}
-	collHTTPPort, err := allocate()
+	collHTTPPort, err := resolveOTLPPort(cfg.OTLPHTTPPort, 4318, "OTLP HTTP", allocate)
 	if err != nil {
-		return nil, fmt.Errorf("collector http port: %w", err)
+		return nil, err
 	}
+	// Prometheus exporter port is internal scrape target — keep ephemeral.
 	collPromPort, err := allocate()
 	if err != nil {
 		return nil, fmt.Errorf("collector prometheus port: %w", err)
@@ -584,6 +589,32 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 		gitServer:     gitComp,
 		collectorAddr: coll.GRPCAddr(),
 	}, nil
+}
+
+// resolveOTLPPort returns the OTLP receiver port to bind, applying this policy:
+//   - configured > 0       → use that port; fail loud if unavailable.
+//   - configured == 0      → use the well-known default; fail loud if unavailable.
+//   - configured  < 0      → opt-in to ephemeral allocation.
+//
+// Pinning OTLP ingress to 4317/4318 is a hard requirement for the third-party
+// OTLP-hub role: a publisher with no knowledge of ycode's port allocator must
+// be able to discover ycode purely from the standard OTel default endpoints.
+func resolveOTLPPort(configured, defaultPort int, label string, alloc func() (int, error)) (int, error) {
+	if configured < 0 {
+		p, err := alloc()
+		if err != nil {
+			return 0, fmt.Errorf("%s ephemeral port: %w", label, err)
+		}
+		return p, nil
+	}
+	port := configured
+	if port == 0 {
+		port = defaultPort
+	}
+	if !observability.IsPortAvailable(port) {
+		return 0, fmt.Errorf("%s port %d already in use; configure observability.otlp%sPort to override or set negative to allocate ephemerally", label, port, "GRPC/HTTP")
+	}
+	return port, nil
 }
 
 func loadServeConfig() (*config.ObservabilityConfig, string, error) {

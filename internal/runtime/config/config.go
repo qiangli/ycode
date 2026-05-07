@@ -128,6 +128,13 @@ type ObservabilityConfig struct {
 	ProxyPort     int    `json:"proxyPort"`     // reverse proxy port, default 58080
 	ProxyBindAddr string `json:"proxyBindAddr"` // default "127.0.0.1"
 
+	// OTLP ingress ports — pinned to well-known defaults so any third-party
+	// OTLP client can publish to ycode without configuration. Set to a
+	// non-zero value to override; set to a negative value to opt back into
+	// ephemeral allocation.
+	OTLPGRPCPort int `json:"otlpGRPCPort,omitempty"` // default 4317
+	OTLPHTTPPort int `json:"otlpHTTPPort,omitempty"` // default 4318
+
 	// Remote gateway
 	RemoteWrite []RemoteWriteTarget `json:"remoteWrite,omitempty"`
 	Federation  []FederationTarget  `json:"federation,omitempty"`
@@ -376,6 +383,12 @@ func mergeFromFile(cfg *Config, path string) error {
 		}
 		if o.ProxyBindAddr != "" {
 			cfg.Observability.ProxyBindAddr = o.ProxyBindAddr
+		}
+		if o.OTLPGRPCPort != 0 {
+			cfg.Observability.OTLPGRPCPort = o.OTLPGRPCPort
+		}
+		if o.OTLPHTTPPort != 0 {
+			cfg.Observability.OTLPHTTPPort = o.OTLPHTTPPort
 		}
 		if len(o.RemoteWrite) > 0 {
 			cfg.Observability.RemoteWrite = o.RemoteWrite
