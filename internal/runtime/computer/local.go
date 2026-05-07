@@ -111,8 +111,23 @@ func (s *localShell) Run(ctx context.Context, p bash.ExecParams) (*bash.ExecResu
 		AttrCmdBinary.String(binary),
 		AttrCmdLen.Int(len(p.Command)),
 		AttrCmdTimeout.Int(p.Timeout),
-		AttrForked.Bool(true), // builtin dispatcher in a follow-up commit will set false.
 	)
+
+	// Fast path: try the in-process builtin dispatcher. Only
+	// trivial commands (single SimpleCommand, no pipes /
+	// redirections / assignments) are eligible; anything else falls
+	// through to the real bash.Executor. The forked= attribute on
+	// the span lets us quantify fork-avoidance from traces.
+	if res, ok := tryBuiltin(ctx, p); ok {
+		span.SetAttributes(
+			AttrForked.Bool(false),
+			AttrExitCode.Int(res.ExitCode),
+		)
+		finish(nil)
+		return res, nil
+	}
+
+	span.SetAttributes(AttrForked.Bool(true))
 	res, err := bash.ExecuteWith(ctx, s.c.exec, p)
 	if res != nil {
 		span.SetAttributes(AttrExitCode.Int(res.ExitCode))
