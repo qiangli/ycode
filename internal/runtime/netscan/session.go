@@ -242,9 +242,15 @@ func (s *Session) Close() error {
 func (s *Session) markClosed() {
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
-		_ = s.stdin.Close()
-		_ = s.session.Close()
-		_ = s.client.Close()
+		if s.stdin != nil {
+			_ = s.stdin.Close()
+		}
+		if s.session != nil {
+			_ = s.session.Close()
+		}
+		if s.client != nil {
+			_ = s.client.Close()
+		}
 	})
 }
 
