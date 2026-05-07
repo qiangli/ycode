@@ -179,3 +179,4 @@ Read on demand:
 - [docs/persistence.md](./docs/persistence.md) — storage technology analysis and design decisions
 - [docs/autonomous-loop.md](./docs/autonomous-loop.md) — RESEARCH→PLAN→BUILD→EVALUATE→LEARN loop implementation
 - [docs/lighthouse.md](./docs/lighthouse.md) — exposing ycode capabilities to foreign coding agents via MCP; matrix + federation
+- [docs/lighthouse-roadmap.md](./docs/lighthouse-roadmap.md) — what shipped (Phase 0), what's queued (Phase 1+), strategic anchors; pointer to canonical plan file
