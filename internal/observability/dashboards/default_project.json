@@ -106,6 +106,29 @@
           {"title": "Conversation Errors", "query": "sum(rate(ycode_error_total{component=\"conversation\"}[5m])) by (error_type)", "type": "timeseries"},
           {"title": "All Error Signals", "query": "sum(rate(ycode_error_total[5m])) or sum(rate(ycode_api_error_total[5m])) or sum(rate(ycode_message_structure_warnings[5m]))", "type": "timeseries"}
         ]
+      },
+      {
+        "name": "Hub Sources",
+        "panels": [
+          {"title": "LLM Calls by Source", "query": "sum by (service_name) (rate(ycode_llm_call_total[5m]))", "type": "timeseries"},
+          {"title": "API Errors by Source", "query": "sum by (service_name) (rate(ycode_api_error_total[5m]))", "type": "timeseries"},
+          {"title": "Total Calls per Source", "query": "sum by (service_name) (ycode_llm_call_total)", "type": "table"},
+          {"title": "Cost (USD) by Source", "query": "sum by (service_name) (ycode_llm_cost_dollars)", "type": "timeseries"},
+          {"title": "Tool Calls by Source", "query": "sum by (service_name) (rate(ycode_tool_call_total[5m]))", "type": "timeseries"},
+          {"title": "Active Sources", "query": "count(count by (service_name) (rate(ycode_llm_call_total[5m]) > 0))", "type": "stat"},
+          {"title": "Top Sources by Volume", "query": "topk(10, sum by (service_name) (ycode_llm_call_total))", "type": "table"}
+        ]
+      },
+      {
+        "name": "Session Health",
+        "panels": [
+          {"title": "Turn Duration p95 by Session", "query": "histogram_quantile(0.95, sum by (le, session_id) (rate(ycode_turn_duration_bucket[5m])))", "type": "timeseries"},
+          {"title": "Tool Errors per Session", "query": "sum by (session_id) (rate(ycode_error_total{component=\"tool\"}[5m]))", "type": "timeseries"},
+          {"title": "Cost per Session (USD)", "query": "sum by (session_id) (ycode_session_cost)", "type": "table"},
+          {"title": "Tools per Turn (p50)", "query": "histogram_quantile(0.5, sum by (le, session_id) (rate(ycode_turn_tool_count_bucket[5m])))", "type": "timeseries"},
+          {"title": "Files Changed per Session", "query": "sum by (session_id) (ycode_session_files_changed)", "type": "timeseries"},
+          {"title": "Active Sessions", "query": "count(count by (session_id) (rate(ycode_turn_duration_count[5m]) > 0))", "type": "stat"}
+        ]
       }
     ]
   },
