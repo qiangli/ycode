@@ -8,6 +8,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/runtime/bash/shellparse"
 	"github.com/qiangli/ycode/internal/runtime/permission"
+	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 const (
@@ -173,7 +174,17 @@ func needsTTYStringBased(command string) bool {
 
 // Execute runs a bash command and returns the result.
 // It uses the in-process mvdan/sh interpreter for execution.
-func Execute(ctx context.Context, params ExecParams) (*ExecResult, error) {
+func Execute(ctx context.Context, params ExecParams) (result *ExecResult, err error) {
+	start := time.Now()
+	defer func() {
+		exitCode := 0
+		if result != nil {
+			exitCode = result.ExitCode
+		}
+		timedOut := err != nil && strings.Contains(err.Error(), "timed out")
+		yotel.RecordBashExec(ctx, time.Since(start), exitCode, err == nil, timedOut, params.Background)
+	}()
+
 	// Commands that need interactive terminal access cannot run through
 	// piped execution. Delegate to the TTY executor if one is available;
 	// otherwise reject with a helpful error.
@@ -221,7 +232,7 @@ func Execute(ctx context.Context, params ExecParams) (*ExecResult, error) {
 		Stdin:   params.Stdin,
 	}
 
-	result, err := executor.Execute(ctx, execParams)
+	result, err = executor.Execute(ctx, execParams)
 	if err != nil {
 		return result, fmt.Errorf("command timed out after %v", timeout)
 	}
