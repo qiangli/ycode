@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "ycode": {
+      "command": "ycode",
+      "args": ["mcp", "serve"],
+      "transport": "stdio"
+    }
+  }
+}

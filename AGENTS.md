@@ -147,6 +147,16 @@ Never use bare `./...` — it hits read-only `priorart/` packages. All steps mus
 - **`external/`** — vendored submodules for the ycode build. Do not modify directly; vendor new code with attribution.
 - **`peers/`** — peer Go modules wired into `go.work` (e.g. `peers/bonsai`, the embedded graph database backing `pkg/memex/graph/`). Modules here are owned by this project and editable, but they are independent `go.mod`s — run `go mod tidy` inside the peer directory, not at the repo root.
 
+## Foreign agents (lighthouse pattern)
+
+ycode exposes its capabilities to *any* coding agent (Claude Code, Codex, Cursor, Continue, an older ycode build) via MCP, so agents in this tree can use ycode's AST search, sandbox, local Ollama, isolated Gitea workspaces, etc. without plugins or shell exec.
+
+- `.mcp.json` at the repo root — committed lighthouse beam: any Claude Code session opened in this tree picks up `ycode mcp serve` automatically.
+- `~/.agents/ycode/manifest.json` — written by `ycode serve` listing every live endpoint (MCP routes, OTLP, NATS, Gitea, graph, ...). User-home global, so foreign agents in any codebase find it.
+- `bin/ycode mcp serve` — stdio MCP server. Phase 0 ships infra only (empty `tools/list`); capability families plug into `mcp.NewCompositeHandler` per the recipe in [docs/lighthouse.md](./docs/lighthouse.md).
+
+Adding a capability is one new `mcpserver.go` per family. See [docs/lighthouse.md](./docs/lighthouse.md) for the template and the federation discipline (ycode is the hub of *your* matrix, never the central hub).
+
 ## Evaluation
 
 ```bash
@@ -168,3 +178,4 @@ Read on demand:
 - [docs/swarm.md](./docs/swarm.md) — agent orchestration, YAML definitions, handoff flows
 - [docs/persistence.md](./docs/persistence.md) — storage technology analysis and design decisions
 - [docs/autonomous-loop.md](./docs/autonomous-loop.md) — RESEARCH→PLAN→BUILD→EVALUATE→LEARN loop implementation
+- [docs/lighthouse.md](./docs/lighthouse.md) — exposing ycode capabilities to foreign coding agents via MCP; matrix + federation

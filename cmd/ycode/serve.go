@@ -348,6 +348,15 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	defer os.Remove(pidPath)
 	defer os.Remove(portPath)
 
+	// Lighthouse manifest — single self-describing file foreign coding agents
+	// read to discover every live ycode endpoint. See docs/lighthouse.md.
+	if manifestPath, err := writeServeManifest(home, port, apiNATSPort, stack, api != nil && api.handler != nil, version); err != nil {
+		slog.Warn("failed to write manifest", "error", err)
+	} else {
+		fmt.Printf("Manifest at        %s\n", manifestPath)
+		defer os.Remove(manifestPath)
+	}
+
 	// If auto-started, write sentinel and enable idle shutdown.
 	autoPath := filepath.Join(home, ".agents", "ycode", "serve.auto")
 	if serveAuto {

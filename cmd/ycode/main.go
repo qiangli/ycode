@@ -1269,6 +1269,10 @@ func init() {
 	// Feature registry (build tiers — see docs/strategy.md#feature-tiers)
 	rootCmd.AddCommand(newFeaturesCmd())
 
+	// MCP server — exposes ycode capabilities to external coding agents.
+	// See docs/lighthouse.md for the pattern.
+	rootCmd.AddCommand(newMcpCmd())
+
 	// Evaluation framework
 	registerEvalCmd(rootCmd)
 }
