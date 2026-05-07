@@ -20,11 +20,15 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
+          # peers/aperio + peers/bonsai are git submodules referenced by go.work;
+          # without them, `go test ./internal/features/...` fails to load the
+          # workspace.
+          submodules: recursive
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
