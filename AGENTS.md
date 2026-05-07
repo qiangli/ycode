@@ -61,6 +61,20 @@ make runner-build     # build runner from source (requires C++ toolchain)
 make runner-check     # verify runner binary + health check
 ```
 
+## Running
+
+```bash
+bin/ycode                              # interactive REPL (auto-spawns a server if --connect not given)
+bin/ycode prompt "explain the runtime" # one-shot; add --print for plain text (no markdown)
+bin/ycode --model claude-sonnet-4-6    # override the configured model for this session
+bin/ycode --connect ws://host:58080    # attach to an already-running server
+bin/ycode serve                        # run the server explicitly (Gitea, Ollama, SearXNG, NATS, observability)
+```
+
+When the TUI auto-spawns a server, its stdout/stderr go to `~/.agents/ycode/observability/serve.log` — check there if the client connects but the server appears silent.
+
+The model and provider come from settings.json (`model` field, schema in `internal/runtime/config/config.go`); `--model` overrides per-invocation. `bin/ycode model` manages the local Ollama registry.
+
 ## Architecture
 
 Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one-shot mode. Core loop in `internal/runtime/conversation/runtime.go`: assemble request → send to provider → dispatch tool calls → loop until done. Public embedding API: `pkg/ycode/`. Design: `RuntimeContext` (no global state), four-tier config merge, five-layer memory.
