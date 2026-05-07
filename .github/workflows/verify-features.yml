@@ -33,6 +33,17 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Same CGO deps as release.yml: ./internal/features/... transitively
+      # imports go.podman.io/storage (btrfs driver) and the cgo gpgme
+      # signature verifier, so the test compile pulls in the system
+      # headers. Without these the build fails with "btrfs/version.h:
+      # No such file or directory".
+      - name: Install build dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libbtrfs-dev libgpgme-dev libsqlite3-dev
+
       - name: Verify feature registry
         run: make verify-features
 
