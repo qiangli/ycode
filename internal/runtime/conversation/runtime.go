@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -369,8 +370,18 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		r.promptCtx.Diagnostics.PriorSessionSummary = ""
 	}
 
-	// Build system prompt.
+	// Build system prompt. Wrapped in a span so the assembly phase
+	// (which can be expensive — discovers AGENTS.md files, gathers env
+	// snapshot, formats memories) is visible in trace timelines.
+	promptCtx, promptSpan := otel.Tracer("ycode.conversation").Start(ctx, "prompt.build",
+		trace.WithAttributes(
+			attribute.String("mode", r.Mode()),
+			attribute.Bool("caching_supported", r.cachingSupported),
+		))
 	systemPrompt := prompt.BuildDefault(r.promptCtx, r.Mode(), r.cachingSupported, r.contextBaseline)
+	promptSpan.SetAttributes(attribute.Int("system_prompt.size", len(systemPrompt)))
+	promptSpan.End()
+	_ = promptCtx
 
 	// Pre-activate deferred tools based on intent signals in the user message.
 	// Tier 1a: high-precision keywords. Tier 1b: SearchTools() scoring.

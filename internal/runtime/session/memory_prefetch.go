@@ -4,6 +4,11 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -53,7 +58,30 @@ func StartMemoryPrefetch(searchFn MemorySearchFunc, query string) *MemoryPrefetc
 		ctx, cancel := context.WithTimeout(context.Background(), PrefetchTimeout)
 		defer cancel()
 
+		// Span the memory prefetch so the RRF/MMR retrieval pipeline is
+		// observable alongside the rest of the turn. Cardinality stays
+		// low — query text is recorded as a span attribute (per-trace),
+		// not a metric label.
+		tracer := otel.Tracer("ycode.memory")
+		ctx, span := tracer.Start(ctx, "memory.prefetch",
+			trace.WithAttributes(
+				attribute.Int("query.len", len(query)),
+				attribute.Int("max_results", PrefetchMaxResults),
+			),
+		)
+		started := time.Now()
+
 		results, err := searchFn(ctx, query, PrefetchMaxResults)
+
+		span.SetAttributes(
+			attribute.Int("results", len(results)),
+			attribute.Int64("duration_ms", time.Since(started).Milliseconds()),
+		)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
 
 		mp.mu.Lock()
 		mp.results = results
