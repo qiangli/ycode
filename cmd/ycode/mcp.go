@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/runtime/mcp"
+	"github.com/qiangli/ycode/internal/runtime/treesitter"
 )
 
 // newMcpCmd builds the `ycode mcp` subcommand tree. Today only `serve` exists,
@@ -53,8 +54,13 @@ func newMcpServeCmd() *cobra.Command {
 				}
 			}()
 
-			// Phase 0: empty composite. Phase 1+ capability families register here.
-			composite := mcp.NewCompositeHandler()
+			// Capability families register here. Each is one mcp.ServerHandler
+			// implementing the family's tools — see docs/lighthouse.md for the
+			// recipe and internal/observability/mcpserver.go for the canonical
+			// template.
+			composite := mcp.NewCompositeHandler(
+				treesitter.NewMCPHandler(),
+			)
 
 			// Standalone stdio invocation has no human-loop client to prompt for
 			// permission, so the default gate denies anything above ReadOnly.
