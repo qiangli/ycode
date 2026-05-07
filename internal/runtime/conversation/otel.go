@@ -270,6 +270,12 @@ func (r *Runtime) InstrumentedTurnWithRecovery(ctx context.Context, messages []a
 				attribute.Int("pruned_count", recovery.PrunedCount),
 			))
 		}
+		// Emit ycode.compaction.tokens_saved when Layer 1 pruning reclaimed
+		// tokens. This drives the "Tokens Saved by Compaction" dashboard
+		// panel; previously the instrument was declared but never recorded.
+		if recovery.TokensSaved > 0 {
+			r.otel.Inst.CompactionTokensSaved.Add(ctx, int64(recovery.TokensSaved))
+		}
 	}
 
 	// Turn-level metrics (mirrors InstrumentedTurn line 219-228).

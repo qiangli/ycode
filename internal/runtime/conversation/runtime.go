@@ -890,6 +890,7 @@ type RecoveryResult struct {
 	Pruned          bool // Layer 1: tool results were pruned
 	PrunedCount     int  // Number of tool results pruned
 	Flushed         bool // Layer 3: emergency flush was performed
+	TokensSaved     int  // Approximate tokens reclaimed by Layer 1 pruning (before - after)
 }
 
 // TurnWithRecovery executes a turn with the 4-layer context defense:
@@ -946,6 +947,9 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 			messages = r.sessionMessagesToAPI(pruned)
 			recovery.Pruned = true
 			recovery.PrunedCount = pruneResult.SoftTrimmed + pruneResult.HardCleared
+			if saved := pruneResult.TokensBefore - pruneResult.TokensAfter; saved > 0 {
+				recovery.TokensSaved = saved
+			}
 		}
 	}
 
