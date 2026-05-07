@@ -7,7 +7,10 @@ package taskqueue
 
 import (
 	"context"
+	"fmt"
 	"sync"
+
+	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 // TaskStatus represents the lifecycle of a queued tool execution.
@@ -177,7 +180,7 @@ func (e *Executor) Run(ctx context.Context, calls []Call, progress chan<- TaskEv
 
 			emit(StatusRunning)
 
-			output, err := call.Invoke(ctx)
+			output, err := safeInvoke(ctx, call)
 			results[call.Index] = TaskResult{
 				Index:  call.Index,
 				Output: output,
@@ -194,4 +197,16 @@ func (e *Executor) Run(ctx context.Context, calls []Call, progress chan<- TaskEv
 
 	wg.Wait()
 	return results
+}
+
+// safeInvoke runs a queued task under a recover() so a panicking tool
+// can't take down the whole goroutine pool. The panic is converted to
+// an error and recorded in OTel via yotel.RecordPanic.
+func safeInvoke(ctx context.Context, call Call) (out string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = yotel.RecordPanic(ctx, "taskqueue.invoke", fmt.Sprintf("%s#%d", call.Name, call.Index), r)
+		}
+	}()
+	return call.Invoke(ctx)
 }

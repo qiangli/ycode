@@ -11,6 +11,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/bash"
 	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/policy"
+	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 // PermissionResolver returns the current permission mode.
@@ -289,7 +290,7 @@ func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessag
 	}
 
 	start := time.Now()
-	result, err := handler(ctx, input)
+	result, err := invokeWithPanicGuard(ctx, name, handler, input)
 
 	// Record call metrics in quality monitor.
 	if r.qualityMonitor != nil {
@@ -299,6 +300,20 @@ func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessag
 	}
 
 	return result, err
+}
+
+// invokeWithPanicGuard runs a tool handler under a recover() that
+// converts panics into errors. Without this guard a buggy tool would
+// crash the entire ycode process; the safety net keeps the conversation
+// loop alive and surfaces the panic in OTel (counter + span event +
+// structured log).
+func invokeWithPanicGuard(ctx context.Context, name string, handler ToolFunc, input json.RawMessage) (out string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = yotel.RecordPanic(ctx, "tools.invoke", name, r)
+		}
+	}()
+	return handler(ctx, input)
 }
 
 // AlwaysAvailable returns tool specs that should be sent in every API request.

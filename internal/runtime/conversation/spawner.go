@@ -18,6 +18,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/lanes"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
+	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 	"github.com/qiangli/ycode/internal/tools"
 	"github.com/qiangli/ycode/pkg/memex/memory"
 )
@@ -61,8 +62,12 @@ type SpawnerConfig struct {
 // RegisterAgentHandler. Each invocation creates a child runtime with
 // mode-specific system prompt and filtered tool access, runs a bounded
 // agentic loop, and returns the text result.
+//
+// A panic safety net wraps the spawn body: a panicking subagent
+// converts to an error rather than killing the parent process; the
+// panic is recorded in OTel via yotel.RecordPanic.
 func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tools.AgentManifest) (string, error) {
-	return func(ctx context.Context, manifest *tools.AgentManifest) (string, error) {
+	body := func(ctx context.Context, manifest *tools.AgentManifest) (string, error) {
 		// Acquire a subagent lane slot to bound concurrent subagent work.
 		if sc.LaneScheduler != nil {
 			release, err := sc.LaneScheduler.Acquire(ctx, lanes.LaneSubagent,
@@ -368,6 +373,19 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
+	}
+
+	return func(ctx context.Context, manifest *tools.AgentManifest) (out string, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				detail := ""
+				if manifest != nil {
+					detail = string(manifest.Type)
+				}
+				err = yotel.RecordPanic(ctx, "subagent.spawn", detail, r)
+			}
+		}()
+		return body(ctx, manifest)
 	}
 }
 
