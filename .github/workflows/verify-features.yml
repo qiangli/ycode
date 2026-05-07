@@ -5,6 +5,11 @@ name: verify-features
 # valid tier, and (for stable features, eventually) meet graduation criteria.
 #
 # See docs/strategy.md#feature-tiers for policy.
+#
+# Runs inside the same ycode-builder Docker image that ci.yml uses, so the
+# CGO system deps (libbtrfs-dev / libgpgme-dev / libsqlite3-dev) come from
+# the image rather than apt-installed on the runner. `make ci` runs the
+# exact same commands locally — see Makefile.
 
 on:
   push:
@@ -22,30 +27,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          # peers/aperio + peers/bonsai are git submodules referenced by go.work;
-          # without them, `go test ./internal/features/...` fails to load the
-          # workspace.
           submodules: recursive
           fetch-depth: 0
 
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      # Same CGO deps as release.yml: ./internal/features/... transitively
-      # imports go.podman.io/storage (btrfs driver) and the cgo gpgme
-      # signature verifier, so the test compile pulls in the system
-      # headers. Without these the build fails with "btrfs/version.h:
-      # No such file or directory".
-      - name: Install build dependencies (Linux)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libbtrfs-dev libgpgme-dev libsqlite3-dev
+      - name: Build ycode-builder image
+        run: docker build -t ycode-builder .
 
       - name: Verify feature registry
-        run: make verify-features
+        run: docker run --rm ycode-builder make verify-features
 
       - name: Run features package tests
-        run: go test -short -race ./internal/features/...
+        run: docker run --rm ycode-builder go test -short -race ./internal/features/...

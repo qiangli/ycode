@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# pre-push: run `make ci` before pushing so any failure that GitHub Actions
+# would surface is caught locally first.
+#
+# Installed by `make install-hooks` (symlinks this file into .git/hooks/).
+# Bypass for a one-off: `git push --no-verify`.
+#
+# Skipped automatically when:
+#   - the only thing being pushed is a tag (release flow)
+#   - YCODE_SKIP_CI_HOOK=1 is set
+set -euo pipefail
+
+if [ "${YCODE_SKIP_CI_HOOK:-0}" = "1" ]; then
+  echo "pre-push: YCODE_SKIP_CI_HOOK=1, skipping make ci" >&2
+  exit 0
+fi
+
+# Read refs being pushed from stdin (git invokes the hook with these on
+# stdin). If only tag refs are pushed, skip — release.yml handles them.
+only_tags=true
+any=false
+while read -r local_ref local_sha remote_ref remote_sha; do
+  any=true
+  case "$remote_ref" in
+    refs/tags/*) ;;
+    *) only_tags=false ;;
+  esac
+done
+
+if ! $any; then
+  exit 0
+fi
+if $only_tags; then
+  echo "pre-push: tag-only push, skipping make ci" >&2
+  exit 0
+fi
+
+echo "pre-push: running 'make ci' (set YCODE_SKIP_CI_HOOK=1 to bypass)..." >&2
+make ci

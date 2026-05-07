@@ -125,6 +125,8 @@ make compile              # ensure it builds
 ```
 Never use bare `./...` — it hits read-only `priorart/` packages. All steps must pass with no errors.
 
+**Pre-push CI parity** — `make ci` runs the exact same commands GitHub Actions does, in the same `ycode-builder` Docker image, with the same CGO system deps. Run it before push when you've touched anything CGO-adjacent (podman/storage, sqlite, gpgme), workflow files, or `go.work`. Slow (~5–10 min cold; ~2 min after the image cache warms). For pre-push automation, `make install-hooks` symlinks `scripts/git-hooks/pre-push` so every push runs `make ci` first; bypass with `git push --no-verify` or `YCODE_SKIP_CI_HOOK=1 git push`.
+
 ## Directory Boundaries
 
 - **`priorart/`** — **read-only.** Never modify, create, or delete anything under `priorart/`. Use `$(go list ./... | grep -v '/priorart/')` instead of `./...` for manual Go commands.

@@ -168,6 +168,43 @@ install: build ## Install ycode to ~/bin/
 
 all: build ## Full quality gate (alias for build)
 
+# ─── CI Parity ──────────────────────────────────────────────────────────────
+#
+# `make ci` runs everything GitHub Actions does, in the same container,
+# with the same system deps (libbtrfs-dev / libgpgme-dev / libsqlite3-dev
+# baked into the image). Use it before push when you've touched anything
+# CGO-adjacent or workflow-adjacent — if it passes here, GH won't fail.
+#
+# Slow (~5–10 min cold; ~2 min after the image is cached). For a fast
+# inner loop, `make build` covers fmt/vet/compile/test on the host; the
+# Docker pass exists to catch host-environment drift.
+
+DOCKER ?= $(shell command -v docker 2>/dev/null || command -v podman)
+CI_IMAGE ?= ycode-builder
+
+ci-image: ## Build the ycode-builder Docker image used by GitHub Actions
+	@if [ -z "$(DOCKER)" ]; then echo "neither docker nor podman found in PATH" >&2; exit 1; fi
+	$(DOCKER) build -t $(CI_IMAGE) .
+
+ci: ci-image ## Run the full GitHub Actions matrix locally (Docker) — same image, same commands, same deps
+	$(DOCKER) run --rm $(CI_IMAGE) make compile
+	$(DOCKER) run --rm $(CI_IMAGE) make vet
+	$(DOCKER) run --rm $(CI_IMAGE) make test
+	$(DOCKER) run --rm $(CI_IMAGE) make verify-features
+	$(DOCKER) run --rm $(CI_IMAGE) go test -short -race ./internal/features/...
+	$(DOCKER) run --rm $(CI_IMAGE) make test-tui
+	$(DOCKER) run --rm $(CI_IMAGE) make test-tui-e2e
+	@echo "=== CI parity PASSED ==="
+
+ci-fast: ## Run only the verify-features + unit-test subset (no TUI, no e2e) — assumes ci-image already built
+	@if [ -z "$(DOCKER)" ]; then echo "neither docker nor podman found in PATH" >&2; exit 1; fi
+	$(DOCKER) run --rm $(CI_IMAGE) make verify-features
+	$(DOCKER) run --rm $(CI_IMAGE) go test -short -race ./internal/features/...
+	@echo "=== ci-fast PASSED ==="
+
+install-hooks: ## Symlink scripts/git-hooks/* into .git/hooks/ for pre-push CI parity
+	@./scripts/install-hooks.sh
+
 # ─── Cross-Compile ──────────────────────────────────────────────────────────
 
 cross: dist/ycode-linux-amd64 dist/ycode-linux-arm64 dist/ycode-darwin-amd64 dist/ycode-darwin-arm64 dist/ycode-windows-amd64.exe ## Cross-compile for all platforms
