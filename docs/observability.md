@@ -151,6 +151,88 @@ Configuration is on `config.ObservabilityConfig`:
 | `PersistLogs`    | `true`        | Rotating JSONL logs                          |
 | `SampleRate`     | `1.0`         | Trace sampling (0.0–1.0)                     |
 
+## Coverage map
+
+ycode emits the following metrics today; the per-row file path points
+at the producer site (each cross-cutting helper lives in
+`internal/telemetry/otel/`).
+
+| Metric (Prometheus form)             | Producer                                               |
+| ------------------------------------ | ------------------------------------------------------ |
+| `ycode_llm_call_total`               | `internal/runtime/conversation/otel.go`                |
+| `ycode_llm_call_duration`            | `internal/runtime/conversation/otel.go`                |
+| `ycode_llm_tokens_input/output`      | `internal/runtime/conversation/otel.go`                |
+| `ycode_llm_tokens_cache_read/write`  | `internal/runtime/conversation/otel.go`                |
+| `ycode_llm_cost_dollars`             | `internal/runtime/conversation/otel.go`                |
+| `ycode_llm_context_window_used`      | `internal/api/otel.go`                                 |
+| `ycode_tool_call_total`              | `internal/telemetry/otel/middleware.go`                |
+| `ycode_tool_call_duration`           | `internal/telemetry/otel/middleware.go`                |
+| `ycode_turn_duration`                | `internal/runtime/conversation/otel.go`                |
+| `ycode_turn_tool_count`              | `internal/runtime/conversation/otel.go`                |
+| `ycode_session_turns`                | `internal/runtime/conversation/otel.go`                |
+| `ycode_compaction_total`             | `internal/runtime/conversation/otel.go`                |
+| `ycode_compaction_tokens_saved`      | `internal/runtime/conversation/otel.go`                |
+| `ycode_runtime_panic_total`          | `internal/telemetry/otel/panic.go` (lazy global)       |
+| `ycode_bash_exec_total/duration`     | `internal/runtime/bash/exec.go` via `bash_metrics.go`  |
+| `ycode_fileops_ops_total`            | `internal/tools/file.go` via `fileops_metrics.go`      |
+| `ycode_fileops_bytes_total`          | `internal/tools/file.go` via `fileops_metrics.go`      |
+| `ycode_http_request_total/duration`  | `internal/api/retry.go` via `http_metrics.go`          |
+| `ycode_api_retry_attempts/delay`     | `internal/api/retry.go` via `http_metrics.go`          |
+| `ycode_web_fetch_total/duration`     | `internal/tools/web.go` via `http_metrics.go`          |
+| `ycode_web_search_total/duration/results` | `internal/tools/web.go` via `http_metrics.go`     |
+| `ycode_api_error_total`              | `internal/runtime/conversation/otel.go`                |
+| `ycode_message_structure_warnings`   | `internal/runtime/conversation/otel.go`                |
+| `ycode_error_total`                  | `internal/runtime/conversation/otel.go`                |
+| `ycode_inference_*`                  | `internal/inference/`                                  |
+| `ycode_search_*`                     | `internal/tools/search.go`, `symbol_search.go`         |
+| `ycode_bus_events_published/dropped` | `internal/bus/`                                        |
+| `system_*` (host CPU/mem/disk/net)   | embedded collector hostmetrics receiver                |
+
+LLM metrics carry `llm.model` and `llm.provider` attributes.
+Tool metrics carry `tool_name` and `tool_success`. HTTP metrics carry
+`http.method`, `http.host`, `http.status_code`, `success`. Bash metrics
+carry `success`, `background`, `timed_out`, `exit_code`. File-ops metrics
+carry `op` (`read`/`write`/`edit`) and `success`. Retry metrics carry
+`reason` (`rate_limited`/`5xx`/`4xx`/`net_error`/etc.).
+
+## Trace coverage
+
+User-query → final-answer is traced end-to-end. Key spans:
+
+| Span name              | Producer                                                          |
+| ---------------------- | ----------------------------------------------------------------- |
+| `ycode.session`        | `internal/runtime/conversation/runtime.go`                        |
+| `ycode.turn`           | `internal/runtime/conversation/otel.go` (InstrumentedTurn)        |
+| `prompt.build`         | `internal/runtime/conversation/runtime.go`                        |
+| `memory.prefetch`      | `internal/runtime/session/memory_prefetch.go`                     |
+| `ycode.tool.call`      | `internal/telemetry/otel/middleware.go` (per-tool, with input/output events) |
+| `ycode.subagent`       | `internal/runtime/conversation/spawner.go`                        |
+
+Tool spans capture full input + output as span events (subject to size
+truncation) for self-healing replay. Recovered panics from the safety
+net (`yotel.RecordPanic`) attach to the active span as a `panic` event
+plus the typed error.
+
+## Alert rules
+
+Ten alert rules are loaded from `configs/prometheus/alerts/ycode.yml`
+on startup:
+
+| Rule                            | Trips on                                                  |
+| ------------------------------- | --------------------------------------------------------- |
+| `YcodeAPIErrorRate`             | LLM error rate > 10% for 5m                               |
+| `YcodeAPILatencyP99`            | LLM p99 latency > 30s for 5m                              |
+| `YcodeToolFailureRate`          | Tool failure rate > 25% for 5m                            |
+| `YcodeTokenBudgetExhausted`     | Context window > 90% full                                 |
+| `YcodeCostThreshold`            | Projected daily cost > $10                                |
+| `YcodeCompactionFrequency`      | More than 3 compactions in the last hour                  |
+| `YcodeRuntimePanic`             | Any recovered panic in the last 5m                        |
+| `YcodeExcessiveToolCallsPerTurn`| p95 tool count per turn > 50 for 10m                      |
+| `YcodeToolLatencyTimeoutClass`  | Tool p99 latency > 60s for 5m                             |
+| `YcodeTokenInputRateSpike`      | Input token rate > 1.5x previous hour for 10m             |
+| `YcodeHTTPRetryStorm`           | API retry rate > 1/s for 5m                               |
+| `YcodeBackendDown`              | Any `up{}` = 0 (Prometheus / Jaeger / VL / Collector) for 1m |
+
 ## File layout
 
 | Area                         | Path                                  |
@@ -161,6 +243,8 @@ Configuration is on `config.ObservabilityConfig`:
 | Backend libraries            | `pkg/otel/`                           |
 | Programmatic query API       | `pkg/olly/query/`                     |
 | Alert bus events             | `internal/bus/events_alert.go`        |
+| Cross-cutting metric helpers | `internal/telemetry/otel/{panic,bash_metrics,fileops_metrics,http_metrics}.go` |
+| Alert rules                  | `configs/prometheus/alerts/ycode.yml` |
 
 ## See also
 
