@@ -1,249 +1,178 @@
 ---
 name: autopilot
-description: Autonomously analyze agentic tools, identify gaps in three focused domains, implement, test, and commit — fully unattended
+description: Autonomously execute a development task — fix, improve, or arbitrary goal — through a research-plan-build-test-fix-commit loop
 user_invocable: true
 ---
 
-# /autopilot — Autonomous Agentic Tool Analysis
+# /autopilot — Autonomous Development Task Loop
 
-Fully autonomous, end-to-end analysis of agentic tool(s) at a given path. Detects and classifies tools, then runs three complete independent cycles — one per focus domain — each going from research through commit without stopping for approval.
+`/autopilot` runs a development task end-to-end without stopping for
+approval: research the relevant code, write a short plan, implement,
+test, fix until green, and commit. It is for tasks that don't already
+have a narrow skill.
 
-`{{ARGS}}` is required. A filesystem path containing agentic tool source code.
+`{{ARGS}}` selects a **mode** as its first word, followed by the task
+description. If `{{ARGS}}` is empty, ask the user **once** what the task is, then run to completion.
 
-Examples:
-- `./priorart/aider` — single tool
-- `./priorart/` — all tools in the directory
-- `~/projects/myrepo/src/` — arbitrary path
+## When NOT to use this skill
 
-If `{{ARGS}}` is empty, ask the user for a path. That is the **only** prompt. After receiving the path, run to completion autonomously.
+For tasks that already have a tight, single-purpose skill, invoke that one directly:
 
-If `--push` appears in `{{ARGS}}`, push commits to remote after each domain.
+| Goal | Use instead |
+| --- | --- |
+| Just compile and fix build errors | `/build` |
+| Just run integration / smoke tests | `/validate` |
+| Just deploy to localhost or remote | `/deploy` |
+| Compare ycode against a third-party agentic tool, gap-analyze, implement | `/analyze` |
+| Research a project or topic without implementing (gap analysis only) | `/learn` |
+| Run aperio benchmarks against other agents | `/eval` |
 
----
+## Modes
 
-## Step 1: DETECT — Identify and Classify Tools
+| Mode | ARGS shape | Purpose |
+|------|-----------|---------|
+| `fix <issue>` | issue description in plain English | Diagnose and fix a specific bug, failure, or regression |
+| `improve <area>` | code area or aspect to improve | Research, propose enhancements, implement the highest-leverage ones |
+| `task <goal>` | free-form development goal | Generic catch-all: feature work, refactor, cleanup, anything else |
 
-Scan `{{ARGS}}`:
-
-1. `ls` the path. Determine single-tool (source tree) vs multi-tool (directory of subdirectories).
-2. For each candidate, check for agentic tool indicators:
-   - LLM API imports (anthropic, openai, ollama, litellm, google.generativeai)
-   - Tool/function-calling schemas or registry
-   - Conversation loop, message array, streaming response handler
-   - CLI/TUI entry point (cobra, urfave, ink, bubble tea, click)
-3. Record: name, language, type (CLI agent / framework / SDK), key indicators.
-4. Log detected tools and skipped directories. Proceed immediately.
-
----
-
-## Step 2: For Each Tool — Run Three Domain Cycles
-
-For each detected tool, execute three complete cycles sequentially. Each cycle covers one focus domain end-to-end: RESEARCH → PLAN → BUILD → TEST → FIX → COMMIT.
+If `{{ARGS}}` doesn't begin with a recognized mode keyword, treat the
+whole input as `task <goal>`.
 
 ---
 
-### Cycle 1 of 3: Domain A — Agent Orchestration & Workflow
+## Shared backbone
 
-Gap ID prefix: `A`
+Every mode walks the same eight steps. Skip steps when the mode-specific
+guidance below says they're optional.
 
-**Study areas:**
-- Multi-agent coordination (coordinator, swarm, mesh, DAG, leader-worker)
-- Task delegation and lifecycle (local, remote, background, forked agents)
-- Workflow phases (init, explore, plan, build, test, evaluate, commit)
-- Hook system (pre/post tool use, session lifecycle, permission hooks)
-- Skill system (built-in, disk-based, auto-selection, evolution, gating)
-- Feedback loops (self-improvement, loop/stuck detection, recovery, self-healing)
-- Scheduling (cron, recurring loop, triggers, background jobs)
-- Git integration (worktree isolation, commit conventions, PR workflows)
+### Step 1: UNDERSTAND
 
-**ycode reference packages:**
-`internal/runtime/conversation/`, `internal/runtime/swarm/`, `internal/mesh/`, `internal/runtime/hooks/`, `internal/runtime/skillengine/`, `internal/selfheal/`, `internal/runtime/autoloop/`, `internal/runtime/sprint/`, `internal/runtime/agentpool/`, `internal/runtime/agentdef/`
+Parse `{{ARGS}}` into a mode and a one-line goal. Derive 1–3
+acceptance criteria from the goal — what specifically must be true
+when this is done?
 
-#### A-RESEARCH
+If the goal is genuinely ambiguous in a way that changes the
+approach (not just lacks detail), ask **one** focused clarifying
+question. Otherwise, proceed.
 
-1. Deep-read the tool's source for all Domain A study areas. Use parallel exploration. Record what the tool implements, quality, and novel approaches with file paths.
-2. Simultaneously read ycode's Domain A packages. Record what ycode already has, what is partial, what is missing, and where ycode is **stronger**.
+### Step 2: RESEARCH
 
-#### A-PLAN
+Use `Read`, `Bash` (`grep`, `find`), and existing search tools to
+explore the relevant code. Identify:
 
-Write `docs/gap-analysis-<toolname>-orchestration.md`:
-- **Where ycode Is Stronger** — table
-- **Gaps Identified** — table: ID, Feature, Tool Implementation, ycode Status, Priority, Effort
-- **Implementation Plan** — phased with files to create/modify and design notes
-- **Deferred** — low-priority items with reason
-- **Verification** — how to test
+- The files and functions involved in the task
+- Existing utilities and patterns to **reuse** rather than reimplement
+- Prior art elsewhere in the codebase
 
-If no gaps: write the analysis documenting strengths, state "No actionable gaps identified", skip A-BUILD.
+For `improve` and `task`, this step is mandatory. For `fix` of a
+trivial reproducible bug, it can be brief.
 
-#### A-BUILD
+### Step 3: PLAN
 
-For each High/Medium priority item:
-1. Read target files first
-2. Write implementation + unit tests (follow ycode conventions: no global state, `slog` logging, `t.TempDir()`, permissive licenses, `priorart/` read-only)
-3. Run `make build` — if it fails, fix and re-run until `=== Build PASSED ===`
+Write a short plan-of-attack (in conversation context, or as a
+temporary file under `.claude/plans/` for non-trivial work). Include:
 
-#### A-COMMIT
+- Files to create or modify (with paths)
+- Functions to reuse with their file paths and line numbers
+- Test/verification approach
 
-```bash
-git add <specific files only>
-git commit -m "$(cat <<'EOF'
-feat: add orchestration gaps from <tool-name> analysis
+Keep it scannable. The plan is for execution, not documentation.
 
-<summary of changes by phase>
-EOF
-)"
-```
+### Step 4: BUILD
 
-If `--push`: `git push`
+Implement the plan using `Read` / `Edit` / `Write`. Stay tight:
 
----
+- Don't refactor surrounding code unless the plan calls for it
+- Don't add features beyond the goal
+- Reuse functions and patterns identified in RESEARCH
 
-### Cycle 2 of 3: Domain M — Memory Management & Context Engineering
+### Step 5: TEST
 
-Gap ID prefix: `M`
+Run `make build` (full quality gate: tidy → fmt → vet → compile →
+test → verify).
 
-**Study areas:**
-- Conversation history (persistence, replay, resume, session management)
-- Context window (token counting, estimation, budget, auto-compact thresholds)
-- Compaction (heuristic, LLM-based, microcompact, thinking block management)
-- Pruning (observation masking, soft trim, hard clear, image/document stripping)
-- Prompt caching (warming, fingerprinting, cache-safe params, TTL, completion cache)
-- Memory persistence (file-based, SQLite, vector, Bleve, search index)
-- Memory retrieval (keyword, semantic, RRF fusion, MMR re-ranking, adaptive depth)
-- Memory extraction (post-turn, background agent, heuristic, entity linking)
-- Prompt assembly (system prompt sections, dynamic boundary, JIT discovery)
-- Post-compaction (file restoration, instruction refresh, diagnostics)
+For changes that touch areas covered by `/validate`, additionally run
+the relevant `make validate*` target. Don't reinvent the test pipeline
+— if `/build`'s flow fits, follow it; if `/validate`'s does, follow that.
 
-**ycode reference packages:**
-`internal/runtime/session/`, `internal/runtime/memory/`, `internal/runtime/prompt/`, `internal/api/prompt_cache.go`, `internal/api/cache_warmer.go`, `internal/api/completion_cache.go`, `internal/storage/`
+### Step 6: FIX
 
-#### M-RESEARCH
+If TEST fails, examine the error, fix the **root cause** (not the
+test, unless the test itself is wrong), then re-run TEST.
 
-1. Deep-read the tool's source for all Domain M study areas in parallel.
-2. Simultaneously read ycode's Domain M packages. Record strengths and gaps.
+Cap at **3 fix-and-retry cycles** per task. If still failing, stop and
+report the unresolved error to the user — do not commit partial work.
 
-#### M-PLAN
+### Step 7: COMMIT
 
-Write `docs/gap-analysis-<toolname>-memory.md` (same structure as Domain A).
+Once the build is green:
 
-If no gaps: document strengths, skip M-BUILD.
+1. `git status` to see what changed.
+2. Stage modified files **by name** — never `git add -A` or `git add .`.
+3. Commit with a message that follows the repo's prefix convention
+   (`fix:`, `feat:`, `refactor:`, `chore:`, `docs:`, `test:`) and
+   explains the **why** in 1–2 sentences. Match the style of recent
+   commits via `git log --oneline -10`.
+4. Do not push unless `--push` appears in `{{ARGS}}`.
 
-#### M-BUILD
+If there are zero changes (no-op task), skip the commit and say so in
+the summary.
 
-Same loop as A-BUILD: implement → test → `make build` → fix → repeat until green.
+### Step 8: SUMMARIZE
 
-#### M-COMMIT
-
-```bash
-git add <specific files only>
-git commit -m "$(cat <<'EOF'
-feat: add memory/context engineering gaps from <tool-name> analysis
-
-<summary of changes by phase>
-EOF
-)"
-```
-
-If `--push`: `git push`
+Final report to the user, in 3–5 lines:
+- What changed (1 sentence)
+- Files touched and the commit hash
+- What's verified (build green, tests passed, etc.)
+- Any unresolved follow-ups or caveats
 
 ---
 
-### Cycle 3 of 3: Domain T — Built-in Tool System & Tool Use
+## Mode-specific guidance
 
-Gap ID prefix: `T`
+### `fix <issue>`
 
-**Study areas:**
-- Tool registry and discovery (always-available vs deferred, ToolSearch, categories)
-- Bash/shell (subprocess, in-process interpreter, process groups, signal handling)
-- Bash security (validators, command substitution, sed interception, eval blocking, unicode control)
-- File operations (read, write, edit with fuzzy matching, glob, grep, encoding/line-ending preservation, device blocking)
-- Web (search provider, fetch with HTML-to-markdown, domain filtering, caching)
-- Browser automation (container-based, MCP-based, computer use)
-- Tool parallelism (concurrent vs serial partitioning, streaming executor, context modifiers)
-- Tool output (distillation, truncation, disk save, large output preview)
-- Permission model (modes, rules, policy engine, per-tool matching, classifier)
-- LSP / code intelligence (definitions, references, hover, call hierarchy)
-- Background tasks (stall watchdog, interactive prompt detection, size limits)
+- **RESEARCH is the highest-leverage step.** Before changing code,
+  confirm you understand the root cause. Try to reproduce the issue if
+  possible. If the issue mentions a specific failure mode, find the
+  code path that produces it.
+- **PLAN can be brief** — often a single sentence ("change X in `foo.go`
+  to handle Y") and the file/line.
+- **Prefer the smallest fix** that addresses the reported issue. Don't
+  bundle unrelated cleanups.
 
-**ycode reference packages:**
-`internal/tools/`, `internal/runtime/bash/`, `internal/runtime/fileops/`, `internal/runtime/searxng/`, `internal/runtime/browseruse/`, `internal/runtime/toolexec/`, `internal/runtime/permission/`, `internal/runtime/lsp/`, `internal/runtime/containertool/`
+### `improve <area>`
 
-#### T-RESEARCH
+- **PLAN must enumerate candidates.** List 3–5 possible improvements,
+  pick the highest-leverage 1–2, and explain why the rest are
+  deferred. Don't try to do every improvement in one pass.
+- **Match scope to a single coherent commit.** If the chosen
+  improvements span unrelated changes, narrow further.
+- **Be honest about value.** If RESEARCH reveals the area is already
+  well-engineered, say so and exit with no commit.
 
-1. Deep-read the tool's source for all Domain T study areas in parallel.
-2. Simultaneously read ycode's Domain T packages. Record strengths and gaps.
+### `task <goal>`
 
-#### T-PLAN
-
-Write `docs/gap-analysis-<toolname>-tools.md` (same structure as Domain A).
-
-If no gaps: document strengths, skip T-BUILD.
-
-#### T-BUILD
-
-Same loop: implement → test → `make build` → fix → repeat until green.
-
-#### T-COMMIT
-
-```bash
-git add <specific files only>
-git commit -m "$(cat <<'EOF'
-feat: add tool system gaps from <tool-name> analysis
-
-<summary of changes by phase>
-EOF
-)"
-```
-
-If `--push`: `git push`
-
----
-
-## Step 3: Next Tool (Multi-Tool Mode)
-
-If multiple tools were detected, move to the next tool and repeat Step 2 (all three domain cycles). Continue until all tools are processed.
-
----
-
-## Step 4: Final Summary
-
-After all tools and all domains are complete, output:
-
-```
-## Autopilot Complete
-
-### Tools Analyzed
-- <tool1> (<language>, <type>)
-- <tool2> ...
-
-### Changes by Domain
-| Domain | Tool | Gaps Found | Implemented | Files | Lines |
-|--------|------|------------|-------------|-------|-------|
-| A — Orchestration | <tool> | N | N | N | N |
-| M — Memory | <tool> | N | N | N | N |
-| T — Tools | <tool> | N | N | N | N |
-
-### Commits
-- <hash> <message>
-
-### Gap Analysis Documents
-- docs/gap-analysis-<tool>-orchestration.md
-- docs/gap-analysis-<tool>-memory.md
-- docs/gap-analysis-<tool>-tools.md
-```
+- **Most open-ended; structure is your responsibility.**
+- If the goal naturally decomposes into 1–3 sub-tasks, do that in PLAN
+  and walk BUILD/TEST/FIX/COMMIT once per sub-task with a separate
+  commit each. For larger decompositions, recommend `ycode sprint`
+  instead.
+- For tightly-scoped feature work that fits a single commit, treat it
+  the same as `improve` — research, plan, implement, verify, commit.
 
 ---
 
 ## Rules
 
-- **Fully autonomous.** Run to completion after receiving the path. Never ask for confirmation, approval, or permission between steps.
-- **Three complete cycles per tool.** Each domain (A, M, T) gets its own full RESEARCH → PLAN → BUILD → TEST → COMMIT cycle. Complete one domain entirely before starting the next.
-- **Do not fabricate.** Only document capabilities verified by reading actual source code.
-- **Be honest.** Always document where ycode is ahead. If a domain has no gaps, say so and skip build/commit for that domain.
-- **Never commit broken code.** `make build` must pass before every commit.
-- **Scope aggressively.** Implement High and Medium priority gaps only. Low goes to Deferred.
-- **priorart/ is read-only.** Never modify anything under `priorart/`.
-- **Stage by name.** Never `git add -A` or `git add .`.
-- **Parallel research, sequential build.** Explore the tool across domains in parallel. Build and commit one domain at a time.
-- **Reusable.** Works with any path. No hardcoded project names or directories.
-- **No push unless asked.** Only push if `--push` is in `{{ARGS}}`.
+- **Fully autonomous.** Never ask for confirmation between steps;
+  proceed once the task is parsed.
+- **Never modify** anything under `priorart/` or `external/` —
+  read-only.
+- **Stage by name** — never `git add -A` or `git add .`.
+- **`make build` must pass** before any commit.
+- **No push** unless `--push` appears in `{{ARGS}}`.
+- **Cap retries.** 3 fix-and-retry cycles per task; report and stop if
+  still red.
+- **Reuse, don't reinvent.** If `/build`, `/validate`, or `/deploy`
+  already cover a step, defer to their procedure.

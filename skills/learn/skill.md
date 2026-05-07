@@ -8,6 +8,11 @@ user_invocable: true
 
 Analyze a reference project (existing or new) to identify features this project can adopt. Produces three deliverables: gap analysis, implementation plan, and tracking TODO.
 
+> `/learn` is **research-only** — it produces docs, not code changes.
+> For autonomous implementation against a third-party agentic tool,
+> use `/analyze`. For arbitrary development tasks (fix, improve, feature
+> work), use `/autopilot`.
+
 `{{ARGS}}` is required. It is either:
 - A project name that exists under `priorart/` (e.g., `aider`, `cline`, `opencode`)
 - A topic or technology to research (e.g., `mcp protocol`, `code review`, `terminal ui`)
@@ -174,7 +179,7 @@ Tracking checklist. See gap-analysis-{{ARGS}}.md for full analysis.
 |----|---------|--------|
 ```
 
-### Step 6: Report and pause
+### Step 6: Report and hand off
 
 Summarize to the user:
 - Number of domains compared
@@ -182,20 +187,12 @@ Summarize to the user:
 - Domains where this project is ahead
 - Paths to the three output documents
 
-Then ask: **"Would you like to begin implementation? If so, which phase(s)?"**
+Then point at the next step:
 
-Do **not** start implementing until the user explicitly approves.
+> "Run `/analyze {{ARGS}}` to autonomously implement the high/medium-priority gaps end-to-end (research → plan → build → test → commit). For non-tool-comparison goals, use `/autopilot task <goal>`."
 
-### Step 7: Implement (only if approved)
-
-If the user approves implementation:
-
-1. Read the TODO file for the approved phase(s)
-2. Work through items in order, respecting dependencies
-3. After completing each item, mark it `[x]` in the TODO with the commit hash
-4. Run tests after each item (`go test -short -race ./path/to/package/`)
-5. Commit each logical unit of work separately
-6. After completing a phase, report progress and ask before continuing to the next
+`/learn` itself **does not modify code**. End the run after the
+hand-off recommendation.
 
 ---
 
@@ -254,7 +251,8 @@ Use a short, lowercase name for the directory (matching existing convention: `ai
 
 ### Step 5: Proceed as Mode 1
 
-Execute Mode 1 Steps 1-7 against the newly added project.
+Execute Mode 1 Steps 1-6 against the newly added project (research and
+docs only; do not implement — hand off to `/analyze` per Step 6).
 
 ---
 
@@ -267,5 +265,5 @@ Execute Mode 1 Steps 1-7 against the newly added project.
 - **Scope aggressively.** The plan should explicitly defer low-priority items and explain why. Not every gap needs to be closed.
 - **Match existing doc style.** Read at least one existing `docs/gap-analysis-*.md`, `docs/plan-*.md`, and `docs/todo-*.md` before writing new ones. Follow their formatting conventions.
 - **Agent-agnostic.** Do not rely on any tool-specific capabilities. Use standard file operations, git commands, and shell. If web search is unavailable in Mode 2, fall back to asking the user for URLs.
-- **No implementation without permission.** After producing the three documents, stop and ask before implementing anything.
+- **No implementation.** `/learn` produces only the three research artifacts. Hand off to `/analyze` (or `/autopilot task <goal>`) for implementation; do not modify code in this skill.
 - **Permissive licenses only.** Only add projects licensed under MIT, BSD, or Apache 2.0 as submodules. Never add GPL, AGPL, LGPL, SSPL, BSL, or other copyleft/source-available licensed projects.

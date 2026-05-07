@@ -37,11 +37,12 @@ Include this paragraph verbatim in your AI tool's instruction file
 
 | Command     | Description |
 |-------------|-------------|
-| `/autopilot`| Autonomously analyze agentic tools, identify gaps in 3 domains, implement, test, commit |
+| `/analyze`  | Autonomously analyze an agentic tool, identify gaps in 3 domains, implement, test, commit |
+| `/autopilot`| Autonomously execute a development task (fix, improve, or arbitrary goal) through a research-plan-build-test-fix-commit loop |
 | `/build`    | Build binary with full quality checks, fix errors, commit on success |
 | `/claude`   | Run Claude Code CLI with a single prompt |
 | `/deploy`   | Deploy to host, ensures build first |
-| `/learn`    | Study a prior-art project or new topic, produce gap analysis, plan, and TODO |
+| `/learn`    | Study a prior-art project or new topic, produce gap analysis, plan, and TODO (research only — hand off to `/analyze` for implementation) |
 | `/setup`    | Set up the ycode development environment and verify the build |
 | `/validate` | Run integration/smoke/acceptance tests against running instance |
 
