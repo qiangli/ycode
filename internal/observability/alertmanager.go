@@ -9,20 +9,32 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/qiangli/ycode/internal/bus"
 	am "github.com/qiangli/ycode/pkg/otel/alertmanager"
 )
 
 // AlertmanagerComponent runs an embedded Alertmanager with the real upstream
 // API v2 and the Elm-based UI from the alertmanager/asset package.
+//
+// When a Bus is set via SetBus, every alert delivered through AddAlert is
+// also published as bus.EventAlertFired so ycode internal consumers
+// (autonomous loop, self-healing, learning) can react in parallel with
+// Alertmanager's standard human-notification routing.
 type AlertmanagerComponent struct {
 	alerts  *am.Alerts
 	marker  *am.MemMarker
 	healthy atomic.Bool
 	cancel  context.CancelFunc
+	bus     bus.Bus
 }
 
 func NewAlertmanagerComponent() *AlertmanagerComponent { return &AlertmanagerComponent{} }
 func (a *AlertmanagerComponent) Name() string          { return "alertmanager" }
+
+// SetBus wires an event bus so that each alert delivered via AddAlert is
+// also published as EventAlertFired. Call before Start (or any time
+// before AddAlert is invoked).
+func (a *AlertmanagerComponent) SetBus(b bus.Bus) { a.bus = b }
 
 func (a *AlertmanagerComponent) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
@@ -140,12 +152,40 @@ func (a *AlertmanagerComponent) fallbackHandler() http.Handler {
 	return mux
 }
 
-// AddAlert inserts an alert via the in-memory provider.
+// AddAlert inserts an alert via the in-memory provider and, if a bus is
+// configured, mirrors it onto the bus as EventAlertFired so ycode's
+// internal consumers can react alongside Alertmanager's notification
+// routing.
 func (a *AlertmanagerComponent) AddAlert(ctx context.Context, alert *am.Alert) error {
 	if a.alerts == nil {
 		return nil
 	}
+	if a.bus != nil && alert != nil {
+		bus.PublishAlertFired(a.bus, alertFiredPayloadFrom(alert))
+	}
 	return a.alerts.Put(ctx, alert)
+}
+
+// alertFiredPayloadFrom flattens an Alertmanager alert into the
+// AlertFiredPayload shape consumed by ycode internal subscribers.
+func alertFiredPayloadFrom(a *am.Alert) bus.AlertFiredPayload {
+	labels := make(map[string]string, len(a.Labels))
+	for k, v := range a.Labels {
+		labels[string(k)] = string(v)
+	}
+	annotations := make(map[string]string, len(a.Annotations))
+	for k, v := range a.Annotations {
+		annotations[string(k)] = string(v)
+	}
+	return bus.AlertFiredPayload{
+		Name:        labels["alertname"],
+		Severity:    labels["severity"],
+		Summary:     annotations["summary"],
+		Description: annotations["description"],
+		Labels:      labels,
+		Annotations: annotations,
+		StartsAt:    a.StartsAt,
+	}
 }
 
 // noopPeer implements cluster.ClusterPeer for single-node operation.

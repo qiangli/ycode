@@ -57,6 +57,7 @@ require (
 	github.com/nguyenthenguyen/docx v0.0.0-20230621112118-9c8e795a11db
 	github.com/odvcencio/gotreesitter v0.15.3
 	github.com/philippgille/chromem-go v0.7.0
+	github.com/prometheus/common v0.67.5
 	github.com/prometheus/prometheus v0.311.2
 	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
 	github.com/qiangli/bonsai v0.0.0-20260505184649-a3cb69dbf211
@@ -582,7 +583,6 @@ require (
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_golang/exp v0.0.0-20260408213824-a4984284cf47 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/common/assets v0.2.0 // indirect
 	github.com/prometheus/exporter-toolkit v0.16.0 // indirect
 	github.com/prometheus/otlptranslator v1.0.0 // indirect

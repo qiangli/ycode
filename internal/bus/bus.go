@@ -47,6 +47,11 @@ const (
 	EventResearchDone  EventType = "research.done"
 	EventTrainStart    EventType = "train.start"
 	EventTrainComplete EventType = "train.complete"
+
+	// Observability alert events. Fired when an alert rule trips. ycode
+	// components subscribe for self-healing; Alertmanager continues to
+	// route the same alert for human notifications in parallel.
+	EventAlertFired EventType = "alert.fired"
 )
 
 // Event is a single message flowing through the bus.
