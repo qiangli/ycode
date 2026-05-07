@@ -218,11 +218,6 @@ build-single: podman-embed vfkit-embed runner-build-thin ## Build single self-co
 	@echo "Ship this one file — ycode auto-provisions everything on first run."
 	@ls -lh bin/ycode
 
-# ─── Collector ──────────────────────────────────────────────────────────────
-
-collector: ## Build minimal OTEL collector via OCB (requires ocb installed)
-	ocb --config configs/otelcol/builder-config.yaml --output-path bin/otelcol
-
 # ─── Deploy ─────────────────────────────────────────────────────────────────
 
 deploy: ## Deploy ycode serve (HOST=localhost PORT=58080). Use HOST=<remote> for remote deploy
