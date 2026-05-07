@@ -10,6 +10,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 const (
@@ -62,6 +64,7 @@ func doWithRetry(ctx context.Context, client *http.Client, makeReq func() (*http
 	for attempt := 0; attempt <= defaultMaxRetries; attempt++ {
 		if attempt > 0 {
 			delay := backoffWithJitter(attempt)
+			yotel.RecordRetry(ctx, attempt, delay, classifyRetryReason(lastErr))
 			slog.Warn("retrying API request",
 				"attempt", attempt+1,
 				"delay", delay.Round(time.Millisecond),
@@ -80,14 +83,18 @@ func doWithRetry(ctx context.Context, client *http.Client, makeReq func() (*http
 			return nil, err
 		}
 
+		started := time.Now()
 		resp, err := client.Do(req)
+		host := req.URL.Host
 		if err != nil {
+			yotel.RecordHTTPRequest(ctx, req.Method, host, 0, time.Since(started), false)
 			if isRetryableNetError(err) {
 				lastErr = fmt.Errorf("send request: %w", err)
 				continue
 			}
 			return nil, fmt.Errorf("send request: %w", err)
 		}
+		yotel.RecordHTTPRequest(ctx, req.Method, host, resp.StatusCode, time.Since(started), resp.StatusCode == http.StatusOK)
 
 		if resp.StatusCode == http.StatusOK {
 			return resp, nil
@@ -163,6 +170,33 @@ func doWithRetry(ctx context.Context, client *http.Client, makeReq func() (*http
 	}
 
 	return nil, fmt.Errorf("request failed after %d attempts: %w", defaultMaxRetries+1, lastErr)
+}
+
+// classifyRetryReason maps the last error encountered before a retry into
+// a coarse reason label so the ycode.api.retry.attempts counter has
+// bounded cardinality. Returns "unknown" if no signal is available.
+func classifyRetryReason(lastErr error) string {
+	if lastErr == nil {
+		return "unknown"
+	}
+	var apiErr *APIError
+	if errors.As(lastErr, &apiErr) {
+		switch {
+		case apiErr.StatusCode == 429:
+			return "rate_limited"
+		case apiErr.StatusCode >= 500:
+			return "5xx"
+		case apiErr.StatusCode >= 400:
+			return "4xx"
+		default:
+			return "http_error"
+		}
+	}
+	var classified *ClassifiedError
+	if errors.As(lastErr, &classified) {
+		return classified.Reason.String()
+	}
+	return "net_error"
 }
 
 // backoffWithJitter returns an exponential backoff duration with random jitter.

@@ -360,9 +360,13 @@ func (r *Runtime) recordTurnMetrics(ctx context.Context, result *TurnResult) {
 		return
 	}
 	inst := r.otel.Inst
-	attrs := metric.WithAttributes(
+	llmAttrs := []attribute.KeyValue{
 		attribute.String("llm.model", r.config.Model),
-	)
+	}
+	if r.otel.Provider != "" {
+		llmAttrs = append(llmAttrs, attribute.String("llm.provider", r.otel.Provider))
+	}
+	attrs := metric.WithAttributes(llmAttrs...)
 	inputTokens := int64(result.Usage.InputTokens + result.Usage.PromptTokens)
 	outputTokens := int64(result.Usage.OutputTokens + result.Usage.CompletionTokens)
 

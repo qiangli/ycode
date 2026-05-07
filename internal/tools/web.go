@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	netutil "github.com/qiangli/ycode/internal/runtime/net"
+	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 // RegisterWebHandlers registers WebFetch and WebSearch handlers.
@@ -69,16 +71,26 @@ func handleWebFetch(ctx context.Context, input json.RawMessage) (string, error) 
 	}
 	req.Header.Set("User-Agent", "ycode/1.0")
 
+	host := req.URL.Host
+	if host == "" {
+		if u, perr := url.Parse(params.URL); perr == nil {
+			host = u.Host
+		}
+	}
+	started := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
+		yotel.RecordWebFetch(ctx, host, 0, time.Since(started), 0, false)
 		return "", fmt.Errorf("fetch %s: %w", params.URL, err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
 	if err != nil {
+		yotel.RecordWebFetch(ctx, host, resp.StatusCode, time.Since(started), 0, false)
 		return "", fmt.Errorf("read response: %w", err)
 	}
+	yotel.RecordWebFetch(ctx, host, resp.StatusCode, time.Since(started), len(body), resp.StatusCode/100 == 2)
 
 	text, err := extractContent(string(body), params.URL, params.OutputFormat, params.MaxLength)
 	if err != nil {
@@ -97,10 +109,13 @@ func handleWebSearch(ctx context.Context, input json.RawMessage) (string, error)
 		return "", fmt.Errorf("parse WebSearch input: %w", err)
 	}
 
+	started := time.Now()
 	resp, err := searchWithFallback(ctx, params.Query, params.MaxResults)
 	if err != nil {
+		yotel.RecordWebSearch(ctx, "fallback", time.Since(started), 0, false)
 		return "", fmt.Errorf("search: %w", err)
 	}
+	yotel.RecordWebSearch(ctx, "fallback", time.Since(started), len(resp.Results), true)
 
 	out, err := json.MarshalIndent(resp, "", "  ")
 	if err != nil {
