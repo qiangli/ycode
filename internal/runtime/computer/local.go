@@ -106,7 +106,19 @@ func (c *LocalComputer) Close() error {
 type localShell struct{ c *LocalComputer }
 
 func (s *localShell) Run(ctx context.Context, p bash.ExecParams) (*bash.ExecResult, error) {
-	return bash.ExecuteWith(ctx, s.c.exec, p)
+	binary := firstWord(p.Command)
+	ctx, span, finish := startSpan(ctx, s.c.Name(), "shell", "run",
+		AttrCmdBinary.String(binary),
+		AttrCmdLen.Int(len(p.Command)),
+		AttrCmdTimeout.Int(p.Timeout),
+		AttrForked.Bool(true), // builtin dispatcher in a follow-up commit will set false.
+	)
+	res, err := bash.ExecuteWith(ctx, s.c.exec, p)
+	if res != nil {
+		span.SetAttributes(AttrExitCode.Int(res.ExitCode))
+	}
+	finish(err)
+	return res, err
 }
 
 func (s *localShell) Session(ctx context.Context, opts SessionOpts) (Session, error) {
@@ -115,17 +127,34 @@ func (s *localShell) Session(ctx context.Context, opts SessionOpts) (Session, er
 	return nil, ErrNotSupported
 }
 
+// firstWord returns the first whitespace-separated token of s, or
+// "" if s is empty. Used to attribute spans by the binary the agent
+// invoked without keeping the full command line as a span attribute.
+func firstWord(s string) string {
+	for i, r := range s {
+		if r == ' ' || r == '\t' {
+			return s[:i]
+		}
+	}
+	return s
+}
+
 // ----- Files ---------------------------------------------------------------
 
 type localFiles struct{ c *LocalComputer }
 
-func (f *localFiles) Read(ctx context.Context, p fileops.ReadFileParams) (string, error) {
+func (f *localFiles) Read(ctx context.Context, p fileops.ReadFileParams) (out string, err error) {
 	abs, err := f.c.vfs.ValidatePath(ctx, p.Path)
 	if err != nil {
 		return "", err
 	}
 	p.Path = abs
-	return fileops.ReadFile(p)
+	ctx, span, finish := startSpan(ctx, f.c.Name(), "files", "read", AttrFilePath.String(abs))
+	out, err = fileops.ReadFile(p)
+	span.SetAttributes(AttrFileBytes.Int(len(out)))
+	finish(err)
+	_ = ctx
+	return out, err
 }
 
 func (f *localFiles) Write(ctx context.Context, p fileops.WriteFileParams) error {
@@ -134,7 +163,13 @@ func (f *localFiles) Write(ctx context.Context, p fileops.WriteFileParams) error
 		return err
 	}
 	p.Path = abs
-	return fileops.WriteFile(p, "")
+	ctx, _, finish := startSpan(ctx, f.c.Name(), "files", "write",
+		AttrFilePath.String(abs),
+		AttrFileBytes.Int(len(p.Content)))
+	err = fileops.WriteFile(p, "")
+	finish(err)
+	_ = ctx
+	return err
 }
 
 func (f *localFiles) Edit(ctx context.Context, p fileops.EditFileParams) error {
@@ -143,7 +178,12 @@ func (f *localFiles) Edit(ctx context.Context, p fileops.EditFileParams) error {
 		return err
 	}
 	p.Path = abs
-	return fileops.EditFile(p)
+	ctx, _, finish := startSpan(ctx, f.c.Name(), "files", "edit",
+		AttrFilePath.String(abs))
+	err = fileops.EditFile(p)
+	finish(err)
+	_ = ctx
+	return err
 }
 
 func (f *localFiles) Stat(ctx context.Context, path string) (os.FileInfo, error) {
@@ -151,7 +191,11 @@ func (f *localFiles) Stat(ctx context.Context, path string) (os.FileInfo, error)
 	if err != nil {
 		return nil, err
 	}
-	return os.Stat(abs)
+	ctx, _, finish := startSpan(ctx, f.c.Name(), "files", "stat", AttrFilePath.String(abs))
+	info, err := os.Stat(abs)
+	finish(err)
+	_ = ctx
+	return info, err
 }
 
 func (f *localFiles) Glob(ctx context.Context, p fileops.GlobParams) (*fileops.GlobResult, error) {
@@ -162,7 +206,14 @@ func (f *localFiles) Glob(ctx context.Context, p fileops.GlobParams) (*fileops.G
 		}
 		p.Path = abs
 	}
-	return fileops.GlobSearch(p)
+	ctx, span, finish := startSpan(ctx, f.c.Name(), "files", "glob", AttrGlobPattern.String(p.Pattern))
+	res, err := fileops.GlobSearch(p)
+	if res != nil {
+		span.SetAttributes(AttrMatchCount.Int(len(res.Files)))
+	}
+	finish(err)
+	_ = ctx
+	return res, err
 }
 
 func (f *localFiles) Grep(ctx context.Context, p fileops.GrepParams) (*fileops.GrepResult, error) {
@@ -173,7 +224,14 @@ func (f *localFiles) Grep(ctx context.Context, p fileops.GrepParams) (*fileops.G
 		}
 		p.Path = abs
 	}
-	return fileops.GrepSearch(p)
+	ctx, span, finish := startSpan(ctx, f.c.Name(), "files", "grep", AttrGrepPattern.String(p.Pattern))
+	res, err := fileops.GrepSearch(p)
+	if res != nil {
+		span.SetAttributes(AttrMatchCount.Int(len(res.Matches)))
+	}
+	finish(err)
+	_ = ctx
+	return res, err
 }
 
 func (f *localFiles) ValidatePath(ctx context.Context, path string) (string, error) {
@@ -184,13 +242,26 @@ func (f *localFiles) ValidatePath(ctx context.Context, path string) (string, err
 
 type localWeb struct{ c *LocalComputer }
 
-func (w *localWeb) Fetch(ctx context.Context, url string, opts FetchOpts) (*FetchResult, error) {
-	if err := netutil.ValidateURL(url); err != nil {
-		return nil, fmt.Errorf("SSRF protection: %w", err)
+func (w *localWeb) Fetch(ctx context.Context, url string, opts FetchOpts) (res *FetchResult, err error) {
+	ctx, span, finish := startSpan(ctx, w.c.Name(), "web", "fetch", AttrURL.String(url))
+	defer func() {
+		if res != nil {
+			span.SetAttributes(
+				AttrHTTPStatus.Int(res.Status),
+				AttrHTTPBytes.Int(len(res.Body)),
+			)
+		}
+		finish(err)
+	}()
+
+	if err = netutil.ValidateURL(url); err != nil {
+		err = fmt.Errorf("SSRF protection: %w", err)
+		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+	req, rerr := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if rerr != nil {
+		err = fmt.Errorf("create request: %w", rerr)
+		return nil, err
 	}
 	ua := opts.UserAgent
 	if ua == "" {
@@ -200,49 +271,64 @@ func (w *localWeb) Fetch(ctx context.Context, url string, opts FetchOpts) (*Fetc
 
 	client := w.c.httpc
 	if opts.Timeout > 0 {
-		// Per-call timeout: use a derived context rather than mutating
-		// the shared client.
 		callCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 		defer cancel()
 		req = req.WithContext(callCtx)
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", url, err)
+	resp, derr := client.Do(req)
+	if derr != nil {
+		err = fmt.Errorf("fetch %s: %w", url, derr)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	max := opts.MaxBytes
 	if max <= 0 {
-		max = 1 << 20 // 1 MB default; matches existing WebFetch
+		max = 1 << 20
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, max))
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+	body, rerr := io.ReadAll(io.LimitReader(resp.Body, max))
+	if rerr != nil {
+		err = fmt.Errorf("read response: %w", rerr)
+		return nil, err
 	}
 	final := url
 	if resp.Request != nil && resp.Request.URL != nil {
 		final = resp.Request.URL.String()
 	}
-	return &FetchResult{
+	res = &FetchResult{
 		Status: resp.StatusCode,
 		Header: resp.Header,
 		Body:   body,
 		URL:    final,
-	}, nil
+	}
+	return res, nil
 }
 
-func (w *localWeb) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
+func (w *localWeb) Do(ctx context.Context, req *http.Request) (resp *http.Response, err error) {
+	urlStr := ""
 	if req.URL != nil {
-		if err := netutil.ValidateURL(req.URL.String()); err != nil {
-			return nil, fmt.Errorf("SSRF protection: %w", err)
+		urlStr = req.URL.String()
+	}
+	ctx, span, finish := startSpan(ctx, w.c.Name(), "web", "do", AttrURL.String(urlStr))
+	defer func() {
+		if resp != nil {
+			span.SetAttributes(AttrHTTPStatus.Int(resp.StatusCode))
+		}
+		finish(err)
+	}()
+
+	if req.URL != nil {
+		if err = netutil.ValidateURL(req.URL.String()); err != nil {
+			err = fmt.Errorf("SSRF protection: %w", err)
+			return nil, err
 		}
 	}
 	if req.Context() == nil || req.Context() == context.Background() {
 		req = req.WithContext(ctx)
 	}
-	return w.c.httpc.Do(req)
+	resp, err = w.c.httpc.Do(req)
+	return resp, err
 }
 
 // ----- Browser (unsupported stub) -----------------------------------------
