@@ -57,6 +57,7 @@ require (
 	github.com/nguyenthenguyen/docx v0.0.0-20230621112118-9c8e795a11db
 	github.com/odvcencio/gotreesitter v0.15.3
 	github.com/philippgille/chromem-go v0.7.0
+	github.com/prometheus/prometheus v0.311.2
 	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
 	github.com/qiangli/bonsai v0.0.0-20260505184649-a3cb69dbf211
 	github.com/qiangli/gfy v0.0.0-20260504062854-764095a2877d
@@ -586,7 +587,6 @@ require (
 	github.com/prometheus/exporter-toolkit v0.16.0 // indirect
 	github.com/prometheus/otlptranslator v1.0.0 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
-	github.com/prometheus/prometheus v0.311.2 // indirect
 	github.com/prometheus/sigv4 v0.4.1 // indirect
 	github.com/prometheus/statsd_exporter v0.29.0 // indirect
 	github.com/protocolbuffers/txtpbfmt v0.0.0-20260217160748-a481f6a22f94 // indirect
