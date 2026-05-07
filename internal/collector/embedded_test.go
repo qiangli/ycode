@@ -174,6 +174,22 @@ func TestGenerateYAML_Pipelines(t *testing.T) {
 	}
 }
 
+func TestGenerateYAML_PreservesResourceAttrs(t *testing.T) {
+	cfg := Config{
+		GRPCPort:       4317,
+		HTTPPort:       4318,
+		PrometheusPort: 8888,
+	}
+	yaml := GenerateYAML(cfg)
+	// Without resource_to_telemetry_conversion, the Prometheus exporter
+	// collapses all OTel resource attributes (service.name, service.instance.id,
+	// etc.) into a single unlabeled stream, so different OTLP publishers
+	// would be indistinguishable in metrics queries.
+	if !contains(yaml, "resource_to_telemetry_conversion") {
+		t.Error("Prometheus exporter must enable resource_to_telemetry_conversion to preserve service.name as a label")
+	}
+}
+
 func TestGenerateYAML_NoOptionalExporters(t *testing.T) {
 	cfg := Config{
 		GRPCPort:       4317,

@@ -56,8 +56,15 @@ func GenerateYAML(cfg Config) string {
 
 	b.WriteString("\nexporters:\n")
 
-	// Metrics → Prometheus
+	// Metrics → Prometheus.
+	//
+	// resource_to_telemetry_conversion preserves OTel resource attributes
+	// (service.name, service.instance.id, service.namespace, …) as
+	// Prometheus labels. Without it, OTLP signals from third-party
+	// publishers all collapse into a single unlabeled stream and source
+	// differentiation is lost.
 	b.WriteString(fmt.Sprintf("  prometheus:\n    endpoint: \"127.0.0.1:%d\"\n", cfg.PrometheusPort))
+	b.WriteString("    resource_to_telemetry_conversion:\n      enabled: true\n")
 
 	// Logs → VictoriaLogs (OTLP HTTP)
 	// The endpoint must include the http.pathPrefix that VictoriaLogs requires
