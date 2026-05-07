@@ -124,6 +124,62 @@
           {"title": "Tools per Turn (p50)", "query": "histogram_quantile(0.5, sum by (le, session_id) (rate(ycode_turn_tool_count_bucket[5m])))", "type": "timeseries"},
           {"title": "Active Sessions", "query": "count(count by (session_id) (rate(ycode_turn_duration_count[5m]) > 0))", "type": "stat"}
         ]
+      },
+      {
+        "name": "Bash & Exec",
+        "panels": [
+          {"title": "Bash Exec Rate", "query": "sum(rate(ycode_bash_exec_total[5m]))", "type": "timeseries"},
+          {"title": "Bash Exec by Success", "query": "sum by (success) (rate(ycode_bash_exec_total[5m]))", "type": "timeseries"},
+          {"title": "Bash Latency p50", "query": "histogram_quantile(0.5, rate(ycode_bash_exec_duration_bucket[5m]))", "type": "timeseries"},
+          {"title": "Bash Latency p95", "query": "histogram_quantile(0.95, rate(ycode_bash_exec_duration_bucket[5m]))", "type": "timeseries"},
+          {"title": "Background Jobs", "query": "sum(ycode_bash_exec_total{background=\"true\"})", "type": "stat"},
+          {"title": "Timeouts", "query": "sum(ycode_bash_exec_total{timed_out=\"true\"})", "type": "stat"},
+          {"title": "Non-zero Exit Codes", "query": "sum by (exit_code) (ycode_bash_exec_total{success=\"false\"})", "type": "table"}
+        ]
+      },
+      {
+        "name": "File Ops",
+        "panels": [
+          {"title": "File Ops Rate", "query": "sum by (op) (rate(ycode_fileops_ops_total[5m]))", "type": "timeseries"},
+          {"title": "File Ops by Op", "query": "sum by (op) (ycode_fileops_ops_total)", "type": "table"},
+          {"title": "Failed Ops", "query": "sum by (op) (rate(ycode_fileops_ops_total{success=\"false\"}[5m]))", "type": "timeseries"},
+          {"title": "Bytes Throughput", "query": "sum by (op) (rate(ycode_fileops_bytes_total[5m]))", "type": "timeseries"},
+          {"title": "Total Bytes Read", "query": "sum(ycode_fileops_bytes_total{op=\"read\"})", "type": "stat"},
+          {"title": "Total Bytes Written", "query": "sum(ycode_fileops_bytes_total{op=\"write\"})", "type": "stat"}
+        ]
+      },
+      {
+        "name": "HTTP Outbound & Retries",
+        "panels": [
+          {"title": "HTTP Request Rate by Host", "query": "sum by (http_host) (rate(ycode_http_request_total[5m]))", "type": "timeseries"},
+          {"title": "HTTP Latency p95", "query": "histogram_quantile(0.95, rate(ycode_http_request_duration_bucket[5m]))", "type": "timeseries"},
+          {"title": "HTTP Status Mix", "query": "sum by (http_status_code) (rate(ycode_http_request_total[5m]))", "type": "timeseries"},
+          {"title": "HTTP Failures", "query": "sum(rate(ycode_http_request_total{success=\"false\"}[5m]))", "type": "timeseries"},
+          {"title": "Retry Attempts Rate", "query": "sum by (reason) (rate(ycode_api_retry_attempts[5m]))", "type": "timeseries"},
+          {"title": "Retry Backoff p50 (ms)", "query": "histogram_quantile(0.5, rate(ycode_api_retry_delay_bucket[5m]))", "type": "timeseries"},
+          {"title": "Retry Reasons", "query": "sum by (reason) (ycode_api_retry_attempts)", "type": "table"}
+        ]
+      },
+      {
+        "name": "Web Tools",
+        "panels": [
+          {"title": "Web Fetch Rate", "query": "sum(rate(ycode_web_fetch_total[5m]))", "type": "timeseries"},
+          {"title": "Web Fetch by Host", "query": "sum by (host) (ycode_web_fetch_total)", "type": "table"},
+          {"title": "Web Fetch Latency p95", "query": "histogram_quantile(0.95, rate(ycode_web_fetch_duration_bucket[5m]))", "type": "timeseries"},
+          {"title": "Web Fetch Failures", "query": "sum(rate(ycode_web_fetch_total{success=\"false\"}[5m]))", "type": "timeseries"},
+          {"title": "Web Search Rate", "query": "sum(rate(ycode_web_search_total[5m]))", "type": "timeseries"},
+          {"title": "Web Search Latency p95", "query": "histogram_quantile(0.95, rate(ycode_web_search_duration_bucket[5m]))", "type": "timeseries"},
+          {"title": "Web Search Results (median)", "query": "histogram_quantile(0.5, rate(ycode_web_search_results_bucket[5m]))", "type": "timeseries"}
+        ]
+      },
+      {
+        "name": "Panics",
+        "panels": [
+          {"title": "Total Panics", "query": "sum(ycode_runtime_panic_total)", "type": "stat"},
+          {"title": "Panic Rate", "query": "sum(rate(ycode_runtime_panic_total[5m]))", "type": "timeseries"},
+          {"title": "Panics by Component", "query": "sum by (component) (ycode_runtime_panic_total)", "type": "table"},
+          {"title": "Panics by Detail (top 10)", "query": "topk(10, sum by (detail) (ycode_runtime_panic_total))", "type": "table"}
+        ]
       }
     ]
   },
