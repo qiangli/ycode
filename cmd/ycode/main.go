@@ -64,6 +64,16 @@ func selfHealEnabled() bool {
 }
 
 func main() {
+	// Intercept Gitea-generated git hook invocations before cobra parses.
+	// Gitea's bare repos contain pre-receive/update/post-receive scripts
+	// that exec `<binary> --config=<app.ini> hook <stage>` — those args
+	// would confuse cobra. Delegate to Gitea's CLI machinery instead, so
+	// the hooks call back to the running Gitea via its internal HTTP
+	// API and update PR/issue state correctly. See docs/agent-collab.md.
+	if maybeHandleGiteaHook() {
+		return
+	}
+
 	// Check if self-healing is enabled
 	if selfHealEnabled() {
 		opts := &selfheal.WrapMainOptions{
@@ -1275,6 +1285,9 @@ func init() {
 
 	// Multi-agent collaboration task queue. See docs/agent-collab.md.
 	rootCmd.AddCommand(newTasksCmd())
+
+	// Multi-agent collaboration orchestrator. See docs/agent-collab.md.
+	rootCmd.AddCommand(newCollabCmd())
 
 	// Evaluation framework
 	registerEvalCmd(rootCmd)

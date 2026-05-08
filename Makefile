@@ -88,7 +88,7 @@ test-oci: ## Run OCI self-build integration test (requires podman)
 	go test -tags integration -race -count=1 -timeout 600s -v ./internal/container/... -run TestOCIBuildSelf
 
 test-gitserver: ## Run git server workspace integration tests
-	go test -tags integration -race -count=1 -timeout 60s -v ./internal/gitserver/...
+	go test -tags "integration,sqlite,sqlite_unlock_notify,bindata" -race -count=1 -timeout 240s -v ./internal/gitserver/...
 
 test-ui: ## Run Playwright browser tests (requires running server + npx)
 	@cd e2e && npx playwright test; s=$$?; \

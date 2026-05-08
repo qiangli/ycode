@@ -6,11 +6,15 @@ package gitserver
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 
 	giteaembed "code.gitea.io/gitea/embed"
@@ -54,8 +58,15 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("create gitea data dir: %w", err)
 	}
 
-	// Write minimal app.ini for local single-user mode.
-	if err := s.writeConfig(); err != nil {
+	// Pre-allocate the HTTP port and bake it into app.ini so generated
+	// git hook scripts (which load this same app.ini in a fresh process)
+	// resolve the correct LOCAL_ROOT_URL when calling back to Gitea's
+	// internal API. Without this, hooks default to port 3000 and fail.
+	port, err := allocPort()
+	if err != nil {
+		return fmt.Errorf("allocate gitea port: %w", err)
+	}
+	if err := s.writeConfig(port); err != nil {
 		return fmt.Errorf("write gitea config: %w", err)
 	}
 
@@ -64,6 +75,7 @@ func (s *Server) Start(ctx context.Context) error {
 		WorkPath:   s.dataDir,
 		CustomPath: filepath.Join(s.dataDir, "custom"),
 		CustomConf: filepath.Join(s.dataDir, "custom", "conf", "app.ini"),
+		Port:       port,
 		AppName:    s.cfg.AppName,
 	})
 	if err != nil {
@@ -78,6 +90,19 @@ func (s *Server) Start(ctx context.Context) error {
 	s.healthy.Store(true)
 	slog.Info("gitserver: started (in-process)", "port", inner.Port(), "data", s.dataDir)
 	return nil
+}
+
+// allocPort grabs a free TCP port. Brief race window between close and
+// the embed package's Listen, but in practice the OS does not reassign
+// within the millisecond gap.
+func allocPort() (int, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	return port, nil
 }
 
 // Stop gracefully shuts down the git server.
@@ -118,8 +143,11 @@ func (s *Server) HTTPHandler() http.Handler {
 	return s.inner.HTTPHandler()
 }
 
-// writeConfig writes a minimal Gitea app.ini for local single-user operation.
-func (s *Server) writeConfig() error {
+// writeConfig writes a minimal Gitea app.ini for local single-user
+// operation. The HTTP_PORT and LOCAL_ROOT_URL must be pinned so that
+// generated git hook scripts — which load this same file in a separate
+// process — can call back to Gitea's internal API on the right port.
+func (s *Server) writeConfig(port int) error {
 	confDir := filepath.Join(s.dataDir, "custom", "conf")
 	if err := os.MkdirAll(confDir, 0o755); err != nil {
 		return err
@@ -128,11 +156,24 @@ func (s *Server) writeConfig() error {
 	dbPath := filepath.Join(s.dataDir, "gitea.db")
 	repoRoot := filepath.Join(s.dataDir, "repositories")
 
+	// Reuse the persisted INTERNAL_TOKEN if Gitea generated one on a
+	// previous run; otherwise generate a stable one ourselves so that
+	// hook handlers (loading this same config in a child process)
+	// authenticate against the running server with matching credentials.
+	internalToken := readExistingInternalToken(filepath.Join(confDir, "app.ini"))
+	if internalToken == "" {
+		internalToken = randomTokenSecret()
+	}
+
+	localURL := fmt.Sprintf("http://127.0.0.1:%d/", port)
+
 	ini := fmt.Sprintf(`[server]
-HTTP_ADDR = 127.0.0.1
-DOMAIN    = localhost
-APP_NAME  = %s
-OFFLINE_MODE = true
+HTTP_ADDR      = 127.0.0.1
+HTTP_PORT      = %d
+DOMAIN         = localhost
+APP_NAME       = %s
+OFFLINE_MODE   = true
+LOCAL_ROOT_URL = %s
 
 [database]
 DB_TYPE = sqlite3
@@ -147,7 +188,8 @@ REQUIRE_SIGNIN_CONFIRM = false
 ENABLE_NOTIFY_MAIL     = false
 
 [security]
-INSTALL_LOCK = true
+INSTALL_LOCK   = true
+INTERNAL_TOKEN = %s
 
 [session]
 PROVIDER = file
@@ -165,10 +207,74 @@ DISABLE = %t
 
 [api]
 ENABLE_SWAGGER = false
-`, s.cfg.AppName, dbPath, repoRoot,
+`, port, s.cfg.AppName, localURL, dbPath, repoRoot, internalToken,
 		filepath.Join(s.dataDir, "log"),
 		s.cfg.HTTPOnly,
 	)
 
 	return os.WriteFile(filepath.Join(confDir, "app.ini"), []byte(ini), 0o644)
 }
+
+// readExistingInternalToken returns INTERNAL_TOKEN from a previous
+// app.ini if present, else "". Best-effort line scan; we don't pull
+// in an INI parser for one optional value.
+func readExistingInternalToken(appIni string) string {
+	data, err := os.ReadFile(appIni)
+	if err != nil {
+		return ""
+	}
+	const key = "INTERNAL_TOKEN"
+	for _, line := range splitLines(string(data)) {
+		trim := trimSpaces(line)
+		if !startsWith(trim, key) {
+			continue
+		}
+		rest := trimSpaces(trim[len(key):])
+		if rest == "" || rest[0] != '=' {
+			continue
+		}
+		return trimSpaces(rest[1:])
+	}
+	return ""
+}
+
+func splitLines(s string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		out = append(out, s[start:])
+	}
+	return out
+}
+
+func trimSpaces(s string) string {
+	for len(s) > 0 && (s[0] == ' ' || s[0] == '\t' || s[0] == '\r') {
+		s = s[1:]
+	}
+	for len(s) > 0 && (s[len(s)-1] == ' ' || s[len(s)-1] == '\t' || s[len(s)-1] == '\r') {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+func startsWith(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
+// randomTokenSecret returns a high-entropy hex string used as
+// INTERNAL_TOKEN when no prior token exists.
+func randomTokenSecret() string {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("gitserver: rand.Read: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+var _ = strconv.Itoa // keep strconv if future fmt-string changes drop %d

@@ -70,6 +70,11 @@ type SubmitOptions struct {
 }
 
 // Submit files a new task as a Gitea issue.
+//
+// Two API calls: create the issue without labels, then PATCH to attach
+// resolved label IDs. Real Gitea's CreateIssue endpoint accepts only
+// integer label IDs in the "labels" field; passing names returns 422.
+// Doing the dance here means callers pass label *names* throughout.
 func Submit(ctx context.Context, c *gitserver.Client, p *projects.Project, opts SubmitOptions) (*gitserver.Issue, error) {
 	if opts.Title == "" {
 		return nil, fmt.Errorf("queue: empty title")
@@ -81,12 +86,18 @@ func Submit(ctx context.Context, c *gitserver.Client, p *projects.Project, opts 
 	if !validPriority(pr) {
 		return nil, fmt.Errorf("queue: invalid priority %q", pr)
 	}
-	labels := append([]string{pr}, opts.Labels...)
-	issue, err := c.CreateIssue(ctx, projects.Owner, p.Slug, opts.Title, opts.Body, labels)
+	issue, err := c.CreateIssue(ctx, projects.Owner, p.Slug, opts.Title, opts.Body, nil)
 	if err != nil {
 		return nil, fmt.Errorf("queue: submit: %w", err)
 	}
-	return issue, nil
+	wantLabels := append([]string{pr}, opts.Labels...)
+	updated, err := c.UpdateIssue(ctx, projects.Owner, p.Slug, issue.Number, map[string]any{
+		"labels": uniqueLabelIDs(ctx, c, p, wantLabels),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("queue: attach labels to issue %d: %w", issue.Number, err)
+	}
+	return updated, nil
 }
 
 // Pop atomically claims the highest-priority open, unclaimed issue for the

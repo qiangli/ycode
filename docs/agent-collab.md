@@ -7,8 +7,12 @@ customer's React app, or anything else. The internal Gitea server is owned by
 ycode end-to-end: smash-and-burn-safe state, fully reconstructible from the
 user's working tree.
 
-> **Status:** design only. No code written for this plan. See `docs/embedding-gitea.md`
-> for the existing Gitea embedding it builds on.
+> **Status:** implemented end-to-end. Phase 0 plumbing
+> (`internal/gitserver/{projects,agents,queue,merger}` + `ycode tasks`)
+> shipped in commit `d1410e5`; the bootstrap, `ycode hook`, orchestrator
+> (`internal/gitserver/collab/`), and `ycode collab` CLI shipped in
+> the follow-up. See `docs/embedding-gitea.md` for the underlying
+> embedding.
 
 ## Goal
 
@@ -242,34 +246,48 @@ Auto-merge daemon — one per project under `ycode autopilot collab`.
 - `internal/runtime/bash/` — in-process CI execution.
 - `~/.agents/ycode/otel/` — observability collector + retention.
 
-## Phases
+## CLI
 
-Each phase ships independently and is verifiable end-to-end on its own.
+```
+ycode tasks add "title" [--priority p1|p2|p3] [--auto-merge] [--push-origin]
+ycode tasks list [--state open|closed|all]
+ycode tasks pull                         # FF cwd from upstream/main; no auto-stash
+ycode tasks mirror                       # one-shot: push cwd HEAD to upstream
+ycode tasks tick [--ci CMD]              # one-shot merger pass (debugging)
+ycode collab --agents 3 [--ci CMD] [--issue-timeout-seconds 1800]
+```
 
-1. **Project registry + mirror** — `projects/` package, slug + upstream creation,
-   `mirror up` and `tasks pull`. CLI: `ycode tasks-internal mirror`. No agents.
-   *Useful on its own as a backup/audit log of cwd into the internal Gitea.*
+`ycode collab` is the autonomous daemon: spawns N child autopilot
+processes, each working a popped task in an isolated fork checkout
+of `admin/<slug>`. The merger auto-merges PRs whose `--ci` command
+exits 0. Ctrl-C drains all goroutines and child processes cleanly.
 
-2. **Fork lifecycle + PR** — `agents/` package. CLI: `ycode tasks-internal fork --as alice`,
-   then push/PR by hand. *Validates Gitea's fork+PR API works programmatically
-   and that the OTEL agent.id baggage flows correctly.*
+Sandboxes: `~/.agents/ycode/gitea/collab-sandboxes/<agent-id>/issue-<N>/`
+Per-agent logs: `~/.agents/ycode/gitea/collab-sessions/<agent-id>/issue-<N>.log`
 
-3. **Issue queue** — `queue/` package + `ycode tasks add/list`. Manual agent
-   invocation still. *Validates queue claim atomicity under contention with a
-   stress test (N goroutines hammering Pop).*
+## Phases (delivered)
 
-4. **Merger + auto-merge** — `merger/` package. Standalone daemon: file an
-   issue, manually push a green branch, watch it merge automatically. *First
-   end-to-end "green CI → merge" without an agent in the loop.*
-
-5. **Autopilot --collab** — glue layer wiring the agent loop. `--agents N`
-   spawns N agents; each runs the existing autopilot skill scoped to a fork.
-   *First real multi-agent run, on ycode itself as the test bed.*
-
-6. **Third-party validation** — run against an unrelated repo (something
-   small and Go-free, e.g. a Node app) to confirm cwd-as-source-of-truth
-   works without ycode-isms leaking in. *The most important phase — proves
-   the design isn't accidentally coupled to ycode's own build.*
+1. **Project registry + mirror** — `internal/gitserver/projects/`. Shipped.
+2. **Branch lifecycle + PR** — `internal/gitserver/agents/`. Shipped.
+3. **Issue queue** — `internal/gitserver/queue/` + `ycode tasks` CLI. Shipped.
+4. **Merger + auto-merge** — `internal/gitserver/merger/`. Shipped.
+5. **Gitea bootstrap** — `internal/gitserver/bootstrap.go` (`EnsureAdmin` +
+   `IssueToken`); `cmd/ycode/hook.go` delegates Gitea-generated git hooks back
+   to Gitea's CLI machinery so PR DB state stays consistent across pushes.
+   Without these, the embedded Gitea returns 401 on first run and pushes are
+   declined. Shipped.
+6. **Autopilot collab orchestrator** — `internal/gitserver/collab/`
+   (`Orchestrator`, `PrepareSandbox`, OTEL `Metrics`) + `ycode collab` CLI.
+   Spawns child `ycode prompt /autopilot collab task ...` processes, each
+   in its own fork checkout, captured to per-agent log files. Shipped.
+7. **Real-Gitea E2E** — `internal/gitserver/e2e_realgitea_test.go` and
+   `internal/gitserver/collab/orchestrator_e2e_test.go` (both
+   `//go:build integration`) exercise the full workflow against a real
+   embedded Gitea. The orchestrator E2E uses a stub child binary
+   (`os.Args[0]` self-invocation pattern) to validate the flow without
+   needing an LLM. Run with `make test-gitserver`. Shipped.
+8. **Third-party validation** — *deferred*. Run against a Node/Python
+   project to confirm cwd-as-source-of-truth has no ycode-isms.
 
 ## Non-goals (v1)
 
@@ -290,7 +308,10 @@ Each phase ships independently and is verifiable end-to-end on its own.
 - `docs/embedding-gitea.md` — how Gitea is embedded in-process (the foundation this builds on).
 - `docs/swarm.md` — multi-agent orchestration primitives (handoff, flow types). This plan is the *workflow* layer; swarm.md is the *agent-definition* layer.
 - `docs/autonomous-loop.md` — RESEARCH→PLAN→BUILD→EVALUATE→LEARN. Each agent's inner loop in `--collab` mode is a single iteration of this loop.
-- `internal/gitserver/server.go:42` — Gitea data dir.
+- `internal/gitserver/server.go` — Gitea wrapper (writes app.ini with pinned
+  HTTP_PORT + LOCAL_ROOT_URL + INTERNAL_TOKEN so generated hooks can call back).
+- `internal/gitserver/bootstrap.go` — `EnsureAdmin` / `IssueToken`.
 - `internal/gitserver/api.go` — REST client.
-- `internal/gitserver/workspace.go:38` — existing worktree primitive.
-- `cmd/ycode/serve.go:148` — observability data dir.
+- `internal/gitserver/collab/orchestrator.go` — agent goroutine + child spawn.
+- `cmd/ycode/hook.go` — production hook delegator.
+- `cmd/ycode/collab.go` — `ycode collab` CLI.

@@ -128,3 +128,18 @@ func (g *GitServerComponent) BaseURL() string {
 func (g *GitServerComponent) SetOTEL(tracer trace.Tracer, meter metric.Meter) {
 	g.otel = &gitOTELState{tracer: tracer, meter: meter}
 }
+
+// Bootstrap idempotently provisions the admin user and issues a fresh
+// API access token. Returns the new token; callers persist it.
+//
+// Safe to call on every Start: EnsureAdmin is a no-op once the user
+// exists, and IssueToken auto-suffixes duplicate names.
+func (g *GitServerComponent) Bootstrap(ctx context.Context, name, email, password, tokenName string) (string, error) {
+	if g.server == nil {
+		return "", fmt.Errorf("gitserver.Bootstrap: server not started")
+	}
+	if _, err := g.server.EnsureAdmin(ctx, name, email, password); err != nil {
+		return "", err
+	}
+	return g.server.IssueToken(ctx, name, tokenName)
+}

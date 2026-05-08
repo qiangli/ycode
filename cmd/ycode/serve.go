@@ -266,18 +266,22 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 
 	// Wire Git server client for agent collaboration tools.
 	if stack.gitServer != nil && stack.gitServer.Healthy() {
-		giteaClient := gitserver.NewClient(stack.gitServer.BaseURL(), fullCfg.GitServer.Token)
+		token, err := resolveGitServerToken(ctx, home, fullCfg.GitServer.Token, stack.gitServer)
+		if err != nil {
+			slog.Warn("gitserver: token bootstrap failed; API calls will be unauthenticated", "error", err)
+		}
+		giteaClient := gitserver.NewClient(stack.gitServer.BaseURL(), token)
 		tools.SetGitServer(giteaClient)
 		overrideGitServerURL = fmt.Sprintf("http://127.0.0.1:%d/git/", port)
 		fmt.Printf("Git server at      %s\n", overrideGitServerURL)
 
-		// Discovery files for the `ycode tasks` CLI to find the live Gitea
-		// without needing to read settings.json or the proxy mount.
+		// Discovery files for the `ycode tasks` / `ycode collab` CLIs to
+		// find the live Gitea without parsing settings.json.
 		_ = os.WriteFile(filepath.Join(home, ".agents", "ycode", "gitea.url"),
 			[]byte(stack.gitServer.BaseURL()), 0o644)
-		if fullCfg.GitServer.Token != "" {
+		if token != "" {
 			_ = os.WriteFile(filepath.Join(home, ".agents", "ycode", "gitea.token"),
-				[]byte(fullCfg.GitServer.Token), 0o600)
+				[]byte(token), 0o600)
 		}
 
 		// Gitea MCP — expose git server API via MCP protocol for external AI agents.
@@ -730,4 +734,36 @@ func init() {
 		&cobra.Command{Use: "reset", Short: "Remove all Pulse data", RunE: serveResetCmd.RunE},
 	)
 	rootCmd.AddCommand(pulseCmd)
+}
+
+// resolveGitServerToken returns a Gitea API token, in order of preference:
+//  1. The explicit token from settings.json (if non-empty).
+//  2. A persisted token from ~/.agents/ycode/gitea/admin.token.
+//  3. A freshly bootstrapped token via EnsureAdmin + IssueToken,
+//     persisted to admin.token for future starts.
+//
+// Returns "" + error only if bootstrap fails; serve.go logs the warning
+// and continues with an unauthenticated client (broken, but at least the
+// rest of the stack still boots).
+func resolveGitServerToken(ctx context.Context, home, configToken string, comp *gitserver.GitServerComponent) (string, error) {
+	if configToken != "" {
+		return configToken, nil
+	}
+	persistPath := filepath.Join(home, ".agents", "ycode", "gitea", "admin.token")
+	if data, err := os.ReadFile(persistPath); err == nil {
+		if t := strings.TrimSpace(string(data)); t != "" {
+			return t, nil
+		}
+	}
+	tok, err := comp.Bootstrap(ctx, "admin", "admin@ycode.local", gitserver.RandomPassword(), "ycode-admin")
+	if err != nil {
+		return "", fmt.Errorf("gitserver bootstrap: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(persistPath), 0o755); err != nil {
+		return tok, fmt.Errorf("persist admin token: %w", err)
+	}
+	if err := os.WriteFile(persistPath, []byte(tok), 0o600); err != nil {
+		return tok, fmt.Errorf("persist admin token: %w", err)
+	}
+	return tok, nil
 }
