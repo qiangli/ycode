@@ -1273,6 +1273,9 @@ func init() {
 	// See docs/lighthouse.md for the pattern.
 	rootCmd.AddCommand(newMcpCmd())
 
+	// Multi-agent collaboration task queue. See docs/agent-collab.md.
+	rootCmd.AddCommand(newTasksCmd())
+
 	// Evaluation framework
 	registerEvalCmd(rootCmd)
 }

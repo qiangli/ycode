@@ -176,3 +176,32 @@ Final report to the user, in 3–5 lines:
   still red.
 - **Reuse, don't reinvent.** If `/build`, `/validate`, or `/deploy`
   already cover a step, defer to their procedure.
+
+---
+
+## Collab mode
+
+When `{{ARGS}}` starts with `collab`, the agent is one of N workers
+operating against ycode's internal Gitea (see
+[docs/agent-collab.md](../../docs/agent-collab.md)). This mode is
+typically invoked by `ycode autopilot collab --agents N`, not by humans.
+
+Differences from default mode:
+
+- **Workspace is a fork checkout, not cwd.** The orchestrator hands the
+  agent a temp dir already cloned from `admin/<slug>` in internal Gitea
+  with HEAD on a fresh `agent/<id>/issue-<N>` branch.
+- **Task comes from the queue.** The orchestrator pops the highest-priority
+  unclaimed issue from `tasks/<slug>` and passes title+body as the goal.
+- **Commit author is `agent-<id>`** — the orchestrator pre-configures
+  `user.email` / `user.name` in the worktree; do not override.
+- **Push, then PR.** After `make build` is green and you've committed,
+  push the branch (the orchestrator pre-configures the `ycode-internal`
+  remote) and open a PR back to `main`. The merger handles auto-merge.
+- **Never touch cwd.** Treat the user's working tree as off-limits.
+  The orchestrator's pull command (`ycode tasks pull`) is the only
+  channel that sync's merged work back to cwd.
+
+If a step fails and you can't recover, call `Release` on the issue
+(deferred tool: search for `tasks_release`) so another agent can pick
+it up; do not silently abandon.

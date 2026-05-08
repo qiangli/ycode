@@ -78,6 +78,9 @@ type Config struct {
 	// Embedded git server settings (Gitea-based)
 	GitServer *GitServerConfig `json:"gitServer,omitempty"`
 
+	// Multi-agent collaboration task queue settings (see docs/agent-collab.md).
+	Tasks *TasksConfig `json:"tasks,omitempty"`
+
 	// Toolsets maps user-defined toolset names to tool names.
 	Toolsets map[string][]string `json:"toolsets,omitempty"`
 
@@ -182,6 +185,22 @@ type GitServerConfig struct {
 	AppName  string `json:"appName,omitempty"`  // display name (default: "ycode Git")
 	HTTPOnly bool   `json:"httpOnly,omitempty"` // disable SSH access (default true)
 	Token    string `json:"token,omitempty"`    // admin API token (auto-generated if empty)
+}
+
+// TasksConfig controls the multi-agent collaboration task queue.
+// See docs/agent-collab.md.
+type TasksConfig struct {
+	// CICommand is the shell command run by the merger in an isolated
+	// checkout of each PR's prospective merge commit. Empty = no CI gate
+	// (auto-merge unconditionally; only safe for trusted setups).
+	CICommand string `json:"ciCommand,omitempty"`
+	// CITimeoutSeconds caps how long CICommand may run. 0 = 1800 (30 min).
+	CITimeoutSeconds int `json:"ciTimeoutSeconds,omitempty"`
+	// AutoMerge enables the merger loop. When false, PRs accumulate but
+	// are not auto-merged — useful for human review.
+	AutoMerge bool `json:"autoMerge,omitempty"`
+	// PollSeconds is how often the merger checks for new PRs. 0 = 10s.
+	PollSeconds int `json:"pollSeconds,omitempty"`
 }
 
 // RemoteWriteTarget configures a Prometheus remote-write endpoint.
@@ -472,6 +491,24 @@ func mergeFromFile(cfg *Config, path string) error {
 		}
 		if gs.Token != "" {
 			cfg.GitServer.Token = gs.Token
+		}
+	}
+	if overlay.Tasks != nil {
+		if cfg.Tasks == nil {
+			cfg.Tasks = &TasksConfig{}
+		}
+		tk := overlay.Tasks
+		if tk.CICommand != "" {
+			cfg.Tasks.CICommand = tk.CICommand
+		}
+		if tk.CITimeoutSeconds != 0 {
+			cfg.Tasks.CITimeoutSeconds = tk.CITimeoutSeconds
+		}
+		if tk.AutoMerge {
+			cfg.Tasks.AutoMerge = true
+		}
+		if tk.PollSeconds != 0 {
+			cfg.Tasks.PollSeconds = tk.PollSeconds
 		}
 	}
 	if overlay.Toolsets != nil {

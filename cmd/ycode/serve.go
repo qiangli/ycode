@@ -271,6 +271,15 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		overrideGitServerURL = fmt.Sprintf("http://127.0.0.1:%d/git/", port)
 		fmt.Printf("Git server at      %s\n", overrideGitServerURL)
 
+		// Discovery files for the `ycode tasks` CLI to find the live Gitea
+		// without needing to read settings.json or the proxy mount.
+		_ = os.WriteFile(filepath.Join(home, ".agents", "ycode", "gitea.url"),
+			[]byte(stack.gitServer.BaseURL()), 0o644)
+		if fullCfg.GitServer.Token != "" {
+			_ = os.WriteFile(filepath.Join(home, ".agents", "ycode", "gitea.token"),
+				[]byte(fullCfg.GitServer.Token), 0o600)
+		}
+
 		// Gitea MCP — expose git server API via MCP protocol for external AI agents.
 		giteaMCPHandler := gitserver.NewGiteaMCPHandler(giteaClient)
 		giteaMCPHTTP := observability.NewMCPHTTPHandler(giteaMCPHandler)

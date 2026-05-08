@@ -215,6 +215,15 @@ func (c *Client) UpdateIssue(ctx context.Context, owner, repo string, number int
 	return &issue, nil
 }
 
+// ListLabels lists labels in a repository.
+func (c *Client) ListLabels(ctx context.Context, owner, repo string) ([]Label, error) {
+	var labels []Label
+	if err := c.get(ctx, fmt.Sprintf("/api/v1/repos/%s/%s/labels", owner, repo), &labels); err != nil {
+		return nil, err
+	}
+	return labels, nil
+}
+
 // CreateLabel creates a label in a repository.
 func (c *Client) CreateLabel(ctx context.Context, owner, repo, name, color string) (*Label, error) {
 	body := map[string]any{
