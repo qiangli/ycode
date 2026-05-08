@@ -2,13 +2,35 @@ package bash
 
 import (
 	"sync"
+
+	"mvdan.cc/sh/v3/interp"
 )
 
-// ShellSession tracks persistent shell state (working directory) across
-// sequential bash invocations. Each conversation gets one ShellSession.
+// ShellSession tracks persistent shell state across sequential bash
+// invocations. Each conversation gets one ShellSession.
+//
+// Two kinds of executor share a session:
+//
+//   - The agent-mode InterpreterExecutor builds a fresh interp.Runner per
+//     call and only uses the session for cwd tracking. Validators V01–V12
+//     are applied; this is the bash agent tool surface.
+//
+//   - The interactive `ycode shell` mode uses RunString (in persistent.go)
+//     which keeps one long-lived interp.Runner so env, vars, functions,
+//     `set -e`/`set -u`/`set -o pipefail` flags, and aliases survive
+//     across submissions. Stdio is re-installed per call via the
+//     supported `interp.StdIO(...)(r)` pattern. Validators are NOT
+//     applied — the user is the operator.
 type ShellSession struct {
 	mu      sync.Mutex
 	workDir string
+
+	// Persistent runner for shell mode. Lazily created on first
+	// RunString call; reused for all subsequent calls. nil while in
+	// agent mode (the InterpreterExecutor never touches this field).
+	runnerMu sync.Mutex
+	runner   *interp.Runner
+	tty      TTYRunner
 }
 
 // NewShellSession creates a session starting at the given directory.
