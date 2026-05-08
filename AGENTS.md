@@ -11,14 +11,17 @@ ycode — pure Go CLI agent harness for autonomous software development. Go 1.26
 ```bash
 make init                              # REQUIRED: initialize submodules, fetch Perses plugins, gzip embedded assets
 export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY for OpenAI-compatible providers
+make install-hooks                     # recommended: symlinks pre-push hook so `make ci` runs before every push
 ```
+
+A committed `.mcp.json` at the repo root means any Claude Code session opened in this tree auto-registers `ycode mcp serve` — no manual MCP config needed. See "Foreign agents" below.
 
 ## Build Commands
 
 ```bash
 make build          # full quality gate: tidy → fmt → vet → compile → test → verify
 make compile        # quick compile only (bin/ycode)
-make compile-full   # single binary with embedded podman + runner
+make compile-full   # single binary with embedded podman + runner (much larger output; for offline distribution)
 make compile-debug  # compile with debug symbols (for profiling/debugging)
 make install        # build + install to ~/bin/ycode (re-signs on macOS)
 make test           # unit tests only (-short -race)
@@ -120,6 +123,8 @@ Each step depends on the previous one succeeding. On failure: diagnose, fix sour
 **No test logic in bash.** Scripts may invoke `go test` but must not contain assertions, HTTP calls for validation, or result parsing.
 
 **Dependencies** — never add a dependency with a non-permissive license (GPL, AGPL, SSPL, CPAL). Only MIT, Apache-2.0, BSD, ISC, and MPL-2.0 are allowed.
+
+**Feature tiers** — new features land behind the `experimental` build tag and graduate to `stable` only after meeting the criteria in [`docs/strategy.md`](./docs/strategy.md). Check the strategy doc before proposing scope/architecture changes; the wedge ("local-first, single-binary, runs offline") is load-bearing.
 
 **No global state** — never use package-level `var` for mutable state or registries. All state belongs on `RuntimeContext` or function parameters.
 
