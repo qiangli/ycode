@@ -42,6 +42,59 @@ func RegisterSkillHandler(r *Registry) {
 	}
 }
 
+// DiscoverSkill is the exported entry point for resolving a skill by name.
+// It walks the standard search dirs and returns the first SKILL.md /
+// skill.md / <name>.md hit. Used by the agentic Skill tool and by the
+// `ycode shell` SkillResolver.
+func DiscoverSkill(name string) (string, error) { return discoverSkill(name) }
+
+// LoadSkillFromPath reads a skill file directly from a filesystem path.
+// Used by the `@<path>` shell sentinel.
+func LoadSkillFromPath(path string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("load skill %q: %w", path, err)
+	}
+	return string(content), nil
+}
+
+// ListSkills enumerates the names of all skills discoverable from the
+// current working directory. Used by tab completion in the shell.
+func ListSkills() []string {
+	dirs := skillSearchDirs()
+	seen := make(map[string]struct{})
+	var skills []string
+
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() {
+				skillPath := filepath.Join(dir, name, "SKILL.md")
+				if _, err := os.Stat(skillPath); err != nil {
+					skillPath = filepath.Join(dir, name, "skill.md")
+					if _, err := os.Stat(skillPath); err != nil {
+						continue
+					}
+				}
+				if _, ok := seen[name]; !ok {
+					seen[name] = struct{}{}
+					skills = append(skills, name)
+				}
+			} else if skillName, ok := strings.CutSuffix(name, ".md"); ok {
+				if _, dup := seen[skillName]; !dup {
+					seen[skillName] = struct{}{}
+					skills = append(skills, skillName)
+				}
+			}
+		}
+	}
+	return skills
+}
+
 // discoverSkill searches for a skill in the ancestry chain.
 func discoverSkill(name string) (string, error) {
 	// Normalize name (case-insensitive, handle qualified names).
