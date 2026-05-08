@@ -22,6 +22,13 @@ type Spec struct {
 	// its output is displayed, then AgentPrompt is called to produce the
 	// prompt sent to the LLM for the agentic turn.
 	AgentPrompt func(args string) string
+
+	// ShellSafe marks this command as runnable from `ycode shell` mode,
+	// where there is no agent conversation / *App context. Handlers
+	// that depend on RuntimeDeps fields like RunAgenticInit, RetryTurn,
+	// or ModelSwitcher should leave this false — invoking them in shell
+	// mode would dereference nil and crash the shell.
+	ShellSafe bool
 }
 
 // Registry holds all registered slash commands.
