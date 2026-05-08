@@ -1,0 +1,54 @@
+package shell
+
+import (
+	"fmt"
+	"io"
+)
+
+// SuggestFunc is the agentmode hook that turns a raw command string into
+// a list of hints. internal/shell/agentmode wires this in init() to
+// avoid the import cycle.
+//
+// Inputs: the runtime (for context — cwd, available skills, etc.) and
+// the raw command. Returns hints suitable for stderr printing.
+type SuggestFunc func(rt *ShellRuntime, command string) []Hint
+
+// Hint is the public hint shape used by both --suggest and --agent
+// output augmentation. Mirrors the agentmode internal Hint with only
+// the fields callers care about.
+type Hint struct {
+	ID       string `json:"id"`
+	Category string `json:"category"`
+	Message  string `json:"message"`
+}
+
+var suggestFn SuggestFunc
+
+// SetSuggestFunc is called by internal/shell/agentmode/init() to wire
+// the hint-engine entry point.
+func SetSuggestFunc(fn SuggestFunc) { suggestFn = fn }
+
+// WriteSuggestions emits hint lines to w for the given command, without
+// executing it. Returns an error only on write failure.
+func WriteSuggestions(rt *ShellRuntime, command string, w io.Writer) error {
+	hints := Suggestions(rt, command)
+	if len(hints) == 0 {
+		_, err := fmt.Fprintln(w, "(no hints)")
+		return err
+	}
+	for _, h := range hints {
+		if _, err := fmt.Fprintf(w, "# ycode hint [%s]: %s\n", h.Category, h.Message); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Suggestions runs the registered SuggestFunc and returns its hints.
+// When the agentmode package isn't loaded (no init), returns nil.
+func Suggestions(rt *ShellRuntime, command string) []Hint {
+	if suggestFn == nil {
+		return nil
+	}
+	return suggestFn(rt, command)
+}
