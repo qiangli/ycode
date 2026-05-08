@@ -49,9 +49,12 @@ func (s *ShellSession) EnsureRunner(_ context.Context) (*interp.Runner, error) {
 		return s.runner, nil
 	}
 
+	mws := append([]func(interp.ExecHandlerFunc) interp.ExecHandlerFunc{}, s.extraExecMWs...)
+	mws = append(mws, NewShellExecHandler(2*time.Second, s.tty))
+
 	opts := []interp.RunnerOption{
 		interp.Env(expand.ListEnviron(os.Environ()...)),
-		interp.ExecHandlers(NewShellExecHandler(2*time.Second, s.tty)),
+		interp.ExecHandlers(mws...),
 	}
 	if dir := s.WorkDir(); dir != "" {
 		opts = append(opts, interp.Dir(dir))

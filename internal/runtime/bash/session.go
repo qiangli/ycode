@@ -28,9 +28,21 @@ type ShellSession struct {
 	// Persistent runner for shell mode. Lazily created on first
 	// RunString call; reused for all subsequent calls. nil while in
 	// agent mode (the InterpreterExecutor never touches this field).
-	runnerMu sync.Mutex
-	runner   *interp.Runner
-	tty      TTYRunner
+	runnerMu     sync.Mutex
+	runner       *interp.Runner
+	tty          TTYRunner
+	extraExecMWs []func(interp.ExecHandlerFunc) interp.ExecHandlerFunc
+}
+
+// AddExecMiddleware appends an interp.ExecHandler middleware to the
+// persistent runner's chain. The middleware runs BEFORE the standard
+// shell-mode exec handler, so it can intercept commands like `yc <verb>`
+// before they hit PATH lookup. Must be called before the first
+// RunString; if the runner is already created, Reset() it first.
+func (s *ShellSession) AddExecMiddleware(mw func(interp.ExecHandlerFunc) interp.ExecHandlerFunc) {
+	s.runnerMu.Lock()
+	defer s.runnerMu.Unlock()
+	s.extraExecMWs = append(s.extraExecMWs, mw)
 }
 
 // NewShellSession creates a session starting at the given directory.
