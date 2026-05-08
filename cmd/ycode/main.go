@@ -1300,6 +1300,9 @@ func init() {
 	// Multi-agent collaboration orchestrator. See docs/agent-collab.md.
 	rootCmd.AddCommand(newCollabCmd())
 
+	// Interactive agentic shell (ycode shell)
+	rootCmd.AddCommand(newShellCmd())
+
 	// Evaluation framework
 	registerEvalCmd(rootCmd)
 }
