@@ -23,6 +23,13 @@ type Options struct {
 	IdleTimeout    time.Duration
 	ReaperInterval time.Duration
 
+	// OnLeaseCwd, if non-nil, is invoked at most once per unique cwd
+	// the first time a Lease for that cwd succeeds. The wiring layer
+	// uses this to run cross-cutting initialization in the foreign
+	// tool's project (e.g. selfinit). Errors and panics are caught
+	// at the call site so the lease is never blocked.
+	OnLeaseCwd func(ctx context.Context, cwd string)
+
 	Logger *slog.Logger
 	Now    func() time.Time
 }
@@ -39,12 +46,15 @@ type Service struct {
 	idleTimeout    time.Duration
 	reaperInterval time.Duration
 
+	onLeaseCwd func(ctx context.Context, cwd string)
+
 	log *slog.Logger
 	now func() time.Time
 
 	cancel       context.CancelFunc
 	reaperDone   chan struct{}
 	seenProjects sync.Map // slug -> struct{}
+	seenCwds     sync.Map // cwd  -> struct{}
 }
 
 // NewService validates opts and returns a running Service. Caller must
@@ -96,6 +106,7 @@ func NewService(opts Options) (*Service, error) {
 		maxTTL:         maxTTL,
 		idleTimeout:    idleTimeout,
 		reaperInterval: reaperInterval,
+		onLeaseCwd:     opts.OnLeaseCwd,
 		log:            logger,
 		now:            now,
 		reaperDone:     make(chan struct{}),
@@ -135,6 +146,22 @@ func (s *Service) Lease(ctx context.Context, req LeaseRequest) (Lease, error) {
 	slug, cloneURL, err := s.backend.EnsureProject(ctx, req.CWD)
 	if err != nil {
 		return Lease{}, fmt.Errorf("loom: ensure project: %w", err)
+	}
+
+	// First time we've seen this cwd? Run the wiring-layer hook so
+	// ycode can self-establish in the foreign tool's project. Wrapped
+	// in defer/recover so a misbehaving callback never blocks a lease.
+	if s.onLeaseCwd != nil {
+		if _, loaded := s.seenCwds.LoadOrStore(req.CWD, struct{}{}); !loaded {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						s.log.Warn("loom: OnLeaseCwd panicked", "cwd", req.CWD, "panic", r)
+					}
+				}()
+				s.onLeaseCwd(ctx, req.CWD)
+			}()
+		}
 	}
 
 	// First time we've seen this project? Notify backend so it can
