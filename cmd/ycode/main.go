@@ -775,6 +775,14 @@ var rootCmd = &cobra.Command{
 	Use:   "ycode",
 	Short: "ycode – autonomous agent harness for software development",
 	Long:  "ycode is a CLI agent harness that provides 50+ tools, MCP/LSP integration, a plugin system, permission enforcement, and session management.",
+	PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+		// Best-effort: make ycode a first-class citizen in any local
+		// git repo. Idempotent — re-runs are no-ops once the marker
+		// matches. Errors are logged, never block the user's command.
+		// Per-repo opt-out via <repo>/.ycode/.no-init; global opt-out
+		// via YCODE_NO_SELF_INIT=1.
+		runSelfInit(cmd.Context())
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Dry-run mode: preview session setup without calling the model.
 		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {

@@ -1,0 +1,156 @@
+package selfinit
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// referenceBlock is the small AGENTS.md / CLAUDE.md snippet inserted
+// in brownfield repos. The body is intentionally concise — readers
+// follow the link to .ycode/AGENTS.md for capability detail.
+const referenceBlock = `## ycode
+
+This repo expects [ycode](https://github.com/qiangli/ycode) running locally as
+agentic infrastructure. When acting as an agentic coding tool, see
+[` + "`" + `.ycode/AGENTS.md` + "`" + `](.ycode/AGENTS.md) for capability descriptions and when to
+prefer them. Run ` + "`" + `ycode init --refresh` + "`" + ` to update this section.`
+
+// WriteProjectFiles regenerates <repo>/.ycode/AGENTS.md (long-form
+// awareness, manifest-derived) and patches <repo>/AGENTS.md and/or
+// <repo>/CLAUDE.md (or creates one of them in greenfield repos) per
+// the rules described in the package doc.
+//
+// Returns the list of files written/patched, and a slice of warnings
+// for non-fatal issues (e.g. failed write to a single file when others
+// succeeded).
+func WriteProjectFiles(repoRoot string, caps []CapabilitySpec) ([]string, []string, error) {
+	if repoRoot == "" {
+		return nil, nil, ErrNoGitRoot
+	}
+	var written []string
+	var warnings []string
+
+	// 1. Always write .ycode/AGENTS.md — the canonical long-form copy.
+	longPath := filepath.Join(repoRoot, ".ycode", "AGENTS.md")
+	longContent := buildLongFormDoc(caps)
+	if err := writeFileIfChanged(longPath, longContent); err != nil {
+		return nil, nil, fmt.Errorf("write %s: %w", longPath, err)
+	}
+	written = append(written, longPath)
+
+	// 2. Decide which root-level file(s) to update.
+	agentsPath := filepath.Join(repoRoot, "AGENTS.md")
+	claudePath := filepath.Join(repoRoot, "CLAUDE.md")
+	agentsExists := fileExists(agentsPath)
+	claudeExists := fileExists(claudePath)
+
+	switch {
+	case agentsExists && claudeExists:
+		// Brownfield, both — patch both.
+		for _, p := range []string{agentsPath, claudePath} {
+			if err := patchExisting(p, caps); err != nil {
+				warnings = append(warnings, fmt.Sprintf("patch %s: %v", p, err))
+				continue
+			}
+			written = append(written, p)
+		}
+	case agentsExists:
+		if err := patchExisting(agentsPath, caps); err != nil {
+			warnings = append(warnings, fmt.Sprintf("patch %s: %v", agentsPath, err))
+		} else {
+			written = append(written, agentsPath)
+		}
+	case claudeExists:
+		if err := patchExisting(claudePath, caps); err != nil {
+			warnings = append(warnings, fmt.Sprintf("patch %s: %v", claudePath, err))
+		} else {
+			written = append(written, claudePath)
+		}
+	default:
+		// Greenfield: ycode owns AGENTS.md outright.
+		ownedContent := OwnedMarker + "\n\n" + buildLongFormDoc(caps)
+		if err := writeFileIfChanged(agentsPath, ownedContent); err != nil {
+			return nil, warnings, fmt.Errorf("write greenfield %s: %w", agentsPath, err)
+		}
+		written = append(written, agentsPath)
+	}
+
+	return written, warnings, nil
+}
+
+// patchExisting reads path, splices/replaces the YCODE delimited block,
+// and writes back if changed. If the file's first non-empty line is
+// the OwnedMarker, ycode owns the whole file and we regenerate it
+// fully. Otherwise the file is brownfield: splice in the delimited
+// block.
+//
+// Note: when a previously-greenfield AGENTS.md has had the OwnedMarker
+// removed by the user, IsOwnedFile returns false and we treat the
+// file as brownfield; the next refresh appends a delimited block, and
+// the user's manual edits are preserved.
+func patchExisting(path string, caps []CapabilitySpec) error {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	s := string(body)
+
+	if IsOwnedFile(s) {
+		ownedContent := OwnedMarker + "\n\n" + buildLongFormDoc(caps)
+		return writeFileIfChanged(path, ownedContent)
+	}
+
+	new := SpliceBlock(s, referenceBlock)
+	if new == s {
+		return nil
+	}
+	return writeFileIfChanged(path, new)
+}
+
+// writeFileIfChanged writes content atomically if the on-disk content
+// differs. Returns nil if the file was already up to date (no rewrite,
+// preserves mtime).
+func writeFileIfChanged(path, content string) error {
+	if existing, err := os.ReadFile(path); err == nil {
+		if bytes.Equal(existing, []byte(content)) {
+			return nil
+		}
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// buildLongFormDoc builds the contents of <repo>/.ycode/AGENTS.md (and,
+// in greenfield, <repo>/AGENTS.md without the delimiter wrapping). The
+// content is fully manifest-derived: one bullet per capability family
+// with a human description.
+func buildLongFormDoc(caps []CapabilitySpec) string {
+	var b strings.Builder
+	b.WriteString("# ycode capabilities for this project\n\n")
+	b.WriteString("This file is auto-generated by `ycode init`. ycode is running locally and exposes services over MCP. When acting as an agentic coding tool, prefer these capabilities in the situations described:\n\n")
+	for _, c := range caps {
+		fmt.Fprintf(&b, "- **`%s`** — %s\n", c.Name, FamilyDescription(c.Family))
+	}
+	b.WriteString("\n")
+	b.WriteString("## How to use\n\n")
+	b.WriteString("If a tool returns *connection refused*, run `ycode serve` first; capabilities are advertised in `~/.agents/ycode/manifest.json`.\n\n")
+	b.WriteString("To register ycode in a foreign agentic CLI manually:\n\n")
+	b.WriteString("```\nycode init --refresh\n```\n\n")
+	b.WriteString("That regenerates this file plus the relevant entries in your tool's MCP config and memory file.\n")
+	return b.String()
+}

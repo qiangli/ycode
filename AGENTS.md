@@ -185,3 +185,12 @@ Read on demand:
 - [docs/autonomous-loop.md](./docs/autonomous-loop.md) — RESEARCH→PLAN→BUILD→EVALUATE→LEARN loop implementation
 - [docs/lighthouse.md](./docs/lighthouse.md) — exposing ycode capabilities to foreign coding agents via MCP; matrix + federation
 - [docs/lighthouse-roadmap.md](./docs/lighthouse-roadmap.md) — what shipped (Phase 0), what's queued (Phase 1+), strategic anchors; pointer to canonical plan file
+
+<!-- BEGIN YCODE -->
+## ycode
+
+This repo expects [ycode](https://github.com/qiangli/ycode) running locally as
+agentic infrastructure. When acting as an agentic coding tool, see
+[`.ycode/AGENTS.md`](.ycode/AGENTS.md) for capability descriptions and when to
+prefer them. Run `ycode init --refresh` to update this section.
+<!-- END YCODE -->
