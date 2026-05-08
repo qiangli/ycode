@@ -10,18 +10,35 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/shell"
+	"github.com/qiangli/ycode/internal/shell/agentmode"
+	"github.com/qiangli/ycode/internal/shell/builtins"
 )
 
+// shellFlags collects the per-invocation knobs for `ycode shell`.
+type shellFlags struct {
+	workDir       string
+	permission    string
+	noTUI         bool
+	command       string // -c "..." one-shot
+	quiet         bool   // suppress banner/prompt
+	agent         bool   // agent posture: implies quiet, sets env, augments output
+	suggest       string // --suggest "..." returns hints only, no exec
+	json          bool   // --json envelope output (Phase B1)
+	manifestOnly  bool   // --manifest emits the JSON capability dump
+	sandbox       bool   // route external commands through podman (Phase B4)
+	allowedDirs   []string
+	timeoutString string
+	offline       bool
+	auditLog      string
+}
+
 func newShellCmd() *cobra.Command {
-	var (
-		workDir    string
-		permission string
-		noTUI      bool
-	)
+	f := &shellFlags{}
 
 	cmd := &cobra.Command{
 		Use:   "shell",
@@ -38,33 +55,65 @@ exactly like /bin/bash. Agentic features sit above bash via sentinel prefixes:
 Sentinels only fire as the first non-whitespace token of a logical line.
 Inside quotes, heredocs, command-substitution, mid-line, or pipelines they
 are literal text. PATH always wins for bare words; nobody can ship a skill
-named 'ls' and break muscle memory.`,
+named 'ls' and break muscle memory.
+
+Modes:
+  ycode shell                       interactive Bubble Tea TUI
+  ycode shell --no-tui              plain stdin/stdout REPL
+  ycode shell -c "command"          non-interactive one-shot (matches bash -c)
+  ycode shell --manifest            emit JSON capability catalog and exit
+  ycode shell --suggest "command"   emit agent-mode hints for command and exit
+
+Use --agent to enable agent-friendly output augmentation (auto-quiet,
+hints to stderr, YCODE_SHELL_AGENT=1 env var). See docs/shell-agent.md.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runShellCmd(cmd, args, workDir, permission, noTUI)
+			return runShellCmd(cmd, args, f)
 		},
 	}
 
-	cmd.Flags().StringVar(&workDir, "workdir", "", "Initial working directory (defaults to current)")
-	cmd.Flags().StringVar(&permission, "permission", "danger-full-access", "Permission mode (default: danger-full-access — user is the operator)")
-	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Run a plain stdin/stdout REPL instead of the Bubble Tea TUI")
+	cmd.Flags().StringVar(&f.workDir, "workdir", "", "Initial working directory (defaults to current)")
+	cmd.Flags().StringVar(&f.permission, "permission", "danger-full-access", "Permission mode")
+	cmd.Flags().BoolVar(&f.noTUI, "no-tui", false, "Run a plain stdin/stdout REPL instead of the Bubble Tea TUI")
+	cmd.Flags().StringVarP(&f.command, "command", "c", "", "Run a single command and exit (matches bash -c)")
+	cmd.Flags().BoolVar(&f.quiet, "quiet", false, "Suppress banner and prompt (auto-on when stdout is not a TTY)")
+	cmd.Flags().BoolVar(&f.agent, "agent", false, "Agent posture: implies --quiet, sets YCODE_SHELL_AGENT=1, augments output with hints")
+	cmd.Flags().StringVar(&f.suggest, "suggest", "", "Emit hints for the given command without executing it")
+	cmd.Flags().BoolVar(&f.json, "json", false, "Wrap each command result as a JSON envelope on stdout")
+	cmd.Flags().BoolVar(&f.manifestOnly, "manifest", false, "Emit the JSON capability catalog and exit")
+	cmd.Flags().BoolVar(&f.sandbox, "sandbox", false, "Route external commands through a podman sandbox")
+	cmd.Flags().StringSliceVar(&f.allowedDirs, "allowed-dirs", nil, "Restrict file ops to these directories (comma-separated)")
+	cmd.Flags().StringVar(&f.timeoutString, "timeout", "", "Per-command timeout (e.g. 30s, 5m)")
+	cmd.Flags().BoolVar(&f.offline, "offline", false, "Block all LLM calls (!/?/skill-LLM)")
+	cmd.Flags().StringVar(&f.auditLog, "audit-log", "", "Append every dispatched intent to this JSONL file")
 
 	return cmd
 }
 
-func runShellCmd(_ *cobra.Command, _ []string, workDir, perm string, noTUI bool) error {
-	if workDir == "" {
+func runShellCmd(_ *cobra.Command, _ []string, f *shellFlags) error {
+	// --agent implies --quiet and sets the env var for child processes.
+	if f.agent {
+		f.quiet = true
+		_ = os.Setenv("YCODE_SHELL_AGENT", "1")
+	}
+	// Auto-quiet when stdout isn't a TTY (piped, redirected, or under an
+	// agent that didn't pass --agent explicitly).
+	if !f.quiet && !term.IsTerminal(int(os.Stdout.Fd())) {
+		f.quiet = true
+	}
+
+	if f.workDir == "" {
 		var err error
-		workDir, err = os.Getwd()
+		f.workDir, err = os.Getwd()
 		if err != nil {
 			return fmt.Errorf("getwd: %w", err)
 		}
 	}
 
-	provider, model := buildShellProvider()
+	provider, model := buildShellProvider(f.offline)
 
 	rt, err := shell.New(shell.Options{
-		WorkDir:    workDir,
-		Permission: perm,
+		WorkDir:    f.workDir,
+		Permission: f.permission,
 		Registry:   buildShellRegistry(),
 		Skills:     shell.NewSkillResolver(),
 		Provider:   provider,
@@ -75,21 +124,34 @@ func runShellCmd(_ *cobra.Command, _ []string, workDir, perm string, noTUI bool)
 	}
 	defer rt.Close()
 
-	// Install PTY support so commands like vi / less / top get a real
-	// controlling terminal when invoked from --no-tui mode. The Bubble
-	// Tea TUI mode steers users to --no-tui for those commands until
-	// tea.ExecProcess-based handoff lands.
-	if noTUI {
+	// Install the yc <verb> built-in dispatcher before the standard
+	// shell-mode exec handler so foreign agents (and humans) can use
+	// `yc symbols ...`, `yc repomap`, etc. as bash-callable commands.
+	rt.Session().AddExecMiddleware(builtins.Handler())
+
+	// One-shot pre-exec subcommands (don't need a runner / TTY).
+	if f.manifestOnly {
+		return runShellManifest(rt)
+	}
+	if f.suggest != "" {
+		return runShellSuggest(rt, f)
+	}
+
+	// One-shot -c "command".
+	if f.command != "" {
 		rt.Session().SetTTYRunner(shell.NewPTYManager())
-		return runShellREPL(rt)
+		return runShellOneShot(rt, f)
+	}
+
+	// Interactive paths.
+	if f.noTUI {
+		rt.Session().SetTTYRunner(shell.NewPTYManager())
+		return runShellREPL(rt, f)
 	}
 	return runShellTUI(rt)
 }
 
-// runShellTUI launches the Bubble Tea shell model. The session's
-// TTYRunner is wired to a tea.ExecProcess-based runner so commands
-// like vi / less / top get a real controlling terminal — Bubble Tea
-// suspends, the child runs full-screen, then control returns.
+// runShellTUI launches the Bubble Tea shell model.
 func runShellTUI(rt *shell.ShellRuntime) error {
 	model := shell.NewShellModel(rt)
 	prog := tea.NewProgram(model)
@@ -98,14 +160,6 @@ func runShellTUI(rt *shell.ShellRuntime) error {
 	return err
 }
 
-// buildShellRegistry returns a slash-command registry suitable for shell
-// mode. Per plan §13f decision 5, only a curated subset of handlers is
-// registered; others would need an *App context they don't have here.
-//
-// For the skeleton we register a minimal set that doesn't touch the LLM
-// (`/help`, `/version`, `/clear`). Wiring `/init`, `/commit`, `/model`
-// requires lifting the existing handler registration helper out of
-// internal/cli — left as a follow-up.
 func buildShellRegistry() *commands.Registry {
 	r := commands.NewRegistry()
 
@@ -136,12 +190,10 @@ func buildShellRegistry() *commands.Registry {
 	return r
 }
 
-// buildShellProvider returns the LLM provider + model for the `!`/`?`
-// sentinels. Detection follows the standard ycode rules: --model flag
-// (modelFlag, defined in main.go) or auto-detect from env vars. Returns
-// (nil, "") when no credentials are available — the dispatcher prints a
-// helpful error in that case.
-func buildShellProvider() (api.Provider, string) {
+func buildShellProvider(offline bool) (api.Provider, string) {
+	if offline {
+		return nil, ""
+	}
 	model := modelFlag
 	if model == "" {
 		model = "claude-sonnet-4-6"
@@ -159,30 +211,110 @@ func shellHelpText() string {
 		"  /<word>    slash command — try /help, /version, /clear\n" +
 		"  @<name>    skill from registry\n" +
 		"  @<path>    skill from filesystem path\n" +
-		"  !<text>    one-shot agent with shell context (not yet impl.)\n" +
-		"  ?<text>    cheap LLM Q&A (not yet impl.)\n\n" +
+		"  !<text>    one-shot agent with shell context\n" +
+		"  ?<text>    cheap LLM Q&A\n\n" +
+		"Built-ins (bash-callable, no MCP setup):\n" +
+		"  yc help    list yc <verb> built-ins\n" +
+		"  yc manifest emit JSON capability catalog\n\n" +
 		"Anything else is bash. Pipelines, heredocs, redirections, env vars,\n" +
-		"functions, and `cd` all work and persist across submissions.\n"
+		"functions, set options, and aliases all persist across submissions.\n"
 }
 
-// runShellREPL is the headless --no-tui debug REPL. Reads lines from
-// stdin, classifies each via the sentinel parser, dispatches, prints
-// the result. ^C cancels the current dispatch but does not exit the
-// shell; ^D (EOF) exits cleanly.
-func runShellREPL(rt *shell.ShellRuntime) error {
+// runShellOneShot dispatches a single -c command and exits with the result's
+// exit code. Honors --json and --agent.
+func runShellOneShot(rt *shell.ShellRuntime, f *shellFlags) error {
+	d := shell.NewDispatcher(rt)
+	sink := shell.WriterSink{StdoutW: os.Stdout, StderrW: os.Stderr}
+
+	intent, err := shell.Classify(f.command)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "shell: classify: %v\n", err)
+		os.Exit(2)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	defer signal.Stop(sigCh)
+	defer cancel()
+
+	if f.json {
+		// Phase B1 wires this; for now error gracefully so the flag is
+		// declared but unimplemented behavior is explicit.
+		fmt.Fprintln(os.Stderr, "shell: --json envelope not yet implemented (Phase B1)")
+	}
+
+	res, derr := d.Dispatch(ctx, intent, sink)
+	if derr != nil {
+		fmt.Fprintf(os.Stderr, "shell: dispatch error: %v\n", derr)
+	}
+
+	if f.agent {
+		emitHints(rt, f.command, &res)
+	}
+
+	if res.ExitCode != 0 {
+		os.Exit(res.ExitCode)
+	}
+	return nil
+}
+
+// emitHints prints any matching agent-mode hints to stderr. Pre-exec
+// hints fire on the raw command; post-exec hints fire on (exitCode, stderr)
+// — but for the skeleton we only have stderr captured in --json mode, so
+// the post-exec catalog runs against res.ExitCode only.
+func emitHints(rt *shell.ShellRuntime, command string, res *shell.Result) {
+	if res == nil {
+		return
+	}
+	for _, h := range agentmode.Suggest(rt, command) {
+		fmt.Fprintf(os.Stderr, "# ycode hint [%s]: %s\n", h.Category, h.Message)
+	}
+	for _, h := range agentmode.SuggestPost(rt, res.ExitCode, "") {
+		fmt.Fprintf(os.Stderr, "# ycode hint [%s]: %s\n", h.Category, h.Message)
+	}
+}
+
+// runShellManifest emits the JSON capability catalog and exits.
+func runShellManifest(rt *shell.ShellRuntime) error {
+	return shell.WriteManifest(rt, os.Stdout)
+}
+
+// runShellSuggest emits hints for f.suggest and exits without executing.
+func runShellSuggest(rt *shell.ShellRuntime, f *shellFlags) error {
+	return shell.WriteSuggestions(rt, f.suggest, os.Stdout)
+}
+
+// runShellREPL is the --no-tui debug REPL. Reads lines from stdin,
+// classifies each via the sentinel parser, dispatches, prints the
+// result. ^C cancels the current dispatch; ^D (EOF) exits cleanly.
+func runShellREPL(rt *shell.ShellRuntime, f *shellFlags) error {
 	d := shell.NewDispatcher(rt)
 	sink := shell.WriterSink{StdoutW: os.Stdout, StderrW: os.Stderr}
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-	fmt.Fprintln(os.Stderr, "ycode shell (skeleton — type /help, ^D to exit)")
+	if !f.quiet {
+		fmt.Fprintln(os.Stderr, "ycode shell (skeleton — type /help, ^D to exit)")
+	}
 	for {
-		fmt.Fprintf(os.Stdout, "ycode:%s$ ", rt.WorkDir())
+		if !f.quiet {
+			fmt.Fprintf(os.Stdout, "ycode:%s$ ", rt.WorkDir())
+		}
 		if !scanner.Scan() {
 			if err := scanner.Err(); err != nil {
 				return err
 			}
-			fmt.Fprintln(os.Stderr) // newline after ^D
+			if !f.quiet {
+				fmt.Fprintln(os.Stderr)
+			}
 			return nil
 		}
 		line := scanner.Text()
@@ -208,13 +340,16 @@ func runShellREPL(rt *shell.ShellRuntime) error {
 			}
 		}()
 
-		_, derr := d.Dispatch(ctx, intent, sink)
+		res, derr := d.Dispatch(ctx, intent, sink)
 		signal.Stop(sigCh)
 		close(sigCh)
 		cancel()
 
 		if derr != nil {
 			fmt.Fprintf(os.Stderr, "shell: dispatch error: %v\n", derr)
+		}
+		if f.agent {
+			emitHints(rt, line, &res)
 		}
 	}
 }
