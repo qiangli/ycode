@@ -237,6 +237,32 @@ func (c *Client) CreateLabel(ctx context.Context, owner, repo, name, color strin
 	return &label, nil
 }
 
+// DeleteBranch removes a branch from a repository. Best-effort:
+// 404 (branch missing) is not surfaced as an error, mirroring how
+// CreateBranch treats 409 (already exists).
+func (c *Client) DeleteBranch(ctx context.Context, owner, repo, branch string) error {
+	req, err := http.NewRequestWithContext(ctx, "DELETE",
+		fmt.Sprintf("%s/api/v1/repos/%s/%s/branches/%s", c.baseURL, owner, repo, branch), nil)
+	if err != nil {
+		return err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "token "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("gitea delete branch: %w", err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNoContent, http.StatusNotFound:
+		return nil
+	default:
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("gitea delete branch %d: %s", resp.StatusCode, string(body))
+	}
+}
+
 // HTTP helpers.
 
 func (c *Client) get(ctx context.Context, path string, result any) error {
