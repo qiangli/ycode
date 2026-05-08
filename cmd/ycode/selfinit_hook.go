@@ -8,12 +8,22 @@ import (
 	"github.com/qiangli/ycode/internal/selfinit"
 )
 
+// noSelfInitFlag mirrors --no-self-init on rootCmd. Wired in
+// cmd/ycode/main.go's init() block.
+var noSelfInitFlag bool
+
 // runSelfInit invokes selfinit.Run with the host environment. Errors
 // are logged at debug level and never propagated — selfinit must not
-// gate the user's command. Per-process: a global env opt-out skips the
-// run entirely.
+// gate the user's command. Per-process: a global env opt-out, the
+// --no-self-init flag, or the explicit `ycode init` command itself
+// (avoids recursion) skip the run entirely.
 func runSelfInit(ctx context.Context) {
-	if os.Getenv("YCODE_NO_SELF_INIT") == "1" {
+	if noSelfInitFlag || os.Getenv("YCODE_NO_SELF_INIT") == "1" {
+		return
+	}
+	// `ycode init` is itself a SelfInit invocation; let its own RunE
+	// drive the run rather than firing the persistent hook first.
+	if len(os.Args) > 1 && os.Args[1] == "init" {
 		return
 	}
 	res, err := selfinit.Run(ctx, selfinit.Options{

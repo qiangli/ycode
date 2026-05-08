@@ -1249,6 +1249,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noOtel, "no-otel", false, "Disable OTEL instrumentation (no-op, kept for compatibility)")
 	_ = rootCmd.PersistentFlags().MarkHidden("no-otel")
 
+	rootCmd.PersistentFlags().BoolVar(&noSelfInitFlag, "no-self-init", false, "Skip ycode's self-establishment in the current git repo")
+
 	loopCmd.Flags().String("interval", "10m", "Loop interval (e.g., 5m, 1h)")
 	loopCmd.Flags().String("prompt", "", "Path to prompt file")
 	doctorCmd.Flags().Bool("dry-run", false, "Quick readiness check without starting the full system")
@@ -1290,6 +1292,7 @@ func init() {
 	// MCP server — exposes ycode capabilities to external coding agents.
 	// See docs/lighthouse.md for the pattern.
 	rootCmd.AddCommand(newMcpCmd())
+	rootCmd.AddCommand(newInitCmd())
 
 	// Multi-agent collaboration task queue. See docs/agent-collab.md.
 	rootCmd.AddCommand(newTasksCmd())

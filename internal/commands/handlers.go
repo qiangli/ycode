@@ -12,6 +12,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/codegraph"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/session"
+	"github.com/qiangli/ycode/internal/selfinit"
 )
 
 // PlanModeController manages plan mode state.
@@ -400,6 +401,21 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 							llmResult.InputTokens, llmResult.OutputTokens, totalTokens))
 					}
 				}
+			}
+		}
+
+		// /init parity with auto-startup SelfInit: append the ycode
+		// awareness block (and refresh user-scope foreign-tool configs)
+		// so /init always leaves the project in the same shape the
+		// auto-init flow would.
+		if res, err := selfinit.Run(ctx, selfinit.Options{Cwd: cwd, Force: true}); err != nil {
+			emit(fmt.Sprintf("⚠ ycode self-init: %v", err))
+		} else if !res.OptedOut {
+			if len(res.ProjectFiles) > 0 {
+				emit(fmt.Sprintf("✓ ycode self-init: refreshed %d project files", len(res.ProjectFiles)))
+			}
+			for tool, files := range res.UserFilesByTool {
+				emit(fmt.Sprintf("✓ ycode self-init: refreshed %s (%v)", tool, files))
 			}
 		}
 

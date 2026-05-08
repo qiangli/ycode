@@ -54,7 +54,7 @@ The plan groups families in priority order. Each new capability is a single `mcp
 
 **Phase 4 — Family E (external) + Family H (coordination) + the matrix.** GitHub MCP, MCP proxy bridge (the matrix substrate), NATS pub/sub, session-steering. Per-pair allowlists, namespacing, three-hop provenance land here.
 
-**Mode 2 deliverables (parallel track, after Phase 0):** `ycode init-lighthouse <tool>`, per-tool config writers, opt-in privacy + provenance-tagged signal capture. Optional companion repo `github.com/qiangli/ycode-lighthouse` for one-liner install.
+**Mode 2 deliverables (shipped — `internal/selfinit`, late 2026-05).** Reframed mid-design from "explicit `ycode init-lighthouse <tool>` per-tool installer" into the stronger "ycode auto-establishes as a first-class citizen in any git repo on every entry-point invocation": the cobra root command's `PersistentPreRun` runs `selfinit.Run`, which (a) writes `<repo>/.ycode/AGENTS.md` + patches `<repo>/AGENTS.md`/`CLAUDE.md`, and (b) detects installed agentic tools (Claude Code + OpenCode at v1; Codex + Gemini queued) and refreshes their user-scope MCP config + memory file. Idempotent via state-hash marker; per-repo opt-out via `<repo>/.ycode/.no-init`; global opt-out via `YCODE_NO_SELF_INIT=1` or `--no-self-init`. The same code path is reused by the explicit `ycode init` CLI subcommand and the embedded `/init` slash command — no drift between manual and automatic flows. See [`docs/selfinit.md`](./selfinit.md).
 
 ## Cross-references
 

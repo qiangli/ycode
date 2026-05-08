@@ -31,6 +31,22 @@ numbers). The opaque `loom_id` handle is round-tripped on every call.
 State values returned by `loom_status`: `leased`, `pushed`, `merging`,
 `merged`, `ci_failed`, `conflict`.
 
+## Quickstart for foreign tools
+
+Run any ycode entry point (e.g. `ycode init` or just `ycode`) inside any git repo — selfinit detects installed agentic tools and registers ycode's MCP servers + instructions automatically. Restart the foreign tool to pick them up. See [`docs/selfinit.md`](./selfinit.md) for the full mechanism.
+
+To inspect what would be registered without writing:
+
+```
+ycode init --doctor
+```
+
+To force a refresh after manifest changes:
+
+```
+ycode init --refresh
+```
+
 ## Discovery
 
 `ycode serve` writes `~/.agents/ycode/manifest.json` (`schemaVersion=2`)
