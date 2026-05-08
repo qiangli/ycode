@@ -22,6 +22,7 @@ import (
 	"github.com/qiangli/ycode/internal/observability/dashboards"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/tools"
+	loompkg "github.com/qiangli/ycode/pkg/loom"
 )
 
 var (
@@ -293,6 +294,24 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		} else {
 			fmt.Printf("Gitea MCP at       http://127.0.0.1:%d/gitea-mcp/\n", port)
 		}
+
+		// Loom — workspace-isolation substrate for foreign agentic tools.
+		// Hands each foreign sub-agent an isolated clone+branch+author so
+		// N parallel sub-agents converge through the merger/CI gate
+		// without stepping on each other. See docs/loom.md.
+		giteaDataDir := filepath.Join(dataDir, "gitea")
+		loomComp, loomSvc, err := buildLoomComponent(ctx, giteaClient, token, giteaDataDir)
+		if err != nil {
+			slog.Warn("Loom not available", "error", err)
+		} else {
+			if err := mgr.AddLateComponent(ctx, loomComp); err != nil {
+				slog.Warn("Loom MCP not available", "error", err)
+			} else {
+				fmt.Printf("Loom MCP at        http://127.0.0.1:%d/loom-mcp/\n", port)
+				stack.loom = loomComp
+				stack.loomSvc = loomSvc
+			}
+		}
 	}
 
 	// 2. Build API/WebSocket + NATS (may take time or fail if no API key).
@@ -469,6 +488,8 @@ type stackComponents struct {
 	ollama        *inference.OllamaComponent
 	containers    *container.ContainerComponent
 	gitServer     *gitserver.GitServerComponent
+	loom          *loomComponent // workspace substrate; nil if gitserver disabled
+	loomSvc       *loompkg.Service
 	collectorAddr string // actual gRPC address of the embedded collector (e.g. "127.0.0.1:54321")
 }
 

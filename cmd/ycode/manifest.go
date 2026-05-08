@@ -57,9 +57,12 @@ func writeServeManifest(home string, port, natsPort int, stack *stackComponents,
 	if stack.gitServer != nil && stack.gitServer.Healthy() {
 		mcpHTTP["gitea"] = proxy + "/gitea-mcp/"
 	}
+	if stack.loom != nil && stack.loom.Healthy() {
+		mcpHTTP["loom"] = proxy + "/loom-mcp/"
+	}
 
 	manifest := map[string]any{
-		"schemaVersion": "1",
+		"schemaVersion": "2",
 		"ycodeVersion":  ycodeVersion,
 		"endpoints":     endpoints,
 		"mcp": map[string]any{
@@ -75,6 +78,18 @@ func writeServeManifest(home string, port, natsPort int, stack *stackComponents,
 			"token":         filepath.Join(dir, "server.token"),
 			"collectorAddr": filepath.Join(dir, "collector.addr"),
 		},
+	}
+	if stack.loom != nil && stack.loom.Healthy() {
+		manifest["loom"] = map[string]any{
+			"mcp":                        proxy + "/loom-mcp/",
+			"leaseTTLDefaultSeconds":     3600,
+			"leaseTTLMaxSeconds":         28800,
+			"subAgentIdentityConvention": "loom:<label>",
+			"cloneURLTemplate":           proxy + "/git/admin/{slug}.git",
+			"tokenFile":                  filepath.Join(home, ".agents", "ycode", "gitea", "admin.token"),
+			"sandboxRoot":                filepath.Join(home, ".agents", "ycode", "gitea", "loom", "sandboxes"),
+			"branchNamePattern":          "agent/agent-loom:<label>-<id8>/free-<rand>",
+		}
 	}
 
 	data, err := json.MarshalIndent(manifest, "", "  ")

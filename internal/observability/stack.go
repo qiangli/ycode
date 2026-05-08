@@ -208,6 +208,7 @@ var componentPathMap = map[string]string{
 	"containers":     "/containers/",
 	"git":            "/git/",
 	"gitea-mcp":      "/gitea-mcp/",
+	"loom-mcp":       "/loom-mcp/",
 }
 
 // registerRoutes mounts each component's HTTP handler on the proxy mux.
