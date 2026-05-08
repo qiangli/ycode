@@ -4,9 +4,11 @@ package gitserver_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -67,6 +69,7 @@ func TestE2E_RealGitea(t *testing.T) {
 		t.Fatalf("IssueToken: %v", err)
 	}
 	c := gitserver.NewClient(srv.BaseURL(), token)
+	testToken = token // exposed for subtest helpers (runMergerOnce)
 
 	t.Run("bootstrap_idempotency", func(t *testing.T) {
 		// EnsureAdmin must be a no-op on repeat (returns same user).
@@ -98,6 +101,85 @@ func TestE2E_RealGitea(t *testing.T) {
 
 	t.Run("full_workflow", func(t *testing.T) {
 		runFullWorkflow(ctx, t, c, token, giteaDir)
+	})
+
+	t.Run("ci_gate_green", func(t *testing.T) {
+		f := prepareCollabPR(t, ctx, c, token, giteaDir, "ci-green.txt", "ok\n")
+		runMergerOnce(t, ctx, c, f, "true")
+		assertPRClosed(t, ctx, c, f)
+		assertSyncEntry(t, f, 1)
+	})
+
+	t.Run("ci_gate_red", func(t *testing.T) {
+		f := prepareCollabPR(t, ctx, c, token, giteaDir, "ci-red.txt", "fail\n")
+		runMergerOnce(t, ctx, c, f, "false")
+		// Red CI: the PR must remain open and no sync entry recorded.
+		all, err := c.ListPRs(ctx, projects.Owner, f.project.Slug, "all")
+		if err != nil {
+			t.Fatalf("ListPRs: %v", err)
+		}
+		for _, pr := range all {
+			if pr.Number == f.pr.Number && pr.State != "open" {
+				t.Errorf("expected PR open after red CI, got state=%q", pr.State)
+			}
+		}
+		entries, _ := f.syncLog.Pending()
+		if len(entries) != 0 {
+			t.Errorf("expected 0 sync entries on red CI, got %d", len(entries))
+		}
+	})
+
+	t.Run("pull_clean", func(t *testing.T) {
+		f := prepareCollabPR(t, ctx, c, token, giteaDir, "pull-clean.txt", "ok\n")
+		runMergerOnce(t, ctx, c, f, "")
+		assertPRClosed(t, ctx, c, f)
+		// Now pull. cwd has nothing, upstream has the merged file.
+		if err := projects.PullFastForward(ctx, f.cwd, f.cloneURL, token); err != nil {
+			t.Fatalf("PullFastForward (clean): %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(f.cwd, "pull-clean.txt")); err != nil {
+			t.Fatalf("expected pull-clean.txt in cwd after pull: %v", err)
+		}
+	})
+
+	t.Run("pull_dirty", func(t *testing.T) {
+		f := prepareCollabPR(t, ctx, c, token, giteaDir, "pull-dirty.txt", "ok\n")
+		runMergerOnce(t, ctx, c, f, "")
+		assertPRClosed(t, ctx, c, f)
+		// Make cwd dirty.
+		if err := os.WriteFile(filepath.Join(f.cwd, "uncommitted.txt"), []byte("dirty\n"), 0o644); err != nil {
+			t.Fatalf("write dirty file: %v", err)
+		}
+		err := projects.PullFastForward(ctx, f.cwd, f.cloneURL, token)
+		if err == nil {
+			t.Fatal("expected ErrPullDirty, got nil")
+		}
+		if !errors.Is(err, projects.ErrPullDirty) {
+			t.Errorf("expected ErrPullDirty, got: %v", err)
+		}
+		// And the merged file should NOT have been pulled.
+		if _, err := os.Stat(filepath.Join(f.cwd, "pull-dirty.txt")); !os.IsNotExist(err) {
+			t.Errorf("expected pull-dirty.txt absent on refused pull, stat err: %v", err)
+		}
+	})
+
+	t.Run("pull_non_ff", func(t *testing.T) {
+		f := prepareCollabPR(t, ctx, c, token, giteaDir, "pull-divergent.txt", "ok\n")
+		runMergerOnce(t, ctx, c, f, "")
+		assertPRClosed(t, ctx, c, f)
+		// Make cwd diverge: add a different file and commit.
+		if err := os.WriteFile(filepath.Join(f.cwd, "local-only.txt"), []byte("local\n"), 0o644); err != nil {
+			t.Fatalf("write local file: %v", err)
+		}
+		mustExecCwd(t, f.cwd, "git", "add", "local-only.txt")
+		mustExecCwd(t, f.cwd, "git", "commit", "-m", "local divergent commit")
+		err := projects.PullFastForward(ctx, f.cwd, f.cloneURL, token)
+		if err == nil {
+			t.Fatal("expected ErrPullNotFastForward, got nil")
+		}
+		if !errors.Is(err, projects.ErrPullNotFastForward) {
+			t.Errorf("expected ErrPullNotFastForward, got: %v", err)
+		}
 	})
 }
 
@@ -325,4 +407,172 @@ func simulateAgentEdits(t *testing.T, ctx context.Context, cloneURL, token, bran
 		t.Fatalf("commit: %v", err)
 	}
 	return dir
+}
+
+// --- subtest fixture & helpers ---
+
+// collabFixture captures the live state needed by the CI-gate and pull
+// subtests. Each subtest gets its own fresh project/cwd/syncLog so they
+// don't depend on each other's state.
+type collabFixture struct {
+	cwd      string
+	project  *projects.Project
+	cloneURL string
+	syncLog  *projects.SyncLog
+	pr       *gitserver.PullRequest
+	branch   *agents.Branch
+}
+
+// prepareCollabPR builds an end-to-end collab state up to "PR open":
+// fresh host project, mirrored to upstream, one issue submitted +
+// claimed, agent branch with the named file pushed, PR opened.
+// Caller invokes the merger as needed.
+func prepareCollabPR(t *testing.T, ctx context.Context, c *gitserver.Client, token, giteaDir, fileName, content string) *collabFixture {
+	t.Helper()
+	cwd := newRealHostProject(t, "host.txt", "host\n")
+	r, err := projects.NewRegistry(giteaDir)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	p, err := r.Resolve(ctx, cwd)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if _, err := projects.EnsureRepo(ctx, c, p); err != nil {
+		t.Fatalf("EnsureRepo: %v", err)
+	}
+
+	repos, _ := c.ListRepos(ctx)
+	cloneURL := ""
+	for _, rp := range repos {
+		if rp.Name == p.Slug {
+			cloneURL = rp.CloneURL
+		}
+	}
+	if cloneURL == "" {
+		t.Fatalf("clone URL not found for slug %s", p.Slug)
+	}
+
+	if err := projects.MirrorUpstream(ctx, cwd, projects.MirrorOptions{
+		CloneURL: cloneURL, Token: token, Force: true,
+	}); err != nil {
+		t.Fatalf("MirrorUpstream: %v", err)
+	}
+	if err := queue.EnsureLabels(ctx, c, p); err != nil {
+		t.Fatalf("EnsureLabels: %v", err)
+	}
+	issue, err := queue.Submit(ctx, c, p, queue.SubmitOptions{
+		Title:    "subtest: " + fileName,
+		Priority: queue.LabelP1,
+	})
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	popped, err := queue.Pop(ctx, c, p, "agent-S")
+	if err != nil || popped == nil || popped.Number != issue.Number {
+		t.Fatalf("Pop: %v %v", err, popped)
+	}
+	a := &agents.Agent{ID: "agent-S"}
+	br, err := agents.AssignBranch(ctx, c, p, a, popped.Number)
+	if err != nil {
+		t.Fatalf("AssignBranch: %v", err)
+	}
+	work := simulateAgentEdits(t, ctx, cloneURL, token, br.Name, fileName, content, a)
+	if err := br.Push(ctx, agents.PushOptions{
+		WorktreePath: work,
+		CloneURL:     cloneURL,
+		Token:        token,
+	}); err != nil {
+		t.Fatalf("Branch.Push: %v", err)
+	}
+	pr, err := br.OpenPR(ctx, c, "", "")
+	if err != nil {
+		t.Fatalf("OpenPR: %v", err)
+	}
+
+	syncLog, err := projects.NewSyncLog(giteaDir, p)
+	if err != nil {
+		t.Fatalf("NewSyncLog: %v", err)
+	}
+
+	return &collabFixture{
+		cwd:      cwd,
+		project:  p,
+		cloneURL: cloneURL,
+		syncLog:  syncLog,
+		pr:       pr,
+		branch:   br,
+	}
+}
+
+// runMergerOnce constructs a merger with the given CICommand and runs
+// one Tick. CICommand="" disables the gate (auto-merge).
+func runMergerOnce(t *testing.T, ctx context.Context, c *gitserver.Client, f *collabFixture, ciCommand string) {
+	t.Helper()
+	m, err := merger.New(merger.Config{
+		Client:    c,
+		Project:   f.project,
+		SyncLog:   f.syncLog,
+		CloneURL:  f.cloneURL,
+		Token:     testToken,
+		WorkDir:   t.TempDir(),
+		CICommand: ciCommand,
+		Logger:    slog.New(slog.NewTextHandler(testLogWriter{t: t}, nil)),
+	})
+	if err != nil {
+		t.Fatalf("merger.New: %v", err)
+	}
+	if err := m.Tick(ctx); err != nil {
+		t.Fatalf("merger.Tick: %v", err)
+	}
+}
+
+// testLogWriter routes slog output to t.Log so the merger's warnings
+// show up in the failing test's output.
+type testLogWriter struct{ t *testing.T }
+
+func (w testLogWriter) Write(p []byte) (int, error) {
+	w.t.Log(strings.TrimRight(string(p), "\n"))
+	return len(p), nil
+}
+
+// testToken holds the bootstrap token for the lifetime of TestE2E_RealGitea.
+// Set by TestE2E_RealGitea before the subtests run.
+var testToken string
+
+func assertPRClosed(t *testing.T, ctx context.Context, c *gitserver.Client, f *collabFixture) {
+	t.Helper()
+	all, err := c.ListPRs(ctx, projects.Owner, f.project.Slug, "all")
+	if err != nil {
+		t.Fatalf("ListPRs: %v", err)
+	}
+	for _, pr := range all {
+		if pr.Number == f.pr.Number {
+			if pr.State != "closed" {
+				t.Errorf("PR #%d state: got %q want closed", pr.Number, pr.State)
+			}
+			return
+		}
+	}
+	t.Fatalf("PR #%d not found", f.pr.Number)
+}
+
+func assertSyncEntry(t *testing.T, f *collabFixture, want int) {
+	t.Helper()
+	pending, err := f.syncLog.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(pending) != want {
+		t.Errorf("sync entries: got %d want %d", len(pending), want)
+	}
+}
+
+func mustExecCwd(t *testing.T, dir, name string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%s %s: %v\n%s", name, strings.Join(args, " "), err, string(out))
+	}
 }

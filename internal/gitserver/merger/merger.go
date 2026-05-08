@@ -164,8 +164,10 @@ func (m *Merger) processPR(ctx context.Context, pr gitserver.PullRequest) TickRe
 		}
 	}
 
-	// Merge via Gitea.
-	if err := m.cfg.Client.MergePR(ctx, projects.Owner, m.cfg.Project.Slug, pr.Number, "merge"); err != nil {
+	// Merge via Gitea. Gitea computes mergeability asynchronously after
+	// a PR is created; if we hit 405 "Please try again later", give it
+	// a moment and retry. Up to ~10s total before giving up.
+	if err := m.mergeWithRetry(ctx, pr.Number); err != nil {
 		res.Status = "error"
 		res.Detail = err.Error()
 		return res
@@ -207,6 +209,32 @@ func (m *Merger) processPR(ctx context.Context, pr gitserver.PullRequest) TickRe
 	}
 
 	return res
+}
+
+// mergeWithRetry calls Gitea's MergePR endpoint, retrying briefly on
+// "Please try again later" — Gitea computes PR mergeability in a
+// background goroutine, so newly-opened PRs can race the merge call.
+// Up to 10 attempts at 1s each (~10s wall-clock max).
+func (m *Merger) mergeWithRetry(ctx context.Context, prNumber int64) error {
+	const maxAttempts = 10
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		err := m.cfg.Client.MergePR(ctx, projects.Owner, m.cfg.Project.Slug, prNumber, "merge")
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		// Only retry the specific "not ready" 405; everything else is fatal.
+		if !strings.Contains(err.Error(), "Please try again later") {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+	return fmt.Errorf("merger: MergePR not ready after %d attempts: %w", maxAttempts, lastErr)
 }
 
 // runCI checks out the merge result of the PR head into a temp dir, runs

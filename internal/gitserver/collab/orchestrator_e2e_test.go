@@ -5,7 +5,6 @@ package collab_test
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -52,19 +51,22 @@ func TestMain(m *testing.M) {
 }
 
 // stubAutopilot impersonates `ycode prompt /autopilot ...`. It writes
-// a file (named from the env-injected target) into cwd, commits it,
-// and exits 0. Does not need network access — the orchestrator pushes
-// from the sandbox after this returns.
+// a file into cwd, commits it, and exits 0.
+//
+// Filename is derived from the current git branch (e.g.
+// agent/agent-x/issue-3 → "stub-issue-3.txt"). This lets multiple
+// concurrent agents in the same project each commit their own file
+// without conflicting at merge time.
 func stubAutopilot() int {
-	target := os.Getenv("YCODE_TEST_STUB_FILE")
-	if target == "" {
-		target = "stub-output.txt"
-	}
-	contents := os.Getenv("YCODE_TEST_STUB_CONTENT")
-	if contents == "" {
-		contents = "stub did the thing\n"
-	}
 	cwd, _ := os.Getwd()
+	branchOut, err := runCmd(cwd, "git", "branch", "--show-current")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "stub: read branch:", err, branchOut)
+		return 1
+	}
+	branch := strings.TrimSpace(branchOut)
+	target := stubFileFromBranch(branch)
+	contents := fmt.Sprintf("stub did %q on %s\n", target, branch)
 	if err := os.WriteFile(filepath.Join(cwd, target), []byte(contents), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "stub write:", err)
 		return 1
@@ -82,6 +84,31 @@ func stubAutopilot() int {
 	return 0
 }
 
+// stubFileFromBranch maps "agent/<id>/issue-N" → "stub-issue-N.txt".
+// Falls back to the branch name as-is for free-form / unparseable
+// branches.
+func stubFileFromBranch(branch string) string {
+	const marker = "/issue-"
+	if i := strings.LastIndex(branch, marker); i >= 0 {
+		return "stub-issue-" + branch[i+len(marker):] + ".txt"
+	}
+	return "stub-" + sanitizeBranch(branch) + ".txt"
+}
+
+func sanitizeBranch(s string) string {
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+			out = append(out, c)
+		default:
+			out = append(out, '-')
+		}
+	}
+	return string(out)
+}
+
 func runCmd(dir, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
@@ -90,23 +117,21 @@ func runCmd(dir, name string, args ...string) (string, error) {
 }
 
 // TestE2E_RealGitea_Orchestrator runs the orchestrator end-to-end
-// with one agent against a real embedded Gitea, using this test
-// binary as the stub autopilot child. Verifies:
-//   - Issue is popped + claimed
-//   - Sandbox is created with correct branch + author identity
-//   - Stub child runs and commits
-//   - Orchestrator pushes the branch and opens a PR
-//   - The merger auto-merges (CICommand="" → no gate)
-//   - The merged file appears on main
+// against a real embedded Gitea, using this test binary as the stub
+// autopilot child.
+//
+// Subtests share one Gitea instance (Gitea's package-global state
+// can't survive two NewServer cycles in one process):
+//   - single_issue: 1 agent, 1 issue → merges
+//   - multi_issue:  2 agents, 3 issues → all 3 merge
 func TestE2E_RealGitea_Orchestrator(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test (real embedded Gitea + spawned child)")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 360*time.Second)
 	defer cancel()
 
-	// 1. Real embedded Gitea.
 	giteaDir := t.TempDir()
 	srv, err := gitserver.NewServer(&gitserver.ServerConfig{
 		DataDir:  giteaDir,
@@ -133,7 +158,23 @@ func TestE2E_RealGitea_Orchestrator(t *testing.T) {
 	}
 	c := gitserver.NewClient(srv.BaseURL(), token)
 
-	// 2. Resolve project + create tracking repo + seed main.
+	t.Run("single_issue", func(t *testing.T) {
+		runOrchestratorSubtest(ctx, t, c, token, giteaDir, 1, 1)
+	})
+
+	t.Run("multi_issue", func(t *testing.T) {
+		runOrchestratorSubtest(ctx, t, c, token, giteaDir, 2, 3)
+	})
+}
+
+// runOrchestratorSubtest sets up a fresh project, files numIssues tasks,
+// runs the orchestrator with numAgents agents, and asserts that all
+// numIssues PRs merge within the wall-clock budget.
+func runOrchestratorSubtest(ctx context.Context, t *testing.T, c *gitserver.Client, token, giteaDir string, numAgents, numIssues int) {
+	t.Helper()
+
+	// Each subtest gets its own project (fresh slug) so PR/issue numbers
+	// don't collide across subtests.
 	cwd := newOrchHostProject(t, "README.md", "host\n")
 	r, _ := projects.NewRegistry(giteaDir)
 	p, _ := r.Resolve(ctx, cwd)
@@ -148,44 +189,41 @@ func TestE2E_RealGitea_Orchestrator(t *testing.T) {
 		}
 	}
 	if cloneURL == "" {
-		t.Fatalf("clone URL not found")
+		t.Fatalf("clone URL not found for %s", p.Slug)
 	}
 	if err := projects.MirrorUpstream(ctx, cwd, projects.MirrorOptions{
 		CloneURL: cloneURL, Token: token, Force: true,
 	}); err != nil {
 		t.Fatalf("MirrorUpstream: %v", err)
 	}
-
-	// 3. File a task.
 	if err := queue.EnsureLabels(ctx, c, p); err != nil {
 		t.Fatalf("EnsureLabels: %v", err)
 	}
-	if _, err := queue.Submit(ctx, c, p, queue.SubmitOptions{
-		Title:    "stub task",
-		Body:     "stub work for the orchestrator",
-		Priority: queue.LabelP1,
-	}); err != nil {
-		t.Fatalf("Submit: %v", err)
+	for i := 1; i <= numIssues; i++ {
+		if _, err := queue.Submit(ctx, c, p, queue.SubmitOptions{
+			Title:    fmt.Sprintf("stub task %d", i),
+			Body:     fmt.Sprintf("issue %d body", i),
+			Priority: queue.LabelP1,
+		}); err != nil {
+			t.Fatalf("Submit %d: %v", i, err)
+		}
 	}
 
-	// 4. Configure orchestrator: 1 agent, no CI gate, stub child binary.
 	syncLog, _ := projects.NewSyncLog(giteaDir, p)
-	logHandler := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logHandler := slog.New(slog.NewTextHandler(testLogWriterCollab{t: t}, nil))
 
-	// Set env so the spawned child knows to run stubAutopilot.
+	// Tell the spawned child binary to behave as stubAutopilot.
 	t.Setenv("YCODE_TEST_STUB_CHILD", "1")
-	t.Setenv("YCODE_TEST_STUB_FILE", "agent-output.txt")
-	t.Setenv("YCODE_TEST_STUB_CONTENT", "agent did the thing\n")
 
 	o, err := collab.New(collab.Config{
 		Project:      p,
 		Client:       c,
 		SyncLog:      syncLog,
-		NumAgents:    1,
-		CICommand:    "", // unconditional auto-merge
+		NumAgents:    numAgents,
+		CICommand:    "", // unconditional auto-merge for the test
 		YcodeBin:     os.Args[0],
-		SandboxRoot:  filepath.Join(giteaDir, "collab-sandboxes"),
-		SessionsRoot: filepath.Join(giteaDir, "collab-sessions"),
+		SandboxRoot:  filepath.Join(giteaDir, "collab-sandboxes-"+p.Slug),
+		SessionsRoot: filepath.Join(giteaDir, "collab-sessions-"+p.Slug),
 		IssueTimeout: 30 * time.Second,
 		PollInterval: 1 * time.Second,
 		Token:        token,
@@ -196,50 +234,94 @@ func TestE2E_RealGitea_Orchestrator(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	// 5. Run with a deadline. The orchestrator runs until ctx is canceled;
-	// we cancel as soon as the merger has merged the PR.
 	runCtx, runCancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() { done <- o.Run(runCtx) }()
 
-	// 6. Wait for the merger to record the sync entry. That happens
-	// AFTER the PR is closed (synchronously, in the same Tick), so it's
-	// the right signal for "we're fully done — safe to shut down."
-	deadline := time.Now().Add(120 * time.Second)
-	merged := false
-	for time.Now().Before(deadline) && !merged {
+	// Wait for all numIssues sync entries.
+	deadline := time.Now().Add(time.Duration(numIssues) * 60 * time.Second)
+	got := 0
+	for time.Now().Before(deadline) {
 		entries, _ := syncLog.Pending()
-		if len(entries) > 0 {
-			merged = true
+		if len(entries) >= numIssues {
+			got = len(entries)
 			break
 		}
 		time.Sleep(1 * time.Second)
 	}
 	runCancel()
-	<-done // drain
+	<-done
 
-	if !merged {
-		// Dump the per-agent log for diagnosis.
-		entries, _ := os.ReadDir(filepath.Join(giteaDir, "collab-sessions"))
+	if got < numIssues {
+		// Dump per-agent logs for diagnosis.
+		entries, _ := os.ReadDir(filepath.Join(giteaDir, "collab-sessions-"+p.Slug))
 		for _, e := range entries {
-			t.Logf("session dir: %s", e.Name())
-			subEntries, _ := os.ReadDir(filepath.Join(giteaDir, "collab-sessions", e.Name()))
+			subEntries, _ := os.ReadDir(filepath.Join(giteaDir, "collab-sessions-"+p.Slug, e.Name()))
 			for _, se := range subEntries {
-				logBytes, _ := os.ReadFile(filepath.Join(giteaDir, "collab-sessions", e.Name(), se.Name()))
+				logBytes, _ := os.ReadFile(filepath.Join(giteaDir, "collab-sessions-"+p.Slug, e.Name(), se.Name()))
 				t.Logf("--- %s/%s ---\n%s", e.Name(), se.Name(), string(logBytes))
 			}
 		}
-		t.Fatalf("PR did not merge within deadline")
+		t.Fatalf("expected %d sync entries within deadline, got %d", numIssues, got)
 	}
 
-	// 7. Verify the agent's file landed on main.
+	// Each entry must be attributed to an agent.
 	pending, _ := syncLog.Pending()
-	if len(pending) != 1 {
-		t.Errorf("expected 1 sync entry, got %d", len(pending))
+	if len(pending) != numIssues {
+		t.Errorf("sync entries: got %d want %d", len(pending), numIssues)
 	}
-	if len(pending) >= 1 && !strings.HasPrefix(pending[0].AgentID, "agent-") {
-		t.Errorf("expected agent-* AgentID, got %q", pending[0].AgentID)
+	for i, e := range pending {
+		if !strings.HasPrefix(e.AgentID, "agent-") {
+			t.Errorf("entry %d: AgentID %q lacks agent- prefix", i, e.AgentID)
+		}
 	}
+
+	// All issues must be closed in Gitea.
+	closedIssues, _ := c.ListIssues(ctx, projects.Owner, p.Slug, "closed", nil)
+	if len(closedIssues) != numIssues {
+		t.Errorf("closed issues: got %d want %d", len(closedIssues), numIssues)
+	}
+
+	// And the agent-derived files must be on main: clone fresh, stat each.
+	verify := t.TempDir()
+	if _, err := gitClone(ctx, verify, cloneURL, token); err != nil {
+		t.Fatalf("verify clone: %v", err)
+	}
+	for i := 1; i <= numIssues; i++ {
+		want := fmt.Sprintf("stub-issue-%d.txt", i)
+		if _, err := os.Stat(filepath.Join(verify, want)); err != nil {
+			t.Errorf("expected %s on main: %v", want, err)
+		}
+	}
+}
+
+// testLogWriterCollab routes slog output to t.Log.
+type testLogWriterCollab struct{ t *testing.T }
+
+func (w testLogWriterCollab) Write(p []byte) (int, error) {
+	w.t.Log(strings.TrimRight(string(p), "\n"))
+	return len(p), nil
+}
+
+// gitClone shells out for a fresh, single-branch clone of admin/<slug>:main.
+func gitClone(ctx context.Context, dir, cloneURL, token string) (string, error) {
+	authURL := injectTokenForTest(cloneURL, token)
+	cmd := exec.CommandContext(ctx, "git", "clone", "--branch", "main", "--single-branch", authURL, dir)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func injectTokenForTest(rawURL, token string) string {
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		return rawURL
+	}
+	scheme := "http://"
+	rest := strings.TrimPrefix(rawURL, scheme)
+	if rest == rawURL {
+		scheme = "https://"
+		rest = strings.TrimPrefix(rawURL, scheme)
+	}
+	return fmt.Sprintf("%stoken:%s@%s", scheme, token, rest)
 }
 
 // --- helpers (orchestrator-test specific) ---

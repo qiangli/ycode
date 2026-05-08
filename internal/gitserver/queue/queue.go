@@ -100,12 +100,18 @@ func Submit(ctx context.Context, c *gitserver.Client, p *projects.Project, opts 
 	return updated, nil
 }
 
-// Pop atomically claims the highest-priority open, unclaimed issue for the
-// given agent ID. Returns nil, nil if no work is available.
+// Pop attempts to claim the highest-priority open, unclaimed issue for
+// the given agent ID. Returns (nil, nil) if no work is available OR if
+// we lost a claim race to another agent — callers should treat both as
+// "try again later".
 //
-// "Atomic" here means optimistic: we PATCH the issue with a claim label;
-// if two agents race they may both succeed but each will end up working on
-// a different issue (or on the same one — the merger rejects duplicates).
+// Race handling: Gitea's PATCH on the labels field is a SET (replaces the
+// whole label list), so two agents racing both APPEAR to win locally
+// (each gets back a response with their own claim label). We resolve by
+// re-GETting the issue immediately after our PATCH and checking whose
+// claim Gitea actually persisted. The losing agent reverts to "no work"
+// and tries again — the next Pop will skip this issue (in-progress label
+// is set) and find a different one.
 func Pop(ctx context.Context, c *gitserver.Client, p *projects.Project, agentID string) (*gitserver.Issue, error) {
 	if agentID == "" {
 		return nil, fmt.Errorf("queue: empty agentID")
@@ -118,8 +124,16 @@ func Pop(ctx context.Context, c *gitserver.Client, p *projects.Project, agentID 
 	if len(candidates) == 0 {
 		return nil, nil
 	}
+	// Sort by priority (lower rank = more urgent), then by issue number
+	// ascending so the oldest issue at the same priority is picked
+	// first (FIFO). Gitea's default ListIssues order is newest-first
+	// which would systematically starve the oldest issues.
 	sort.SliceStable(candidates, func(i, j int) bool {
-		return priorityRank(&candidates[i]) < priorityRank(&candidates[j])
+		ri, rj := priorityRank(&candidates[i]), priorityRank(&candidates[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return candidates[i].Number < candidates[j].Number
 	})
 	pick := candidates[0]
 

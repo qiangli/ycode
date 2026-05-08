@@ -2,15 +2,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
-	osExec "os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -139,14 +136,6 @@ This is the only sanctioned channel for syncing agent work back to cwd.`,
 				return err
 			}
 
-			clean, err := projects.IsClean(cwd)
-			if err != nil {
-				return fmt.Errorf("tasks pull: check cwd: %w", err)
-			}
-			if !clean {
-				return errors.New("tasks pull: cwd has uncommitted changes; commit or stash first (no auto-stash by design)")
-			}
-
 			home, _ := os.UserHomeDir()
 			dataDir := filepath.Join(home, ".agents", "ycode", "gitea")
 			synclog, err := projects.NewSyncLog(dataDir, p)
@@ -162,27 +151,16 @@ This is the only sanctioned channel for syncing agent work back to cwd.`,
 				return nil
 			}
 
-			// Find the project's upstream clone URL.
-			repos, err := c.ListRepos(ctx)
+			cloneURL, err := lookupCloneURL(ctx, c, p)
 			if err != nil {
-				return err
-			}
-			var cloneURL string
-			for _, r := range repos {
-				if r.Name == p.Slug {
-					cloneURL = r.CloneURL
-					break
-				}
-			}
-			if cloneURL == "" {
-				return fmt.Errorf("tasks pull: tracking repo admin/%s not found in Gitea", p.Slug)
+				return fmt.Errorf("tasks pull: %w", err)
 			}
 			token, err := readDiscoveryToken()
 			if err != nil {
 				return err
 			}
-			if err := pullFastForward(ctx, cwd, cloneURL, token); err != nil {
-				return err
+			if err := projects.PullFastForward(ctx, cwd, cloneURL, token); err != nil {
+				return fmt.Errorf("tasks pull: %w", err)
 			}
 			if err := synclog.Truncate(); err != nil {
 				slog.Warn("tasks pull: synclog truncate", "err", err)
@@ -359,58 +337,4 @@ func readDiscoveryToken() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(data)), nil
-}
-
-// pullFastForward runs `git pull --ff-only` from the cwd against
-// admin/<slug>:main on internal Gitea, with token-auth injected into
-// the URL. Refuses non-fast-forward (the user resolves manually).
-func pullFastForward(ctx context.Context, cwd, cloneURL, token string) error {
-	authURL := injectGiteaToken(cloneURL, token)
-	// Add the remote on demand — idempotent via "git remote set-url".
-	const remote = "ycode-internal"
-
-	if _, err := runGit(ctx, cwd, "remote", "get-url", remote); err != nil {
-		if _, err := runGit(ctx, cwd, "remote", "add", remote, authURL); err != nil {
-			return err
-		}
-	} else {
-		_, _ = runGit(ctx, cwd, "remote", "set-url", remote, authURL)
-	}
-	if _, err := runGit(ctx, cwd, "fetch", remote, "main"); err != nil {
-		return fmt.Errorf("tasks pull: fetch: %w", err)
-	}
-	if _, err := runGit(ctx, cwd, "merge", "--ff-only", remote+"/main"); err != nil {
-		return fmt.Errorf("tasks pull: not a fast-forward; resolve manually: %w", err)
-	}
-	return nil
-}
-
-func runGit(ctx context.Context, dir string, args ...string) (string, error) {
-	t := time.Now()
-	out, err := execCmd(ctx, dir, "git", args...)
-	if err != nil {
-		return out, fmt.Errorf("git %s (%s): %w\n%s",
-			strings.Join(args, " "), time.Since(t).Round(time.Millisecond), err, out)
-	}
-	return out, nil
-}
-
-func injectGiteaToken(rawURL, token string) string {
-	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
-		return rawURL
-	}
-	scheme := "http://"
-	rest := strings.TrimPrefix(rawURL, scheme)
-	if rest == rawURL {
-		scheme = "https://"
-		rest = strings.TrimPrefix(rawURL, scheme)
-	}
-	return fmt.Sprintf("%stoken:%s@%s", scheme, token, rest)
-}
-
-func execCmd(ctx context.Context, dir, name string, args ...string) (string, error) {
-	cmd := osExec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	return string(out), err
 }

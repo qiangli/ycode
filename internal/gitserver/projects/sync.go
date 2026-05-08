@@ -2,8 +2,11 @@ package projects
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -128,4 +131,76 @@ func (l *SyncLog) Truncate() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return os.Truncate(l.path, 0)
+}
+
+// ErrPullDirty is returned by PullFastForward when cwd has uncommitted changes.
+var ErrPullDirty = errors.New("projects: cwd has uncommitted changes; commit or stash first (no auto-stash by design)")
+
+// ErrPullNotFastForward is returned when cwd's main has diverged from upstream.
+var ErrPullNotFastForward = errors.New("projects: not a fast-forward; resolve manually")
+
+// PullFastForward fast-forwards cwd from admin/<slug>:main on internal
+// Gitea. Refuses on dirty cwd or non-fast-forward — the user resolves
+// manually. This is the only sanctioned channel for syncing merged
+// agent work back into the user's working tree.
+//
+// Idempotent: configures the "ycode-internal" remote on demand, with
+// a token-authed URL.
+func PullFastForward(ctx context.Context, cwd, cloneURL, token string) error {
+	if cloneURL == "" {
+		return fmt.Errorf("projects: empty cloneURL")
+	}
+	if token == "" {
+		return fmt.Errorf("projects: empty token")
+	}
+
+	clean, err := IsClean(cwd)
+	if err != nil {
+		return fmt.Errorf("projects: check cwd: %w", err)
+	}
+	if !clean {
+		return ErrPullDirty
+	}
+
+	authURL := injectPullToken(cloneURL, token)
+	const remote = "ycode-internal"
+
+	if _, err := runGit(ctx, cwd, "remote", "get-url", remote); err != nil {
+		if _, err := runGit(ctx, cwd, "remote", "add", remote, authURL); err != nil {
+			return fmt.Errorf("projects: add remote: %w", err)
+		}
+	} else {
+		_, _ = runGit(ctx, cwd, "remote", "set-url", remote, authURL)
+	}
+	if _, err := runGit(ctx, cwd, "fetch", remote, "main"); err != nil {
+		return fmt.Errorf("projects: fetch: %w", err)
+	}
+	if _, err := runGit(ctx, cwd, "merge", "--ff-only", remote+"/main"); err != nil {
+		return fmt.Errorf("%w: %v", ErrPullNotFastForward, err)
+	}
+	return nil
+}
+
+func injectPullToken(rawURL, token string) string {
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		return rawURL
+	}
+	scheme := "http://"
+	rest := strings.TrimPrefix(rawURL, scheme)
+	if rest == rawURL {
+		scheme = "https://"
+		rest = strings.TrimPrefix(rawURL, scheme)
+	}
+	return fmt.Sprintf("%stoken:%s@%s", scheme, token, rest)
+}
+
+func runGit(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("git %s: %w\n%s",
+			strings.Join(args, " "), err, string(out))
+	}
+	return string(out), nil
 }

@@ -71,6 +71,13 @@ type Config struct {
 type Orchestrator struct {
 	cfg     Config
 	metrics *Metrics
+
+	// seen tracks issue numbers that any agent in this orchestrator
+	// has already claimed in this run. Real Gitea's PATCH-labels
+	// eventual consistency means a re-Pop right after a claim can
+	// see the issue as still-open-and-unclaimed; without this guard
+	// the same agent (or another) will redundantly re-process it.
+	seen sync.Map // int64 → struct{}
 }
 
 // New validates and constructs an Orchestrator.
@@ -158,14 +165,28 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		o.reportQueueDepth(ctx)
 	}()
 
-	// Agent goroutines.
+	// Agent goroutines, staggered by 250ms each so they don't all hit
+	// queue.Pop in the same millisecond and race on the same issue.
+	// Real Gitea's PATCH-labels semantics + label index propagation
+	// can let two simultaneous claims both APPEAR to win locally, with
+	// the loser only discovering the conflict at OpenPR time. Spreading
+	// pops out by 250ms makes the first claim land authoritatively
+	// before the second agent's ListIssues snapshot.
 	for i := 0; i < o.cfg.NumAgents; i++ {
 		a := agents.NewAgent(fmt.Sprintf("worker-%d", i+1))
+		startDelay := time.Duration(i) * 250 * time.Millisecond
 		wg.Add(1)
-		go func(a *agents.Agent) {
+		go func(a *agents.Agent, delay time.Duration) {
 			defer wg.Done()
+			if delay > 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(delay):
+				}
+			}
 			o.agentLoop(ctx, a)
-		}(a)
+		}(a, startDelay)
 	}
 
 	wg.Wait()
@@ -200,6 +221,13 @@ func (o *Orchestrator) agentLoop(ctx context.Context, a *agents.Agent) {
 			continue
 		}
 		if issue == nil {
+			sleepCtx(ctx, o.cfg.PollInterval)
+			continue
+		}
+		// Claim already happened in this run? Skip — Gitea's eventual
+		// label propagation can let queue.Pop return an issue that
+		// was already claimed milliseconds ago.
+		if _, dup := o.seen.LoadOrStore(issue.Number, struct{}{}); dup {
 			sleepCtx(ctx, o.cfg.PollInterval)
 			continue
 		}
