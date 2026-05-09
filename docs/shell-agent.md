@@ -76,19 +76,73 @@ Within a single process, hints dedup by ID (you don't get spammed with the same 
 
 ### Claude Code
 
-In `~/.claude/settings.json`:
+Claude Code does **not** expose a settings.json key to swap the `Bash`
+tool's underlying shell binary. The integration paths that work today,
+in order of cleanliness:
+
+#### Path 1 — MCP (recommended)
+
+Add to `~/.claude/settings.json` or `.claude/settings.json`:
 
 ```json
 {
-  "tool_overrides": {
-    "Bash": {
-      "command": "ycode shell --agent -c"
+  "mcpServers": {
+    "ycode-shell": {
+      "command": "ycode",
+      "args": ["mcp", "serve"]
     }
   }
 }
 ```
 
-Or wrap as an MCP tool — Phase B6 adds an `agent_shell` tool to `ycode mcp serve` that takes a single `command` string and returns the `--json` envelope.
+`ycode mcp serve` exposes the `agent_shell` tool (plus the existing
+treesitter handler). The default permission ceiling is
+`danger-full-access` — agents that intentionally configured
+`ycode mcp serve` have opted into ycode's full surface. Lower with
+`--permission=read-only` or `--permission=workspace-write` for
+sandboxed integrations.
+
+#### Path 2 — PreToolUse hook that rewrites Bash commands
+
+`PreToolUse` hooks can mutate `updatedInput.command` before Claude's
+Bash tool runs the call. A hook can prepend `ycode shell --agent --json -c`
+to every Bash command, so all Claude shell traffic flows through the
+agentic surface without the agent knowing.
+
+Sketch (in `~/.claude/settings.json`):
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [{
+      "matcher": "Bash",
+      "hooks": [{
+        "type": "command",
+        "command": "jq '. + {\"updatedInput\": {\"command\": (\"ycode shell --agent -c \" + (.toolInput.command | @sh))}}'"
+      }]
+    }]
+  }
+}
+```
+
+This is invasive and finicky — debug carefully. Recommended only when
+you want global agent-mode coverage and can't use MCP.
+
+#### Path 3 — PATH wrapper / system-level shell swap
+
+Claude Code uses Node's `child_process` under the hood. There is no
+documented mechanism to point it at a different shell. The closest
+system-level approach is a wrapper script earlier in PATH (or replacing
+`/bin/sh`) that delegates to `ycode shell -c "$@"`. Risky — affects all
+processes that use that shell, not just Claude — so consider this only
+in containerized / dedicated dev-VM setups.
+
+#### Path 4 — Tell Claude in the prompt
+
+The simplest path for ad-hoc use: tell Claude to use `ycode shell -c`
+explicitly. Claude's existing Bash tool runs whatever you ask:
+
+> "Use `ycode shell --agent --json -c \"yc symbols ./src\"` to enumerate symbols."
 
 ### OpenCode
 

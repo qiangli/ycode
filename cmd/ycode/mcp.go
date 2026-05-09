@@ -36,13 +36,18 @@ func newMcpCmd() *cobra.Command {
 }
 
 func newMcpServeCmd() *cobra.Command {
-	return &cobra.Command{
+	var ceiling string
+	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run an MCP server over stdio (JSON-RPC + Content-Length framing)",
 		Long: "Speaks the MCP protocol on stdin/stdout. External agents connect by " +
 			"spawning `ycode mcp serve` per their .mcp.json. Today the surface is " +
 			"empty (Phase 0 — infrastructure only); Phase 1+ capability handlers " +
-			"plug in via internal/runtime/mcp.CompositeHandler.",
+			"plug in via internal/runtime/mcp.CompositeHandler.\n\n" +
+			"The default permission ceiling is danger-full-access — agents that " +
+			"intentionally configure ycode mcp serve in their settings.json have " +
+			"opted into ycode's full capability surface. Lower with " +
+			"--permission=read-only or workspace-write for sandboxed integrations.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
@@ -75,14 +80,25 @@ func newMcpServeCmd() *cobra.Command {
 				shell.NewMCPHandler(shellRT),
 			)
 
-			// Standalone stdio invocation has no human-loop client to prompt for
-			// permission, so the default gate denies anything above ReadOnly.
-			// `ycode serve` will install a prompting gate when this same wiring
-			// is mounted under HTTP for in-session use.
-			//
-			// To allow agent_shell (DangerFullAccess), agents must explicitly
-			// raise the ceiling — see docs/shell-agent.md.
-			gate := mcp.StaticGate{Ceiling: mcp.ModeReadOnly}
+			// Permission ceiling. Default is DangerFullAccess so the
+			// agent_shell tool (and any other write-capable handler)
+			// works out of the box for foreign-agent integrations like
+			// Claude Code's mcpServers config. Operators wanting a
+			// sandboxed surface pass --permission=read-only or
+			// =workspace-write. `ycode serve` will install a prompting
+			// gate when this same wiring is mounted under HTTP.
+			gateMode := mcp.ModeDangerFullAccess
+			switch ceiling {
+			case "read-only", "readonly":
+				gateMode = mcp.ModeReadOnly
+			case "workspace-write", "write":
+				gateMode = mcp.ModeWorkspaceWrite
+			case "", "danger-full-access", "full", "danger":
+				gateMode = mcp.ModeDangerFullAccess
+			default:
+				return fmt.Errorf("unknown --permission %q (try: read-only, workspace-write, danger-full-access)", ceiling)
+			}
+			gate := mcp.StaticGate{Ceiling: gateMode}
 			handler := mcp.NewGatedHandler(composite, gate)
 
 			if err := mcp.RunServer(ctx, handler); err != nil {
@@ -91,4 +107,6 @@ func newMcpServeCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&ceiling, "permission", "", "Permission ceiling: read-only | workspace-write | danger-full-access (default)")
+	return cmd
 }
