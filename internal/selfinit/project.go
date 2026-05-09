@@ -10,15 +10,15 @@ import (
 
 // referenceBlock is the small AGENTS.md / CLAUDE.md snippet inserted
 // in brownfield repos. The body is intentionally concise — readers
-// follow the link to .ycode/AGENTS.md for capability detail.
+// follow the link to .agents/ycode/AGENTS.md for capability detail.
 const referenceBlock = `## ycode
 
 This repo expects [ycode](https://github.com/qiangli/ycode) running locally as
 agentic infrastructure. When acting as an agentic coding tool, see
-[` + "`" + `.ycode/AGENTS.md` + "`" + `](.ycode/AGENTS.md) for capability descriptions and when to
+[` + "`" + `.agents/ycode/AGENTS.md` + "`" + `](.agents/ycode/AGENTS.md) for capability descriptions and when to
 prefer them. Run ` + "`" + `ycode init --refresh` + "`" + ` to update this section.`
 
-// WriteProjectFiles regenerates <repo>/.ycode/AGENTS.md (long-form
+// WriteProjectFiles regenerates <repo>/.agents/ycode/AGENTS.md (long-form
 // awareness, manifest-derived) and patches <repo>/AGENTS.md and/or
 // <repo>/CLAUDE.md (or creates one of them in greenfield repos) per
 // the rules described in the package doc.
@@ -33,8 +33,8 @@ func WriteProjectFiles(repoRoot string, caps []CapabilitySpec) ([]string, []stri
 	var written []string
 	var warnings []string
 
-	// 1. Always write .ycode/AGENTS.md — the canonical long-form copy.
-	longPath := filepath.Join(repoRoot, ".ycode", "AGENTS.md")
+	// 1. Always write .agents/ycode/AGENTS.md — the canonical long-form copy.
+	longPath := filepath.Join(repoRoot, selfinitSubdir, "AGENTS.md")
 	longContent := buildLongFormDoc(caps)
 	if err := writeFileIfChanged(longPath, longContent); err != nil {
 		return nil, nil, fmt.Errorf("write %s: %w", longPath, err)
@@ -135,7 +135,7 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// buildLongFormDoc builds the contents of <repo>/.ycode/AGENTS.md (and,
+// buildLongFormDoc builds the contents of <repo>/.agents/ycode/AGENTS.md (and,
 // in greenfield, <repo>/AGENTS.md without the delimiter wrapping). The
 // content is fully manifest-derived: one bullet per capability family
 // with a human description.

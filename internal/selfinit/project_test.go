@@ -34,11 +34,11 @@ func TestWriteProjectFiles_Greenfield(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteProjectFiles: %v", err)
 	}
-	// Greenfield should write .ycode/AGENTS.md AND a fresh AGENTS.md
+	// Greenfield should write .agents/ycode/AGENTS.md AND a fresh AGENTS.md
 	// (owned, no delimiters).
 	wantWritten := map[string]bool{
-		filepath.Join(repo, ".ycode", "AGENTS.md"): true,
-		filepath.Join(repo, "AGENTS.md"):           true,
+		filepath.Join(repo, ".agents", "ycode", "AGENTS.md"): true,
+		filepath.Join(repo, "AGENTS.md"):                     true,
 	}
 	for _, w := range written {
 		delete(wantWritten, w)

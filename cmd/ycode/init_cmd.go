@@ -25,12 +25,12 @@ func newInitCmd() *cobra.Command {
 		Long: `Run ycode's self-init pass against the current directory's git repo.
 
 By default ycode runs this automatically on every invocation; the marker
-at <repo>/.ycode/.init-done makes idempotent re-runs no-ops. Use this
+at <repo>/.agents/ycode/.init-done makes idempotent re-runs no-ops. Use this
 command to:
 
   --refresh   Force a regeneration even if the marker matches.
   --doctor    Print what is/would be registered without writing.
-  --opt-out   Disable selfinit for this repo (writes <repo>/.ycode/.no-init).
+  --opt-out   Disable selfinit for this repo (writes <repo>/.agents/ycode/.no-init).
 
 In a fresh repo the first auto-run is enough; this command is mainly
 for explicit refreshes after manifest changes or for diagnosing why a

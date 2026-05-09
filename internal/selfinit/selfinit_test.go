@@ -137,8 +137,8 @@ func TestRun_NotInGitRepo_StillRunsUserScope(t *testing.T) {
 		t.Errorf("user-scope writes should still happen outside git repo")
 	}
 	// No marker file written outside git repo.
-	if _, err := os.Stat(filepath.Join(cwd, ".ycode")); err == nil {
-		t.Errorf(".ycode dir should not be created outside a git repo")
+	if _, err := os.Stat(filepath.Join(cwd, ".agents", "ycode", ".init-done")); err == nil {
+		t.Errorf(".agents/ycode/.init-done should not be created outside a git repo")
 	}
 }
 

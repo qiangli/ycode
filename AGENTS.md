@@ -199,6 +199,6 @@ Read on demand:
 
 This repo expects [ycode](https://github.com/qiangli/ycode) running locally as
 agentic infrastructure. When acting as an agentic coding tool, see
-[`.ycode/AGENTS.md`](.ycode/AGENTS.md) for capability descriptions and when to
+[`.agents/ycode/AGENTS.md`](.agents/ycode/AGENTS.md) for capability descriptions and when to
 prefer them. Run `ycode init --refresh` to update this section.
 <!-- END YCODE -->

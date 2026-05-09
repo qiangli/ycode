@@ -53,7 +53,7 @@ func TestOptOut(t *testing.T) {
 		t.Errorf("WriteOptOut did not register")
 	}
 	// File exists where expected.
-	if _, err := os.Stat(filepath.Join(repo, ".ycode", noInitFilename)); err != nil {
+	if _, err := os.Stat(filepath.Join(repo, ".agents", "ycode", noInitFilename)); err != nil {
 		t.Errorf("opt-out file missing: %v", err)
 	}
 }

@@ -10,14 +10,19 @@ import (
 	"strings"
 )
 
-// markerFilename is the dotfile inside <repo>/.ycode/ that records the
-// state hash of the most recent SelfInit run. Matching hash + present
+// markerFilename is the dotfile inside <repo>/.agents/ycode/ that records
+// the state hash of the most recent SelfInit run. Matching hash + present
 // marker ⇒ skip work.
 const markerFilename = ".init-done"
 
 // noInitFilename is the per-repo opt-out marker. When this file exists
-// inside <repo>/.ycode/, SelfInit refuses to do anything in this repo.
+// inside <repo>/.agents/ycode/, SelfInit refuses to do anything in this repo.
 const noInitFilename = ".no-init"
+
+// selfinitSubdir is the per-repo directory where SelfInit places its
+// state and generated docs. Matches the convention used elsewhere in
+// ycode (memory, plan mode, skills, settings).
+var selfinitSubdir = filepath.Join(".agents", "ycode")
 
 // stateHash returns a stable hash over the inputs that, if changed,
 // require a SelfInit refresh. Order-independent for capabilities so
@@ -45,14 +50,14 @@ func capFingerprint(c CapabilitySpec) string {
 		strings.Join(c.Args, " "), c.URL)
 }
 
-// markerPath returns <repo>/.ycode/.init-done.
+// markerPath returns <repo>/.agents/ycode/.init-done.
 func markerPath(repoRoot string) string {
-	return filepath.Join(repoRoot, ".ycode", markerFilename)
+	return filepath.Join(repoRoot, selfinitSubdir, markerFilename)
 }
 
-// optOutPath returns <repo>/.ycode/.no-init.
+// optOutPath returns <repo>/.agents/ycode/.no-init.
 func optOutPath(repoRoot string) string {
-	return filepath.Join(repoRoot, ".ycode", noInitFilename)
+	return filepath.Join(repoRoot, selfinitSubdir, noInitFilename)
 }
 
 // MarkerMatches reports whether the on-disk marker equals the expected
@@ -67,7 +72,7 @@ func MarkerMatches(repoRoot, want string) bool {
 
 // WriteMarker stores the state hash atomically.
 func WriteMarker(repoRoot, hash string) error {
-	dir := filepath.Join(repoRoot, ".ycode")
+	dir := filepath.Join(repoRoot, selfinitSubdir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -86,7 +91,7 @@ func IsOptedOut(repoRoot string) bool {
 
 // WriteOptOut creates the opt-out marker. Used by `ycode init --opt-out`.
 func WriteOptOut(repoRoot string) error {
-	dir := filepath.Join(repoRoot, ".ycode")
+	dir := filepath.Join(repoRoot, selfinitSubdir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
