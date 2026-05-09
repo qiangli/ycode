@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "ycode": {
+    "ycode-stdio": {
       "command": "ycode",
       "args": ["mcp", "serve"],
       "transport": "stdio"

@@ -154,14 +154,53 @@ func (c *claude) WriteInstructions(_ context.Context, caps []CapabilitySpec) (bo
 
 // buildInstructionsBlock constructs the manifest-derived L2 content
 // that lands inside <BEGIN/END YCODE> in foreign tools' memory files.
+//
+// The block has two halves:
+//
+//  1. **MCP capabilities** — manifest-derived, named `ycode-<family>`.
+//     Reachable only when the foreign tool has loaded the corresponding
+//     MCP server entry from `~/.claude.json` / `~/.config/opencode/mcp.json`
+//     etc. (managed automatically by SelfInit's WriteMCP).
+//
+//  2. **`yc <verb>` shell built-ins** — bash-callable commands that
+//     ride the same Go code as the MCP handlers but require zero MCP
+//     setup. Active in two scenarios:
+//
+//     * Foreign tool's bash backend points at `ycode shell -c` (or
+//     a PATH wrapper that does — see docs/shell-agent.md).
+//     * The user types `ycode shell -c "yc <verb> ..."` manually.
+//
+//     The yc family is the recommended primary integration path because
+//     it works without MCP-server consent prompts and is debuggable as
+//     plain bash output.
 func buildInstructionsBlock(caps []CapabilitySpec) string {
 	var b strings.Builder
 	b.WriteString("## ycode capabilities\n\n")
-	b.WriteString("ycode runs locally and exposes services over MCP. Prefer them in these situations:\n\n")
+	b.WriteString("ycode runs locally and exposes its capabilities through two reachable surfaces. Prefer them over generic shell tools when the language/use-case matches.\n\n")
+
+	b.WriteString("### MCP servers (when the corresponding entry is in your tool's mcpServers config)\n\n")
 	for _, cs := range caps {
 		fmt.Fprintf(&b, "- **`%s`** — %s\n", cs.Name, FamilyDescription(cs.Family))
 	}
-	b.WriteString("\nIf a tool returns *connection refused*, run `ycode serve` first; capabilities are advertised in `~/.agents/ycode/manifest.json`.")
+
+	b.WriteString("\n### `yc <verb>` shell built-ins (bash-callable, zero MCP setup)\n\n")
+	b.WriteString("Active whenever your bash backend routes through `ycode shell -c` (e.g., a PATH wrapper at `~/bin/ycode-wrappers/bash`, or direct `ycode shell -c \"...\"` invocation). These are the same Go capabilities as the MCP family, just reachable as plain bash commands. Use them by default — they don't require MCP-server consent and the agent-mode hint engine surfaces suggestions on stderr.\n\n")
+	b.WriteString("- `yc symbols <path>` — list top-level symbols (treesitter; faster than ctags). Replaces `ctags -R` and most `grep -r` for declarations.\n")
+	b.WriteString("- `yc search-symbols <pattern> [path]` — name-substring symbol search across the workspace.\n")
+	b.WriteString("- `yc refs <symbol>` — find references and callers across the workspace.\n")
+	b.WriteString("- `yc repomap [--budget=N]` — token-budgeted file→symbol overview. Replaces `find . -name *.go | xargs head` for repo orientation.\n")
+	b.WriteString("- `yc graph \"<DQL>\"` — read-only DQL query against ycode's code knowledge graph (when populated by `ycode serve`).\n")
+	b.WriteString("- `yc git <subcommand>` — native go-git (no fork). Faster than shelling out for `git log/status/diff/branch/show/blame`.\n")
+	b.WriteString("- `yc remember \"<text>\"` / `yc recall <query>` — semantic memory (RRF fusion across memex backends).\n")
+	b.WriteString("- `yc browser fetch <url>` — HTTP fetch with timeout/redirect handling. `yc browser open` requires `ycode serve`.\n")
+	b.WriteString("- `yc sandbox -- <cmd>` — podman-isolated execution (alpine, network=none, cwd-mounted).\n")
+	b.WriteString("- `yc help` / `yc manifest` — discovery.\n\n")
+
+	b.WriteString("### Discovery & troubleshooting\n\n")
+	b.WriteString("- `ycode shell --manifest` — JSON capability catalog (built-ins + skills + sentinels + hint patterns).\n")
+	b.WriteString("- `ycode shell --suggest \"<cmd>\"` — emit hints for a command without executing it.\n")
+	b.WriteString("- If an MCP tool returns *connection refused*, run `ycode serve` first; live endpoints are advertised in `~/.agents/ycode/manifest.json`.\n")
+	b.WriteString("- See `docs/shell-agent.md` in the ycode repo for full integration recipes.")
 	return b.String()
 }
 
