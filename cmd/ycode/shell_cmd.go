@@ -110,6 +110,17 @@ func runShellCmd(_ *cobra.Command, _ []string, f *shellFlags) error {
 	if !f.quiet && !term.IsTerminal(int(os.Stdout.Fd())) {
 		f.quiet = true
 	}
+	// When neither -c nor --no-tui is given, the default branch is the
+	// Bubble Tea TUI — which needs a controlling TTY. If stdin is not a
+	// TTY (heredoc, pipe, or a long-lived foreign-agent bash subprocess
+	// feeding commands on stdin), opening /dev/tty fails and the wrapper
+	// exits 1 before running anything. Real bash handles this by reading
+	// commands from stdin in non-interactive mode; mirror that behaviour
+	// by routing to the --no-tui REPL, which already does exactly that.
+	if f.command == "" && !f.noTUI && !term.IsTerminal(int(os.Stdin.Fd())) {
+		f.noTUI = true
+		f.quiet = true
+	}
 
 	if f.workDir == "" {
 		var err error
@@ -411,6 +422,12 @@ func runShellSuggest(rt *shell.ShellRuntime, f *shellFlags) error {
 // runShellREPL is the --no-tui debug REPL. Reads lines from stdin,
 // classifies each via the sentinel parser, dispatches, prints the
 // result. ^C cancels the current dispatch; ^D (EOF) exits cleanly.
+//
+// On EOF, exits with the last command's exit status — same as real
+// bash in non-interactive mode (`bash <<EOF\nfalse\nEOF` → 1). This
+// matters when ycode shell is invoked as a foreign agent's $SHELL and
+// commands are fed via stdin: the agent expects the parent process's
+// exit code to mirror the last command's.
 func runShellREPL(rt *shell.ShellRuntime, f *shellFlags) error {
 	d := shell.NewDispatcher(rt)
 	sink := shell.WriterSink{StdoutW: os.Stdout, StderrW: os.Stderr}
@@ -420,6 +437,7 @@ func runShellREPL(rt *shell.ShellRuntime, f *shellFlags) error {
 	if !f.quiet {
 		fmt.Fprintln(os.Stderr, "ycode shell (skeleton — type /help, ^D to exit)")
 	}
+	lastExit := 0
 	for {
 		if !f.quiet {
 			fmt.Fprintf(os.Stdout, "ycode:%s$ ", rt.WorkDir())
@@ -431,6 +449,9 @@ func runShellREPL(rt *shell.ShellRuntime, f *shellFlags) error {
 			if !f.quiet {
 				fmt.Fprintln(os.Stderr)
 			}
+			if lastExit != 0 {
+				os.Exit(lastExit)
+			}
 			return nil
 		}
 		line := scanner.Text()
@@ -439,9 +460,11 @@ func runShellREPL(rt *shell.ShellRuntime, f *shellFlags) error {
 		if err != nil {
 			if errors.Is(err, shell.ErrSentinelInPipeline) {
 				fmt.Fprintf(os.Stderr, "shell: %v\n", err)
+				lastExit = 2
 				continue
 			}
 			fmt.Fprintf(os.Stderr, "shell: classify: %v\n", err)
+			lastExit = 2
 			continue
 		}
 
@@ -464,6 +487,7 @@ func runShellREPL(rt *shell.ShellRuntime, f *shellFlags) error {
 		if derr != nil {
 			fmt.Fprintf(os.Stderr, "shell: dispatch error: %v\n", derr)
 		}
+		lastExit = res.ExitCode
 		if f.agent {
 			emitHints(rt, line, &res)
 		}
