@@ -1,0 +1,149 @@
+# skill-domain seed glossary for skillcnl Phase 0.
+#
+# Each entry's `dhnt` is the canonical machine identifier, derived
+# from the primary English label by the dhnt loan-word rule (see
+# EncodeWord in dhnt.go) and locked at glossary admission time. When
+# you add a new entry, run TestGlossary_DhntFormsMatchEncoder to
+# verify the dhnt field matches the encoder's output for the en[0]
+# label.
+#
+# `labels` are display projections per language. The first label in a
+# language is the canonical display form; later entries are
+# synonyms/alternate spellings the LLM normaliser will accept.
+#
+# `all` is a special language tag for foreign atoms whose surface form
+# is identical in every language (project names, established command
+# names like git/oauth/k8s).
+
+entries:
+  # ─── structural keywords ──────────────────────────────────────────
+  - dhnt: sokilili
+    kind: keyword
+    labels:
+      en: [skill]
+      zh: ["技能", jineng]
+
+  - dhnt: sotepo
+    kind: keyword
+    labels:
+      en: [step, action]
+      zh: ["步骤", buzhou, "动作", dongzuo]
+
+  - dhnt: felowu
+    kind: keyword
+    labels:
+      en: [flow]
+      zh: ["流程", liucheng]
+
+  - dhnt: needaso
+    kind: keyword
+    labels:
+      en: [needs, requires]
+      zh: ["需要", xuyao]
+
+  - dhnt: ini
+    kind: keyword
+    labels:
+      en: [in, input]
+      zh: ["输入", shuru]
+
+  - dhnt: outo
+    kind: keyword
+    labels:
+      en: [out, output]
+      zh: ["输出", shuchu]
+
+  - dhnt: do
+    kind: keyword
+    labels:
+      en: [do]
+      zh: ["执行", zhixing]
+
+  - dhnt: onifaili
+    kind: keyword
+    labels:
+      en: [onfail]
+      zh: ["失败时", shibaishi]
+
+  - dhnt: retoroyu
+    kind: keyword
+    labels:
+      en: [retry]
+      zh: ["重试", chongshi]
+
+  - dhnt: esocalate
+    kind: keyword
+    labels:
+      en: [escalate]
+      zh: ["升级", shengji]
+
+  - dhnt: budageto
+    kind: keyword
+    labels:
+      en: [budget]
+      zh: ["预算", yusuan]
+
+  - dhnt: capabilitoyu
+    kind: keyword
+    labels:
+      en: [capability]
+      zh: ["能力", nengli]
+
+  - dhnt: initenito
+    kind: keyword
+    labels:
+      en: [intent]
+      zh: ["意图", yitu]
+
+  # ─── types ────────────────────────────────────────────────────────
+  - dhnt: semivero
+    kind: type
+    labels:
+      en: [semver]
+      zh: ["语义版本", yuyibanben]
+
+  - dhnt: marokidowuni
+    kind: type
+    labels:
+      en: [markdown]
+      all: [markdown]
+
+  - dhnt: texuto
+    kind: type
+    labels:
+      en: [text]
+      zh: ["文本", wenben]
+
+  - dhnt: ranige
+    kind: type
+    labels:
+      en: [range]
+      zh: ["范围", fanwei]
+
+  # ─── capabilities (foreign atoms — same in every language) ────────
+  - dhnt: gito
+    kind: capability
+    labels:
+      all: [git]
+
+  - dhnt: gitohuba
+    kind: capability
+    labels:
+      all: [github]
+
+  - dhnt: solacaki
+    kind: capability
+    labels:
+      all: [slack]
+
+  - dhnt: lilimi
+    kind: capability
+    labels:
+      en: [llm]
+      all: [llm]
+
+  - dhnt: file
+    kind: capability
+    labels:
+      en: [file]
+      zh: ["文件", wenjian]
