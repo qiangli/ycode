@@ -193,7 +193,8 @@ internal/integration/
 
 ## References
 
-- Plan / research note: `~/.claude/plans/skills-optimization-when-composing-silly-pnueli.md`
+- Design rationale (companion doc): [`skill-cnl-rationale.md`](./skill-cnl-rationale.md) — why this shape, what was considered, what's deferred
+- Working notes from the design conversation: `~/.claude/plans/skills-optimization-when-composing-silly-pnueli.md`
 - dhnt spec: https://github.com/dhnt/dhnt
 - Grammatical Framework: http://www.grammaticalframework.org
 - CIDOC-CRM ontology discipline: https://www.cidoc-crm.org
