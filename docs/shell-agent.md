@@ -128,14 +128,53 @@ Sketch (in `~/.claude/settings.json`):
 This is invasive and finicky — debug carefully. Recommended only when
 you want global agent-mode coverage and can't use MCP.
 
-#### Path 3 — PATH wrapper / system-level shell swap
+#### Path 3 — PATH wrapper (per-session, recommended for full bash interception)
 
-Claude Code uses Node's `child_process` under the hood. There is no
-documented mechanism to point it at a different shell. The closest
-system-level approach is a wrapper script earlier in PATH (or replacing
-`/bin/sh`) that delegates to `ycode shell -c "$@"`. Risky — affects all
-processes that use that shell, not just Claude — so consider this only
-in containerized / dedicated dev-VM setups.
+Inspection of `reference/open-claude-code/v2/src/tools/bash.mjs`
+(Claude Code clone) shows the Bash tool is implemented as:
+
+```js
+spawn('bash', ['-c', input.command], { env: { ...process.env } })
+```
+
+Node's `child_process.spawn` resolves bare names like `'bash'` via the
+calling process's `$PATH`. This means a PATH-scoped wrapper is the
+clean interception point — **scoped to a single Claude Code session,
+not the whole system**:
+
+```bash
+mkdir -p ~/bin/ycode-wrappers
+cat > ~/bin/ycode-wrappers/bash <<'EOF'
+#!/bin/sh
+# Claude Code invokes: bash -c "<command>"
+# Route that through ycode shell --agent.
+if [ "$1" = "-c" ] && [ $# -ge 2 ]; then
+    exec ycode shell --agent -c "$2"
+fi
+exec /bin/bash "$@"
+EOF
+chmod +x ~/bin/ycode-wrappers/bash
+
+# Only this Claude session sees the wrapper:
+PATH="$HOME/bin/ycode-wrappers:$PATH" claude
+```
+
+Verify the wrapper is being called by Claude before swapping to the
+ycode-shell variant:
+
+```sh
+#!/bin/sh
+echo "[wrapper saw: $@]" >> /tmp/claude-bash-trace.log
+exec /bin/bash "$@"
+```
+
+If `/tmp/claude-bash-trace.log` fills up when Claude runs commands →
+production Claude Code uses the same `spawn('bash', ...)` form as the
+clone, and the ycode-shell wrapper will work.
+
+If the trace log stays empty, Claude Code is calling something else
+(`/bin/sh -c`, `$SHELL`, a hardcoded path) — fall back to Path 1 (MCP)
+or Path 2 (PreToolUse hook).
 
 #### Path 4 — Tell Claude in the prompt
 
