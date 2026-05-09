@@ -13,13 +13,13 @@ import (
 // (and any other path that opts into envelope output). Stdout / stderr
 // stay separate fields so agents can parse error messages out of band.
 type Envelope struct {
-	ExitCode   int      `json:"exit_code"`
-	Stdout     string   `json:"stdout"`
-	Stderr     string   `json:"stderr"`
-	DurationMS int64    `json:"duration_ms"`
-	Intent     IntentV  `json:"intent"`
-	Hints      []Hint   `json:"hints,omitempty"`
-	Command    string   `json:"command"`
+	ExitCode   int     `json:"exit_code"`
+	Stdout     string  `json:"stdout"`
+	Stderr     string  `json:"stderr"`
+	DurationMS int64   `json:"duration_ms"`
+	Intent     IntentV `json:"intent"`
+	Hints      []Hint  `json:"hints,omitempty"`
+	Command    string  `json:"command"`
 }
 
 // IntentV is the JSON-serializable view of an Intent. We don't encode

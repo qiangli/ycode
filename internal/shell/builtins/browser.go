@@ -12,9 +12,13 @@ func init() { Register(&browserVerb{}) }
 
 type browserVerb struct{}
 
-func (browserVerb) Name() string        { return "browser" }
-func (browserVerb) Description() string { return "Browser automation: open, fetch, find (lightweight HTTP fallback when no headless browser)" }
-func (browserVerb) Usage() string       { return "yc browser fetch <url> | open <url> | find <url> <selector>" }
+func (browserVerb) Name() string { return "browser" }
+func (browserVerb) Description() string {
+	return "Browser automation: open, fetch, find (lightweight HTTP fallback when no headless browser)"
+}
+func (browserVerb) Usage() string {
+	return "yc browser fetch <url> | open <url> | find <url> <selector>"
+}
 
 func (browserVerb) Run(ctx context.Context, args []string, stdio Stdio, _ string) (int, error) {
 	if len(args) == 0 {

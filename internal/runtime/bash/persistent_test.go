@@ -234,4 +234,3 @@ func TestReset_DropsState(t *testing.T) {
 		t.Fatalf("after Reset $FOO = %q, want %q", got, "empty")
 	}
 }
-

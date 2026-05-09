@@ -60,4 +60,3 @@ func (sandboxVerb) Run(ctx context.Context, args []string, stdio Stdio, cwd stri
 	}
 	return 0, nil
 }
-

@@ -10,9 +10,11 @@ func init() { Register(&manifestVerb{}) }
 
 type manifestVerb struct{}
 
-func (manifestVerb) Name() string        { return "manifest" }
-func (manifestVerb) Description() string { return "Emit JSON capability catalog (built-ins, skills, sentinels, hints)" }
-func (manifestVerb) Usage() string       { return "yc manifest" }
+func (manifestVerb) Name() string { return "manifest" }
+func (manifestVerb) Description() string {
+	return "Emit JSON capability catalog (built-ins, skills, sentinels, hints)"
+}
+func (manifestVerb) Usage() string { return "yc manifest" }
 
 func (manifestVerb) Run(_ context.Context, _ []string, stdio Stdio, _ string) (int, error) {
 	// We don't have the *ShellRuntime here (it's not passed to verbs in
@@ -24,8 +26,8 @@ func (manifestVerb) Run(_ context.Context, _ []string, stdio Stdio, _ string) (i
 	// use `ycode shell --manifest`. This in-shell verb is a quick
 	// reflection on what's compiled in.
 	out := struct {
-		Version  string             `json:"version"`
-		Builtins []verbManifestRow  `json:"builtins"`
+		Version  string            `json:"version"`
+		Builtins []verbManifestRow `json:"builtins"`
 	}{
 		Version: "0.1.0",
 	}

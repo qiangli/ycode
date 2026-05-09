@@ -87,9 +87,11 @@ func resolvePath(arg, cwd string) string {
 
 type symbolsVerb struct{}
 
-func (symbolsVerb) Name() string        { return "symbols" }
-func (symbolsVerb) Description() string { return "List top-level symbols (func/type/class/...) in a file or directory" }
-func (symbolsVerb) Usage() string       { return "yc symbols <path> [--json]" }
+func (symbolsVerb) Name() string { return "symbols" }
+func (symbolsVerb) Description() string {
+	return "List top-level symbols (func/type/class/...) in a file or directory"
+}
+func (symbolsVerb) Usage() string { return "yc symbols <path> [--json]" }
 
 func (symbolsVerb) Run(ctx context.Context, args []string, stdio Stdio, cwd string) (int, error) {
 	asJSON := false
@@ -147,9 +149,11 @@ func (symbolsVerb) Run(ctx context.Context, args []string, stdio Stdio, cwd stri
 
 type searchSymbolsVerb struct{}
 
-func (searchSymbolsVerb) Name() string        { return "search-symbols" }
-func (searchSymbolsVerb) Description() string { return "Search for symbols whose name matches a substring/regex" }
-func (searchSymbolsVerb) Usage() string       { return "yc search-symbols <pattern> [path] [--json]" }
+func (searchSymbolsVerb) Name() string { return "search-symbols" }
+func (searchSymbolsVerb) Description() string {
+	return "Search for symbols whose name matches a substring/regex"
+}
+func (searchSymbolsVerb) Usage() string { return "yc search-symbols <pattern> [path] [--json]" }
 
 func (searchSymbolsVerb) Run(ctx context.Context, args []string, stdio Stdio, cwd string) (int, error) {
 	asJSON := false
@@ -218,9 +222,11 @@ func (searchSymbolsVerb) Run(ctx context.Context, args []string, stdio Stdio, cw
 
 type refsVerb struct{}
 
-func (refsVerb) Name() string        { return "refs" }
-func (refsVerb) Description() string { return "Find references and callers of a symbol across the workspace" }
-func (refsVerb) Usage() string       { return "yc refs <symbol> [workspace] [--json]" }
+func (refsVerb) Name() string { return "refs" }
+func (refsVerb) Description() string {
+	return "Find references and callers of a symbol across the workspace"
+}
+func (refsVerb) Usage() string { return "yc refs <symbol> [workspace] [--json]" }
 
 func (refsVerb) Run(ctx context.Context, args []string, stdio Stdio, cwd string) (int, error) {
 	asJSON := false
