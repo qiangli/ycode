@@ -90,6 +90,30 @@ var Catalog = []Hint{
 		Category: "structure",
 		Suggest:  "for repo context, `yc repomap --budget=N` gives a token-budgeted symbol map",
 	},
+	{
+		ID:       "ctags-suggests-symbols",
+		Pattern:  regexp.MustCompile(`\b(ctags|etags)\b`),
+		Category: "code-search",
+		Suggest:  "`yc symbols <path>` extracts symbols natively (treesitter, no index file)",
+	},
+	{
+		ID:       "wget-suggests-browser",
+		Pattern:  regexp.MustCompile(`\bwget\b[^|]*https?://`),
+		Category: "net",
+		Suggest:  "for JS-rendered pages: `yc browser fetch <url>` (also handles redirects + Content-Type)",
+	},
+	{
+		ID:       "find-large-suggests-repomap",
+		Pattern:  regexp.MustCompile(`\bfind\b\s+\.\s+(-type\s+f\b|-name\b)`),
+		Category: "file-walk",
+		Suggest:  "for a token-budgeted file overview: `yc repomap`",
+	},
+	{
+		ID:       "echo-content-pipe-grep",
+		Pattern:  regexp.MustCompile(`\becho\b[^|]*\|\s*grep\b`),
+		Category: "code-search",
+		Suggest:  "for richer matching consider `yc search-symbols` (over actual code) or in-process bash regex",
+	},
 }
 
 // PostHints fire AFTER execution, based on the result.
@@ -115,6 +139,23 @@ var PostCatalog = []PostHint{
 		Suggest:  "permission denied — `--sandbox` grants podman-isolated execution with controlled mounts",
 		Match: func(exitCode int, stderr string) bool {
 			return exitCode != 0 && strings.Contains(strings.ToLower(stderr), "permission denied")
+		},
+	},
+	{
+		ID:       "no-such-file-suggests-symbols",
+		Category: "discovery",
+		Suggest:  "no such file — try `yc symbols <path>` to enumerate, or `yc repomap` for an overview",
+		Match: func(exitCode int, stderr string) bool {
+			low := strings.ToLower(stderr)
+			return exitCode != 0 && (strings.Contains(low, "no such file") || strings.Contains(low, "not a directory"))
+		},
+	},
+	{
+		ID:       "git-not-a-repo-suggests-yc-git",
+		Category: "git",
+		Suggest:  "not a git repository — `yc git init` initializes one (native go-git)",
+		Match: func(exitCode int, stderr string) bool {
+			return exitCode != 0 && strings.Contains(strings.ToLower(stderr), "not a git repository")
 		},
 	},
 }
@@ -205,4 +246,5 @@ func ManifestEntries() []shell.ManifestHint {
 func init() {
 	shell.SetSuggestFunc(Suggest)
 	shell.SetHintCatalogForManifest(ManifestEntries())
+	shell.SetPostHintsFunc(SuggestPost)
 }
