@@ -105,6 +105,9 @@ func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Reg
 		}
 	}
 
+	// Wire shell hint engine + dispatch metrics/tracer.
+	wireShellTelemetry(otelProvider)
+
 	providerKind := ""
 	if provider != nil {
 		providerKind = string(provider.Kind())
@@ -225,6 +228,9 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 			slog.Debug("otel: apply tool middleware", "tool", toolName, "error", err)
 		}
 	}
+
+	// Wire shell hint engine + dispatch metrics/tracer.
+	wireShellTelemetry(otelProvider)
 
 	// Build conversation OTEL config for wiring into conversation.Runtime.
 	convCfg := &conversation.OTELConfig{

@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/signal"
+	"sort"
+	"strconv"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -37,6 +41,8 @@ type shellFlags struct {
 	timeoutString string
 	offline       bool
 	auditLog      string
+	mine          string // --mine missed|stats|raw — mining sink reports
+	mineFile      string // --mine-history-file overrides the JSONL path
 }
 
 func newShellCmd() *cobra.Command {
@@ -87,6 +93,8 @@ hints to stderr, YCODE_SHELL_AGENT=1 env var). See docs/shell-agent.md.`,
 	cmd.Flags().StringVar(&f.timeoutString, "timeout", "", "Per-command timeout (e.g. 30s, 5m)")
 	cmd.Flags().BoolVar(&f.offline, "offline", false, "Block all LLM calls (!/?/skill-LLM)")
 	cmd.Flags().StringVar(&f.auditLog, "audit-log", "", "Append every dispatched intent to this JSONL file")
+	cmd.Flags().StringVar(&f.mine, "mine", "", "Report on the catalog mining sink: missed | stats | raw")
+	cmd.Flags().StringVar(&f.mineFile, "mine-history-file", "", "Override the mining sink path (defaults to $YCODE_SHELL_HISTORY_FILE or ~/.agents/ycode/shell-history.jsonl)")
 
 	return cmd
 }
@@ -144,6 +152,9 @@ func runShellCmd(_ *cobra.Command, _ []string, f *shellFlags) error {
 	}
 	if f.suggest != "" {
 		return runShellSuggest(rt, f)
+	}
+	if f.mine != "" {
+		return runShellMine(f)
 	}
 
 	// One-shot -c "command".
@@ -318,15 +329,28 @@ func runShellOneShot(rt *shell.ShellRuntime, f *shellFlags) error {
 	d := shell.NewDispatcher(rt)
 	sink := shell.WriterSink{StdoutW: os.Stdout, StderrW: os.Stderr}
 
+	dispatchStart := time.Now()
+	dispatchCtx, endSpan := shell.StartSpan(ctx, "ycode.shell.dispatch")
+
 	intent, err := shell.Classify(f.command)
 	if err != nil {
+		endSpan(err, "kind", "classify_error")
 		fmt.Fprintf(os.Stderr, "shell: classify: %v\n", err)
 		os.Exit(2)
 	}
-	res, derr := d.Dispatch(ctx, intent, sink)
+	res, derr := d.Dispatch(dispatchCtx, intent, sink)
 	if derr != nil {
 		fmt.Fprintf(os.Stderr, "shell: dispatch error: %v\n", derr)
 	}
+
+	durationMs := float64(time.Since(dispatchStart).Microseconds()) / 1000.0
+	shell.ObserveCommandDuration(intent.Kind.String(), durationMs)
+	endSpan(derr, "kind", intent.Kind.String(), "exit_code", strconv.Itoa(res.ExitCode))
+	slog.Info("shell.command dispatched",
+		"intent", intent.Kind.String(),
+		"exit_code", res.ExitCode,
+		"duration_ms", durationMs,
+	)
 
 	if f.agent {
 		for _, h := range preHints {
@@ -439,4 +463,112 @@ func runShellREPL(rt *shell.ShellRuntime, f *shellFlags) error {
 			emitHints(rt, line, &res)
 		}
 	}
+}
+
+// runShellMine reports on the catalog mining sink (--mine missed|stats|raw).
+// The sink is the JSONL file written by agentmode.RecordPre/RecordPost on
+// every Suggest/SuggestPost call.
+func runShellMine(f *shellFlags) error {
+	path := f.mineFile
+	if path == "" {
+		path = agentmode.HistoryPath()
+	}
+	if path == "" {
+		return fmt.Errorf("mine: cannot resolve history path (set --mine-history-file or $YCODE_SHELL_HISTORY_FILE)")
+	}
+	switch f.mine {
+	case "missed":
+		return mineReportMissed(path)
+	case "stats":
+		return mineReportStats(path)
+	case "raw":
+		return mineReportRaw(path)
+	default:
+		return fmt.Errorf("mine: unknown action %q (want missed | stats | raw)", f.mine)
+	}
+}
+
+func mineOpen(path string) (*os.File, error) {
+	fp, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("mine: history file not found: %s\n  the sink populates on `ycode shell --suggest` / `--agent` runs", path)
+		}
+		return nil, fmt.Errorf("mine: open %s: %w", path, err)
+	}
+	return fp, nil
+}
+
+func mineReportMissed(path string) error {
+	fp, err := mineOpen(path)
+	if err != nil {
+		return err
+	}
+	defer fp.Close()
+	entries, err := agentmode.Missed(fp)
+	if err != nil {
+		return fmt.Errorf("mine: scan: %w", err)
+	}
+	if len(entries) == 0 {
+		fmt.Println("# no un-hinted commands recorded")
+		return nil
+	}
+	fmt.Printf("%-6s  %s\n", "COUNT", "COMMAND")
+	for _, e := range entries {
+		sample := e.Sample
+		if len(sample) > 100 {
+			sample = sample[:97] + "..."
+		}
+		fmt.Printf("%-6d  %s\n", e.Count, sample)
+	}
+	return nil
+}
+
+func mineReportStats(path string) error {
+	fp, err := mineOpen(path)
+	if err != nil {
+		return err
+	}
+	defer fp.Close()
+	s, err := agentmode.ComputeStats(fp)
+	if err != nil {
+		return fmt.Errorf("mine: scan: %w", err)
+	}
+	fmt.Printf("records:        %d (pre=%d post=%d)\n", s.TotalRecords, s.PreRecords, s.PostRecords)
+	fmt.Printf("pre hit/miss:   %d / %d\n", s.HitPre, s.MissPre)
+	fmt.Printf("pre hit-rate:   %.1f%%\n", s.HitRatePre*100)
+	if len(s.ByID) == 0 {
+		return nil
+	}
+	type kv struct {
+		k string
+		v int
+	}
+	pairs := make([]kv, 0, len(s.ByID))
+	for k, v := range s.ByID {
+		pairs = append(pairs, kv{k, v})
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].v != pairs[j].v {
+			return pairs[i].v > pairs[j].v
+		}
+		return pairs[i].k < pairs[j].k
+	})
+	fmt.Println()
+	fmt.Println("top hint IDs:")
+	limit := min(10, len(pairs))
+	for _, p := range pairs[:limit] {
+		fmt.Printf("  %5d  %s\n", p.v, p.k)
+	}
+	return nil
+}
+
+func mineReportRaw(path string) error {
+	fp, err := mineOpen(path)
+	if err != nil {
+		return err
+	}
+	defer fp.Close()
+	_, err = io.Copy(os.Stdout, fp)
+	return err
 }

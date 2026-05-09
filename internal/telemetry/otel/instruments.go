@@ -90,6 +90,16 @@ type Instruments struct {
 	SearchTrigramTotal    metric.Int64Counter
 	SearchIndexerDuration metric.Float64Histogram
 	SearchIndexerFiles    metric.Int64Counter
+
+	// Shell hint engine + dispatch metrics.
+	// Labels: hint_id, category, phase ("pre"|"post").
+	ShellHintsFiredTotal metric.Int64Counter
+	// Labels: kind (bash|slash|skill|skill-path|agent-shot|agent-qa|empty|unknown).
+	ShellIntentClassifiedTotal metric.Int64Counter
+	// Labels: intent_kind. Unit: ms.
+	ShellCommandDuration metric.Float64Histogram
+	// Labels: phase ("pre"|"post"), outcome (ok|disabled|open_err|encode_err|mkdir_err|no_path).
+	ShellMineRecordTotal metric.Int64Counter
 }
 
 // NewInstruments creates all OTEL metric instruments from the given meter.
@@ -342,6 +352,24 @@ func NewInstruments(m metric.Meter) (*Instruments, error) {
 	}
 	if inst.SearchIndexerFiles, err = m.Int64Counter("ycode.search.indexer.files",
 		metric.WithDescription("Files indexed by background indexer")); err != nil {
+		return nil, err
+	}
+
+	if inst.ShellHintsFiredTotal, err = m.Int64Counter("ycode.shell.hints_fired.total",
+		metric.WithDescription("Shell agent-mode hints emitted, labeled by hint_id, category, phase")); err != nil {
+		return nil, err
+	}
+	if inst.ShellIntentClassifiedTotal, err = m.Int64Counter("ycode.shell.intent_classified.total",
+		metric.WithDescription("Shell sentinel classifications, labeled by intent kind")); err != nil {
+		return nil, err
+	}
+	if inst.ShellCommandDuration, err = m.Float64Histogram("ycode.shell.command.duration",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Shell command dispatch latency, labeled by intent kind")); err != nil {
+		return nil, err
+	}
+	if inst.ShellMineRecordTotal, err = m.Int64Counter("ycode.shell.mine_record.total",
+		metric.WithDescription("Mining-sink JSONL write outcomes, labeled by phase and outcome")); err != nil {
 		return nil, err
 	}
 

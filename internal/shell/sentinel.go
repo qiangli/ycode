@@ -2,6 +2,7 @@ package shell
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"regexp"
 	"strings"
@@ -100,6 +101,18 @@ var (
 //     for command negation. In shell mode the `!` sentinel takes
 //     precedence over bash negation by design (see plan §12c notes).
 func Classify(raw string) (Intent, error) {
+	_, end := StartSpan(context.Background(), "ycode.shell.classify")
+	intent, err := classify(raw)
+	observeIntent(intent.Kind.String())
+	if err != nil {
+		end(err, "kind", intent.Kind.String())
+	} else {
+		end(nil, "kind", intent.Kind.String())
+	}
+	return intent, err
+}
+
+func classify(raw string) (Intent, error) {
 	trimmed := strings.TrimLeft(raw, " \t")
 	if trimmed == "" {
 		return Intent{Kind: IntentEmpty, Raw: raw}, nil

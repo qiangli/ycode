@@ -2,8 +2,60 @@ package agentmode
 
 import (
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/qiangli/ycode/internal/shell"
 )
+
+// fakeMetricsSink records every observation so the test can assert
+// counter increments without standing up real OTel infrastructure.
+type fakeMetricsSink struct {
+	mu     sync.Mutex
+	hints  []hintObs
+	mine   []mineObs
+	intent []string
+	dur    []durObs
+}
+
+type hintObs struct{ id, category, phase string }
+type mineObs struct{ phase, outcome string }
+type durObs struct {
+	kind string
+	ms   float64
+}
+
+func (s *fakeMetricsSink) ObserveHint(id, category, phase string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hints = append(s.hints, hintObs{id, category, phase})
+}
+func (s *fakeMetricsSink) ObserveMineWrite(phase, outcome string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mine = append(s.mine, mineObs{phase, outcome})
+}
+func (s *fakeMetricsSink) ObserveIntent(kind string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.intent = append(s.intent, kind)
+}
+func (s *fakeMetricsSink) ObserveCommandDuration(kind string, ms float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dur = append(s.dur, durObs{kind, ms})
+}
+
+// installFakeMetrics swaps in a recording sink and registers cleanup.
+// Tests that need to assert metric emissions wrap their body with this.
+func installFakeMetrics(t *testing.T) *fakeMetricsSink {
+	t.Helper()
+	t.Setenv(envMineDisable, "1")
+	s := &fakeMetricsSink{}
+	shell.SetMetrics(s)
+	t.Cleanup(func() { shell.SetMetrics(nil) })
+	return s
+}
 
 // TestSuggestSubstitutes pins the contract that suggestion strings are
 // run through Pattern.ExpandString — `$1` etc. must be filled from
@@ -99,6 +151,33 @@ func TestSuggestStaticUnchanged(t *testing.T) {
 		}
 	}
 	t.Fatalf("tree hint did not fire; got %+v", hints)
+}
+
+// TestSuggestEmitsMetrics confirms each fired hint reaches the metrics
+// sink with the expected (id, category, phase) tuple.
+func TestSuggestEmitsMetrics(t *testing.T) {
+	sink := installFakeMetrics(t)
+
+	ResetSeen()
+	_ = Suggest(nil, "git status")
+	ResetSeen()
+	_ = Suggest(nil, "grep -nE '^func' foo.go")
+	ResetSeen()
+	_ = SuggestPost(nil, 127, "")
+
+	want := []hintObs{
+		{"git-log-status-diff-suggests-yc-git", "git", "pre"},
+		{"grep-source-file-suggests-symbols", "code-search", "pre"},
+		{"exit-127-suggests-yc-help", "discovery", "post"},
+	}
+	if len(sink.hints) != len(want) {
+		t.Fatalf("hint observations: want %d, got %d (%+v)", len(want), len(sink.hints), sink.hints)
+	}
+	for i, w := range want {
+		if sink.hints[i] != w {
+			t.Errorf("[%d] want %+v, got %+v", i, w, sink.hints[i])
+		}
+	}
 }
 
 // TestSuggestNoFalseFire keeps a small negative set so future regex

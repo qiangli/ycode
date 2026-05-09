@@ -10,12 +10,17 @@
 package agentmode
 
 import (
+	"context"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/qiangli/ycode/internal/shell"
 )
+
+// itoa avoids dragging fmt into the hot-path attribute formatter.
+func itoa(n int) string { return strconv.Itoa(n) }
 
 // Hint is the in-package shape; the public Hint type lives in
 // internal/shell to keep cmd/ycode importable without pulling agentmode.
@@ -183,11 +188,18 @@ var PostCatalog = []PostHint{
 // from capture groups — agents see runnable invocations instead of
 // generic templates. Rules without capture groups behave as before.
 // To emit a literal `$` in a suggestion, escape it as `$$`.
+//
+// Every call records a JSONL row to the mining sink (path resolves to
+// $YCODE_SHELL_HISTORY_FILE or ~/.agents/ycode/shell-history.jsonl;
+// disable with YCODE_SHELL_MINE_DISABLE=1) so the catalog-improvement
+// loop can later see which commands missed.
 func Suggest(_ *shell.ShellRuntime, command string) []shell.Hint {
+	_, end := shell.StartSpan(context.Background(), "ycode.shell.suggest")
 	var hints []shell.Hint
 	seen := suggestSeen()
 	defer suggestRelease(seen)
 
+	var firedIDs []string
 	for _, h := range Catalog {
 		loc := h.Pattern.FindStringSubmatchIndex(command)
 		if loc == nil {
@@ -199,7 +211,11 @@ func Suggest(_ *shell.ShellRuntime, command string) []shell.Hint {
 		seen[h.ID] = struct{}{}
 		msg := string(h.Pattern.ExpandString(nil, h.Suggest, command, loc))
 		hints = append(hints, shell.Hint{ID: h.ID, Category: h.Category, Message: msg})
+		firedIDs = append(firedIDs, h.ID)
+		shell.ObserveHint(h.ID, h.Category, "pre")
 	}
+	RecordPre(command, firedIDs)
+	end(nil, "fired_count", itoa(len(firedIDs)))
 	return hints
 }
 
@@ -207,10 +223,12 @@ func Suggest(_ *shell.ShellRuntime, command string) []shell.Hint {
 // "try yc help". Called by the dispatcher after every command in agent
 // mode.
 func SuggestPost(_ *shell.ShellRuntime, exitCode int, stderr string) []shell.Hint {
+	_, end := shell.StartSpan(context.Background(), "ycode.shell.suggest_post")
 	var hints []shell.Hint
 	seen := suggestSeen()
 	defer suggestRelease(seen)
 
+	var firedIDs []string
 	for _, h := range PostCatalog {
 		if h.Match(exitCode, stderr) {
 			if _, dup := seen[h.ID]; dup {
@@ -218,8 +236,12 @@ func SuggestPost(_ *shell.ShellRuntime, exitCode int, stderr string) []shell.Hin
 			}
 			seen[h.ID] = struct{}{}
 			hints = append(hints, shell.Hint{ID: h.ID, Category: h.Category, Message: h.Suggest})
+			firedIDs = append(firedIDs, h.ID)
+			shell.ObserveHint(h.ID, h.Category, "post")
 		}
 	}
+	RecordPost(exitCode, firedIDs)
+	end(nil, "fired_count", itoa(len(firedIDs)), "exit_code", itoa(exitCode))
 	return hints
 }
 
