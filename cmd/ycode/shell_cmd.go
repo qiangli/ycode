@@ -346,7 +346,12 @@ func runShellOneShot(rt *shell.ShellRuntime, f *shellFlags) error {
 	durationMs := float64(time.Since(dispatchStart).Microseconds()) / 1000.0
 	shell.ObserveCommandDuration(intent.Kind.String(), durationMs)
 	endSpan(derr, "kind", intent.Kind.String(), "exit_code", strconv.Itoa(res.ExitCode))
-	slog.Info("shell.command dispatched",
+	// Debug, not Info: foreign agents (Claude Code, Codex, …) often treat any
+	// non-empty stderr as failure regardless of exit code, so a per-command
+	// dispatch log on the default stderr handler poisons every successful
+	// `ycode shell -c "<cmd>"` run. The OTEL span (endSpan) already captures
+	// the same fields when telemetry is wired.
+	slog.Debug("shell.command dispatched",
 		"intent", intent.Kind.String(),
 		"exit_code", res.ExitCode,
 		"duration_ms", durationMs,
