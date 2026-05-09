@@ -11,6 +11,9 @@ import (
 
 	"github.com/qiangli/ycode/internal/runtime/mcp"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
+	"github.com/qiangli/ycode/internal/shell"
+	_ "github.com/qiangli/ycode/internal/shell/agentmode"
+	_ "github.com/qiangli/ycode/internal/shell/builtins"
 )
 
 // newMcpCmd builds the `ycode mcp` subcommand tree. Today only `serve` exists,
@@ -58,14 +61,27 @@ func newMcpServeCmd() *cobra.Command {
 			// implementing the family's tools — see docs/lighthouse.md for the
 			// recipe and internal/observability/mcpserver.go for the canonical
 			// template.
+			//
+			// agent_shell exposes ycode shell's --agent --json semantics as a
+			// single MCP tool: foreign agents send a `command` and get the
+			// envelope back (stdout, stderr, exit, hints[]). The shared
+			// runtime is built with no provider/skills/registry — agents
+			// usually want pure bash + yc-builtins, not the LLM sentinels.
+			shellRT, _ := shell.New(shell.Options{
+				Permission: "danger-full-access",
+			})
 			composite := mcp.NewCompositeHandler(
 				treesitter.NewMCPHandler(),
+				shell.NewMCPHandler(shellRT),
 			)
 
 			// Standalone stdio invocation has no human-loop client to prompt for
 			// permission, so the default gate denies anything above ReadOnly.
 			// `ycode serve` will install a prompting gate when this same wiring
 			// is mounted under HTTP for in-session use.
+			//
+			// To allow agent_shell (DangerFullAccess), agents must explicitly
+			// raise the ceiling — see docs/shell-agent.md.
 			gate := mcp.StaticGate{Ceiling: mcp.ModeReadOnly}
 			handler := mcp.NewGatedHandler(composite, gate)
 
