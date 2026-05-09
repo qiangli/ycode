@@ -74,6 +74,16 @@ func main() {
 		return
 	}
 
+	// Intercept `ycode shell …` before cobra. The wrapper at
+	// ~/bin/ycode-wrappers/bash makes ycode stand in for /bin/bash via
+	// shebang, so foreign agents pass standard bash flags (-l, -lc,
+	// --login, ...). Cobra rejects those as unknown or, worse, binds -l
+	// as the value of -c. The interceptor parses argv with bash
+	// semantics and dispatches straight into runShellCmd.
+	if maybeHandleShellCmd() {
+		return
+	}
+
 	// Check if self-healing is enabled
 	if selfHealEnabled() {
 		opts := &selfheal.WrapMainOptions{
@@ -1302,6 +1312,10 @@ func init() {
 
 	// Interactive agentic shell (ycode shell)
 	rootCmd.AddCommand(newShellCmd())
+
+	// `ycode yc <verb>` — same built-in registry as the bash middleware,
+	// reachable from any shell since the ycode binary is on PATH.
+	rootCmd.AddCommand(newYcCmd())
 
 	// Evaluation framework
 	registerEvalCmd(rootCmd)

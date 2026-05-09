@@ -144,16 +144,19 @@ not the whole system**:
 
 ```bash
 mkdir -p ~/bin/ycode-wrappers
+# The wrapper is a one-line shebang: ycode IS bash (its `shell` subcommand
+# with --agent posture speaks bash via mvdan/sh and adds the yc <verb>
+# built-ins). When an agent execs `bash -c "<cmd>"`, the kernel runs:
+#     ycode shell --agent <wrapper-path> -c "<cmd>"
+# The stray <wrapper-path> positional is ignored; -c "<cmd>" dispatches.
+# `env -S` splits the shebang args on Linux (macOS splits natively).
 cat > ~/bin/ycode-wrappers/bash <<'EOF'
-#!/bin/sh
-# Claude Code invokes: bash -c "<command>"
-# Route that through ycode shell --agent.
-if [ "$1" = "-c" ] && [ $# -ge 2 ]; then
-    exec ycode shell --agent -c "$2"
-fi
-exec /bin/bash "$@"
+#!/usr/bin/env -S ycode shell --agent
 EOF
 chmod +x ~/bin/ycode-wrappers/bash
+
+# Symlink zsh → bash so agents that spawn either shell hit the same wrapper.
+ln -sf bash ~/bin/ycode-wrappers/zsh
 
 # Only this Claude session sees the wrapper:
 PATH="$HOME/bin/ycode-wrappers:$PATH" claude
@@ -163,7 +166,7 @@ Verify the wrapper is being called by Claude before swapping to the
 ycode-shell variant:
 
 ```sh
-#!/bin/sh
+#!/bin/bash
 echo "[wrapper saw: $@]" >> /tmp/claude-bash-trace.log
 exec /bin/bash "$@"
 ```
