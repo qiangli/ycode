@@ -23,8 +23,17 @@ func runSelfInit(ctx context.Context) {
 	}
 	// `ycode init` is itself a SelfInit invocation; let its own RunE
 	// drive the run rather than firing the persistent hook first.
-	if len(os.Args) > 1 && os.Args[1] == "init" {
-		return
+	//
+	// `ycode mcp serve` is a stdio JSON-RPC server — anything written
+	// to stderr (selfinit's "first-class citizen" log) gets captured
+	// by the foreign MCP client and noises up its diagnostic stream.
+	// Skip the run; the user's main `ycode` invocation already wired
+	// the project on first use.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "init", "mcp":
+			return
+		}
 	}
 	res, err := selfinit.Run(ctx, selfinit.Options{
 		YcodeVersion: version,

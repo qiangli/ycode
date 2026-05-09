@@ -108,15 +108,9 @@ func (t *StdioTransport) Call(ctx context.Context, method string, params any) (j
 	}
 
 	t.mu.Lock()
-	// Write with Content-Length header per LSP/MCP protocol.
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
-	if _, err := io.WriteString(t.stdin, header); err != nil {
+	if err := writeFrame(t.stdin, data); err != nil {
 		t.mu.Unlock()
-		return nil, fmt.Errorf("write header: %w", err)
-	}
-	if _, err := t.stdin.Write(data); err != nil {
-		t.mu.Unlock()
-		return nil, fmt.Errorf("write body: %w", err)
+		return nil, fmt.Errorf("write request: %w", err)
 	}
 	t.mu.Unlock()
 
@@ -133,37 +127,22 @@ func (t *StdioTransport) Call(ctx context.Context, method string, params any) (j
 	return resp.Result, nil
 }
 
-// readResponse reads a JSON-RPC response from stdout.
+// readResponse reads one newline-delimited JSON-RPC response. The MCP
+// stdio transport frames each message as a single line terminated by
+// `\n`; embedded newlines are forbidden.
 func (t *StdioTransport) readResponse(resp *JSONRPCResponse) error {
-	// Read Content-Length header.
-	var contentLen int
 	for {
-		line, err := t.reader.ReadString('\n')
+		line, err := t.reader.ReadBytes('\n')
 		if err != nil {
-			return fmt.Errorf("read header: %w", err)
+			return fmt.Errorf("read response: %w", err)
 		}
-		line = line[:len(line)-1] // trim \n
-		if len(line) > 0 && line[len(line)-1] == '\r' {
-			line = line[:len(line)-1]
+		// Trim trailing \r\n / \n.
+		line = trimNewline(line)
+		if len(line) == 0 {
+			continue // tolerate blank framing lines
 		}
-		if line == "" {
-			break // end of headers
-		}
-		if n, err := fmt.Sscanf(line, "Content-Length: %d", &contentLen); err == nil && n == 1 {
-			continue
-		}
+		return json.Unmarshal(line, resp)
 	}
-
-	if contentLen <= 0 {
-		return fmt.Errorf("invalid content length: %d", contentLen)
-	}
-
-	body := make([]byte, contentLen)
-	if _, err := io.ReadFull(t.reader, body); err != nil {
-		return fmt.Errorf("read body: %w", err)
-	}
-
-	return json.Unmarshal(body, resp)
 }
 
 // Notify sends a JSON-RPC notification (no response expected).
@@ -181,15 +160,33 @@ func (t *StdioTransport) Notify(ctx context.Context, method string, params any) 
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
-
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
-	if _, err := io.WriteString(t.stdin, header); err != nil {
-		return fmt.Errorf("write notification header: %w", err)
-	}
-	if _, err := t.stdin.Write(data); err != nil {
-		return fmt.Errorf("write notification body: %w", err)
+	if err := writeFrame(t.stdin, data); err != nil {
+		return fmt.Errorf("write notification: %w", err)
 	}
 	return nil
+}
+
+// writeFrame emits one MCP stdio frame: the JSON message followed by a
+// single '\n'. Used by both Call and Notify to keep framing in one
+// place.
+func writeFrame(w io.Writer, data []byte) error {
+	if _, err := w.Write(data); err != nil {
+		return err
+	}
+	_, err := w.Write([]byte{'\n'})
+	return err
+}
+
+// trimNewline strips a trailing '\n' (and optionally '\r' before it)
+// from line. Returns line unchanged if no terminator is present.
+func trimNewline(line []byte) []byte {
+	if n := len(line); n > 0 && line[n-1] == '\n' {
+		line = line[:n-1]
+		if n := len(line); n > 0 && line[n-1] == '\r' {
+			line = line[:n-1]
+		}
+	}
+	return line
 }
 
 // Stderr returns any captured stderr output from the server process.

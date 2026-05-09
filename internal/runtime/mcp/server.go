@@ -54,6 +54,13 @@ func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) (*JSONR
 
 	case "tools/list":
 		tools := s.handler.ListTools()
+		// MCP clients (Claude Code, Cursor) require an array — a nil
+		// slice marshals to JSON null and triggers a Zod validation
+		// error on the client. Force an empty array when there are no
+		// tools.
+		if tools == nil {
+			tools = []Tool{}
+		}
 		result := map[string]any{"tools": tools}
 		data, _ := json.Marshal(result)
 		resp.Result = data
@@ -81,6 +88,12 @@ func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) (*JSONR
 
 	case "resources/list":
 		resources := s.handler.ListResources()
+		// Same nil-slice guard as tools/list — Claude Code's MCP
+		// client logs `"Failed to fetch resources: expected array,
+		// received null"` and skips the server otherwise.
+		if resources == nil {
+			resources = []Resource{}
+		}
 		result := map[string]any{"resources": resources}
 		data, _ := json.Marshal(result)
 		resp.Result = data
