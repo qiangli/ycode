@@ -41,11 +41,12 @@ var Catalog = []Hint{
 		// Common case: `grep -nE '^func' foo.go` to enumerate declarations —
 		// exactly what `yc symbols` does without a regex. The body skips over
 		// '...' and "..." spans so a `|` inside a quoted regex (e.g.
-		// `'(func|type)'`) doesn't end the match prematurely.
+		// `'(func|type)'`) doesn't end the match prematurely. $1 captures
+		// the last source-file argument so the suggestion is runnable verbatim.
 		ID:       "grep-source-file-suggests-symbols",
-		Pattern:  regexp.MustCompile(`\bgrep\b(?:[^|'"]|'[^']*'|"[^"]*")*\.(go|py|ts|js|rs|java|c|rb)\b`),
+		Pattern:  regexp.MustCompile(`\bgrep\b(?:[^|'"]|'[^']*'|"[^"]*")*\s(\S+\.(?:go|py|ts|js|rs|java|c|rb))\b`),
 		Category: "code-search",
-		Suggest:  "for declarations in a source file: `yc symbols <path>`; for substring search: `yc search-symbols '<pattern>' [path]`",
+		Suggest:  "for declarations in `$1`: `yc symbols $1`; for substring search: `yc search-symbols '<pattern>' $1`",
 	},
 	{
 		ID:       "rg-or-ack-suggests-search-symbols",
@@ -73,15 +74,15 @@ var Catalog = []Hint{
 	},
 	{
 		ID:       "wc-source-suggests-symbols",
-		Pattern:  regexp.MustCompile(`\bwc\b\s+-\w*l\b[^|]*\.(go|py|ts|js|rs|java|c|rb)\b`),
+		Pattern:  regexp.MustCompile(`\bwc\b\s+-\w*l\b[^|]*?\s(\S+\.(?:go|py|ts|js|rs|java|c|rb))\b`),
 		Category: "structure",
-		Suggest:  "`yc symbols <path>` enumerates functions/types/methods directly without line counting",
+		Suggest:  "`yc symbols $1` enumerates functions/types/methods directly without line counting",
 	},
 	{
 		ID:       "curl-http-suggests-browser",
-		Pattern:  regexp.MustCompile(`\bcurl\b[^|]*https?://`),
+		Pattern:  regexp.MustCompile(`\bcurl\b[^|]*?(https?://\S+)`),
 		Category: "net",
-		Suggest:  "for JS-rendered pages: `yc browser fetch <url>`; for an interactive session: `yc browser open <url>`",
+		Suggest:  "for JS-rendered pages: `yc browser fetch $1`; for an interactive session: `yc browser open $1`",
 	},
 	{
 		ID:       "git-log-status-diff-suggests-yc-git",
@@ -109,9 +110,9 @@ var Catalog = []Hint{
 	},
 	{
 		ID:       "wget-suggests-browser",
-		Pattern:  regexp.MustCompile(`\bwget\b[^|]*https?://`),
+		Pattern:  regexp.MustCompile(`\bwget\b[^|]*?(https?://\S+)`),
 		Category: "net",
-		Suggest:  "for JS-rendered pages: `yc browser fetch <url>` (also handles redirects + Content-Type)",
+		Suggest:  "for JS-rendered pages: `yc browser fetch $1` (also handles redirects + Content-Type)",
 	},
 	{
 		ID:       "find-large-suggests-repomap",
@@ -176,19 +177,28 @@ var PostCatalog = []PostHint{
 //
 // `rt` is currently unused but kept in the signature so future hints
 // can consult cwd, available skills, etc.
+//
+// The Suggest field of each rule is run through Pattern.ExpandString
+// against the matched command, so `$1`, `${name}`, etc. interpolate
+// from capture groups — agents see runnable invocations instead of
+// generic templates. Rules without capture groups behave as before.
+// To emit a literal `$` in a suggestion, escape it as `$$`.
 func Suggest(_ *shell.ShellRuntime, command string) []shell.Hint {
 	var hints []shell.Hint
 	seen := suggestSeen()
 	defer suggestRelease(seen)
 
 	for _, h := range Catalog {
-		if h.Pattern.MatchString(command) {
-			if _, dup := seen[h.ID]; dup {
-				continue
-			}
-			seen[h.ID] = struct{}{}
-			hints = append(hints, shell.Hint{ID: h.ID, Category: h.Category, Message: h.Suggest})
+		loc := h.Pattern.FindStringSubmatchIndex(command)
+		if loc == nil {
+			continue
 		}
+		if _, dup := seen[h.ID]; dup {
+			continue
+		}
+		seen[h.ID] = struct{}{}
+		msg := string(h.Pattern.ExpandString(nil, h.Suggest, command, loc))
+		hints = append(hints, shell.Hint{ID: h.ID, Category: h.Category, Message: msg})
 	}
 	return hints
 }
