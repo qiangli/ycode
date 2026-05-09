@@ -56,7 +56,7 @@ require (
 	github.com/nats-io/nats-server/v2 v2.12.6
 	github.com/nats-io/nats.go v1.50.0
 	github.com/nguyenthenguyen/docx v0.0.0-20230621112118-9c8e795a11db
-	github.com/odvcencio/gotreesitter v0.15.3
+	github.com/odvcencio/gotreesitter v0.16.0
 	github.com/philippgille/chromem-go v0.7.0
 	github.com/prometheus/common v0.67.5
 	github.com/prometheus/prometheus v0.311.2
