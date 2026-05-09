@@ -123,7 +123,7 @@ func (symbolsVerb) Run(ctx context.Context, args []string, stdio Stdio, cwd stri
 		if perr != nil {
 			return nil
 		}
-		all = append(all, treesitter.ExtractSymbols(tree, path)...)
+		all = append(all, parser.ExtractSymbols(tree, path)...)
 		return nil
 	})
 	if err != nil {
@@ -137,7 +137,7 @@ func (symbolsVerb) Run(ctx context.Context, args []string, stdio Stdio, cwd stri
 		return 0, nil
 	}
 	for _, s := range all {
-		fmt.Fprintf(stdio.Stdout, "%s:%d: %-9s %s %s\n", s.File, s.Line, s.Kind, s.Name, s.Signature)
+		fmt.Fprintf(stdio.Stdout, "%s:%d: %s\n", s.File, s.Line, formatSymbolLine(s))
 	}
 	if len(all) == 0 {
 		fmt.Fprintln(stdio.Stderr, "(no symbols found)")
@@ -191,7 +191,7 @@ func (searchSymbolsVerb) Run(ctx context.Context, args []string, stdio Stdio, cw
 		if perr != nil {
 			return nil
 		}
-		for _, s := range treesitter.ExtractSymbols(tree, path) {
+		for _, s := range parser.ExtractSymbols(tree, path) {
 			if strings.Contains(strings.ToLower(s.Name), needle) {
 				matches = append(matches, s)
 			}
@@ -209,13 +209,23 @@ func (searchSymbolsVerb) Run(ctx context.Context, args []string, stdio Stdio, cw
 		return 0, nil
 	}
 	for _, s := range matches {
-		fmt.Fprintf(stdio.Stdout, "%s:%d: %-9s %s %s\n", s.File, s.Line, s.Kind, s.Name, s.Signature)
+		fmt.Fprintf(stdio.Stdout, "%s:%d: %s\n", s.File, s.Line, formatSymbolLine(s))
 	}
 	if len(matches) == 0 {
 		fmt.Fprintln(stdio.Stderr, "(no symbols match)")
 		return 1, nil
 	}
 	return 0, nil
+}
+
+// formatSymbolLine renders a Symbol for plain-text output. Falls back to
+// "<kind> <name>" when the signature is empty (e.g., for languages whose
+// tags query the upstream registry doesn't cover yet).
+func formatSymbolLine(s treesitter.Symbol) string {
+	if s.Signature != "" {
+		return s.Signature
+	}
+	return s.Kind + " " + s.Name
 }
 
 // ----- yc refs -----
