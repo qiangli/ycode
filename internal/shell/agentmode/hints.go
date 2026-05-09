@@ -37,6 +37,17 @@ var Catalog = []Hint{
 		Suggest:  "try `yc search-symbols '<pattern>' [path]` (AST-aware, language-agnostic)",
 	},
 	{
+		// Single-file or explicit-list grep against a source file (no -r).
+		// Common case: `grep -nE '^func' foo.go` to enumerate declarations —
+		// exactly what `yc symbols` does without a regex. The body skips over
+		// '...' and "..." spans so a `|` inside a quoted regex (e.g.
+		// `'(func|type)'`) doesn't end the match prematurely.
+		ID:       "grep-source-file-suggests-symbols",
+		Pattern:  regexp.MustCompile(`\bgrep\b(?:[^|'"]|'[^']*'|"[^"]*")*\.(go|py|ts|js|rs|java|c|rb)\b`),
+		Category: "code-search",
+		Suggest:  "for declarations in a source file: `yc symbols <path>`; for substring search: `yc search-symbols '<pattern>' [path]`",
+	},
+	{
 		ID:       "rg-or-ack-suggests-search-symbols",
 		Pattern:  regexp.MustCompile(`\b(rg|ack|ag)\b`),
 		Category: "code-search",
