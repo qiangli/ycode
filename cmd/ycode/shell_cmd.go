@@ -3,10 +3,12 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -107,6 +109,13 @@ func runShellCmd(_ *cobra.Command, _ []string, f *shellFlags) error {
 		if err != nil {
 			return fmt.Errorf("getwd: %w", err)
 		}
+	}
+
+	if f.sandbox {
+		fmt.Fprintln(os.Stderr, "# ycode shell: --sandbox is advisory in this build; use `yc sandbox -- <cmd>` per-call for podman isolation")
+	}
+	if len(f.allowedDirs) > 0 {
+		fmt.Fprintln(os.Stderr, "# ycode shell: --allowed-dirs is advisory; full VFS enforcement is not yet wired in shell mode")
 	}
 
 	provider, model := buildShellProvider(f.offline)
@@ -220,19 +229,53 @@ func shellHelpText() string {
 		"functions, set options, and aliases all persist across submissions.\n"
 }
 
-// runShellOneShot dispatches a single -c command and exits with the result's
-// exit code. Honors --json and --agent.
-func runShellOneShot(rt *shell.ShellRuntime, f *shellFlags) error {
-	d := shell.NewDispatcher(rt)
-	sink := shell.WriterSink{StdoutW: os.Stdout, StderrW: os.Stderr}
-
-	intent, err := shell.Classify(f.command)
+// applyTimeout wraps ctx with f.timeoutString (parsed) when set.
+func applyTimeout(ctx context.Context, f *shellFlags) (context.Context, context.CancelFunc, error) {
+	if f.timeoutString == "" {
+		return ctx, func() {}, nil
+	}
+	d, err := time.ParseDuration(f.timeoutString)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "shell: classify: %v\n", err)
+		return nil, nil, fmt.Errorf("invalid --timeout %q: %w", f.timeoutString, err)
+	}
+	c, cancel := context.WithTimeout(ctx, d)
+	return c, cancel, nil
+}
+
+// auditEntry is one row in --audit-log JSONL output.
+type auditEntry struct {
+	Time     time.Time `json:"time"`
+	Command  string    `json:"command"`
+	ExitCode int       `json:"exit_code"`
+	WorkDir  string    `json:"workdir"`
+	Sandbox  bool      `json:"sandbox,omitempty"`
+	Offline  bool      `json:"offline,omitempty"`
+	Source   string    `json:"source"` // "one-shot" | "repl" | "tui"
+}
+
+func appendAudit(path string, entry auditEntry) {
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "shell: audit-log open: %v\n", err)
+		return
+	}
+	defer f.Close()
+	_ = json.NewEncoder(f).Encode(entry)
+}
+
+// runShellOneShot dispatches a single -c command and exits with the result's
+// exit code. Honors --json, --agent, --timeout, --audit-log, --offline.
+func runShellOneShot(rt *shell.ShellRuntime, f *shellFlags) error {
+	ctx, cancelTimeout, terr := applyTimeout(context.Background(), f)
+	if terr != nil {
+		fmt.Fprintln(os.Stderr, terr)
 		os.Exit(2)
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
+	defer cancelTimeout()
+	ctx, cancel := context.WithCancel(ctx)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
 	go func() {
@@ -245,20 +288,64 @@ func runShellOneShot(rt *shell.ShellRuntime, f *shellFlags) error {
 	defer signal.Stop(sigCh)
 	defer cancel()
 
-	if f.json {
-		// Phase B1 wires this; for now error gracefully so the flag is
-		// declared but unimplemented behavior is explicit.
-		fmt.Fprintln(os.Stderr, "shell: --json envelope not yet implemented (Phase B1)")
+	// Pre-exec hints (matched against the raw command string).
+	var preHints []shell.Hint
+	if f.agent {
+		preHints = agentmode.Suggest(rt, f.command)
 	}
 
+	if f.json {
+		env := shell.DispatchEnvelope(ctx, rt, f.command, preHints)
+		if err := shell.WriteEnvelopeJSON(env, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "shell: write envelope: %v\n", err)
+		}
+		appendAudit(f.auditLog, auditEntry{
+			Time:     time.Now(),
+			Command:  f.command,
+			ExitCode: env.ExitCode,
+			WorkDir:  rt.WorkDir(),
+			Sandbox:  f.sandbox,
+			Offline:  f.offline,
+			Source:   "one-shot",
+		})
+		if env.ExitCode != 0 {
+			os.Exit(env.ExitCode)
+		}
+		return nil
+	}
+
+	// Plain mode: dispatch live, augment with hints on stderr.
+	d := shell.NewDispatcher(rt)
+	sink := shell.WriterSink{StdoutW: os.Stdout, StderrW: os.Stderr}
+
+	intent, err := shell.Classify(f.command)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "shell: classify: %v\n", err)
+		os.Exit(2)
+	}
 	res, derr := d.Dispatch(ctx, intent, sink)
 	if derr != nil {
 		fmt.Fprintf(os.Stderr, "shell: dispatch error: %v\n", derr)
 	}
 
 	if f.agent {
-		emitHints(rt, f.command, &res)
+		for _, h := range preHints {
+			fmt.Fprintf(os.Stderr, "# ycode hint [%s]: %s\n", h.Category, h.Message)
+		}
+		for _, h := range agentmode.SuggestPost(rt, res.ExitCode, "") {
+			fmt.Fprintf(os.Stderr, "# ycode hint [%s]: %s\n", h.Category, h.Message)
+		}
 	}
+
+	appendAudit(f.auditLog, auditEntry{
+		Time:     time.Now(),
+		Command:  f.command,
+		ExitCode: res.ExitCode,
+		WorkDir:  rt.WorkDir(),
+		Sandbox:  f.sandbox,
+		Offline:  f.offline,
+		Source:   "one-shot",
+	})
 
 	if res.ExitCode != 0 {
 		os.Exit(res.ExitCode)
