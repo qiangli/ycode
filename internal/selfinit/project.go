@@ -24,9 +24,12 @@ You are the **Foreman** for this session. The Boss → Foreman → Worker
 protocol is universal across every ycode-aware repo. When helping the
 user plan, write tasks as ` + "`docs/backlog/<slug>.md`" + ` files (frontmatter:
 ` + "`title`" + `, ` + "`priority: p1|p2|p3`" + `, ` + "`state: open`" + `). When starting cold with no
-specific user task, follow ` + "`.agents/ycode/skills/ycode-foreman/skill.md`" + `
-(invoke as ` + "`/foreman`" + `). Boss control: ` + "`ycode foreman pause/resume/stop/skip/prio/tell/status`" + `.
-Full protocol: [` + "`docs/backlog.md`" + `](docs/backlog.md).`
+specific user task, invoke ` + "`/foreman`" + `. The skill body is at
+` + "`~/.config/ycode/skills/ycode-foreman/skill.md`" + ` (user-global, written
+by ` + "`ycode init`" + `; embedded in the binary as fallback). Boss control:
+` + "`ycode foreman pause/resume/stop/skip/prio/tell/status`" + `.
+Full protocol: [` + "`docs/backlog.md`" + `](docs/backlog.md). Available skills are
+listed in [` + "`.agents/ycode/AGENTS.md`" + `](.agents/ycode/AGENTS.md#skills-available-via-ycode).`
 
 // WriteProjectFiles regenerates <repo>/.agents/ycode/AGENTS.md (long-form
 // awareness, manifest-derived) and patches <repo>/AGENTS.md and/or
@@ -235,8 +238,10 @@ func fileExists(path string) bool {
 
 // buildLongFormDoc builds the contents of <repo>/.agents/ycode/AGENTS.md (and,
 // in greenfield, <repo>/AGENTS.md without the delimiter wrapping). The
-// content is fully manifest-derived: one bullet per capability family
-// with a human description.
+// content is manifest-derived: one bullet per capability family, plus
+// a Skills inventory so foreign agents (Claude Code, OpenCode, Codex,
+// …) discover ycode's skills by reading the file they already pull —
+// without ycode writing into their personal config dirs.
 func buildLongFormDoc(caps []CapabilitySpec) string {
 	var b strings.Builder
 	b.WriteString("# ycode capabilities for this project\n\n")
@@ -245,6 +250,21 @@ func buildLongFormDoc(caps []CapabilitySpec) string {
 		fmt.Fprintf(&b, "- **`%s`** — %s\n", c.Name, FamilyDescription(c.Family))
 	}
 	b.WriteString("\n")
+
+	// Skills inventory — non-intrusive discovery surface for foreign
+	// agents. ycode does not write into ~/.claude/skills/, ~/.codex/,
+	// etc.; agents pick up the inventory when they read this file.
+	if len(SkillInventory) > 0 {
+		b.WriteString("## Skills available via ycode\n\n")
+		b.WriteString("Universal skills shipped with the ycode binary. Invoke from any chat with a leading slash (e.g. `/foreman`); ycode resolves the body from cwd → project → user (`~/.config/ycode/skills/`) → embedded. To customize a skill globally, edit the user-global copy; to override per-repo, drop a copy at `.agents/ycode/skills/<name>/skill.md`.\n\n")
+		b.WriteString("| Skill | When to use | Body |\n")
+		b.WriteString("|---|---|---|\n")
+		for _, s := range SkillInventory {
+			fmt.Fprintf(&b, "| `%s` — %s | %s | `%s` |\n", s.Name, s.Summary, s.When, s.BodyPath)
+		}
+		b.WriteString("\n")
+	}
+
 	b.WriteString("## How to use\n\n")
 	b.WriteString("If a tool returns *connection refused*, run `ycode serve` first; capabilities are advertised in `~/.agents/ycode/manifest.json`.\n\n")
 	b.WriteString("To register ycode in a foreign agentic CLI manually:\n\n")
