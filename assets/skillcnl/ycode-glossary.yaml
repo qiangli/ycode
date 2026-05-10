@@ -1,45 +1,24 @@
-# skill-domain seed glossary for skillcnl Phase 0.
+# ycode-specific skill-domain glossary.
 #
-# Each entry's `dhnt` is the canonical machine identifier, derived
-# from the primary English label by the dhnt loan-word rule (see
-# EncodeWord in dhnt.go) and locked at glossary admission time. When
-# you add a new entry, run TestGlossary_DhntFormsMatchEncoder to
-# verify the dhnt field matches the encoder's output for the en[0]
-# label.
+# Layered on top of the generic seed glossary that ships with
+# github.com/dhnt/dhnt/skills (which covers the structural keywords
+# skill / step / needs and a handful of generic primitives). This
+# file holds the entries ycode itself relies on — additional
+# structural keywords (flow / in / out / do / on_fail / retry /
+# escalate / budget / capability / intent), the type primitives
+# (semver / markdown / range), and the capability foreign atoms
+# (git / github / slack / llm / file).
 #
-# `labels` are display projections per language. The first label in a
-# language is the canonical display form; later entries are
-# synonyms/alternate spellings the LLM normaliser will accept.
-#
-# `all` is a special language tag for foreign atoms whose surface form
-# is identical in every language (project names, established command
-# names like git/oauth/k8s).
+# Loaders combine this file with the upstream seed via
+# skills.Glossary.Merge.
 
 entries:
-  # ─── structural keywords ──────────────────────────────────────────
-  - dhnt: sokilili
-    kind: keyword
-    labels:
-      en: [skill]
-      zh: ["技能", jineng]
-
-  - dhnt: sotepo
-    kind: keyword
-    labels:
-      en: [step, action]
-      zh: ["步骤", buzhou, "动作", dongzuo]
-
+  # ─── extended structural keywords ─────────────────────────────────
   - dhnt: felowu
     kind: keyword
     labels:
       en: [flow]
       zh: ["流程", liucheng]
-
-  - dhnt: needaso
-    kind: keyword
-    labels:
-      en: [needs, requires]
-      zh: ["需要", xuyao]
 
   - dhnt: ini
     kind: keyword
@@ -107,12 +86,6 @@ entries:
     labels:
       en: [markdown]
       all: [markdown]
-
-  - dhnt: texuto
-    kind: type
-    labels:
-      en: [text]
-      zh: ["文本", wenben]
 
   - dhnt: ranige
     kind: type

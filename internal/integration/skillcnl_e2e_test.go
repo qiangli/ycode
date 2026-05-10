@@ -9,12 +9,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiangli/ycode/internal/runtime/skillcnl"
+	"github.com/dhnt/dhnt/skills"
 )
 
 // TestSkillCNL_E2E exercises the full Phase-0 pipeline end-to-end:
 //
-//  1. Load the real seed glossary from the package's testdata.
+//  1. Load the upstream skills package's seed glossary plus ycode's
+//     domain-specific glossary, merged into one Glossary.
 //  2. Build a representative skill via the public API.
 //  3. Linearise to Layer 1.5 (dhnt) — the canonical machine form.
 //  4. Verify the canonical form is strictly [a-z]+whitespace.
@@ -24,48 +25,44 @@ import (
 //  8. Verify each language has the expected display labels.
 //
 // This is the integration-level "if every component agrees, the
-// architecture works" test. Unit tests in the skillcnl package cover
-// edge cases on each component individually.
+// architecture works" test. Unit tests in the upstream skills package
+// cover edge cases on each component individually.
 func TestSkillCNL_E2E(t *testing.T) {
-	glossaryPath := findGlossary(t)
-	g, err := skillcnl.LoadGlossary(glossaryPath)
-	if err != nil {
-		t.Fatalf("LoadGlossary(%q): %v", glossaryPath, err)
-	}
+	g := loadMergedGlossary(t)
 	if g.Len() == 0 {
-		t.Fatal("seed glossary is empty")
+		t.Fatal("merged glossary is empty")
 	}
 
-	original := skillcnl.Skill{
+	original := skills.Skill{
 		Name: "rilease",
 		Caps: []string{"gito", "gitohuba", "lilimi"},
-		Steps: []skillcnl.Step{
+		Steps: []skills.Step{
 			{
 				Name:      "bumipiviro",
 				Primitive: "gito",
-				Args: []skillcnl.Arg{
-					{Name: "ini", Value: skillcnl.NewRef("semivero")},
-					{Name: "outo", Value: skillcnl.NewRef("semivero")},
+				Args: []skills.Arg{
+					{Name: "ini", Value: skills.NewRef("semivero")},
+					{Name: "outo", Value: skills.NewRef("semivero")},
 				},
 			},
 			{
 				Name:      "anini",
 				Primitive: "gitohuba",
-				Args: []skillcnl.Arg{
-					{Name: "budageto", Value: skillcnl.NewNumber(2018)},
+				Args: []skills.Arg{
+					{Name: "budageto", Value: skills.NewNumber(2018)},
 				},
 			},
 		},
 	}
 
-	dhnt, err := skillcnl.LineariseDhnt(original)
+	dh, err := skills.LineariseDhnt(original)
 	if err != nil {
 		t.Fatalf("LineariseDhnt: %v", err)
 	}
-	t.Logf("Layer 1.5 (dhnt): %s", dhnt)
+	t.Logf("Layer 1.5 (dhnt): %s", dh)
 
-	for i := 0; i < len(dhnt); i++ {
-		c := dhnt[i]
+	for i := 0; i < len(dh); i++ {
+		c := dh[i]
 		if c == ' ' || c == '\t' || c == '\n' {
 			continue
 		}
@@ -74,21 +71,21 @@ func TestSkillCNL_E2E(t *testing.T) {
 		}
 	}
 
-	parsed, err := skillcnl.ParseDhnt(dhnt)
+	parsed, err := skills.ParseDhnt(dh)
 	if err != nil {
-		t.Fatalf("ParseDhnt(%q): %v", dhnt, err)
+		t.Fatalf("ParseDhnt(%q): %v", dh, err)
 	}
 	if !reflect.DeepEqual(parsed, original) {
 		t.Fatalf("AST roundtrip mismatch:\n original = %#v\n parsed   = %#v", original, parsed)
 	}
 
-	en, err := skillcnl.LineariseLang(original, g, "en")
+	en, err := skills.LineariseLang(original, g, "en")
 	if err != nil {
 		t.Fatalf("LineariseLang(en): %v", err)
 	}
 	t.Logf("Layer 1 (en): %s", en)
 
-	zh, err := skillcnl.LineariseLang(original, g, "zh")
+	zh, err := skills.LineariseLang(original, g, "zh")
 	if err != nil {
 		t.Fatalf("LineariseLang(zh): %v", err)
 	}
@@ -112,25 +109,43 @@ func TestSkillCNL_E2E(t *testing.T) {
 	}
 
 	// Re-linearise the parsed AST: idempotent canonical form.
-	dhnt2, err := skillcnl.LineariseDhnt(parsed)
+	dh2, err := skills.LineariseDhnt(parsed)
 	if err != nil {
 		t.Fatalf("LineariseDhnt second pass: %v", err)
 	}
-	if dhnt != dhnt2 {
-		t.Errorf("dhnt linearisation is not idempotent:\n  first  = %s\n  second = %s", dhnt, dhnt2)
+	if dh != dh2 {
+		t.Errorf("dhnt linearisation is not idempotent:\n  first  = %s\n  second = %s", dh, dh2)
 	}
 }
 
-// findGlossary locates the seed glossary YAML by walking up from the
-// current test directory. Tests run with various cwd depending on the
-// runner; this gives a stable lookup.
-func findGlossary(t *testing.T) string {
+// loadMergedGlossary loads the upstream embedded seed glossary from
+// github.com/dhnt/dhnt/skills, then layers ycode's domain-specific
+// extensions on top via Glossary.Merge. The upstream seed is shipped
+// in the module binary (no filesystem dependency); the ycode domain
+// glossary lives in this tree at assets/skillcnl/ycode-glossary.yaml.
+func loadMergedGlossary(t *testing.T) *skills.Glossary {
 	t.Helper()
-	candidates := []string{
-		"../runtime/skillcnl/testdata/glossary.yaml",
-		"../../internal/runtime/skillcnl/testdata/glossary.yaml",
-		"internal/runtime/skillcnl/testdata/glossary.yaml",
+	base, err := skills.SeedGlossary()
+	if err != nil {
+		t.Fatalf("SeedGlossary: %v", err)
 	}
+	domain := findFile(t, []string{
+		"../../assets/skillcnl/ycode-glossary.yaml",
+		"assets/skillcnl/ycode-glossary.yaml",
+	})
+	addendum, err := skills.LoadGlossary(domain)
+	if err != nil {
+		t.Fatalf("LoadGlossary(domain %q): %v", domain, err)
+	}
+	merged, err := base.Merge(addendum)
+	if err != nil {
+		t.Fatalf("Glossary.Merge: %v", err)
+	}
+	return merged
+}
+
+func findFile(t *testing.T, candidates []string) string {
+	t.Helper()
 	wd, _ := os.Getwd()
 	for _, rel := range candidates {
 		p := filepath.Join(wd, rel)
@@ -143,6 +158,6 @@ func findGlossary(t *testing.T) string {
 			return rel
 		}
 	}
-	t.Fatalf("could not locate seed glossary; tried %v from %s", candidates, wd)
+	t.Fatalf("could not locate any of %v from %s", candidates, wd)
 	return ""
 }

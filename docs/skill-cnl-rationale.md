@@ -395,6 +395,31 @@ algorithm, not table maintenance.
 The alpha proves the keystone (glossary + dhnt + roundtrip) without
 committing to runtime concerns.
 
+## 12a. Where the code lives (post-extraction)
+
+The deterministic core has been extracted upstream to
+[`github.com/dhnt/dhnt`](https://github.com/dhnt/dhnt) under the
+Apache-2.0 license — the intent is for this to become a community-
+shared reference implementation that any agent harness can adopt,
+not just ycode. The dhnt repository now hosts both the language
+specification (`dhnt.md`) and the Go reference implementation:
+
+- `github.com/dhnt/dhnt` — encoder, IsCanonical, numeral codec.
+- `github.com/dhnt/dhnt/skills` — Glossary, AST, lineariser, parser.
+
+ycode consumes this as a regular Go module dependency
+(`require github.com/dhnt/dhnt v0.1.0-alpha.1`). During development
+the `peers/dhnt` convention (gitignored local clone wired into
+`go.work`) lets ycode iterate against an in-progress dhnt branch.
+ycode-specific assets (the domain glossary at
+`assets/skillcnl/ycode-glossary.yaml`, the e2e test) live in the
+ycode tree. The local `internal/runtime/skillcnl/` package has been
+removed in favour of the upstream module.
+
+This split aligns with the original intent: dhnt and skill-CNL are
+infrastructure for many possible LLM agent harnesses; ycode is one
+consumer.
+
 ## 13. References
 
 - dhnt language specification — https://github.com/dhnt/dhnt

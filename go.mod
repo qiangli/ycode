@@ -47,6 +47,7 @@ require (
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260422141420-a6cbdff8a7e2
 	github.com/creack/pty/v2 v2.0.1
 	github.com/dgraph-io/dgo/v250 v250.0.0
+	github.com/dhnt/dhnt v0.1.0-alpha.2
 	github.com/go-git/go-git/v5 v5.18.0
 	github.com/google/go-github/v84 v84.0.0
 	github.com/google/uuid v1.6.0

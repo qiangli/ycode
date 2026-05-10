@@ -149,16 +149,23 @@ between them is established at the AST layer, not by translation.
 
 ## What's in this drop (Phase 0)
 
-| Component | Status |
-|---|---|
-| dhnt encoder/decoder (alpha subset) | shipped |
-| Glossary types + YAML loader + skill-domain seed | shipped |
-| Layer 2 typed AST | shipped |
-| AST → Layer 1.5 lineariser | shipped |
-| Layer 1.5 → AST parser | shipped |
-| AST → Layer 1 lineariser (EN, ZH) | shipped |
-| Roundtrip + property tests | shipped |
-| e2e roundtrip in `internal/integration/` | shipped |
+The deterministic core has been extracted into a standalone module at
+[`github.com/dhnt/dhnt`](https://github.com/dhnt/dhnt) (Apache-2.0,
+v0.1.0-alpha.1). ycode now consumes it as a normal Go module
+dependency. The local `internal/runtime/skillcnl/` package has been
+removed; ycode adds only the assets/glue needed to extend the
+upstream seed glossary with its own domain entries.
+
+| Component | Where | Status |
+|---|---|---|
+| dhnt encoder/decoder | upstream `github.com/dhnt/dhnt` | shipped |
+| Glossary types + YAML loader + Merge | upstream `github.com/dhnt/dhnt/skills` | shipped |
+| Generic seed glossary | upstream `skills/testdata/glossary.yaml` | shipped |
+| Layer 2 typed AST | upstream `github.com/dhnt/dhnt/skills` | shipped |
+| AST ↔ Layer 1.5 ↔ Layer 1 | upstream `github.com/dhnt/dhnt/skills` | shipped |
+| Roundtrip + property tests | upstream | shipped |
+| ycode domain glossary (caps, types, extra keywords) | `assets/skillcnl/ycode-glossary.yaml` | shipped |
+| ycode e2e (merge upstream + ycode glossary, roundtrip) | `internal/integration/skillcnl_e2e_test.go` | shipped |
 
 ## What's deferred
 
@@ -170,26 +177,56 @@ between them is established at the AST layer, not by translation.
 | Pinyin tonal disambiguation | Toneless Pinyin is sufficient for the skill domain seed. |
 | Multi-language skill registry / discovery integration | Lives in the existing `internal/runtime/skillengine/`; bridge in a follow-up. |
 
-## File map
+## Where the code lives
+
+The deterministic core is **upstream** at
+[`github.com/dhnt/dhnt`](https://github.com/dhnt/dhnt) — Apache-2.0
+licensed, intended as a community-shared reference implementation
+that any agent harness can consume. ycode imports it as a regular Go
+module dependency.
 
 ```
-internal/runtime/skillcnl/
-  doc.go              package overview + experimental build tag
-  dhnt.go             encoder/decoder per the dhnt spec subset
-  dhnt_test.go        unit tests + roundtrip property
-  glossary.go         types + YAML loader
-  glossary_test.go    loader + bidirectional lookup tests
-  ast.go              Layer 2 types
-  linearise.go        AST → Layer 1.5  +  AST → Layer 1 (lang)
-  parse.go            Layer 1.5 → AST
-  roundtrip_test.go   parse(linearise(a, dhnt)) == a property test
-  testdata/
-    glossary.yaml     skill-domain seed (EN + ZH)
-    fixtures/         hand-authored ASTs + their expected projections
+github.com/dhnt/dhnt                       (upstream — Apache-2.0)
+  doc.go, encode.go, numeral.go            language primitives
+  encode_test.go, numeral_test.go          spec-example tests
+  skills/                                  multilingual skill CNL
+    doc.go, glossary.go, ast.go,
+    linearise.go, parse.go
+    glossary_test.go, roundtrip_test.go
+    testdata/glossary.yaml                 minimal generic seed
+  examples/encoder_basic                   "hello dhnt" demo
+  examples/release_pipeline                full multi-language roundtrip
+  .github/workflows/ci.yml                 build + vet + test on push/PR
 
-internal/integration/
-  skillcnl_e2e_test.go   AST → 1.5 → AST → EN/ZH roundtrip
+ycode-side (ycode-specific glue + extension):
+  go.mod                                   require github.com/dhnt/dhnt v0.1.0-alpha.1
+  go.work                                  use ./peers/dhnt during dev (gitignored)
+  assets/skillcnl/ycode-glossary.yaml      ycode domain glossary —
+                                            extends the upstream seed
+                                            with capabilities (git,
+                                            github, slack, llm, file),
+                                            type primitives (semver,
+                                            markdown, range), and
+                                            extra structural keywords
+                                            (flow, in, out, do,
+                                            on_fail, retry, escalate,
+                                            budget, capability, intent)
+  internal/integration/skillcnl_e2e_test.go  e2e: load merged
+                                              upstream + ycode glossary,
+                                              roundtrip a skill across
+                                              dhnt / EN / ZH
 ```
+
+The `peers/dhnt` directory is a local git checkout of the dhnt repo,
+gitignored per the existing ycode convention (see `go.work`). Adding
+`./peers/dhnt` to `go.work` lets ycode iterate against an in-progress
+dhnt branch; removing it falls back to the tagged version in `go.mod`.
+
+The ycode glossary loader merges its domain entries on top of the
+upstream seed via `skills.Glossary.Merge`. The upstream seed covers
+the structural keywords needed by parse/linearise plus generic
+primitives; ycode's glossary adds everything specific to the agent
+harness (capabilities, types, extra keywords).
 
 ## References
 
