@@ -132,7 +132,7 @@ func lookupLoomLease(loomID string) (loompkg.Lease, error) {
 	if err != nil {
 		return loompkg.Lease{}, err
 	}
-	leasePath := filepath.Join(home, ".agents", "ycode", "gitea", "loom", "leases.json")
+	leasePath := filepath.Join(home, ".agents", "ycode", "observability", "gitea", "loom", "leases.json")
 	store, err := loompkg.NewFileStore(leasePath)
 	if err != nil {
 		return loompkg.Lease{}, fmt.Errorf("loom store: %w", err)
