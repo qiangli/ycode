@@ -775,7 +775,19 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 			}
 		}
 
-		// Phase 1: Deterministic scaffold (shown immediately).
+		// Phase 0: Run selfinit so the TUI /init is a strict superset of
+		// `ycode init` (CLI). This installs Foreman protocol scaffolding
+		// (docs/backlog.md, docs/backlog/, user-global /foreman skill,
+		// .agents/ycode/AGENTS.md) and registers ycode capabilities for
+		// any detected foreign agent. Idempotent — no-op if marker matches.
+		if siRes, err := selfinit.Run(ctx, selfinit.Options{Cwd: cwd}); err != nil {
+			progress(fmt.Sprintf("⚠ selfinit failed: %v", err))
+		} else if !siRes.Skipped {
+			progress(fmt.Sprintf("✓ selfinit: %d project file(s), %d user-global file(s)",
+				len(siRes.ProjectFiles), len(siRes.UserGlobalFiles)))
+		}
+
+		// Phase 1: Deterministic project scaffold (shown immediately).
 		report, err := InitializeRepo(cwd)
 		if err != nil {
 			return "", fmt.Errorf("init scaffold failed: %w", err)
