@@ -7,6 +7,7 @@ acceptance:
   - Reproduce the race condition flagged near internal/gitserver/collab/orchestrator.go:78-80 with a regression test (uses t.TempDir + the embedded Gitea fixture, no network)
   - Root-cause the failure mode (not just paper over with retries)
   - Fix passes -race -count=100 reliably
+gitea_issue: 3
 ---
 
 ## Context

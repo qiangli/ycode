@@ -50,13 +50,13 @@ type ForemanCommand struct {
 
 // ForemanStateFile is the structure of state.json.
 type ForemanStateFile struct {
-	State           ForemanState `json:"state"`
-	CurrentIssue    *int64       `json:"current_issue,omitempty"`
-	CurrentLoomID   string       `json:"current_loom_id,omitempty"`
-	CurrentSlug     string       `json:"current_slug,omitempty"`
-	StartedAt       *time.Time   `json:"started_at,omitempty"`
-	LastCommandID   string       `json:"last_command_id,omitempty"`
-	LastTransition  time.Time    `json:"last_transition"`
+	State          ForemanState `json:"state"`
+	CurrentIssue   *int64       `json:"current_issue,omitempty"`
+	CurrentLoomID  string       `json:"current_loom_id,omitempty"`
+	CurrentSlug    string       `json:"current_slug,omitempty"`
+	StartedAt      *time.Time   `json:"started_at,omitempty"`
+	LastCommandID  string       `json:"last_command_id,omitempty"`
+	LastTransition time.Time    `json:"last_transition"`
 }
 
 // foremanDir resolves .agents/ycode/foreman/ relative to cwd, creating

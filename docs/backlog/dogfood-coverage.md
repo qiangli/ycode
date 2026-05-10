@@ -7,6 +7,7 @@ acceptance:
   - Tests exist for each phase skill (build/validate/deploy/eval/learn) covering the happy path
   - The end-of-week analysis queries in docs/skills-dogfood.md are wrapped behind `make dogfood-stats` (or equivalent) so the daily ritual is one command
   - At least one failure-mode test confirms err_kind values surface correctly in skill-usage.jsonl
+gitea_issue: 5
 ---
 
 ## Context

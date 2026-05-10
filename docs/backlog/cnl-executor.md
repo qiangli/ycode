@@ -8,6 +8,7 @@ acceptance:
   - "Invocation translates the CNL body through internal/runtime/skillcnl/ to the dhnt IR before execution"
   - "At least one catalog skill ships with `executor: cnl` and is exercised in a smoke test"
   - "docs/skill-cnl.md and docs/skill-cnl-rationale.md are updated with the dispatch path"
+gitea_issue: 1
 ---
 
 ## Context

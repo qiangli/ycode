@@ -8,6 +8,7 @@ acceptance:
   - docs/strategy.md graduation criteria are checked off (test coverage, documented behavior, no open critical bugs)
   - docs/selfinit.md describes the stable contract, not the experimental one
   - A clean make build passes without the experimental tag set
+gitea_issue: 4
 ---
 
 ## Context

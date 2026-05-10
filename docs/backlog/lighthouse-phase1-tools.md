@@ -8,6 +8,7 @@ acceptance:
   - bin/ycode mcp serve exposes a graph family (query_graph_dql) routed through pkg/memex/graph/
   - Both families are registered via mcp.NewCompositeHandler per the recipe in docs/lighthouse.md
   - A foreign agent (Claude Code) opening this tree can list both families via tools/list and invoke at least one tool from each end-to-end
+gitea_issue: 2
 ---
 
 ## Context
