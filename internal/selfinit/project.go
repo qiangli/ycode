@@ -99,21 +99,36 @@ func WriteProjectFiles(repoRoot string, caps []CapabilitySpec) ([]string, []stri
 	return written, warnings, nil
 }
 
-// writeForemanProtocol drops the Boss → Foreman → Worker scaffolding
-// into <repo>: the /foreman skill body, docs/backlog.md, an empty
-// docs/backlog/ with a README. All writes are idempotent. Existing
-// files are not overwritten unless content drifted from the embedded
-// canonical.
+// WriteForemanUserSkill writes the canonical /foreman skill body to
+// ~/.config/ycode/skills/ycode-foreman/skill.md. The skill is universal
+// — same body for every repo — so it lives at the user-global level
+// rather than being copied into each project. The binary embeds the
+// canonical source; this function ensures it's also available on disk
+// for any agent that prefers to read a file. Idempotent.
+//
+// Resolution order at runtime: cwd-local → project (.agents/ycode/) →
+// user (~/.config/ycode/) → embedded. First match wins.
+func WriteForemanUserSkill(home string) (string, error) {
+	if home == "" {
+		return "", fmt.Errorf("selfinit: empty home")
+	}
+	skillPath := filepath.Join(home, ".config", "ycode", "skills", "ycode-foreman", "skill.md")
+	if err := writeFileIfChanged(skillPath, foremanSkillMD); err != nil {
+		return "", fmt.Errorf("write %s: %w", skillPath, err)
+	}
+	return skillPath, nil
+}
+
+// writeForemanProtocol drops the per-project Boss → Foreman → Worker
+// scaffolding into <repo>: docs/backlog.md (protocol doc) and an empty
+// docs/backlog/ with a README. The /foreman skill itself is NOT
+// written here — it lives at the user-global level via
+// WriteForemanUserSkill so the same body serves every repo. All writes
+// are idempotent. Existing files are not overwritten unless content
+// drifted from the embedded canonical.
 func writeForemanProtocol(repoRoot string) ([]string, []string, error) {
 	var written []string
 	var warnings []string
-
-	skillPath := filepath.Join(repoRoot, ".agents", "ycode", "skills", "ycode-foreman", "skill.md")
-	if err := writeFileIfChanged(skillPath, foremanSkillMD); err != nil {
-		warnings = append(warnings, fmt.Sprintf("write %s: %v", skillPath, err))
-	} else {
-		written = append(written, skillPath)
-	}
 
 	protocolPath := filepath.Join(repoRoot, "docs", "backlog.md")
 	if err := writeFileIfChanged(protocolPath, backlogProtocolMD); err != nil {

@@ -78,6 +78,17 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{RepoRoot: repoRoot, OptedOut: true}, nil
 	}
 
+	// User-global Foreman skill — universal protocol, same body for
+	// every repo. Run unconditionally (before the marker-skip below)
+	// so a deleted user-global skill is restored on next init in any
+	// repo. Idempotent via writeFileIfChanged.
+	var userGlobalFiles []string
+	if userSkillPath, err := WriteForemanUserSkill(home); err != nil {
+		logger.Warn("selfinit: write user-global foreman skill", "err", err)
+	} else {
+		userGlobalFiles = append(userGlobalFiles, userSkillPath)
+	}
+
 	caps := LoadCapabilities(home, opts.DefaultPort)
 
 	tools := opts.Tools
@@ -97,9 +108,10 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if !opts.Force && repoRoot != "" && MarkerMatches(repoRoot, want) {
 		logger.Debug("selfinit: marker matches, skipping", "repo", repoRoot)
 		return Result{
-			RepoRoot:     repoRoot,
-			Capabilities: capNames(caps),
-			Skipped:      true,
+			RepoRoot:        repoRoot,
+			Capabilities:    capNames(caps),
+			UserGlobalFiles: userGlobalFiles,
+			Skipped:         true,
 		}, nil
 	}
 
@@ -107,6 +119,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		RepoRoot:        repoRoot,
 		Capabilities:    capNames(caps),
 		UserFilesByTool: map[string][]string{},
+		UserGlobalFiles: userGlobalFiles,
 	}
 
 	// Project-scope writes (only inside a git repo).

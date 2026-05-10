@@ -53,6 +53,7 @@ type Result struct {
 	Capabilities    []string            // names of caps registered (Name field)
 	ProjectFiles    []string            // files SelfInit wrote / patched
 	UserFilesByTool map[string][]string // tool name -> files written
+	UserGlobalFiles []string            // user-scope files (~/.config/ycode/...) ensured
 	Skipped         bool                // true if marker matched and we no-op'd
 	OptedOut        bool                // true if a no-init marker was found
 }

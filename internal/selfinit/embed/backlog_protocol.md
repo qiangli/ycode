@@ -176,8 +176,11 @@ Worker operation with telemetry collected).
 
 - `docs/agent-collab.md` — the multi-agent runtime that the Worker
   inner loop builds on (collab orchestrator, merger, queue).
-- `.agents/ycode/skills/ycode-foreman/skill.md` — the Foreman loop
-  body the chat agent follows when the Boss runs `/foreman`.
+- `~/.config/ycode/skills/ycode-foreman/skill.md` — the Foreman loop
+  body the chat agent follows when the Boss runs `/foreman`. User-global
+  (universal across all repos); written by `ycode init`; embedded in
+  the binary as the canonical fallback. Per-repo override: drop
+  `.agents/ycode/skills/ycode-foreman/skill.md` in any project.
 - `.agents/ycode/skills/ycode-autopilot/skill.md` — the inner
   RESEARCH→PLAN→BUILD→TEST→FIX→COMMIT loop the Worker runs in its
   Loom workspace.

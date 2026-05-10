@@ -131,4 +131,7 @@ func printInitResult(res selfinit.Result) {
 	for tool, files := range res.UserFilesByTool {
 		fmt.Printf("  ✓ %s (%v)\n", tool, files)
 	}
+	for _, f := range res.UserGlobalFiles {
+		fmt.Printf("  ✓ %s (user-global)\n", f)
+	}
 }
