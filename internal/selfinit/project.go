@@ -16,7 +16,17 @@ const referenceBlock = `## ycode
 This repo expects [ycode](https://github.com/qiangli/ycode) running locally as
 agentic infrastructure. When acting as an agentic coding tool, see
 [` + "`" + `.agents/ycode/AGENTS.md` + "`" + `](.agents/ycode/AGENTS.md) for capability descriptions and when to
-prefer them. Run ` + "`" + `ycode init --refresh` + "`" + ` to update this section.`
+prefer them. Run ` + "`" + `ycode init --refresh` + "`" + ` to update this section.
+
+### Self-Bootstrap (Foreman role)
+
+You are the **Foreman** for this session. The Boss → Foreman → Worker
+protocol is universal across every ycode-aware repo. When helping the
+user plan, write tasks as ` + "`docs/backlog/<slug>.md`" + ` files (frontmatter:
+` + "`title`" + `, ` + "`priority: p1|p2|p3`" + `, ` + "`state: open`" + `). When starting cold with no
+specific user task, follow ` + "`.agents/ycode/skills/ycode-foreman/skill.md`" + `
+(invoke as ` + "`/foreman`" + `). Boss control: ` + "`ycode foreman pause/resume/stop/skip/prio/tell/status`" + `.
+Full protocol: [` + "`docs/backlog.md`" + `](docs/backlog.md).`
 
 // WriteProjectFiles regenerates <repo>/.agents/ycode/AGENTS.md (long-form
 // awareness, manifest-derived) and patches <repo>/AGENTS.md and/or
@@ -78,8 +88,81 @@ func WriteProjectFiles(repoRoot string, caps []CapabilitySpec) ([]string, []stri
 		written = append(written, agentsPath)
 	}
 
+	// 3. Install the Foreman protocol scaffolding (universal).
+	foremanWritten, foremanWarnings, err := writeForemanProtocol(repoRoot)
+	warnings = append(warnings, foremanWarnings...)
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("foreman protocol: %v", err))
+	}
+	written = append(written, foremanWritten...)
+
 	return written, warnings, nil
 }
+
+// writeForemanProtocol drops the Boss → Foreman → Worker scaffolding
+// into <repo>: the /foreman skill body, docs/backlog.md, an empty
+// docs/backlog/ with a README. All writes are idempotent. Existing
+// files are not overwritten unless content drifted from the embedded
+// canonical.
+func writeForemanProtocol(repoRoot string) ([]string, []string, error) {
+	var written []string
+	var warnings []string
+
+	skillPath := filepath.Join(repoRoot, ".agents", "ycode", "skills", "ycode-foreman", "skill.md")
+	if err := writeFileIfChanged(skillPath, foremanSkillMD); err != nil {
+		warnings = append(warnings, fmt.Sprintf("write %s: %v", skillPath, err))
+	} else {
+		written = append(written, skillPath)
+	}
+
+	protocolPath := filepath.Join(repoRoot, "docs", "backlog.md")
+	if err := writeFileIfChanged(protocolPath, backlogProtocolMD); err != nil {
+		warnings = append(warnings, fmt.Sprintf("write %s: %v", protocolPath, err))
+	} else {
+		written = append(written, protocolPath)
+	}
+
+	backlogDir := filepath.Join(repoRoot, "docs", "backlog")
+	if err := os.MkdirAll(backlogDir, 0o755); err != nil {
+		warnings = append(warnings, fmt.Sprintf("mkdir %s: %v", backlogDir, err))
+	} else {
+		readmePath := filepath.Join(backlogDir, "README.md")
+		// Only seed README if the dir is otherwise empty — don't clobber
+		// a user-authored backlog README.
+		if _, err := os.Stat(readmePath); os.IsNotExist(err) {
+			if err := writeFileIfChanged(readmePath, backlogReadme); err != nil {
+				warnings = append(warnings, fmt.Sprintf("write %s: %v", readmePath, err))
+			} else {
+				written = append(written, readmePath)
+			}
+		}
+	}
+
+	return written, warnings, nil
+}
+
+// backlogReadme is the seed README dropped into a fresh docs/backlog/.
+const backlogReadme = `# docs/backlog/
+
+Canonical task list. **One ` + "`.md`" + ` per task, slug = filename stem.**
+See [` + "`docs/backlog.md`" + `](../backlog.md) for the source-of-truth
+contract, the Boss → Foreman → Worker chain, the Boss control
+protocol, and the reconciler semantics.
+
+This ` + "`README.md`" + ` is not an issue — the reconciler skips it.
+
+## Adding a new task
+
+` + "```bash" + `
+ycode backlog new "Implement <feature>" --priority p1
+ycode backlog list                  # show all
+ycode backlog list --priority p1    # only top tier
+ycode backlog show <slug>           # render one
+` + "```" + `
+
+The reconciler (running inside ` + "`ycode serve`" + `) syncs new entries to
+Gitea on its next 60s poll; force a sync with ` + "`ycode backlog reconcile`" + `.
+`
 
 // patchExisting reads path, splices/replaces the YCODE delimited block,
 // and writes back if changed. If the file's first non-empty line is

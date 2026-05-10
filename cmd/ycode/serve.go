@@ -277,9 +277,9 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		overrideGitServerURL = fmt.Sprintf("http://127.0.0.1:%d/git/", port)
 		fmt.Printf("Git server at      %s\n", overrideGitServerURL)
 
-		// Experimental: backlog reconciler (docs/backlog/ ↔ Gitea issues).
-		// No-op unless built with -tags=experimental. Resolves the project
-		// for the cwd and seeds Gitea from the markdown source-of-truth.
+		// Backlog reconciler (docs/backlog/ ↔ Gitea issues). Resolves the
+		// project for the cwd and seeds Gitea from the markdown source-
+		// of-truth. See docs/backlog.md.
 		if cwd, err := os.Getwd(); err == nil {
 			if reg, err := projects.NewRegistry(filepath.Join(home, ".agents", "ycode", "gitea")); err == nil {
 				if proj, err := reg.Resolve(ctx, cwd); err == nil {

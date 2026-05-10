@@ -1,5 +1,3 @@
-//go:build experimental
-
 package main
 
 import (
@@ -24,7 +22,7 @@ import (
 func newAutopilotCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "autopilot",
-		Short: "Foreman/Worker autopilot subcommands (experimental)",
+		Short: "Foreman/Worker autopilot subcommands",
 	}
 	cmd.AddCommand(newAutopilotWorkerCmd())
 	return cmd

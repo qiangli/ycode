@@ -1,5 +1,3 @@
-//go:build experimental
-
 // Package backlog manages the markdown-as-source-of-truth task spec at
 // docs/backlog/. The reconciler synchronizes those files into Gitea
 // issues in admin/<slug> via the queue package.
