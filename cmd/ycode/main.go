@@ -1272,6 +1272,7 @@ func init() {
 
 	// Model management commands
 	rootCmd.AddCommand(newModelCmd())
+	rootCmd.AddCommand(newConfigCmd())
 
 	// Container management commands (podman/docker)
 	rootCmd.AddCommand(newPodmanCmd())

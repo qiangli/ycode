@@ -23,9 +23,74 @@ func newModelCmd() *cobra.Command {
 		newModelListCmd(),
 		newModelSearchCmd(),
 		newModelDeleteCmd(),
+		newModelCurrentCmd(),
+		newModelUseCmd(),
 	)
 
 	return cmd
+}
+
+// newModelCurrentCmd prints the configured default model from
+// ~/.config/ycode/settings.json. Convenience for `ycode config get model`.
+func newModelCurrentCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "current",
+		Short: "Print the configured default model (settings.json `model` field)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := userConfigPath()
+			if err != nil {
+				return err
+			}
+			m, err := loadConfig(path)
+			if err != nil {
+				return err
+			}
+			if v, ok := m["model"].(string); ok && v != "" {
+				fmt.Println(v)
+				return nil
+			}
+			fmt.Fprintln(os.Stderr, "no default model set; use `ycode model use <name>`")
+			return nil
+		},
+	}
+}
+
+// newModelUseCmd sets ~/.config/ycode/settings.json `model` to <name>.
+// Equivalent to `ycode config set model <name>`. Provider is auto-
+// detected from the model name prefix (claude-* → ANTHROPIC_API_KEY,
+// gpt-* → OPENAI_API_KEY, qwen* → DASHSCOPE_API_KEY or local Ollama,
+// kimi/moonshot* → MOONSHOT_API_KEY, ...). See internal/api/provider.go.
+func newModelUseCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "use <model>",
+		Short: "Set the default model (cloud or local) in settings.json",
+		Long: `Sets the ` + "`model`" + ` field in ~/.config/ycode/settings.json. The model
+name decides which provider/key gets used at runtime — there is no
+separate "provider" field.
+
+Examples:
+  ycode model use claude-sonnet-4-6   # ANTHROPIC_API_KEY (or ` + "`ycode login`" + `)
+  ycode model use gpt-4o-mini         # OPENAI_API_KEY
+  ycode model use qwen3.5:9b          # local Ollama (run ` + "`ycode model list`" + `)
+  ycode model use kimi-k2.5           # MOONSHOT_API_KEY / KIMI_API_KEY`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := userConfigPath()
+			if err != nil {
+				return err
+			}
+			m, err := loadConfig(path)
+			if err != nil {
+				return err
+			}
+			m["model"] = args[0]
+			if err := saveConfig(path, m); err != nil {
+				return err
+			}
+			fmt.Printf("default model set to %q in %s\n", args[0], path)
+			return nil
+		},
+	}
 }
 
 // ollamaURL returns the base URL of a reachable Ollama server, or empty string.
