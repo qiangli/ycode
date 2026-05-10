@@ -1,9 +1,17 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)"
-# sqlite + sqlite_unlock_notify: required for embedded Gitea (in-process git server).
-# bindata: embeds Gitea's locale, template, and public asset files into the binary.
-TAGS := -tags "sqlite,sqlite_unlock_notify,bindata"
+
+# Build tag layers (see docs/strategy.md#feature-tiers):
+#   sqlite + sqlite_unlock_notify  embedded Gitea / SQLite
+#   bindata                        Gitea bundled assets
+#   experimental                   features that haven't graduated yet
+#
+# `experimental` is part of the default build while ycode is
+# pre-release. For a stable-only build, override TAG_LIST:
+#   make compile TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
+TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata,experimental
+TAGS := -tags "$(TAG_LIST)"
 PACKAGES := $(shell go list ./... | grep -v '/priorart/')
 
 # Deploy / validate defaults
@@ -12,9 +20,9 @@ PORT ?= 58080
 BASE_URL ?= http://$(HOST):$(PORT)
 
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
-export VERSION COMMIT PACKAGES HOST PORT BASE_URL
+export VERSION COMMIT PACKAGES HOST PORT BASE_URL TAG_LIST
 
-.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
+.PHONY: help init sync priorart-list priorart-sync compile compile-wip compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
 
 .DEFAULT_GOAL := help
 
@@ -45,26 +53,23 @@ priorart-sync: ## Pull latest changes for all priorart repos
 
 # ─── Build ──────────────────────────────────────────────────────────────────
 
-compile: ## Compile the ycode binary to bin/ (no checks; stable features only)
+compile: ## Compile the ycode binary to bin/ (no checks; includes experimental)
 	go build -trimpath $(TAGS) $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	@echo "Built bin/ycode (tags: $(TAG_LIST))"
 
-compile-experimental: ## Compile with experimental features enabled (-tags experimental)
-	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata,experimental" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
-	@echo "Built with experimental features: bin/ycode"
-
-compile-wip: ## Compile with experimental + wip features enabled (-tags experimental,wip)
-	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata,experimental,wip" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
-	@echo "Built with experimental + wip features: bin/ycode"
+compile-wip: ## Compile with experimental + wip features enabled
+	go build -trimpath -tags "$(TAG_LIST),wip" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	@echo "Built bin/ycode (tags: $(TAG_LIST),wip)"
 
 verify-features: ## Verify the feature registry vs. the working tree (and README drift)
 	go test -count=1 ./internal/features/...
 	@./scripts/verify-readme-features.sh
 
 readme-features: ## Regenerate the README Features section from internal/features/registry.yaml
-	go run -tags "sqlite,sqlite_unlock_notify,bindata" ./cmd/ycode/ features readme --write README.md
+	go run $(TAGS) ./cmd/ycode/ features readme --write README.md
 
 compile-full: ## Compile with embedded podman + runner (single binary, all-in-one)
-	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata,embed_podman,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	go build -trimpath -tags "$(TAG_LIST),embed_podman,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
 	@echo "Built single binary with embedded podman + runner: bin/ycode"
 
@@ -76,7 +81,7 @@ build: ## Build with full quality gate: tidy → fmt → vet → compile → tes
 	@./scripts/build.sh
 
 test: ## Run unit tests with race detector (-short flag)
-	go test -short -race $(PACKAGES)
+	go test -short -race $(TAGS) $(PACKAGES)
 
 test-integration: ## Run Go integration tests (requires running server)
 	go test -tags integration -v -count=1 ./internal/integration/...
@@ -151,7 +156,7 @@ bench-memory-latency: ## Memory and storage operation latency benchmarks
 bench-memory-all: bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency ## All memory benchmarks
 
 vet: ## Run static analysis
-	go vet $(PACKAGES)
+	go vet $(TAGS) $(PACKAGES)
 
 tidy: ## Run mod tidy, fmt, and vet
 	@./scripts/tidy.sh

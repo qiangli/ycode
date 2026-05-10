@@ -6,15 +6,21 @@ modes. All three modes feed the same `browser_*` tool surface
 share a common reliability layer ported from
 [openchrome](https://github.com/shaun0927/openchrome) (MIT).
 
-The modes are gated behind the **`experimental` build tag** — see
-[`docs/strategy.md`](./strategy.md#feature-tiers). Build with:
+The modes live behind the **`experimental` build tag**, which is
+**enabled by default** in `make compile` / `make build` while ycode is
+pre-release (see [`docs/strategy.md`](./strategy.md#feature-tiers)).
 
 ```bash
-make compile-experimental
+make compile          # includes experimental
+make build            # full quality gate, same tags
 ```
 
-The stable build ships a `ycode browser` stub that explains how to
-enable.
+For a stable-only build (no experimental features), override the tag
+list:
+
+```bash
+make compile TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
+```
 
 ## The three modes
 

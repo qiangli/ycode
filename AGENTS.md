@@ -22,17 +22,25 @@ make install-hooks                     # recommended: symlinks pre-push hook so 
 
 ```bash
 make build          # full quality gate: tidy → fmt → vet → compile → test → verify
-make compile        # quick compile only (bin/ycode)
-make compile-full   # single binary with embedded podman + runner (much larger output; for offline distribution)
+make compile        # quick compile (includes experimental features by default)
+make compile-wip    # add the next-tier `wip` features
+make compile-full   # single binary with embedded podman + runner (large; for offline distribution)
 make compile-debug  # compile with debug symbols (for profiling/debugging)
 make install        # build + install to ~/bin/ycode (re-signs on macOS)
 make test           # unit tests only (-short -race)
 make cross          # cross-compile all platforms (dist/)
 ```
 
-Manual `go build` requires build tags (handled automatically by `make compile`):
+`experimental` is in the default tag list while ycode is pre-release.
+For a stable-only build (no experimental features) override the list:
+
 ```bash
-go build -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/
+make compile TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
+```
+
+Manual `go build` (handled automatically by `make compile`):
+```bash
+go build -tags "sqlite,sqlite_unlock_notify,bindata,experimental" -o bin/ycode ./cmd/ycode/
 ```
 
 Single test and integration test (use the first for fast unit iteration; the second when the test needs container/network setup):
