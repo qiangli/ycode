@@ -48,3 +48,7 @@ evals/results/
 .agents/ycode/sessions/
 .agents/ycode/cache/
 .agents/ycode/logs/
+.agents/ycode/foreman/
+
+# Backlog kill-switch sentinel (runtime; backlog/*.md ARE tracked)
+docs/backlog/PAUSE

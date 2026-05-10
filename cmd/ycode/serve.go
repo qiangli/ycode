@@ -17,6 +17,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/gitserver"
+	"github.com/qiangli/ycode/internal/gitserver/projects"
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/observability/dashboards"
@@ -275,6 +276,27 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		tools.SetGitServer(giteaClient)
 		overrideGitServerURL = fmt.Sprintf("http://127.0.0.1:%d/git/", port)
 		fmt.Printf("Git server at      %s\n", overrideGitServerURL)
+
+		// Experimental: backlog reconciler (docs/backlog/ ↔ Gitea issues).
+		// No-op unless built with -tags=experimental. Resolves the project
+		// for the cwd and seeds Gitea from the markdown source-of-truth.
+		if cwd, err := os.Getwd(); err == nil {
+			if reg, err := projects.NewRegistry(filepath.Join(home, ".agents", "ycode", "gitea")); err == nil {
+				if proj, err := reg.Resolve(ctx, cwd); err == nil {
+					if _, err := projects.EnsureRepo(ctx, giteaClient, proj); err == nil {
+						if err := startBacklogReconciler(ctx, slog.Default(), cwd, giteaClient, proj); err != nil {
+							slog.Warn("backlog: reconciler not started", "error", err)
+						}
+					} else {
+						slog.Warn("backlog: ensure repo", "error", err)
+					}
+				} else {
+					slog.Warn("backlog: project resolve", "error", err)
+				}
+			} else {
+				slog.Warn("backlog: project registry", "error", err)
+			}
+		}
 
 		// Discovery files for the `ycode tasks` / `ycode collab` CLIs to
 		// find the live Gitea without parsing settings.json.

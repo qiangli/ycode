@@ -1307,6 +1307,9 @@ func init() {
 	// Multi-agent collaboration task queue. See docs/agent-collab.md.
 	rootCmd.AddCommand(newTasksCmd())
 
+	// Experimental commands (backlog, foreman). Build with -tags=experimental.
+	addExperimentalCmds(rootCmd)
+
 	// Multi-agent collaboration orchestrator. See docs/agent-collab.md.
 	rootCmd.AddCommand(newCollabCmd())
 

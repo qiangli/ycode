@@ -110,6 +110,14 @@ Five layers — working (context window) → episodic (JSONL sessions) → compa
 
 When the user's message starts with `/<name>`, read `skills/<name>/skill.md` and follow it. Everything after `/<name> ` is `ARGS`. See `skills/` for the project-skill catalog; `/init` and `/commit` are embedded in the binary.
 
+## Self-Bootstrap (Foreman role)
+
+**You are the Foreman.** Any agent reading this file with source-tree access is acting as the Foreman for this session. The Foreman holds full privileges (source tree, `docs/backlog/`, `ycode backlog`/`ycode foreman` CLIs, full Gitea admin token, all MCP tools). **Workers** are sandboxed subprocesses spawned via `/foreman` — they receive only one Gitea issue and one Loom workspace and do not read this file. The **Boss** (human user) talks to the Foreman either in chat or via `ycode foreman <verb>`. See `docs/backlog.md` for the full chain-of-command and privilege boundaries.
+
+**Planning behavior.** When helping the user plan or brainstorm, write `docs/backlog/<slug>.md` files (one per task) with frontmatter `priority: p1|p2|p3`, `state: open`, `title`, optional `acceptance: [...]`. The reconciler (running inside `ycode serve`) syncs them to Gitea automatically every 60s. **`docs/backlog/` is the source of truth — Gitea is a derived coordination cache that can be wiped and rebuilt from the markdown.**
+
+**Working behavior.** If you start a session with no specific user task, run `/foreman` (or for non-ycode agents that don't have the skill loaded: `ycode backlog list --priority p1` then dispatch a Worker via `ycode autopilot worker --issue N --loom-id ID` after `mcp__ycode-loom__loom_lease`). The reconciler / queue / orchestrator primitives live in `internal/gitserver/{backlog,queue,collab}/`; the loop body is `.agents/ycode/skills/ycode-foreman/skill.md`. Foreign agents discover this protocol via the `## Foreign agents (lighthouse pattern)` section below.
+
 ## Development Cycle: Build → Deploy → Validate
 
 ```bash
