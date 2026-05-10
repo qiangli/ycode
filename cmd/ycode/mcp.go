@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/runtime/mcp"
+	"github.com/qiangli/ycode/internal/runtime/skills"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
 	"github.com/qiangli/ycode/internal/shell"
 	_ "github.com/qiangli/ycode/internal/shell/agentmode"
@@ -78,6 +79,7 @@ func newMcpServeCmd() *cobra.Command {
 			composite := mcp.NewCompositeHandler(
 				treesitter.NewMCPHandler(),
 				shell.NewMCPHandler(shellRT),
+				skills.NewMCPHandler(),
 			)
 
 			// Permission ceiling. Default is DangerFullAccess so the
