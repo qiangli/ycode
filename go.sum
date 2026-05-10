@@ -538,8 +538,8 @@ github.com/dgryski/go-groupvarint v0.0.0-20230630160417-2bfb7969fb3c h1:cHaw4wmu
 github.com/dgryski/go-groupvarint v0.0.0-20230630160417-2bfb7969fb3c/go.mod h1:MlkUQveSLEDbIgq2r1e++tSf0zfzU9mQpa9Qkczl+9Y=
 github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f h1:lO4WD4F/rVNCu3HqELle0jiPLLBs70cWOduZpkS1E78=
 github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f/go.mod h1:cuUVRXasLTGF7a8hSLbxyZXjz+1KgoB3wDUb6vlszIc=
-github.com/dhnt/dhnt v0.2.0-alpha.2 h1:gptpsdCdEW5uL+A2PSzv5oY3z8E5eoN9AY9EIljOkKc=
-github.com/dhnt/dhnt v0.2.0-alpha.2/go.mod h1:FzOUnU5er6BfqrNWqLXJvdt8NtOqdDfJL94yJ2Xodcw=
+github.com/dhnt/dhnt v0.2.0-alpha.3 h1:mVe14Puzxk8tLqPurqHWmMZH4zwTM0M/xmSSOr6FMoE=
+github.com/dhnt/dhnt v0.2.0-alpha.3/go.mod h1:FzOUnU5er6BfqrNWqLXJvdt8NtOqdDfJL94yJ2Xodcw=
 github.com/digitalocean/go-libvirt v0.0.0-20220804181439-8648fbde413e h1:SCnqm8SjSa0QqRxXbo5YY//S+OryeJioe17nK+iDZpg=
 github.com/digitalocean/go-libvirt v0.0.0-20220804181439-8648fbde413e/go.mod h1:o129ljs6alsIQTc8d6eweihqpmmrbxZ2g1jhgjhPykI=
 github.com/digitalocean/go-qemu v0.0.0-20250212194115-ee9b0668d242 h1:rh6rt8pF5U4iyQ86h6lRDenJoX4ht2wFnZXB9ogIrIM=
