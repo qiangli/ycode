@@ -81,6 +81,9 @@ type Config struct {
 	// Multi-agent collaboration task queue settings (see docs/agent-collab.md).
 	Tasks *TasksConfig `json:"tasks,omitempty"`
 
+	// Browser automation backend selection (see internal/runtime/mcpservers).
+	Browser *BrowserConfig `json:"browser,omitempty"`
+
 	// Toolsets maps user-defined toolset names to tool names.
 	Toolsets map[string][]string `json:"toolsets,omitempty"`
 
@@ -185,6 +188,34 @@ type GitServerConfig struct {
 	AppName  string `json:"appName,omitempty"`  // display name (default: "ycode Git")
 	HTTPOnly bool   `json:"httpOnly,omitempty"` // disable SSH access (default true)
 	Token    string `json:"token,omitempty"`    // admin API token (auto-generated if empty)
+}
+
+// BrowserConfig selects which ycode-native browser mode handles the
+// browser_* tools and tunes per-mode behavior. See
+// internal/runtime/mcpservers for the live / probe / solo
+// implementations.
+type BrowserConfig struct {
+	Mode string `json:"mode,omitempty"` // "live" | "probe" | "solo"
+
+	// live (Chrome extension over WebSocket)
+	LivePort int `json:"livePort,omitempty"` // default 58082
+
+	// probe (CDP attach)
+	ProbeURL string `json:"probeURL,omitempty"` // default http://localhost:9222
+
+	// solo (chromedp launches fresh Chrome)
+	SoloChromePath  string `json:"soloChromePath,omitempty"`  // empty → auto-detect / podman fallback
+	SoloHeaded      bool   `json:"soloHeaded,omitempty"`      // default headless
+	SoloUserDataDir string `json:"soloUserDataDir,omitempty"` // empty → ephemeral
+
+	// Reliability layer toggles (openchrome-inspired). nil = default
+	// on; explicit false disables. See
+	// internal/runtime/mcpservers/reliability.
+	HintEngine     *bool `json:"hintEngine,omitempty"`
+	RalphFallback  *bool `json:"ralphFallback,omitempty"`
+	CircuitBreaker *bool `json:"circuitBreaker,omitempty"`
+	CompactDOM     *bool `json:"compactDOM,omitempty"`
+	PatternLearner *bool `json:"patternLearner,omitempty"`
 }
 
 // TasksConfig controls the multi-agent collaboration task queue.

@@ -355,13 +355,11 @@ func TestWebSearch_E2E_StructuredOutput(t *testing.T) {
 	}
 }
 
-// TestBrowserTools_E2E_Unavailable tests that browser tools return graceful
-// message when container engine is not available.
+// TestBrowserTools_E2E_Unavailable tests that browser tools return a
+// graceful message when no backend is wired (stable build, or
+// experimental build with browser.mode unset).
 func TestBrowserTools_E2E_Unavailable(t *testing.T) {
-	// Ensure no browser service is set.
-	original := browserService
-	browserService = nil
-	defer func() { browserService = original }()
+	SetBrowserDispatchHook(nil)
 
 	input, _ := json.Marshal(map[string]any{
 		"url": "https://example.com",

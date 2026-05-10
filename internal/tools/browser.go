@@ -4,27 +4,60 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
-	"github.com/qiangli/ycode/internal/container"
-	"github.com/qiangli/ycode/internal/runtime/browseruse"
 )
 
-// browserService is the shared browser container service.
-var browserService *browseruse.Service
-
-// SetBrowserService sets the browser-use service for browser tools.
-func SetBrowserService(svc *browseruse.Service) {
-	browserService = svc
+// BrowserAction is the wire-level browser action shared between the
+// tool shim and whichever mcpservers backend is installed. Defined
+// here (rather than imported from internal/runtime/mcpservers) so the
+// stable build, which excludes the experimental browser package,
+// still compiles. The experimental wiring
+// (internal/tools/browser_experimental.go) copies fields one-for-one
+// into mcpservers.BrowserAction.
+type BrowserAction struct {
+	Type      string   `json:"action"`
+	URL       string   `json:"url,omitempty"`
+	ElementID int      `json:"element_id,omitempty"`
+	Selector  string   `json:"selector,omitempty"`
+	Text      string   `json:"text,omitempty"`
+	Direction string   `json:"direction,omitempty"`
+	Amount    int      `json:"amount,omitempty"`
+	Goal      string   `json:"goal,omitempty"`
+	TabID     int      `json:"tab_id,omitempty"`
+	TabAction string   `json:"tab_action,omitempty"`
+	Script    string   `json:"script,omitempty"`
+	URLs      []string `json:"urls,omitempty"`
 }
 
-// InitBrowserService creates and starts a browser-use service using the container engine.
-func InitBrowserService(engine *container.Engine, sessionID string, network string, allowedDomains []string) *browseruse.Service {
-	svc := browseruse.NewService(engine, sessionID, network, allowedDomains)
-	browserService = svc
-	return svc
+// BrowserResult mirrors mcpservers.BrowserResult. See note on
+// BrowserAction.
+type BrowserResult struct {
+	Success      bool     `json:"success"`
+	Title        string   `json:"title,omitempty"`
+	URL          string   `json:"url,omitempty"`
+	Content      string   `json:"content,omitempty"`
+	Elements     string   `json:"elements,omitempty"`
+	Data         string   `json:"data,omitempty"`
+	Image        string   `json:"image,omitempty"`
+	Error        string   `json:"error,omitempty"`
+	Hints        []string `json:"hints,omitempty"`
+	OutcomeClass string   `json:"outcome_class,omitempty"`
 }
 
-// RegisterBrowserHandlers registers the browser automation tools.
+// browserDispatchHook is installed by the experimental wiring
+// (SetBrowserManager in internal/tools/browser_experimental.go). When
+// nil, browser_* tools report "no browser backend configured."
+var browserDispatchHook func(ctx context.Context, action BrowserAction) (*BrowserResult, error)
+
+// SetBrowserDispatchHook installs a backend for the lifetime of the
+// session. Pass nil to clear.
+func SetBrowserDispatchHook(fn func(ctx context.Context, action BrowserAction) (*BrowserResult, error)) {
+	browserDispatchHook = fn
+}
+
+// RegisterBrowserHandlers registers the browser automation tools. The
+// 8 browser_* tools share one dispatch path; mode-specific actions
+// (perf_start, network_list, …) are dispatched by name inside the
+// experimental backend.
 func RegisterBrowserHandlers(r *Registry) {
 	registerBrowserNavigate(r)
 	registerBrowserClick(r)
@@ -39,12 +72,10 @@ func RegisterBrowserHandlers(r *Registry) {
 func registerBrowserNavigate(r *Registry) {
 	r.Register(&ToolSpec{
 		Name:        "browser_navigate",
-		Description: "Navigate to a URL in the browser. Returns page content and interactive elements list. Requires container engine.",
+		Description: "Navigate to a URL in the browser. Returns page content + interactive elements. Requires a configured browser backend (see settings.json `browser.mode`).",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
-			"properties": {
-				"url": {"type": "string", "description": "URL to navigate to"}
-			},
+			"properties": {"url": {"type": "string"}},
 			"required": ["url"]
 		}`),
 		AlwaysAvailable: false,
@@ -57,12 +88,12 @@ func registerBrowserNavigate(r *Registry) {
 func registerBrowserClick(r *Registry) {
 	r.Register(&ToolSpec{
 		Name:        "browser_click",
-		Description: "Click an element in the browser by element index (from elements list) or CSS selector.",
+		Description: "Click an element by index (from elements list) or CSS selector.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"element_id": {"type": "integer", "description": "Element index from the elements list (e.g., 1, 2, 3)"},
-				"selector": {"type": "string", "description": "CSS selector (alternative to element_id)"}
+				"element_id": {"type": "integer"},
+				"selector": {"type": "string"}
 			}
 		}`),
 		AlwaysAvailable: false,
@@ -75,13 +106,13 @@ func registerBrowserClick(r *Registry) {
 func registerBrowserType(r *Registry) {
 	r.Register(&ToolSpec{
 		Name:        "browser_type",
-		Description: "Type text into an input element in the browser.",
+		Description: "Type text into an input element.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"element_id": {"type": "integer", "description": "Input element index from elements list"},
-				"selector": {"type": "string", "description": "CSS selector (alternative to element_id)"},
-				"text": {"type": "string", "description": "Text to type"}
+				"element_id": {"type": "integer"},
+				"selector": {"type": "string"},
+				"text": {"type": "string"}
 			},
 			"required": ["text"]
 		}`),
@@ -95,12 +126,12 @@ func registerBrowserType(r *Registry) {
 func registerBrowserScroll(r *Registry) {
 	r.Register(&ToolSpec{
 		Name:        "browser_scroll",
-		Description: "Scroll the browser page up or down.",
+		Description: "Scroll the page up or down.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"direction": {"type": "string", "enum": ["up", "down"], "description": "Scroll direction (default: down)"},
-				"amount": {"type": "integer", "description": "Scroll amount in pixels (default: 500)"}
+				"direction": {"type": "string", "enum": ["up", "down"]},
+				"amount": {"type": "integer"}
 			}
 		}`),
 		AlwaysAvailable: false,
@@ -112,12 +143,9 @@ func registerBrowserScroll(r *Registry) {
 
 func registerBrowserScreenshot(r *Registry) {
 	r.Register(&ToolSpec{
-		Name:        "browser_screenshot",
-		Description: "Take a screenshot of the current browser page. Returns base64-encoded PNG.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {}
-		}`),
+		Name:            "browser_screenshot",
+		Description:     "Take a screenshot of the current page. Returns base64 PNG.",
+		InputSchema:     json.RawMessage(`{"type": "object", "properties": {}}`),
 		AlwaysAvailable: false,
 		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
 			return executeBrowserAction(ctx, input, "screenshot")
@@ -128,12 +156,10 @@ func registerBrowserScreenshot(r *Registry) {
 func registerBrowserExtract(r *Registry) {
 	r.Register(&ToolSpec{
 		Name:        "browser_extract",
-		Description: "Extract content from the current page. Optionally specify a goal to focus extraction.",
+		Description: "Extract content from the current page (a11y-style snapshot). Optional `goal` focuses extraction.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
-			"properties": {
-				"goal": {"type": "string", "description": "What to extract from the page (natural language description)"}
-			}
+			"properties": {"goal": {"type": "string"}}
 		}`),
 		AlwaysAvailable: false,
 		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
@@ -144,12 +170,9 @@ func registerBrowserExtract(r *Registry) {
 
 func registerBrowserBack(r *Registry) {
 	r.Register(&ToolSpec{
-		Name:        "browser_back",
-		Description: "Navigate back to the previous page in browser history.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {}
-		}`),
+		Name:            "browser_back",
+		Description:     "Navigate back in browser history.",
+		InputSchema:     json.RawMessage(`{"type": "object", "properties": {}}`),
 		AlwaysAvailable: false,
 		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
 			return executeBrowserAction(ctx, input, "back")
@@ -160,12 +183,12 @@ func registerBrowserBack(r *Registry) {
 func registerBrowserTabs(r *Registry) {
 	r.Register(&ToolSpec{
 		Name:        "browser_tabs",
-		Description: "Manage browser tabs: list, switch, open new, or close current tab.",
+		Description: "Manage browser tabs: list, switch, new, close.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"tab_action": {"type": "string", "enum": ["list", "switch", "new", "close"], "description": "Tab action to perform"},
-				"tab_id": {"type": "integer", "description": "Tab index to switch to (for switch action)"}
+				"tab_action": {"type": "string", "enum": ["list", "switch", "new", "close"]},
+				"tab_id": {"type": "integer"}
 			},
 			"required": ["tab_action"]
 		}`),
@@ -176,32 +199,26 @@ func registerBrowserTabs(r *Registry) {
 	})
 }
 
-// executeBrowserAction is the shared handler for all browser tools.
-// The browser container is started lazily on first use (the image is large).
+// executeBrowserAction is the shared handler for all browser_* tools.
+// Dispatches to the experimental backend (if installed); otherwise
+// returns a clear "no backend" message.
 func executeBrowserAction(ctx context.Context, input json.RawMessage, actionType string) (string, error) {
-	if browserService == nil {
-		return "Browser tools are not available (container engine not initialized). " +
-			"Use WebFetch for basic URL fetching instead.", nil
-	}
-
-	// Lazy start: build image and start container on first browser tool call.
-	if !browserService.Available() {
-		if err := browserService.Start(ctx); err != nil {
-			return "", fmt.Errorf("browser: failed to start container: %w", err)
-		}
-	}
-
-	var action browseruse.Action
+	var action BrowserAction
 	if err := json.Unmarshal(input, &action); err != nil {
 		return "", fmt.Errorf("parse browser input: %w", err)
 	}
 	action.Type = actionType
 
-	result, err := browserService.Execute(ctx, action)
+	if browserDispatchHook == nil {
+		return "Browser tools are not available. " +
+			"Set `browser.mode` to live, probe, or solo in settings.json " +
+			"(experimental build only). Use WebFetch for basic URL fetching.", nil
+	}
+
+	result, err := browserDispatchHook(ctx, action)
 	if err != nil {
 		return "", fmt.Errorf("browser %s: %w", actionType, err)
 	}
-
 	out, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal result: %w", err)

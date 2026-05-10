@@ -23,7 +23,6 @@ import (
 	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/runtime/bash"
-	"github.com/qiangli/ycode/internal/runtime/browseruse"
 	"github.com/qiangli/ycode/internal/runtime/computer"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
@@ -324,9 +323,10 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 					}
 				}
 
-				// Start containerized browser-use for browser automation.
-				browserSvc := browseruse.NewService(engine, instanceID, cfg.Container.Network, nil)
-				tools.SetBrowserService(browserSvc)
+				// Optional: experimental ycode-native browser modes
+				// (live / probe / solo). Installs a dispatch hook on
+				// the browser_* tools when cfg.Browser.Mode is set.
+				setupBrowserBackend(rootCtx, cfg)
 
 				slog.Info("container sandbox active", "container", sandbox.Name, "image", image)
 				// Clean up sandbox on shutdown.
@@ -1315,6 +1315,11 @@ func init() {
 
 	// Multi-agent collaboration orchestrator. See docs/agent-collab.md.
 	rootCmd.AddCommand(newCollabCmd())
+
+	// MCP browser backends (playwright / devtools / browsermcp).
+	// Stable build adds a stub explaining how to enable; experimental
+	// build registers the real subcommands. See internal/runtime/mcpservers.
+	rootCmd.AddCommand(newBrowserCmd())
 
 	// Interactive agentic shell (ycode shell)
 	rootCmd.AddCommand(newShellCmd())
