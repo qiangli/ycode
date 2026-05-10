@@ -139,6 +139,88 @@ func ListSkills() []string {
 	return skills
 }
 
+// LocalSkillMeta describes one skill discoverable on disk through the
+// local-overlay search path. Used by `bin/ycode skill list` to give
+// humans a rich view of what's available alongside the embedded
+// catalog.
+type LocalSkillMeta struct {
+	Name        string // directory name; equals frontmatter `name:` by convention
+	Description string // from YAML frontmatter; empty if absent or malformed
+	Path        string // absolute path to skill.md / SKILL.md
+}
+
+// ListLocalSkillMeta enumerates every local-overlay skill with its
+// parsed frontmatter description. First-write-wins on duplicate names —
+// closer search dirs (project, then home, then env) shadow farther ones.
+func ListLocalSkillMeta() []LocalSkillMeta {
+	dirs := skillSearchDirs()
+	seen := make(map[string]struct{})
+	var out []LocalSkillMeta
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			for _, fname := range []string{"SKILL.md", "skill.md"} {
+				path := filepath.Join(dir, name, fname)
+				if _, err := os.Stat(path); err != nil {
+					continue
+				}
+				seen[name] = struct{}{}
+				out = append(out, LocalSkillMeta{
+					Name:        name,
+					Description: readFrontmatterDescription(path),
+					Path:        path,
+				})
+				break
+			}
+		}
+	}
+	return out
+}
+
+// readFrontmatterDescription extracts the `description:` field from a
+// skill.md's YAML frontmatter without pulling in a YAML dependency.
+// Frontmatter is delimited by `---\n` lines; the parser is tolerant of
+// missing/malformed frontmatter and returns "" rather than failing.
+func readFrontmatterDescription(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	text := string(data)
+	const marker = "---\n"
+	if !strings.HasPrefix(text, marker) {
+		return ""
+	}
+	rest := text[len(marker):]
+	end := strings.Index(rest, "\n"+marker)
+	if end < 0 {
+		end = strings.Index(rest, "\n---\n")
+	}
+	if end < 0 {
+		return ""
+	}
+	for _, line := range strings.Split(rest[:end], "\n") {
+		s := strings.TrimSpace(line)
+		if !strings.HasPrefix(s, "description:") {
+			continue
+		}
+		v := strings.TrimSpace(strings.TrimPrefix(s, "description:"))
+		v = strings.TrimSpace(strings.Trim(v, "\"'"))
+		return v
+	}
+	return ""
+}
+
 // listLocalSkills walks the local overlay directories and returns every
 // skill discoverable on disk.
 func listLocalSkills() []string {
