@@ -185,8 +185,8 @@ features:
 
   - name: skills-system
     tier: stable
-    description: "hierarchical /-prefixed skills (audit, autopilot, build, deploy, eval, …) plus embedded /init, /commit, /review, /pr"
-    files: [skills, internal/tools/skill.go]
+    description: "lifecycle-organised skill catalog: external (github.com/dhnt/dhnt/catalog) + internal (.agents/ycode/skills/) lanes; loader honours frontmatter executor (markdown / builtin / cnl)"
+    files: [.agents/ycode/skills, internal/tools/skill.go]
     graduation:
       integration_test: true
       dogfood_weeks: 4

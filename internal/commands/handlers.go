@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/dhnt/dhnt/catalog"
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/builtin"
 	"github.com/qiangli/ycode/internal/runtime/codegraph"
@@ -14,6 +15,20 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/selfinit"
 )
+
+// commitSkillBody returns the markdown body of the upstream commit skill
+// (github.com/dhnt/dhnt/catalog → commit/commit/skill.md). The catalog
+// entry is embedded into the binary at build time, so this never touches
+// the filesystem.
+func commitSkillBody() string {
+	if s, ok := catalog.Lookup("commit"); ok {
+		return s.Body
+	}
+	// Defensive fallback — should never hit if the catalog dependency is
+	// at the expected version. Keep the user moving rather than failing
+	// loudly.
+	return "Stage changes by name and write a Conventional Commits message."
+}
 
 // PlanModeController manages plan mode state.
 type PlanModeController interface {
@@ -422,13 +437,16 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		return strings.Join(outputParts, "\n"), nil
 	})
 
-	// /commit: builtin executor returns the embedded commit skill instructions.
-	// Works in any repository — no project-specific skill file needed.
+	// /commit: builtin executor returns the catalog-hosted commit skill
+	// instructions. The skill body lives upstream at
+	// github.com/dhnt/dhnt/catalog/md/commit/commit/skill.md (executor: builtin)
+	// so any agent harness sees the same instruction set.
 	builtin.RegisterSkillExecutor("commit", func(ctx context.Context, args string) (string, error) {
+		body := commitSkillBody()
 		if args != "" {
-			return strings.ReplaceAll(commitSkillContent, "{{ARGS}}", args), nil
+			return strings.ReplaceAll(body, "{{ARGS}}", args), nil
 		}
-		return strings.ReplaceAll(commitSkillContent, "{{ARGS}}", "(none)"), nil
+		return strings.ReplaceAll(body, "{{ARGS}}", "(none)"), nil
 	})
 
 	// Discovery commands

@@ -1,19 +1,12 @@
 package commands
 
 import (
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
-
-//go:embed init_skill.md
-var initSkillContent string
-
-//go:embed commit_skill.md
-var commitSkillContent string
 
 const gitignoreComment = "# ycode local artifacts"
 

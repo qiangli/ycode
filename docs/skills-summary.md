@@ -2,6 +2,13 @@
 
 > Skills/commands analysis of 9 prior-art projects compared to ycode's current implementation.
 > Generated 2026-04-11.
+>
+> **Status (2026-05-09):** the catalog hypothesis from this survey has
+> shipped as [github.com/dhnt/dhnt/catalog](https://github.com/dhnt/dhnt)
+> v0.2.0-alpha.1, with the daily-use tier (~12 skills covering
+> build / test / review / commit / document) live and consumed by ycode.
+> See [`skills.md`](./skills.md) for the current architecture; this doc
+> remains as the historical priorart record that informed seeding.
 
 ---
 
