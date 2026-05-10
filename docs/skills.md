@@ -116,8 +116,23 @@ Available skills (24):
   …
 ```
 
+## Telemetry
+
+Every skill invocation is logged to
+`~/.agents/ycode/skill-usage.jsonl` — one JSON line per dispatch
+with timestamp, name, source (internal / external /
+external_builtin / external_cnl / builtin / not_found), args
+length, success, error class (when failed), and latency. Used for
+the dogfood-week analysis described in
+[`skills-dogfood.md`](./skills-dogfood.md). Failure-quiet: if the
+log can't be written, dispatch still works. Append-only, no
+rotation, no args content recorded (just length).
+
 ## See also
 
+- [`skills-dogfood.md`](./skills-dogfood.md) — the structured
+  one-week run for validating the catalog against real ycode work
+  and shipping round-1 fixes upstream.
 - [`skill-cnl.md`](./skill-cnl.md) — the typed-AST programmatic-skill
   layer (separate concern; consumed via `executor: cnl` in catalog
   frontmatter once dispatch lands).

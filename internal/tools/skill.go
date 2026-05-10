@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dhnt/dhnt/catalog"
 	"github.com/qiangli/ycode/internal/runtime/builtin"
@@ -44,10 +45,20 @@ func RegisterSkillHandler(r *Registry) {
 //     "cnl"       → currently unsupported (typed-AST runtime not yet wired).
 //  3. Builtin executors registered without a catalog entry are still callable
 //     for backwards compatibility.
-func resolveSkill(ctx context.Context, name, args string) (string, error) {
+//
+// Every dispatch — whether successful or not — appends one event to the
+// skill-usage telemetry log. See usage.go.
+func resolveSkill(ctx context.Context, name, args string) (content string, err error) {
+	start := time.Now()
+	var source string
+	defer func() {
+		recordSkillUsage(name, len(args), source, err, time.Since(start))
+	}()
+
 	// 1. Local overlay first — local definitions win.
-	if content, err := discoverSkill(name); err == nil {
-		return content, nil
+	if c, e := discoverSkill(name); e == nil {
+		source = usageSourceInternal
+		return c, nil
 	}
 
 	// 2. Upstream catalog.
@@ -55,23 +66,29 @@ func resolveSkill(ctx context.Context, name, args string) (string, error) {
 		switch s.Executor {
 		case "builtin":
 			if exec, ok := builtin.GetSkillExecutor(s.Name); ok {
+				source = usageSourceExternalBuiltin
 				return exec(ctx, args)
 			}
 			// No matching builtin executor — degrade to the body so the
 			// LLM still gets the instruction.
+			source = usageSourceExternal
 			return s.Body, nil
 		case "cnl":
+			source = usageSourceExternalCNL
 			return "", fmt.Errorf("skill %q uses executor=cnl which is not yet supported", name)
 		default: // "markdown" or unset
+			source = usageSourceExternal
 			return s.Body, nil
 		}
 	}
 
 	// 3. Builtin executor without a catalog entry (legacy fallback).
 	if exec, ok := builtin.GetSkillExecutor(name); ok {
+		source = usageSourceBuiltin
 		return exec(ctx, args)
 	}
 
+	source = usageSourceNotFound
 	return "", fmt.Errorf("skill %q not found", name)
 }
 
