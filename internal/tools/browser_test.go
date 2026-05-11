@@ -54,6 +54,42 @@ func TestBrowserClientDispatch(t *testing.T) {
 	}
 }
 
+// TestBrowserEvalDispatch verifies that browser_eval routes the
+// script through Client.Execute as wire.ActionEvaluate with the
+// script preserved verbatim. The backend support for evaluate already
+// exists in probe + solo (mcpservers/{probe,solo}/service.go).
+func TestBrowserEvalDispatch(t *testing.T) {
+	var seen wire.Action
+	client := &fakeClient{
+		exec: func(_ context.Context, a wire.Action) (*wire.Result, error) {
+			seen = a
+			return &wire.Result{Success: true, Data: `"page-title"`}, nil
+		},
+	}
+	ctx := browser.WithClient(context.Background(), client)
+
+	reg := NewRegistry()
+	registerBrowserEval(reg)
+	spec, ok := reg.Get("browser_eval")
+	if !ok {
+		t.Fatalf("browser_eval not registered")
+	}
+
+	out, err := spec.Handler(ctx, json.RawMessage(`{"script":"document.title"}`))
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if seen.Type != wire.ActionEvaluate {
+		t.Fatalf("action.Type = %q, want %q", seen.Type, wire.ActionEvaluate)
+	}
+	if seen.Script != "document.title" {
+		t.Fatalf("action.Script = %q, want %q", seen.Script, "document.title")
+	}
+	if !strings.Contains(out, "page-title") {
+		t.Fatalf("expected result body in output; got %q", out)
+	}
+}
+
 // TestBrowserNoBackend verifies the friendly error message when no
 // client is installed (stable build, or experimental build without a
 // configured browser.mode).

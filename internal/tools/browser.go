@@ -9,8 +9,8 @@ import (
 	"github.com/qiangli/ycode/pkg/browser/wire"
 )
 
-// RegisterBrowserHandlers registers the browser automation tools. The
-// 8 browser_* tools share one dispatch path; mode-specific actions
+// RegisterBrowserHandlers registers the browser automation tools.
+// All browser_* tools share one dispatch path; mode-specific actions
 // (perf_start, network_list, …) are dispatched by name inside the
 // experimental backend.
 func RegisterBrowserHandlers(r *Registry) {
@@ -22,6 +22,7 @@ func RegisterBrowserHandlers(r *Registry) {
 	registerBrowserExtract(r)
 	registerBrowserBack(r)
 	registerBrowserTabs(r)
+	registerBrowserEval(r)
 }
 
 func registerBrowserNavigate(r *Registry) {
@@ -150,6 +151,22 @@ func registerBrowserTabs(r *Registry) {
 		AlwaysAvailable: false,
 		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
 			return executeBrowserAction(ctx, input, wire.ActionTabs)
+		},
+	})
+}
+
+func registerBrowserEval(r *Registry) {
+	r.Register(&ToolSpec{
+		Name:        "browser_eval",
+		Description: "Evaluate JavaScript in the current page context and return the result as JSON. Supported by probe and solo modes; live mode returns an unsupported error.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {"script": {"type": "string"}},
+			"required": ["script"]
+		}`),
+		AlwaysAvailable: false,
+		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
+			return executeBrowserAction(ctx, input, wire.ActionEvaluate)
 		},
 	})
 }
