@@ -84,6 +84,11 @@ type Config struct {
 	// Browser automation backend selection (see internal/runtime/mcpservers).
 	Browser *BrowserConfig `json:"browser,omitempty"`
 
+	// Project identity for OTEL attribution. Empty fields fall back
+	// to auto-detection (git remote, cwd basename). See
+	// internal/runtime/origin.
+	Project *ProjectConfig `json:"project,omitempty"`
+
 	// Toolsets maps user-defined toolset names to tool names.
 	Toolsets map[string][]string `json:"toolsets,omitempty"`
 
@@ -188,6 +193,16 @@ type GitServerConfig struct {
 	AppName  string `json:"appName,omitempty"`  // display name (default: "ycode Git")
 	HTTPOnly bool   `json:"httpOnly,omitempty"` // disable SSH access (default true)
 	Token    string `json:"token,omitempty"`    // admin API token (auto-generated if empty)
+}
+
+// ProjectConfig declares stable identity for the current ycode
+// workspace. Both fields default to the auto-resolved values when
+// empty (see internal/runtime/origin). Useful for CI / multi-repo
+// setups where the auto-detected value isn't what you want in
+// dashboards.
+type ProjectConfig struct {
+	ID   string `json:"id,omitempty"`   // stable identifier, e.g. github.com/foo/bar
+	Name string `json:"name,omitempty"` // human-readable name shown in dashboards
 }
 
 // BrowserConfig selects which ycode-native browser mode handles the
@@ -540,6 +555,17 @@ func mergeFromFile(cfg *Config, path string) error {
 		}
 		if tk.PollSeconds != 0 {
 			cfg.Tasks.PollSeconds = tk.PollSeconds
+		}
+	}
+	if overlay.Project != nil {
+		if cfg.Project == nil {
+			cfg.Project = &ProjectConfig{}
+		}
+		if overlay.Project.ID != "" {
+			cfg.Project.ID = overlay.Project.ID
+		}
+		if overlay.Project.Name != "" {
+			cfg.Project.Name = overlay.Project.Name
 		}
 	}
 	if overlay.Browser != nil {
