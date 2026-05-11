@@ -386,10 +386,7 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 
 			// 3. Start chat hub. Defaults to enabled when config is absent.
 			chatCfg := fullCfg.Chat
-			if chatCfg == nil {
-				chatCfg = &config.ChatConfig{Enabled: true}
-			}
-			if chatCfg.Enabled && api.natsSrv != nil {
+			if chatCfg.IsEnabled() && api.natsSrv != nil {
 				chatHub := buildChatHub(api.natsSrv.Conn(), chatCfg, filepath.Join(home, ".agents", "ycode", "chat"), api.svc)
 				if err := mgr.AddLateComponent(ctx, chatHub); err != nil {
 					slog.Warn("chat hub not available", "error", err)
@@ -607,7 +604,7 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 
 	// Ollama — local inference engine (optional managed runner).
 	var ollamaComp *inference.OllamaComponent
-	if inferCfg != nil && inferCfg.Enabled {
+	if inferCfg.IsEnabled() {
 		ollamaComp = inference.NewOllamaComponent(inferCfg, filepath.Join(dataDir, "inference"))
 		mgr.AddComponent(ollamaComp)
 	} else {
@@ -617,10 +614,10 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 
 	// Container isolation — Podman-based agent sandboxing (optional).
 	var containerComp *container.ContainerComponent
-	if containerCfg != nil && containerCfg.Enabled {
+	if containerCfg.IsEnabled() {
 		containerComp = container.NewContainerComponent(
 			&container.ComponentConfig{
-				Enabled:      containerCfg.Enabled,
+				Enabled:      true,
 				SocketPath:   containerCfg.SocketPath,
 				Image:        containerCfg.Image,
 				Network:      containerCfg.Network,
@@ -642,9 +639,9 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 
 	// Git server — embedded Gitea for agent coordination (optional).
 	var gitComp *gitserver.GitServerComponent
-	if gitServerCfg != nil && gitServerCfg.Enabled {
+	if gitServerCfg.IsEnabled() {
 		gitComp = gitserver.NewGitServerComponent(&gitserver.ComponentConfig{
-			Enabled:  gitServerCfg.Enabled,
+			Enabled:  true,
 			DataDir:  gitServerCfg.DataDir,
 			AppName:  gitServerCfg.AppName,
 			HTTPOnly: gitServerCfg.HTTPOnly,

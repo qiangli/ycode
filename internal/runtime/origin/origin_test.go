@@ -37,10 +37,10 @@ func TestNormalizeRemote(t *testing.T) {
 
 func TestProjectNameFromRemote(t *testing.T) {
 	cases := map[string]string{
-		"https://github.com/foo/bar.git":     "bar",
-		"git@github.com:foo/bar":             "bar",
+		"https://github.com/foo/bar.git":             "bar",
+		"git@github.com:foo/bar":                     "bar",
 		"https://example.com/deeply/nested/repo.git": "repo",
-		"":                                   "",
+		"": "",
 	}
 	for in, want := range cases {
 		if got := projectNameFromRemote(in); got != want {

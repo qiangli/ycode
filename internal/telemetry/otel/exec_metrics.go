@@ -46,12 +46,12 @@ const (
 
 // Scopes — bounded enum, one per call-site family.
 const (
-	ExecScopeBash         = "bash"          // mvdan/sh ExecHandler — agent's bash tool internals
-	ExecScopeBashTTY      = "bash-tty"      // ycode shell's TTY exec (ssh, vi, sudo)
-	ExecScopeToolexec     = "toolexec"      // 3-tier toolexec host-exec tier
-	ExecScopeSandbox      = "sandbox"       // yc sandbox builtin (podman run …)
-	ExecScopeProbeLaunch  = "probe-launch"  // ycode browser launch (experimental)
-	ExecScopeContainer    = "container"     // Container.Exec REST API
+	ExecScopeBash        = "bash"         // mvdan/sh ExecHandler — agent's bash tool internals
+	ExecScopeBashTTY     = "bash-tty"     // ycode shell's TTY exec (ssh, vi, sudo)
+	ExecScopeToolexec    = "toolexec"     // 3-tier toolexec host-exec tier
+	ExecScopeSandbox     = "sandbox"      // yc sandbox builtin (podman run …)
+	ExecScopeProbeLaunch = "probe-launch" // ycode browser launch (experimental)
+	ExecScopeContainer   = "container"    // Container.Exec REST API
 )
 
 // execMeter looks up the global meter fresh each call. Same pattern

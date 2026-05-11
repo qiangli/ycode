@@ -9,7 +9,7 @@ import (
 )
 
 func TestNewOllamaComponent(t *testing.T) {
-	cfg := &Config{Enabled: true}
+	cfg := &Config{}
 	comp := NewOllamaComponent(cfg, "/tmp/test-data")
 
 	if comp.Name() != "ollama" {
@@ -35,7 +35,6 @@ func TestNewOllamaComponent(t *testing.T) {
 func TestOllamaComponent_Start_NoRunner(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &Config{
-		Enabled:    true,
 		RunnerPath: "/nonexistent/ollama",
 	}
 	comp := NewOllamaComponent(cfg, dir)
@@ -56,7 +55,6 @@ func TestOllamaComponent_Start_NoRunner(t *testing.T) {
 func TestOllamaComponent_Start_CreatesDataDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "inference")
 	cfg := &Config{
-		Enabled:    true,
 		RunnerPath: "/nonexistent/ollama",
 	}
 	comp := NewOllamaComponent(cfg, dir)
@@ -73,7 +71,7 @@ func TestOllamaComponent_Start_CreatesDataDir(t *testing.T) {
 }
 
 func TestOllamaComponent_Stop_BeforeStart(t *testing.T) {
-	cfg := &Config{Enabled: true}
+	cfg := &Config{}
 	comp := NewOllamaComponent(cfg, t.TempDir())
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -88,7 +86,6 @@ func TestOllamaComponent_ModelsDir_EnvVar(t *testing.T) {
 	dir := t.TempDir()
 	modelsDir := filepath.Join(dir, "models")
 	cfg := &Config{
-		Enabled:    true,
 		ModelsDir:  modelsDir,
 		RunnerPath: "/nonexistent/ollama",
 	}

@@ -28,7 +28,7 @@ func TestNewLocalProvider_NilComponent(t *testing.T) {
 }
 
 func TestNewLocalProvider_UnhealthyComponent(t *testing.T) {
-	comp := NewOllamaComponent(&Config{Enabled: true}, t.TempDir())
+	comp := NewOllamaComponent(&Config{}, t.TempDir())
 	// Component is not started, so not healthy.
 	_, err := NewLocalProvider(comp)
 	if err == nil {

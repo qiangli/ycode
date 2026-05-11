@@ -273,7 +273,7 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	// instead of directly on the host. The workspace is bind-mounted read-write.
 	var bashExecutor bash.Executor
 	var containerEngine *container.Engine
-	if cfg.Container != nil && cfg.Container.Enabled {
+	if cfg.Container.IsEnabled() {
 		engine, err := container.NewEngine(rootCtx, &container.EngineConfig{
 			SocketPath: cfg.Container.SocketPath,
 		})
@@ -314,7 +314,7 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 				containerEngine = engine
 
 				// Start containerized SearXNG for web search (if enabled).
-				if os.Getenv("YCODE_SEARXNG") == "true" || cfg.Container.Enabled {
+				if os.Getenv("YCODE_SEARXNG") == "true" || cfg.Container.IsEnabled() {
 					searxngSvc := searxng.NewService(engine, instanceID, cfg.Container.Network)
 					if err := searxngSvc.Start(rootCtx); err != nil {
 						slog.Warn("searxng: failed to start, web search will use other providers", "error", err)

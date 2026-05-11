@@ -17,8 +17,8 @@ func (h *captureHandler) HandleToolCall(ctx context.Context, _ string, _ json.Ra
 	h.gotCtx = ctx
 	return "ok", nil
 }
-func (h *captureHandler) ListTools() []Tool               { return nil }
-func (h *captureHandler) ListResources() []Resource       { return nil }
+func (h *captureHandler) ListTools() []Tool                                    { return nil }
+func (h *captureHandler) ListResources() []Resource                            { return nil }
 func (h *captureHandler) ReadResource(context.Context, string) (string, error) { return "", nil }
 
 func TestServer_CapturesClientInfoFromInitialize(t *testing.T) {

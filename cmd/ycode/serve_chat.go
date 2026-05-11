@@ -19,7 +19,7 @@ import (
 func buildChatHub(conn *nats.Conn, cfg *config.ChatConfig, dataDir string, svc service.Service) observability.Component {
 	// Convert config types.
 	hubCfg := &chat.HubConfig{
-		Enabled:  cfg.Enabled,
+		Enabled:  cfg.IsEnabled(),
 		Channels: make(map[channel.ChannelID]chat.ChannelConfig),
 	}
 	for id, chCfg := range cfg.Channels {

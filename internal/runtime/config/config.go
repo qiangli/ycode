@@ -101,12 +101,28 @@ type Config struct {
 }
 
 // ChatConfig controls the embedded NATS-based chat hub and platform bridges.
+//
+// On by default per ycode's "intrinsic feature, opt-out" convention.
+// Without configured Channels the hub is a no-op at runtime; flipping
+// the master switch off skips the wiring entirely.
 type ChatConfig struct {
-	Enabled  bool                         `json:"enabled"`
+	Enabled  *bool                        `json:"enabled,omitempty"`
 	Channels map[string]ChatChannelConfig `json:"channels,omitempty"` // key = channel ID (telegram, discord, etc.)
 }
 
+// IsEnabled — nil receiver and nil Enabled both return true (default
+// on). Only explicit false opts out.
+func (c *ChatConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
 // ChatChannelConfig configures a single chat channel.
+// Individual channels and accounts are off by default — they require
+// credentials, so enabling them without config would be useless. This
+// is the one exception to the "on by default" convention.
 type ChatChannelConfig struct {
 	Enabled  bool               `json:"enabled"`
 	Accounts []ChatAccountEntry `json:"accounts,omitempty"`
@@ -120,12 +136,23 @@ type ChatAccountEntry struct {
 }
 
 // NATSConfig controls the embedded NATS server for distributed messaging.
+//
+// On by default. Runtime startup is in-process and cheap; even
+// unused, NATS is the bus substrate for agent collab.
 type NATSConfig struct {
-	Enabled    bool   `json:"enabled"`              // start NATS server, default true when serving
+	Enabled    *bool  `json:"enabled,omitempty"`
 	Port       int    `json:"port,omitempty"`       // default 4222
 	URL        string `json:"url,omitempty"`        // external NATS URL (when not using embedded)
 	Embedded   bool   `json:"embedded,omitempty"`   // use embedded server, default true
 	Credential string `json:"credential,omitempty"` // NATS credentials file path
+}
+
+// IsEnabled — nil receiver and nil Enabled both return true (default on).
+func (c *NATSConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
 }
 
 // ObservabilityConfig controls OTEL instrumentation and the embedded observability stack.
@@ -185,8 +212,12 @@ func (c *ObservabilityConfig) IsEnabled() bool {
 }
 
 // InferenceConfig controls the embedded Ollama-based inference engine.
+//
+// On by default. The runner is part of ycode's agent-OS substrate;
+// without it `bin/ycode model use ...` and any local-model workflow
+// degrade. Opt-out: set `inference.enabled: false` in settings.json.
 type InferenceConfig struct {
-	Enabled      bool   `json:"enabled"`                // start local inference engine
+	Enabled      *bool  `json:"enabled,omitempty"`
 	RunnerPath   string `json:"runnerPath,omitempty"`   // explicit path to ollama binary
 	AutoDownload bool   `json:"autoDownload"`           // download runner on first use
 	DefaultModel string `json:"defaultModel,omitempty"` // pre-load model on startup
@@ -195,9 +226,23 @@ type InferenceConfig struct {
 	MaxVRAMMB    int    `json:"maxVramMB,omitempty"`    // limit GPU memory usage
 }
 
+// IsEnabled — nil receiver and nil Enabled both return true (default on).
+func (c *InferenceConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
 // ContainerConfig controls the embedded Podman-based container isolation engine.
+//
+// On by default. Sandbox isolation for the agent's bash tool, yc
+// sandbox, browser containers, and the SearXNG side-service all
+// depend on it. Degrades gracefully when podman is missing on the
+// host (warns + continues without sandbox). Opt-out:
+// `container.enabled: false`.
 type ContainerConfig struct {
-	Enabled      bool   `json:"enabled"`                // enable container isolation for agents
+	Enabled      *bool  `json:"enabled,omitempty"`
 	SocketPath   string `json:"socketPath,omitempty"`   // explicit podman socket path
 	Image        string `json:"image,omitempty"`        // default sandbox image (default: ycode-sandbox:latest)
 	Network      string `json:"network,omitempty"`      // network mode: "bridge" (default), "host", "none"
@@ -207,13 +252,33 @@ type ContainerConfig struct {
 	Memory       string `json:"memory,omitempty"`       // per-container memory limit (e.g., "4g")
 }
 
+// IsEnabled — nil receiver and nil Enabled both return true (default on).
+func (c *ContainerConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
 // GitServerConfig controls the embedded Gitea-based git server for agent swarm coordination.
+//
+// On by default. Foreman backlog reconciler, loom worker coordination,
+// gitea-mcp, and multi-agent task queue all rely on it. Opt-out:
+// `gitServer.enabled: false`.
 type GitServerConfig struct {
-	Enabled  bool   `json:"enabled"`            // enable embedded git server
+	Enabled  *bool  `json:"enabled,omitempty"`
 	DataDir  string `json:"dataDir,omitempty"`  // data directory (default: ~/.agents/ycode/gitea)
 	AppName  string `json:"appName,omitempty"`  // display name (default: "ycode Git")
 	HTTPOnly bool   `json:"httpOnly,omitempty"` // disable SSH access (default true)
 	Token    string `json:"token,omitempty"`    // admin API token (auto-generated if empty)
+}
+
+// IsEnabled — nil receiver and nil Enabled both return true (default on).
+func (c *GitServerConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
 }
 
 // ProjectConfig declares stable identity for the current ycode
@@ -328,7 +393,8 @@ func DefaultConfig() *Config {
 			PersistLogs:      true,
 		},
 		GitServer: &GitServerConfig{
-			Enabled:  true, // On by default — agents use Gitea for branch isolation and collaboration.
+			// Enabled is nil → IsEnabled() returns true (ycode default).
+			// Set `gitserver.enabled: false` in settings.json to opt out.
 			HTTPOnly: true,
 		},
 	}
@@ -513,13 +579,61 @@ func mergeFromFile(cfg *Config, path string) error {
 	if overlay.Chat != nil {
 		cfg.Chat = overlay.Chat
 	}
+	if overlay.Inference != nil {
+		if cfg.Inference == nil {
+			cfg.Inference = &InferenceConfig{}
+		}
+		in := overlay.Inference
+		if in.Enabled != nil {
+			cfg.Inference.Enabled = in.Enabled
+		}
+		if in.RunnerPath != "" {
+			cfg.Inference.RunnerPath = in.RunnerPath
+		}
+		if in.AutoDownload {
+			cfg.Inference.AutoDownload = true
+		}
+		if in.DefaultModel != "" {
+			cfg.Inference.DefaultModel = in.DefaultModel
+		}
+		if in.ModelsDir != "" {
+			cfg.Inference.ModelsDir = in.ModelsDir
+		}
+		if in.GPULayers != 0 {
+			cfg.Inference.GPULayers = in.GPULayers
+		}
+		if in.MaxVRAMMB != 0 {
+			cfg.Inference.MaxVRAMMB = in.MaxVRAMMB
+		}
+	}
+	if overlay.NATS != nil {
+		if cfg.NATS == nil {
+			cfg.NATS = &NATSConfig{}
+		}
+		n := overlay.NATS
+		if n.Enabled != nil {
+			cfg.NATS.Enabled = n.Enabled
+		}
+		if n.Port != 0 {
+			cfg.NATS.Port = n.Port
+		}
+		if n.URL != "" {
+			cfg.NATS.URL = n.URL
+		}
+		if n.Embedded {
+			cfg.NATS.Embedded = true
+		}
+		if n.Credential != "" {
+			cfg.NATS.Credential = n.Credential
+		}
+	}
 	if overlay.Container != nil {
 		if cfg.Container == nil {
 			cfg.Container = &ContainerConfig{}
 		}
 		co := overlay.Container
-		if co.Enabled {
-			cfg.Container.Enabled = true
+		if co.Enabled != nil {
+			cfg.Container.Enabled = co.Enabled
 		}
 		if co.SocketPath != "" {
 			cfg.Container.SocketPath = co.SocketPath
@@ -548,8 +662,8 @@ func mergeFromFile(cfg *Config, path string) error {
 			cfg.GitServer = &GitServerConfig{}
 		}
 		gs := overlay.GitServer
-		if gs.Enabled {
-			cfg.GitServer.Enabled = true
+		if gs.Enabled != nil {
+			cfg.GitServer.Enabled = gs.Enabled
 		}
 		if gs.DataDir != "" {
 			cfg.GitServer.DataDir = gs.DataDir

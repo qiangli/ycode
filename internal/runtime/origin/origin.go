@@ -4,15 +4,15 @@
 //
 // Resolution order:
 //
-//   ProjectID:    cfg.Project.ID  →  normalize(git remote origin)
-//                                 →  "cwd-hash:<sha8 of abs cwd>"
-//   ProjectName:  cfg.Project.Name → $YCODE_PROJECT_NAME
-//                                  → basename of remote path
-//                                  → basename of cwd
-//   AgentTool:    $YCODE_AGENT_TOOL  →  currentAgentTool (set by
-//                                       cobra command before
-//                                       newApp()) →  "cli-other"
-//   Personality:  cfg.Personality (passthrough)
+//	ProjectID:    cfg.Project.ID  →  normalize(git remote origin)
+//	                              →  "cwd-hash:<sha8 of abs cwd>"
+//	ProjectName:  cfg.Project.Name → $YCODE_PROJECT_NAME
+//	                               → basename of remote path
+//	                               → basename of cwd
+//	AgentTool:    $YCODE_AGENT_TOOL  →  currentAgentTool (set by
+//	                                    cobra command before
+//	                                    newApp()) →  "cli-other"
+//	Personality:  cfg.Personality (passthrough)
 //
 // AgentClient is intentionally NOT resolved here — it's per-MCP-
 // connection and set on the request context by the MCP server.
@@ -129,10 +129,10 @@ func Resolve(ctx context.Context, cwd string, cfg *config.Config) Origin {
 // identifier of the form "<host>/<path>". Both https and ssh shapes
 // converge:
 //
-//   https://user:tok@github.com/foo/bar.git  →  github.com/foo/bar
-//   git@github.com:foo/bar.git               →  github.com/foo/bar
-//   ssh://git@gitlab.example.com:2222/x/y    →  gitlab.example.com/x/y
-//   /local/path/repo                         →  /local/path/repo (unchanged)
+//	https://user:tok@github.com/foo/bar.git  →  github.com/foo/bar
+//	git@github.com:foo/bar.git               →  github.com/foo/bar
+//	ssh://git@gitlab.example.com:2222/x/y    →  gitlab.example.com/x/y
+//	/local/path/repo                         →  /local/path/repo (unchanged)
 func NormalizeRemote(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

@@ -231,7 +231,7 @@ func TestLoaderMergeContainerConfig(t *testing.T) {
 	if cfg.Container == nil {
 		t.Fatal("expected non-nil Container config")
 	}
-	if !cfg.Container.Enabled {
+	if !cfg.Container.IsEnabled() {
 		t.Error("expected container enabled from user config")
 	}
 	if cfg.Container.Image != "ycode-sandbox:latest" {
@@ -276,7 +276,7 @@ func TestLoaderMergeGitServerConfig(t *testing.T) {
 	if cfg.GitServer == nil {
 		t.Fatal("expected non-nil GitServer config")
 	}
-	if !cfg.GitServer.Enabled {
+	if !cfg.GitServer.IsEnabled() {
 		t.Error("expected gitServer enabled")
 	}
 	if cfg.GitServer.AppName != "My Git" {
