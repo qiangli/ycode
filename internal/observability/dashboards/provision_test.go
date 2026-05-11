@@ -29,8 +29,10 @@ func TestProvision(t *testing.T) {
 		t.Errorf("expected kind GlobalDatasource, got %v", ds["kind"])
 	}
 
-	// Verify projects.
-	for _, name := range []string{"ycode", "host-metrics", "ycode-node-collector"} {
+	// Verify projects. ycode-node-collector was retired in the
+	// dashboard revamp — it duplicated the ycode project. Assert it
+	// is NOT shipped.
+	for _, name := range []string{"ycode", "host-metrics"} {
 		projPath := filepath.Join(dir, "projects", name+".json")
 		data, err := os.ReadFile(projPath)
 		if err != nil {
@@ -46,12 +48,23 @@ func TestProvision(t *testing.T) {
 			t.Errorf("project %s: expected kind Project, got %v", name, proj["kind"])
 		}
 	}
+	if _, err := os.Stat(filepath.Join(dir, "projects", "ycode-node-collector.json")); err == nil {
+		t.Errorf("ycode-node-collector project should have been removed but still exists")
+	}
 
-	// Verify dashboards exist for each project.
+	// Confirm at least one of the new dashboards is provisioned.
+	for _, name := range []string{"exec-activity", "container-operations", "browser-stack", "shell-builtin-dispatch", "per-tool-and-per-project-rollup"} {
+		path := filepath.Join(dir, "dashboards", "ycode", name+".json")
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("expected dashboard %s: %v", name, err)
+		}
+	}
+
+	// Verify dashboards exist for each project. ycode-node-collector
+	// is gone; the four new dashboards push the ycode count up.
 	expectedDashboards := map[string]int{
-		"ycode":                6,
-		"host-metrics":         5,
-		"ycode-node-collector": 5,
+		"ycode":        15, // baseline 11 kept + 4 new (Exec Activity, Container Operations, Browser Stack, Shell Builtin Dispatch); Hub Sources rewritten in place
+		"host-metrics": 5,
 	}
 	for project, minCount := range expectedDashboards {
 		dbDir := filepath.Join(dir, "dashboards", project)

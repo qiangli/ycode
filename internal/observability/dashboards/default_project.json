@@ -45,11 +45,26 @@
         ]
       },
       {
+        "name": "Per-Tool & Per-Project Rollup",
+        "panels": [
+          {"title": "LLM Calls by Agent Tool", "query": "sum by (ycode_agent_tool) (rate(ycode_llm_call_total[5m]))", "type": "timeseries"},
+          {"title": "LLM Calls by Project", "query": "sum by (ycode_project_name) (rate(ycode_llm_call_total[5m]))", "type": "timeseries"},
+          {"title": "Cost ($) by Agent Tool", "query": "sum by (ycode_agent_tool) (ycode_llm_cost_dollars)", "type": "timeseries"},
+          {"title": "Cost ($) by Project", "query": "sum by (ycode_project_name) (ycode_llm_cost_dollars)", "type": "table"},
+          {"title": "Tool Calls by Foreign Agent Client", "query": "sum by (ycode_agent_client) (rate(ycode_tool_call_total{ycode_agent_client!=\"\"}[5m]))", "type": "timeseries"},
+          {"title": "Top Foreign Agents (Tool Volume)", "query": "topk(10, sum by (ycode_agent_client) (ycode_tool_call_total{ycode_agent_client!=\"\"}))", "type": "table"},
+          {"title": "Errors by Project", "query": "sum by (ycode_project_name) (rate(ycode_error_total[5m]))", "type": "timeseries"},
+          {"title": "Active Projects", "query": "count(count by (ycode_project_name) (rate(ycode_llm_call_total[5m]) > 0))", "type": "stat"},
+          {"title": "Active Agent Tools", "query": "count(count by (ycode_agent_tool) (rate(ycode_llm_call_total[5m]) > 0))", "type": "stat"}
+        ]
+      },
+      {
         "name": "Instance Comparison",
         "panels": [
-          {"title": "Calls by Instance", "query": "sum by (service_instance_id) (ycode_llm_call_total)", "type": "timeseries"},
-          {"title": "Cost by Instance", "query": "sum by (service_instance_id) (ycode_llm_cost_dollars)", "type": "timeseries"},
-          {"title": "Tokens by Instance", "query": "sum by (service_instance_id) (ycode_llm_tokens_input + ycode_llm_tokens_output)", "type": "timeseries"}
+          {"title": "Calls by Project + Instance", "query": "sum by (ycode_project_name, service_instance_id) (ycode_llm_call_total)", "type": "timeseries"},
+          {"title": "Cost by Project + Instance", "query": "sum by (ycode_project_name, service_instance_id) (ycode_llm_cost_dollars)", "type": "timeseries"},
+          {"title": "Tokens by Project + Instance", "query": "sum by (ycode_project_name, service_instance_id) (ycode_llm_tokens_input + ycode_llm_tokens_output)", "type": "timeseries"},
+          {"title": "Top Projects (Call Volume)", "query": "topk(10, sum by (ycode_project_name) (ycode_llm_call_total))", "type": "table"}
         ]
       },
       {
@@ -105,18 +120,6 @@
         ]
       },
       {
-        "name": "Hub Sources",
-        "panels": [
-          {"title": "LLM Calls by Source", "query": "sum by (service_name) (rate(ycode_llm_call_total[5m]))", "type": "timeseries"},
-          {"title": "API Errors by Source", "query": "sum by (service_name) (rate(ycode_api_error_total[5m]))", "type": "timeseries"},
-          {"title": "Total Calls per Source", "query": "sum by (service_name) (ycode_llm_call_total)", "type": "table"},
-          {"title": "Cost (USD) by Source", "query": "sum by (service_name) (ycode_llm_cost_dollars)", "type": "timeseries"},
-          {"title": "Tool Calls by Source", "query": "sum by (service_name) (rate(ycode_tool_call_total[5m]))", "type": "timeseries"},
-          {"title": "Active Sources", "query": "count(count by (service_name) (rate(ycode_llm_call_total[5m]) > 0))", "type": "stat"},
-          {"title": "Top Sources by Volume", "query": "topk(10, sum by (service_name) (ycode_llm_call_total))", "type": "table"}
-        ]
-      },
-      {
         "name": "Session Health",
         "panels": [
           {"title": "Turn Duration p95 by Session", "query": "histogram_quantile(0.95, sum by (le, session_id) (rate(ycode_turn_duration_bucket[5m])))", "type": "timeseries"},
@@ -135,6 +138,57 @@
           {"title": "Background Jobs", "query": "sum(ycode_bash_exec_total{background=\"true\"})", "type": "stat"},
           {"title": "Timeouts", "query": "sum(ycode_bash_exec_total{timed_out=\"true\"})", "type": "stat"},
           {"title": "Non-zero Exit Codes", "query": "sum by (exit_code) (ycode_bash_exec_total{success=\"false\"})", "type": "table"}
+        ]
+      },
+      {
+        "name": "Exec Activity",
+        "panels": [
+          {"title": "Exec Rate by Scope", "query": "sum by (scope) (rate(ycode_exec_total[5m]))", "type": "timeseries"},
+          {"title": "Exit Class Distribution", "query": "sum by (exit_class) (rate(ycode_exec_total[5m]))", "type": "timeseries"},
+          {"title": "Exec Latency p50 by Scope", "query": "histogram_quantile(0.5, sum by (le, scope) (rate(ycode_exec_duration_bucket[5m])))", "type": "timeseries"},
+          {"title": "Exec Latency p95 by Scope", "query": "histogram_quantile(0.95, sum by (le, scope) (rate(ycode_exec_duration_bucket[5m])))", "type": "timeseries"},
+          {"title": "Failures (non-zero exit_class)", "query": "sum by (scope, exit_class) (rate(ycode_exec_total{exit_class!=\"zero\"}[5m]))", "type": "table"},
+          {"title": "Total Execs by Scope", "query": "sum by (scope) (ycode_exec_total)", "type": "table"},
+          {"title": "Success Rate by Scope", "query": "sum by (scope) (rate(ycode_exec_total{success=\"true\"}[5m])) / sum by (scope) (rate(ycode_exec_total[5m]))", "type": "timeseries"}
+        ]
+      },
+      {
+        "name": "Container Operations",
+        "panels": [
+          {"title": "Active Containers", "query": "ycode_container_active", "type": "stat"},
+          {"title": "Pool Available", "query": "ycode_container_pool_available", "type": "stat"},
+          {"title": "Pool Total", "query": "ycode_container_pool_total", "type": "stat"},
+          {"title": "Container Creates Rate", "query": "rate(ycode_container_creates[5m])", "type": "timeseries"},
+          {"title": "Container Exec Rate", "query": "sum by (success) (rate(ycode_container_execs[5m]))", "type": "timeseries"},
+          {"title": "Container Failures Rate", "query": "rate(ycode_container_failures[5m])", "type": "timeseries"},
+          {"title": "Container Exec Latency p95", "query": "histogram_quantile(0.95, rate(ycode_container_exec_duration_bucket[5m]))", "type": "timeseries"},
+          {"title": "Total Container Failures", "query": "sum(ycode_container_failures)", "type": "stat"}
+        ]
+      },
+      {
+        "name": "Browser Stack",
+        "panels": [
+          {"title": "Action Rate by Mode", "query": "sum by (mode) (rate(ycode_browser_action_total[5m]))", "type": "timeseries"},
+          {"title": "Action Duration p95 by Mode", "query": "histogram_quantile(0.95, sum by (le, mode) (rate(ycode_browser_action_duration_bucket[5m])))", "type": "timeseries"},
+          {"title": "Outcome Class Distribution", "query": "sum by (outcome) (rate(ycode_browser_action_total[5m]))", "type": "timeseries"},
+          {"title": "Top Hint Engine Rules", "query": "topk(10, sum by (rule) (ycode_browser_hint_fired_total))", "type": "table"},
+          {"title": "Circuit-Breaker Trips by Level", "query": "sum by (level) (rate(ycode_browser_breaker_trips_total[5m]))", "type": "timeseries"},
+          {"title": "Ralph Strategy Success Rate", "query": "sum by (strategy) (rate(ycode_browser_ralph_attempts_total{succeeded=\"true\"}[5m])) / sum by (strategy) (rate(ycode_browser_ralph_attempts_total[5m]))", "type": "timeseries"},
+          {"title": "Live Hub Extension Connections", "query": "ycode_browser_live_connections", "type": "stat"},
+          {"title": "DOM Compression Ratio (p50)", "query": "histogram_quantile(0.5, rate(ycode_browser_dom_compression_ratio_bucket[5m]))", "type": "timeseries"}
+        ]
+      },
+      {
+        "name": "Shell Builtin Dispatch",
+        "panels": [
+          {"title": "yc <verb> Call Rate", "query": "sum by (verb) (rate(ycode_shell_builtin_total[5m]))", "type": "timeseries"},
+          {"title": "Verb Success Rate", "query": "sum by (verb) (rate(ycode_shell_builtin_total{success=\"true\"}[5m])) / sum by (verb) (rate(ycode_shell_builtin_total[5m]))", "type": "timeseries"},
+          {"title": "Verb Latency p95", "query": "histogram_quantile(0.95, sum by (le, verb) (rate(ycode_shell_builtin_duration_bucket[5m])))", "type": "timeseries"},
+          {"title": "Top Verbs by Call Volume", "query": "topk(10, sum by (verb) (ycode_shell_builtin_total))", "type": "table"},
+          {"title": "Hint Engine Firings by Rule", "query": "sum by (hint_id) (rate(ycode_shell_hints_fired_total[5m]))", "type": "timeseries"},
+          {"title": "Hint Firings by Phase", "query": "sum by (phase) (rate(ycode_shell_hints_fired_total[5m]))", "type": "timeseries"},
+          {"title": "Intent Classification Distribution", "query": "sum by (kind) (rate(ycode_shell_intent_classified_total[5m]))", "type": "timeseries"},
+          {"title": "Shell Command Dispatch Latency p95", "query": "histogram_quantile(0.95, rate(ycode_shell_command_duration_bucket[5m]))", "type": "timeseries"}
         ]
       },
       {
@@ -239,79 +293,6 @@
           {"title": "Network Errors (Transmit)", "query": "rate(system_network_errors_total{direction=\"transmit\"}[5m])", "type": "timeseries"},
           {"title": "Network Packets (Receive)", "query": "rate(system_network_packets_total{direction=\"receive\"}[5m])", "type": "timeseries"},
           {"title": "Network Packets (Transmit)", "query": "rate(system_network_packets_total{direction=\"transmit\"}[5m])", "type": "timeseries"}
-        ]
-      }
-    ]
-  },
-  {
-    "name": "ycode-node-collector",
-    "dashboards": [
-      {
-        "name": "LLM Metrics",
-        "panels": [
-          {"title": "LLM Call Rate", "query": "rate(ycode_llm_call_total[5m])", "type": "timeseries"},
-          {"title": "LLM Call Latency (p50)", "query": "histogram_quantile(0.5, rate(ycode_llm_call_duration_bucket[5m]))", "type": "timeseries"},
-          {"title": "LLM Call Latency (p95)", "query": "histogram_quantile(0.95, rate(ycode_llm_call_duration_bucket[5m]))", "type": "timeseries"},
-          {"title": "LLM Call Latency (p99)", "query": "histogram_quantile(0.99, rate(ycode_llm_call_duration_bucket[5m]))", "type": "timeseries"},
-          {"title": "Total LLM Calls", "query": "sum(ycode_llm_call_total) by (llm_model)", "type": "table"},
-          {"title": "Cost by Model ($)", "query": "sum(ycode_llm_cost_dollars) by (llm_model)", "type": "timeseries"},
-          {"title": "Cumulative Cost ($)", "query": "sum(ycode_llm_cost_dollars)", "type": "stat"},
-          {"title": "Context Window Used", "query": "ycode_llm_context_window_used", "type": "timeseries"}
-        ]
-      },
-      {
-        "name": "Token Metrics",
-        "panels": [
-          {"title": "Input Token Rate", "query": "rate(ycode_llm_tokens_input[5m])", "type": "timeseries"},
-          {"title": "Output Token Rate", "query": "rate(ycode_llm_tokens_output[5m])", "type": "timeseries"},
-          {"title": "Cache Read Token Rate", "query": "rate(ycode_llm_tokens_cache_read[5m])", "type": "timeseries"},
-          {"title": "Cache Write Token Rate", "query": "rate(ycode_llm_tokens_cache_write[5m])", "type": "timeseries"},
-          {"title": "Total Input Tokens", "query": "sum(ycode_llm_tokens_input) by (llm_model)", "type": "table"},
-          {"title": "Total Output Tokens", "query": "sum(ycode_llm_tokens_output) by (llm_model)", "type": "table"},
-          {"title": "Cache Hit Ratio", "query": "sum(rate(ycode_llm_tokens_cache_read[5m])) / (sum(rate(ycode_llm_tokens_input[5m])) + sum(rate(ycode_llm_tokens_cache_read[5m])))", "type": "timeseries"}
-        ]
-      },
-      {
-        "name": "Tool Metrics",
-        "panels": [
-          {"title": "Tool Call Rate", "query": "sum(rate(ycode_tool_call_total[5m])) by (tool_name)", "type": "timeseries"},
-          {"title": "Tool Latency (p50)", "query": "histogram_quantile(0.5, sum(rate(ycode_tool_call_duration_bucket[5m])) by (le, tool_name))", "type": "timeseries"},
-          {"title": "Tool Latency (p95)", "query": "histogram_quantile(0.95, sum(rate(ycode_tool_call_duration_bucket[5m])) by (le, tool_name))", "type": "timeseries"},
-          {"title": "Tool Latency (p99)", "query": "histogram_quantile(0.99, sum(rate(ycode_tool_call_duration_bucket[5m])) by (le, tool_name))", "type": "timeseries"},
-          {"title": "Top 10 Tools by Call Count", "query": "topk(10, sum by (tool_name) (ycode_tool_call_total))", "type": "table"},
-          {"title": "Tool Error Rate", "query": "sum(rate(ycode_tool_call_total{tool_success=\"false\"}[5m])) by (tool_name)", "type": "timeseries"}
-        ]
-      },
-      {
-        "name": "Session & Turn Metrics",
-        "panels": [
-          {"title": "Turns per Session", "query": "sum(ycode_session_turns) by (service_instance_id)", "type": "timeseries"},
-          {"title": "Turn Duration (p50)", "query": "histogram_quantile(0.5, rate(ycode_turn_duration_bucket[5m]))", "type": "timeseries"},
-          {"title": "Turn Duration (p95)", "query": "histogram_quantile(0.95, rate(ycode_turn_duration_bucket[5m]))", "type": "timeseries"},
-          {"title": "Turn Duration (p99)", "query": "histogram_quantile(0.99, rate(ycode_turn_duration_bucket[5m]))", "type": "timeseries"},
-          {"title": "Tools per Turn (median)", "query": "histogram_quantile(0.5, rate(ycode_turn_tool_count_bucket[5m]))", "type": "timeseries"},
-          {"title": "Tools per Turn (p95)", "query": "histogram_quantile(0.95, rate(ycode_turn_tool_count_bucket[5m]))", "type": "timeseries"}
-        ]
-      },
-      {
-        "name": "Compaction Metrics",
-        "panels": [
-          {"title": "Compaction Rate", "query": "rate(ycode_compaction_total[5m])", "type": "timeseries"},
-          {"title": "Total Compaction Events", "query": "sum(ycode_compaction_total)", "type": "stat"},
-          {"title": "Tokens Saved Rate", "query": "rate(ycode_compaction_tokens_saved[5m])", "type": "timeseries"},
-          {"title": "Total Tokens Saved", "query": "sum(ycode_compaction_tokens_saved)", "type": "stat"},
-          {"title": "Context Window vs Compaction", "query": "ycode_llm_context_window_used", "type": "timeseries"}
-        ]
-      },
-      {
-        "name": "Bus & Slash Commands",
-        "panels": [
-          {"title": "Events Published Rate", "query": "sum by (type) (rate(ycode_bus_events_published_total[5m]))", "type": "timeseries"},
-          {"title": "Events Dropped Rate", "query": "sum by (site, type) (rate(ycode_bus_events_dropped_total[5m]))", "type": "timeseries"},
-          {"title": "Total Events Published", "query": "sum(ycode_bus_events_published_total)", "type": "stat"},
-          {"title": "Total Events Dropped", "query": "sum(ycode_bus_events_dropped_total)", "type": "stat"},
-          {"title": "Command-Stream Events Published", "query": "sum by (type) (rate(ycode_bus_events_published_total{type=~\"command\\\\..*\"}[5m]))", "type": "timeseries"},
-          {"title": "Command-Stream Drops by Site", "query": "sum by (site) (rate(ycode_bus_events_dropped_total{type=~\"command\\\\..*\"}[5m]))", "type": "timeseries"}
         ]
       }
     ]
