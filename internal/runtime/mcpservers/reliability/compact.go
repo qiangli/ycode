@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/qiangli/ycode/internal/runtime/mcpservers"
+	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 type compactDOMWrapper struct {
@@ -37,7 +38,9 @@ func (c *compactDOMWrapper) Execute(ctx context.Context, action mcpservers.Brows
 	// page content dominates the token cost.
 	switch action.Type {
 	case mcpservers.ActionExtract, mcpservers.ActionNavigate:
+		before := len(res.Content)
 		res.Content = compactText(res.Content)
+		telotel.RecordBrowserCompactRatio(ctx, c.inner.Name(), before, len(res.Content))
 	}
 	return res, nil
 }

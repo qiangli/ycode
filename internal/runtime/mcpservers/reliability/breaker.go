@@ -17,10 +17,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/qiangli/ycode/internal/runtime/mcpservers"
+	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 const (
@@ -47,6 +49,7 @@ func (b *breakerWrapper) Stop(ctx context.Context) error { return b.next.Stop(ct
 
 func (b *breakerWrapper) Execute(ctx context.Context, action mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
 	if reason := b.inner.gate(action); reason != "" {
+		telotel.RecordBrowserBreakerTrip(ctx, b.next.Name(), breakerLevel(reason))
 		return &mcpservers.BrowserResult{
 			Error: fmt.Sprintf("circuit-breaker: %s", reason),
 		}, nil
@@ -55,6 +58,20 @@ func (b *breakerWrapper) Execute(ctx context.Context, action mcpservers.BrowserA
 	failed := err != nil || (res != nil && (!res.Success || res.Error != ""))
 	b.inner.record(action, res, failed)
 	return res, err
+}
+
+// breakerLevel parses the gate-reason prefix into one of element /
+// page / global for metric attribution.
+func breakerLevel(reason string) string {
+	switch {
+	case strings.HasPrefix(reason, "global"):
+		return "global"
+	case strings.HasPrefix(reason, "element"):
+		return "element"
+	case strings.HasPrefix(reason, "page"):
+		return "page"
+	}
+	return "unknown"
 }
 
 // breaker holds the failure counters. Concurrent-safe.

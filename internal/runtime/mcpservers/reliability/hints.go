@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/qiangli/ycode/internal/runtime/mcpservers"
+	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 type hintEngineWrapper struct {
@@ -40,8 +41,11 @@ func (h *hintEngineWrapper) Execute(ctx context.Context, action mcpservers.Brows
 	// Run every rule; collect hints. Also classify outcome (the
 	// Outcome Classifier is a pseudo-rule that always fires).
 	for _, rule := range hintRules {
-		if h := rule(action, res); h != "" {
-			res.Hints = append(res.Hints, h)
+		if hint := rule(action, res); hint != "" {
+			res.Hints = append(res.Hints, hint)
+			if name, _, ok := strings.Cut(hint, ":"); ok {
+				telotel.RecordBrowserHint(ctx, h.inner.Name(), name)
+			}
 		}
 	}
 	res.OutcomeClass = classifyOutcome(action, res)

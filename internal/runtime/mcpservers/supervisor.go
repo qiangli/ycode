@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+
+	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 // Manager owns one or more backend Services and routes BrowserActions to
@@ -74,7 +76,8 @@ func (m *Manager) List() []string {
 }
 
 // Execute routes a BrowserAction to the default backend, lazily readying
-// it on first use.
+// it on first use. A Pulse span wraps the whole call and emits metrics
+// via finish(outcome, hints, err).
 func (m *Manager) Execute(ctx context.Context, action BrowserAction) (*BrowserResult, error) {
 	m.mu.Lock()
 	name := m.default_
@@ -85,10 +88,23 @@ func (m *Manager) Execute(ctx context.Context, action BrowserAction) (*BrowserRe
 		return nil, fmt.Errorf("mcpservers: no default backend configured (registered: %v)", m.List())
 	}
 
+	ctx, finish := telotel.StartBrowserActionSpan(ctx, name, action.Type, action.URL, action.Selector)
 	if err := svc.EnsureReady(ctx); err != nil {
-		return nil, fmt.Errorf("mcpservers: %s: ready: %w", name, err)
+		err = fmt.Errorf("mcpservers: %s: ready: %w", name, err)
+		finish("ERROR", nil, err)
+		return nil, err
 	}
-	return svc.Execute(ctx, action)
+	res, err := svc.Execute(ctx, action)
+	var (
+		outcome string
+		hints   []string
+	)
+	if res != nil {
+		outcome = res.OutcomeClass
+		hints = res.Hints
+	}
+	finish(outcome, hints, err)
+	return res, err
 }
 
 // StopAll stops every registered backend. Errors are logged but not

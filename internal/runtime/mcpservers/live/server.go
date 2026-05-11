@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 // hub owns the websocket connection to the (one) currently-connected
@@ -105,6 +107,7 @@ func (h *hub) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	h.conn = conn
 	h.mu.Unlock()
+	telotel.RecordBrowserHubConnect(r.Context())
 	slog.Info("live: extension connected", "remote", r.RemoteAddr)
 
 	go h.readLoop(conn)
@@ -123,6 +126,7 @@ func (h *hub) readLoop(conn *websocket.Conn) {
 		}
 		h.mu.Unlock()
 		_ = conn.Close()
+		telotel.RecordBrowserHubDisconnect(context.Background())
 		slog.Info("live: extension disconnected")
 	}()
 
@@ -226,14 +230,26 @@ func (h *hub) handleDispatch(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
+	// Span + metrics for the cross-process path. The agent-side
+	// Manager.Execute is instrumented separately; this branch
+	// catches `yc tab`, `curl /dispatch`, and any external client.
+	url, _ := req.Params["url"].(string)
+	sel, _ := req.Params["selector"].(string)
+	ctx, finish := telotel.StartBrowserActionSpan(ctx, "live", req.Method, url, sel)
 	resp, err := h.call(ctx, req.Method, req.Params)
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
 		// Extension not connected, or write to socket failed.
+		finish("BLOCKED", nil, err)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+	outcome := "SUCCESS"
+	if resp.Error != "" {
+		outcome = "BLOCKED"
+	}
+	finish(outcome, nil, nil)
 	// resp.Result is already a json.RawMessage; either path goes
 	// through to the caller untouched.
 	_ = json.NewEncoder(w).Encode(map[string]any{

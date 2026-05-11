@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/qiangli/ycode/internal/runtime/mcpservers"
+	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 type ralphWrapper struct {
@@ -40,11 +41,14 @@ func (r *ralphWrapper) Execute(ctx context.Context, action mcpservers.BrowserAct
 		return r.inner.Execute(ctx, action)
 	}
 	strategies := ralphStrategies(action)
+	mode := r.inner.Name()
 	var last *mcpservers.BrowserResult
 	var lastErr error
 	for i, s := range strategies {
 		res, err := r.inner.Execute(ctx, s.action)
-		if err == nil && res != nil && res.Success {
+		succeeded := err == nil && res != nil && res.Success
+		telotel.RecordBrowserRalphAttempt(ctx, mode, s.name, succeeded)
+		if succeeded {
 			if i > 0 && res.Hints == nil {
 				res.Hints = append(res.Hints, fmt.Sprintf("ralph: click succeeded via strategy %q after %d failed attempts", s.name, i))
 			}
