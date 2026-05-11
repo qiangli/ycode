@@ -32,6 +32,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/indexer"
 	"github.com/qiangli/ycode/internal/runtime/lsp"
 	"github.com/qiangli/ycode/internal/runtime/oauth"
+	"github.com/qiangli/ycode/internal/runtime/origin"
 	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/repomap"
@@ -559,14 +560,19 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	// Start background memory consolidation (stale removal, dedup).
 	go memory.NewDreamer(memManager, true).Start(rootCtx)
 
+	// Resolve project + agent-tool attribution once per process.
+	// Carried into the OTEL provider as resource attributes so every
+	// trace, metric, and log gets attributed automatically.
+	org := origin.Resolve(rootCtx, cwd, cfg)
+
 	// Wire OTEL observability.
 	// Always-on: file-only mode persists traces/metrics/logs locally.
 	// With Observability.Enabled: full mode adds gRPC export to collector.
 	var otelRes *otelResult
 	if cfg.Observability != nil && cfg.Observability.Enabled {
-		otelRes = setupOTEL(cfg, sess, toolReg, provider, v)
+		otelRes = setupOTEL(cfg, sess, toolReg, provider, v, org)
 	} else {
-		otelRes = setupFileOTEL(cfg, sess, toolReg, provider, v)
+		otelRes = setupFileOTEL(cfg, sess, toolReg, provider, v, org)
 	}
 	var convOTEL *conversation.OTELConfig
 	if otelRes != nil {
@@ -818,11 +824,17 @@ var rootCmd = &cobra.Command{
 			return runRemoteTUI(connectURL)
 		}
 
+		// Default to TUI for the root invocation. Per-command RunE
+		// overrides this before calling newApp() (prompt sets
+		// "prompt", mcp serve sets "mcp-serve", etc.).
+		origin.SetAgentTool(origin.ToolTUI)
+
 		// Check for piped input.
 		stat, _ := os.Stdin.Stat()
 		isPiped := (stat.Mode() & os.ModeCharDevice) == 0
 
 		if isPiped {
+			origin.SetAgentTool(origin.ToolPrompt)
 			input, err := io.ReadAll(os.Stdin)
 			if err != nil {
 				return fmt.Errorf("read stdin: %w", err)
@@ -868,6 +880,7 @@ var promptCmd = &cobra.Command{
 	Short: "Send a one-shot prompt to the agent",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		origin.SetAgentTool(origin.ToolPrompt)
 		app, err := newApp()
 		if err != nil {
 			return err

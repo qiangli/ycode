@@ -20,6 +20,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/commands"
+	"github.com/qiangli/ycode/internal/runtime/origin"
 	"github.com/qiangli/ycode/internal/shell"
 	"github.com/qiangli/ycode/internal/shell/agentmode"
 	"github.com/qiangli/ycode/internal/shell/builtins"
@@ -75,6 +76,7 @@ Modes:
 Use --agent to enable agent-friendly output augmentation (auto-quiet,
 hints to stderr, YCODE_SHELL_AGENT=1 env var). See docs/shell-agent.md.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			origin.SetAgentTool(origin.ToolShell)
 			return runShellCmd(cmd, args, f)
 		},
 	}

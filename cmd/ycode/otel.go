@@ -13,6 +13,7 @@ import (
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
+	"github.com/qiangli/ycode/internal/runtime/origin"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 	"github.com/qiangli/ycode/internal/tools"
@@ -67,7 +68,7 @@ func resolveOTELDataDir(obs *config.ObservabilityConfig) string {
 // setupFileOTEL initializes lightweight file-only OTEL instrumentation for CLI mode.
 // No collector, no gRPC — traces and metrics persist to local JSONL files.
 // This is always-on so every ycode session produces queryable telemetry.
-func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registry, provider api.Provider, opener yotel.FileOpener) *otelResult {
+func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registry, provider api.Provider, opener yotel.FileOpener, org origin.Origin) *otelResult {
 	dataDir := resolveOTELDataDir(cfg.Observability)
 	instanceID := sess.ID
 	instanceDir := filepath.Join(dataDir, "instances", instanceID)
@@ -86,6 +87,11 @@ func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Reg
 		PersistMetrics: true,
 		PersistLogs:    true,
 		Opener:         opener,
+		ProjectID:      org.ProjectID,
+		ProjectName:    org.ProjectName,
+		ProjectRoot:    org.ProjectRoot,
+		AgentTool:      org.AgentTool,
+		Personality:    org.Personality,
 	})
 	if err != nil {
 		slog.Warn("otel: file-only init failed, continuing without telemetry", "error", err)
@@ -177,7 +183,7 @@ func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Reg
 
 // setupOTEL initializes full OTEL instrumentation with gRPC export to collector.
 // It is non-blocking — if initialization fails, it logs a warning and returns a no-op.
-func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registry, provider api.Provider, opener yotel.FileOpener) *otelResult {
+func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registry, provider api.Provider, opener yotel.FileOpener, org origin.Origin) *otelResult {
 	obs := cfg.Observability
 
 	dataDir := resolveOTELDataDir(obs)
@@ -207,6 +213,11 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 		PersistMetrics: obs.PersistMetrics,
 		PersistLogs:    obs.PersistLogs,
 		Opener:         opener,
+		ProjectID:      org.ProjectID,
+		ProjectName:    org.ProjectName,
+		ProjectRoot:    org.ProjectRoot,
+		AgentTool:      org.AgentTool,
+		Personality:    org.Personality,
 	})
 	if err != nil {
 		slog.Warn("otel: init failed, continuing without telemetry", "error", err)

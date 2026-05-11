@@ -22,6 +22,7 @@ import (
 	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/observability/dashboards"
 	"github.com/qiangli/ycode/internal/runtime/config"
+	"github.com/qiangli/ycode/internal/runtime/origin"
 	"github.com/qiangli/ycode/internal/tools"
 	loompkg "github.com/qiangli/ycode/pkg/loom"
 )
@@ -44,6 +45,7 @@ HTTP/WebSocket API server (for web UI and remote clients), and embedded NATS ser
 
 Use --no-api or --no-nats to disable specific services.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		origin.SetAgentTool(origin.ToolServe)
 		fullCfg, obsCfg, dataDir, err := loadFullServeConfig()
 		if err != nil {
 			return err

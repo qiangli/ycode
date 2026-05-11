@@ -65,6 +65,16 @@ var (
 	// Instance tracking.
 	AttrInstanceID = attribute.Key("ycode.instance.id")
 
+	// Origin attribution (set as resource attributes by NewProvider
+	// from internal/runtime/origin.Resolve, except AgentClient which
+	// is per-MCP-connection and rides on the span/log ctx).
+	AttrProjectID   = attribute.Key("ycode.project.id")
+	AttrProjectName = attribute.Key("ycode.project.name")
+	AttrProjectRoot = attribute.Key("ycode.project.root")
+	AttrAgentTool   = attribute.Key("ycode.agent.tool")
+	AttrAgentClient = attribute.Key("ycode.agent.client") // span attr only, not resource
+	AttrPersonality = attribute.Key("ycode.personality")
+
 	// Memory attributes
 	AttrMemoryQuery       = attribute.Key("memory.query")
 	AttrMemoryResultCount = attribute.Key("memory.results_count")

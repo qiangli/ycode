@@ -35,6 +35,17 @@ type ProviderConfig struct {
 	InstanceID     string  // unique per ycode process (UUID) for multi-client tracking
 	SampleRate     float64 // 1.0 = sample everything
 
+	// Origin attribution — populated by internal/runtime/origin.Resolve.
+	// All five fields are optional; empty values are simply skipped
+	// when building the resource. Keeps the provider package free of
+	// a dependency on the origin package (callers stitch the values
+	// in directly).
+	ProjectID   string
+	ProjectName string
+	ProjectRoot string
+	AgentTool   string
+	Personality string
+
 	// File-based persistence.
 	DataDir        string // root OTEL storage dir (e.g. ~/.agents/ycode/otel) — used for retention cleanup
 	InstanceDir    string // per-instance subdir (e.g. ~/.agents/ycode/otel/instances/{id}) — used for file exports
@@ -88,6 +99,25 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 			semconv.ServiceInstanceID(cfg.InstanceID),
 			AttrInstanceID.String(cfg.InstanceID),
 		)
+	}
+	// Origin attribution — every signal that flows through this
+	// provider carries these as resource attributes (i.e. labels in
+	// Prometheus), making it possible to filter dashboards by
+	// project / agent tool without any per-call boilerplate.
+	if cfg.ProjectID != "" {
+		attrs = append(attrs, AttrProjectID.String(cfg.ProjectID))
+	}
+	if cfg.ProjectName != "" {
+		attrs = append(attrs, AttrProjectName.String(cfg.ProjectName))
+	}
+	if cfg.ProjectRoot != "" {
+		attrs = append(attrs, AttrProjectRoot.String(cfg.ProjectRoot))
+	}
+	if cfg.AgentTool != "" {
+		attrs = append(attrs, AttrAgentTool.String(cfg.AgentTool))
+	}
+	if cfg.Personality != "" {
+		attrs = append(attrs, AttrPersonality.String(cfg.Personality))
 	}
 	res, err := resource.New(ctx,
 		resource.WithAttributes(attrs...),

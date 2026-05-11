@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/runtime/mcp"
+	"github.com/qiangli/ycode/internal/runtime/origin"
 	"github.com/qiangli/ycode/internal/runtime/skills"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
 	"github.com/qiangli/ycode/internal/shell"
@@ -50,6 +51,7 @@ func newMcpServeCmd() *cobra.Command {
 			"opted into ycode's full capability surface. Lower with " +
 			"--permission=read-only or workspace-write for sandboxed integrations.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			origin.SetAgentTool(origin.ToolMCPServe)
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
 
