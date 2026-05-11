@@ -567,9 +567,11 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 
 	// Wire OTEL observability.
 	// Always-on: file-only mode persists traces/metrics/logs locally.
-	// With Observability.Enabled: full mode adds gRPC export to collector.
+	// With Observability enabled (the default in ycode): full mode
+	// adds gRPC export to the collector. Disable explicitly by
+	// setting `observability.enabled: false` in settings.json.
 	var otelRes *otelResult
-	if cfg.Observability != nil && cfg.Observability.Enabled {
+	if cfg.Observability.IsEnabled() {
 		otelRes = setupOTEL(cfg, sess, toolReg, provider, v, org)
 	} else {
 		otelRes = setupFileOTEL(cfg, sess, toolReg, provider, v, org)

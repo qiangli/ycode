@@ -129,9 +129,16 @@ type NATSConfig struct {
 }
 
 // ObservabilityConfig controls OTEL instrumentation and the embedded observability stack.
+//
+// Convention: ycode features are ON by default and opt-out. The
+// `Enabled` field is a *bool so the JSON loader can distinguish
+// "absent" (nil → on) from "explicitly false" (pointer to false →
+// off). Use IsEnabled() at every read site rather than checking the
+// pointer directly.
 type ObservabilityConfig struct {
-	// OTEL SDK
-	Enabled       bool    `json:"enabled"`       // master switch, default false
+	// OTEL SDK — on by default. Set `observability.enabled: false`
+	// in settings.json to disable.
+	Enabled       *bool   `json:"enabled,omitempty"`
 	CollectorAddr string  `json:"collectorAddr"` // default "127.0.0.1:4317" (embedded collector)
 	SampleRate    float64 `json:"sampleRate"`    // default 1.0
 
@@ -161,6 +168,20 @@ type ObservabilityConfig struct {
 
 	// Auto-start: fork a detached `ycode serve` if no collector is running.
 	AutoPulse bool `json:"autoPulse,omitempty"`
+}
+
+// IsEnabled reports whether the observability stack is on. Treats nil
+// (the absent / never-set case) as enabled — that's the ycode default.
+// Returns false only when the user explicitly set
+// `observability.enabled: false` in settings.json.
+func (c *ObservabilityConfig) IsEnabled() bool {
+	if c == nil {
+		return true
+	}
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
 }
 
 // InferenceConfig controls the embedded Ollama-based inference engine.
@@ -298,7 +319,8 @@ func DefaultConfig() *Config {
 			MaxAgent:    4,
 		},
 		Observability: &ObservabilityConfig{
-			Enabled:          false, // Only enabled explicitly via "ycode serve" or user config.
+			// Enabled is nil → IsEnabled() returns true (ycode default).
+			// Set `observability.enabled: false` in settings.json to opt out.
 			LogConversations: true,
 			LogToolDetails:   true,
 			PersistTraces:    true,
@@ -436,8 +458,11 @@ func mergeFromFile(cfg *Config, path string) error {
 			cfg.Observability = &ObservabilityConfig{}
 		}
 		o := overlay.Observability
-		if o.Enabled {
-			cfg.Observability.Enabled = true
+		if o.Enabled != nil {
+			// Copy the pointer wholesale so explicit `false` propagates
+			// (the whole point of the *bool shape — letting users opt
+			// out of the default-on behavior).
+			cfg.Observability.Enabled = o.Enabled
 		}
 		if o.CollectorAddr != "" {
 			cfg.Observability.CollectorAddr = o.CollectorAddr
