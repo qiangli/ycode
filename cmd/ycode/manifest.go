@@ -61,10 +61,25 @@ func writeServeManifest(home string, port, natsPort int, stack *stackComponents,
 		mcpHTTP["loom"] = proxy + "/loom-mcp/"
 	}
 
+	authBlock := map[string]any{
+		"scheme":           "bearer",
+		"header":           "Authorization",
+		"wsQueryParam":     "token",
+		"tokenFile":        filepath.Join(dir, "server.token"),
+		"actorHeaders":     []string{"X-Actor-User", "X-Actor-Email", "X-Actor-Roles"},
+		"actorExtraPrefix": "X-Actor-Extra-",
+	}
+	if !apiUp {
+		authBlock["enabled"] = false
+	} else {
+		authBlock["enabled"] = true
+	}
+
 	manifest := map[string]any{
-		"schemaVersion": "2",
+		"schemaVersion": "3",
 		"ycodeVersion":  ycodeVersion,
 		"endpoints":     endpoints,
+		"auth":          authBlock,
 		"mcp": map[string]any{
 			"stdio": map[string]any{
 				"command": "ycode",

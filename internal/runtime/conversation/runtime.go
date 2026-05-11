@@ -106,6 +106,12 @@ type Runtime struct {
 	// Persona — resolved user model for tailored responses.
 	// Updated per-turn with behavioral signals from the observer.
 	currentPersona *memory.Persona
+
+	// modelOverride takes precedence over r.config.Model when non-empty.
+	// Set by SetModelOverride for per-turn / per-session model selection
+	// without mutating the shared config (which is per-workDir, so a
+	// mutation would race across concurrent multi-tenant sessions).
+	modelOverride string
 }
 
 // NewRuntime creates a new conversation runtime.
@@ -302,6 +308,17 @@ func (r *Runtime) SetEventCallback(fn func(eventType string, data map[string]any
 	r.onEvent = fn
 }
 
+// SetModelOverride installs a per-Runtime model override. When set, the
+// next Turn() uses this model instead of r.config.Model. Used by
+// per-session model selection (G-G) so multi-tenant deployments can route
+// different sessions to different models without mutating the per-workDir
+// shared config.
+//
+// Pass "" to clear the override and revert to r.config.Model.
+func (r *Runtime) SetModelOverride(model string) {
+	r.modelOverride = model
+}
+
 // emitEvent calls the event callback if set.
 func (r *Runtime) emitEvent(eventType string, data map[string]any) {
 	if r.onEvent != nil {
@@ -437,8 +454,12 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 	}
 
 	// Build API request.
+	model := r.config.Model
+	if r.modelOverride != "" {
+		model = r.modelOverride
+	}
 	req := &api.Request{
-		Model:     r.config.Model,
+		Model:     model,
 		MaxTokens: maxTokens,
 		System:    systemPrompt,
 		Messages:  messages,

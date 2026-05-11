@@ -115,6 +115,15 @@ func (s *LocalService) SendMessage(ctx context.Context, sessionID string, input 
 
 	// Create runtime with event callback.
 	rt := s.app.ConversationRuntime()
+	// Apply per-session overrides surfaced via context by MultiService.
+	// Today only Model (G-G) is honored at the runtime; ToolsAllowlist /
+	// ToolsBlocklist / PersonaDisabled require per-session App isolation
+	// (G-I) and are tracked separately.
+	if opts, ok := ctx.Value(CtxSessionOptions).(SessionOptions); ok {
+		if opts.Model != "" {
+			rt.SetModelOverride(opts.Model)
+		}
+	}
 	publishEvent := func(eventType string, data map[string]any) {
 		s.b.Publish(bus.Event{
 			Type:      bus.EventType(eventType),
@@ -462,6 +471,18 @@ func (s *LocalService) SetOllamaLister(lister api.OllamaLister) {
 
 func (s *LocalService) ExecuteCommand(ctx context.Context, name string, args string) (string, error) {
 	return s.app.ExecuteCommand(ctx, name, args)
+}
+
+// LookupApp returns the single App that backs this LocalService. The
+// workDir argument is ignored (LocalService is single-tenant); when it is
+// non-empty and disagrees with the App's WorkDir, the call still succeeds
+// because the LocalService has only one App and a divergent workDir is
+// most likely a stale client (e.g. from a previous serve run).
+func (s *LocalService) LookupApp(ctx context.Context, workDir string) (AppBackend, error) {
+	if s.app == nil {
+		return nil, fmt.Errorf("no app available")
+	}
+	return s.app, nil
 }
 
 func (s *LocalService) currentSessionInfo() *SessionInfo {

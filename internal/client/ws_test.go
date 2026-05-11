@@ -56,6 +56,9 @@ func (m *mockService) ListModels(ctx context.Context) ([]api.ModelInfo, error) {
 func (m *mockService) ExecuteCommand(ctx context.Context, name, args string) (string, error) {
 	return "ok", nil
 }
+func (m *mockService) LookupApp(ctx context.Context, workDir string) (service.AppBackend, error) {
+	return nil, nil
+}
 
 func TestWSClient_SendAndReceive(t *testing.T) {
 	memBus := bus.NewMemoryBus()

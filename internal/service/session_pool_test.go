@@ -28,6 +28,7 @@ func (a *fakeApp) SessionMessages() []api.Message                      { return 
 func (a *fakeApp) MessageCount() int                                   { return a.messageCount }
 func (a *fakeApp) Config() *config.Config                              { return &config.Config{Model: a.model} }
 func (a *fakeApp) Model() string                                       { return a.model }
+func (a *fakeApp) Provider() api.Provider                              { return nil }
 func (a *fakeApp) ProviderKind() string                                { return a.providerKind }
 func (a *fakeApp) Version() string                                     { return "test" }
 func (a *fakeApp) WorkDir() string                                     { return a.workDir }

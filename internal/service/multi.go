@@ -17,6 +17,8 @@ type ctxKey string
 const (
 	// CtxWorkDir is the context key for the project working directory.
 	CtxWorkDir ctxKey = "workDir"
+	// CtxSessionOptions carries per-session overrides into CreateSession.
+	CtxSessionOptions ctxKey = "sessionOptions"
 )
 
 // MultiService implements Service with support for multiple concurrent sessions.
@@ -83,17 +85,37 @@ func (m *MultiService) CreateSession(ctx context.Context) (*SessionInfo, error) 
 	if workDir == "" {
 		return nil, fmt.Errorf("work_dir required to create a session")
 	}
+	opts, _ := ctx.Value(CtxSessionOptions).(SessionOptions)
 
 	ms, err := m.pool.GetOrCreate(workDir)
 	if err != nil {
 		return nil, err
+	}
+	// Per-session overrides are stored on the ManagedSession so each
+	// SendMessage can read them. Today multiple connections to the same
+	// workDir share an App, so a later session's Options overwrite an
+	// earlier one's — documented as a Path-1 limitation until G-I lands
+	// (decoupled memex/conversation namespaces).
+	if !opts.IsZero() {
+		ms.Options = opts
 	}
 	return &SessionInfo{
 		ID:           ms.ID,
 		WorkDir:      ms.WorkDir,
 		CreatedAt:    ms.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		MessageCount: ms.App.MessageCount(),
+		Options:      optionsForResponse(ms.Options),
 	}, nil
+}
+
+// optionsForResponse returns the options for echoing in a SessionInfo, or
+// nil when no overrides are set so the JSON response omits the field.
+func optionsForResponse(o SessionOptions) *SessionOptions {
+	if o.IsZero() {
+		return nil
+	}
+	copy := o
+	return &copy
 }
 
 func (m *MultiService) GetSession(ctx context.Context, id string) (*SessionInfo, error) {
@@ -106,6 +128,7 @@ func (m *MultiService) GetSession(ctx context.Context, id string) (*SessionInfo,
 		WorkDir:      ms.WorkDir,
 		CreatedAt:    ms.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		MessageCount: ms.App.MessageCount(),
+		Options:      optionsForResponse(ms.Options),
 	}, nil
 }
 
@@ -127,6 +150,12 @@ func (m *MultiService) SendMessage(ctx context.Context, sessionID string, input 
 	svc, err := m.localService(sessionID)
 	if err != nil {
 		return err
+	}
+	// Surface the session's Options to the LocalService via the context,
+	// so SendMessage can apply per-session overrides (G-G model swap, …)
+	// before driving the agentic loop.
+	if ms := m.pool.Get(sessionID); ms != nil && !ms.Options.IsZero() {
+		ctx = context.WithValue(ctx, CtxSessionOptions, ms.Options)
 	}
 	return svc.SendMessage(ctx, sessionID, input)
 }
@@ -222,6 +251,21 @@ func (m *MultiService) ExecuteCommand(ctx context.Context, name string, args str
 		return "", fmt.Errorf("session not found")
 	}
 	return ms.App.ExecuteCommand(ctx, name, args)
+}
+
+// LookupApp returns (or creates) the App backing the given workDir. The
+// workDir is required: an empty string fails. Used by stateless wire
+// endpoints (/api/extract, /api/embed) that need access to the
+// per-tenant provider/config without going through the agentic loop.
+func (m *MultiService) LookupApp(ctx context.Context, workDir string) (AppBackend, error) {
+	if workDir == "" {
+		return nil, fmt.Errorf("work_dir required")
+	}
+	ms, err := m.pool.GetOrCreate(workDir)
+	if err != nil {
+		return nil, err
+	}
+	return ms.App, nil
 }
 
 // RemoveSession removes a session and its cached LocalService.

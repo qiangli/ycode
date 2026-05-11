@@ -152,6 +152,15 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
+	// `ycode serve --no-persona` is the operator switch that disables the
+	// per-user persona system process-wide. Useful when one ycode serve is
+	// shared by many end-users (e.g. a third-party host like classgo) and
+	// the host wants its own identity model rather than ycode's persona
+	// inference. The flag is unused outside the serve path.
+	if serveNoPersona {
+		cfg.PersonaEnabled = false
+	}
+
 	// Model resolution: --model flag > ANTHROPIC_MODEL > YCODE_MODEL > config > default.
 	model := cfg.Model
 	if envModel := os.Getenv("YCODE_MODEL"); envModel != "" {
@@ -261,9 +270,19 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 		return nil, fmt.Errorf("create vfs: %w", err)
 	}
 
-	// Initialize tool registry with handlers.
+	// Initialize tool registry with handlers. When the operator passes
+	// --tools-allowlist or --tools-blocklist at `ycode serve` start, register
+	// only the permitted built-ins. Allowlist wins when both are set.
+	// Operator-level restriction; per-session enforcement (G-E) lands with G-I.
 	toolReg := tools.NewRegistry()
-	tools.RegisterBuiltins(toolReg)
+	switch {
+	case len(serveToolsAllowlist) > 0:
+		tools.RegisterBuiltinsFiltered(toolReg, serveToolsAllowlist)
+	case len(serveToolsBlocklist) > 0:
+		tools.RegisterBuiltinsExcluding(toolReg, serveToolsBlocklist)
+	default:
+		tools.RegisterBuiltins(toolReg)
+	}
 
 	// Quality monitoring: track tool reliability metrics and surface degraded tools
 	// in the system prompt diagnostics section.

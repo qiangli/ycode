@@ -773,6 +773,12 @@ func (a *App) SetModel(model string) { a.config.Model = model }
 // ProviderKind returns the current provider kind.
 func (a *App) ProviderKind() string { return a.providerKind }
 
+// Provider returns the underlying api.Provider. May be nil when no LLM
+// provider is configured (e.g. before an API key is set). Required by the
+// /api/extract and /api/embed wire endpoints, which run stateless one-shot
+// LLM calls without going through the agentic conversation loop.
+func (a *App) Provider() api.Provider { return a.provider }
+
 // SetProviderKind sets the provider kind (used by thin client to sync from server).
 func (a *App) SetProviderKind(kind string) { a.providerKind = kind }
 

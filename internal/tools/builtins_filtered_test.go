@@ -55,3 +55,37 @@ func TestRegisterBuiltinsFiltered_dropsBash(t *testing.T) {
 		t.Error("read_file should be registered")
 	}
 }
+
+func TestRegisterBuiltinsExcluding_dropsBlocked(t *testing.T) {
+	r := NewRegistry()
+	RegisterBuiltinsExcluding(r, []string{"bash", "write_file"})
+
+	if _, ok := r.Get("bash"); ok {
+		t.Error("bash should be excluded")
+	}
+	if _, ok := r.Get("write_file"); ok {
+		t.Error("write_file should be excluded")
+	}
+	// Other tools must still be present.
+	if _, ok := r.Get("read_file"); !ok {
+		t.Error("read_file should still be registered")
+	}
+}
+
+func TestRegisterBuiltinsExcluding_emptyOrNilFallsThrough(t *testing.T) {
+	rAll := NewRegistry()
+	RegisterBuiltins(rAll)
+	rEmpty := NewRegistry()
+	RegisterBuiltinsExcluding(rEmpty, nil)
+	rEmpty2 := NewRegistry()
+	RegisterBuiltinsExcluding(rEmpty2, []string{})
+
+	if len(rEmpty.Names()) != len(rAll.Names()) {
+		t.Errorf("nil blocklist should equal RegisterBuiltins; got %d vs %d",
+			len(rEmpty.Names()), len(rAll.Names()))
+	}
+	if len(rEmpty2.Names()) != len(rAll.Names()) {
+		t.Errorf("empty blocklist should equal RegisterBuiltins; got %d vs %d",
+			len(rEmpty2.Names()), len(rAll.Names()))
+	}
+}

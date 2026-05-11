@@ -28,6 +28,7 @@ type AppBackend interface {
 	// Configuration and state.
 	Config() *config.Config
 	Model() string
+	Provider() api.Provider
 	ProviderKind() string
 	Version() string
 	WorkDir() string

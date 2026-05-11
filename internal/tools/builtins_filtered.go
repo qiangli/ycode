@@ -23,3 +23,26 @@ func RegisterBuiltinsFiltered(r *Registry, allowed []string) {
 		_ = r.Register(spec)
 	}
 }
+
+// RegisterBuiltinsExcluding registers every built-in tool whose name is NOT
+// in blocked. Pass nil or an empty slice to register everything (equivalent
+// to RegisterBuiltins).
+//
+// Used by `ycode serve --tools-blocklist=name1,name2` for operator-level
+// restriction in shared-tenant deployments.
+func RegisterBuiltinsExcluding(r *Registry, blocked []string) {
+	if len(blocked) == 0 {
+		RegisterBuiltins(r)
+		return
+	}
+	deny := make(map[string]bool, len(blocked))
+	for _, name := range blocked {
+		deny[name] = true
+	}
+	for _, spec := range builtinSpecs() {
+		if deny[spec.Name] {
+			continue
+		}
+		_ = r.Register(spec)
+	}
+}

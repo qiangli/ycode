@@ -18,9 +18,13 @@ import (
 )
 
 var (
-	serveNoAPI  bool
-	serveNoNATS bool
-	apiNATSPort int
+	serveNoAPI          bool
+	serveNoNATS         bool
+	serveNoAuth         bool
+	serveNoPersona      bool
+	serveToolsAllowlist []string
+	serveToolsBlocklist []string
+	apiNATSPort         int
 )
 
 // apiStack holds the API/NATS server state for the unified serve command.
@@ -83,11 +87,25 @@ func buildAPIStack(noNATS bool) (*apiStack, error) {
 	multiSvc = service.NewMultiService(pool, memBus)
 	multiSvc.SetOllamaLister(ollamaLister)
 
-	token, err := generateToken()
-	if err != nil {
-		return nil, err
+	// Token is used by the server's authMiddleware. When --no-auth is set
+	// (or the operator otherwise wants permissive mode), we skip token
+	// generation and the middleware becomes a pass-through. The token file
+	// is still written when present so foreign clients can discover it.
+	var token string
+	if !serveNoAuth {
+		var err error
+		token, err = generateToken()
+		if err != nil {
+			return nil, err
+		}
+		_ = writeTokenFile(token)
+	} else {
+		// Best-effort: remove a stale token from a prior auth-enabled run
+		// so clients don't try to use it.
+		if home, err := os.UserHomeDir(); err == nil {
+			_ = os.Remove(filepath.Join(home, ".agents", "ycode", "server.token"))
+		}
 	}
-	_ = writeTokenFile(token)
 
 	// Build the HTTP/WebSocket handler (but don't start listening yet).
 	srv := internalserver.New(internalserver.Config{Token: token}, multiSvc)

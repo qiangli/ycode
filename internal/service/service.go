@@ -12,13 +12,40 @@ import (
 // MessageInput is an alias for bus.MessageInput to avoid import cycles.
 type MessageInput = bus.MessageInput
 
+// SessionOptions carries per-session overrides accepted on POST
+// /api/sessions and echoed back in SessionInfo. The zero value means
+// "inherit every default from the loaded config." Fields are honored
+// best-effort:
+//
+//   - Model: applied per-turn (G-G). When set, SendMessage swaps the
+//     active model for the duration of the turn and restores afterwards.
+//   - ToolsAllowlist / ToolsBlocklist (G-E): wire shape is accepted and
+//     echoed. Today enforcement is server-wide via `--tools-allowlist` /
+//     `--tools-blocklist` flags; full per-session enforcement is gated on
+//     G-I (decoupling memex/conversation namespaces).
+//   - PersonaDisabled (G-F): same — server-wide via `--no-persona` today.
+//
+// The struct lives next to SessionInfo so JSON tags match the wire.
+type SessionOptions struct {
+	Model           string   `json:"model,omitempty"`
+	ToolsAllowlist  []string `json:"tools_allowlist,omitempty"`
+	ToolsBlocklist  []string `json:"tools_blocklist,omitempty"`
+	PersonaDisabled bool     `json:"persona_disabled,omitempty"`
+}
+
+// IsZero reports whether o carries no overrides.
+func (o SessionOptions) IsZero() bool {
+	return o.Model == "" && len(o.ToolsAllowlist) == 0 && len(o.ToolsBlocklist) == 0 && !o.PersonaDisabled
+}
+
 // SessionInfo describes a session for API responses.
 type SessionInfo struct {
-	ID           string `json:"id"`
-	WorkDir      string `json:"work_dir,omitempty"`
-	CreatedAt    string `json:"created_at"`
-	MessageCount int    `json:"message_count"`
-	Summary      string `json:"summary,omitempty"`
+	ID           string          `json:"id"`
+	WorkDir      string          `json:"work_dir,omitempty"`
+	CreatedAt    string          `json:"created_at"`
+	MessageCount int             `json:"message_count"`
+	Summary      string          `json:"summary,omitempty"`
+	Options      *SessionOptions `json:"session_options,omitempty"`
 }
 
 // StatusInfo describes the current server state.
@@ -59,4 +86,11 @@ type Service interface {
 
 	// Event bus access (for wiring transports).
 	Bus() bus.Bus
+
+	// LookupApp resolves the per-workDir App backend. Used by stateless
+	// wire endpoints (/api/extract, /api/embed) that need the App's
+	// provider/config but not the agentic conversation loop. workDir may
+	// be empty when the service backs a single project (LocalService) —
+	// in that case the implementation returns its sole App.
+	LookupApp(ctx context.Context, workDir string) (AppBackend, error)
 }

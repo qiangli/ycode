@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/service"
 	"github.com/qiangli/ycode/internal/web"
+	"github.com/qiangli/ycode/pkg/ycode/actor"
 )
 
 // Config holds server configuration.
@@ -43,10 +45,24 @@ type Server struct {
 
 	upgrader websocket.Upgrader
 
+	// Lazily-initialized embedding provider for /api/embed* endpoints.
+	// Process-wide today (env-var driven); held on Server to keep tests
+	// hermetic and to allow per-server overrides if a future deployment
+	// wants tenant-specific embedders.
+	embedOnce sync.Once
+	embedProv embeddingProvider
+
 	// OTEL instrumentation (optional).
 	otelCfg     *OTELConfig
 	otelMetrics *otelMetrics
 	tracer      trace.Tracer
+}
+
+// embeddingProvider matches embedding.Provider but is kept local so the
+// server file does not import internal/runtime/embedding at the type level.
+type embeddingProvider interface {
+	Embed(ctx context.Context, text string) ([]float32, error)
+	Dimensions() int
 }
 
 // New creates a new API server.
@@ -172,6 +188,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/models", s.authMiddleware(s.handleListModels))
 	s.mux.HandleFunc("GET /api/status", s.authMiddleware(s.handleGetStatus))
 
+	// Stateless one-shot endpoints (no session, no agent loop).
+	s.mux.HandleFunc("POST /api/extract", s.authMiddleware(s.handleExtract))
+	s.mux.HandleFunc("POST /api/embed", s.authMiddleware(s.handleEmbed))
+	s.mux.HandleFunc("POST /api/embed/batch", s.authMiddleware(s.handleEmbedBatch))
+	s.mux.HandleFunc("GET /api/embed/dimensions", s.authMiddleware(s.handleEmbedDimensions))
+
 	// Group endpoints (team agent coordination).
 	s.mux.HandleFunc("GET /api/groups", s.authMiddleware(s.handleListGroups))
 	s.mux.HandleFunc("POST /api/groups", s.authMiddleware(s.handleCreateGroup))
@@ -180,17 +202,130 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("PUT /api/groups/{id}/sessions/{sid}", s.authMiddleware(s.handleAddSessionToGroup))
 	s.mux.HandleFunc("DELETE /api/groups/{id}/sessions/{sid}", s.authMiddleware(s.handleRemoveSessionFromGroup))
 
-	// WebSocket endpoint.
-	s.mux.HandleFunc("GET /api/sessions/{id}/ws", s.handleWebSocket)
+	// WebSocket endpoint. Uses authMiddlewareWS so the upgrade can also
+	// authenticate via the ?token= query parameter, since browsers cannot
+	// set arbitrary headers on a WebSocket upgrade request.
+	s.mux.HandleFunc("GET /api/sessions/{id}/ws", s.authMiddlewareWS(s.handleWebSocket))
 
 	// Web UI (embedded SPA).
 	s.mux.Handle("/", web.Handler())
 }
 
-// authMiddleware wraps a handler with bearer token authentication.
-// TODO: re-enable token check when auth is fully implemented.
+// authMiddleware wraps a REST handler with Bearer token authentication and
+// stamps an actor.User onto the request context decoded from the X-Actor-*
+// headers.
+//
+// Auth modes:
+//   - Server.config.Token == ""  → permissive; identity headers are still
+//     decoded (useful for local dev / single-tenant TUI).
+//   - Server.config.Token != ""  → require Authorization: Bearer <token>;
+//     reject with 401 on mismatch. Identity headers are decoded only after
+//     the bearer check passes, so end-user identity cannot be spoofed by an
+//     unauthenticated caller.
+//
+// Header convention (consumed when present):
+//
+//	X-Actor-User:  <stable-id>
+//	X-Actor-Email: <email>
+//	X-Actor-Roles: <comma-separated>
+//	X-Actor-Extra-<key>: <value>   (zero or more; key is title-cased)
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return next
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.checkBearer(r, "") {
+			writeError(w, http.StatusUnauthorized, fmt.Errorf("invalid or missing bearer token"))
+			return
+		}
+		if u, ok := decodeActorHeaders(r); ok {
+			r = r.WithContext(actor.WithUser(r.Context(), u))
+		}
+		next(w, r)
+	}
+}
+
+// authMiddlewareWS is the WebSocket-aware variant of authMiddleware. It
+// accepts the bearer token via the Authorization header OR via a ?token=
+// query parameter (since browsers cannot set headers on the upgrade
+// request).
+func (s *Server) authMiddlewareWS(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		queryToken := r.URL.Query().Get("token")
+		if !s.checkBearer(r, queryToken) {
+			writeError(w, http.StatusUnauthorized, fmt.Errorf("invalid or missing bearer token"))
+			return
+		}
+		if u, ok := decodeActorHeaders(r); ok {
+			r = r.WithContext(actor.WithUser(r.Context(), u))
+		}
+		next(w, r)
+	}
+}
+
+// checkBearer validates the request's bearer token against s.config.Token.
+// When Token is empty (dev mode), the check passes unconditionally. When a
+// fallback token is supplied (e.g. from a query parameter for WebSockets),
+// it is accepted in addition to the Authorization header.
+func (s *Server) checkBearer(r *http.Request, fallback string) bool {
+	if s.config.Token == "" {
+		return true
+	}
+	expected := []byte(s.config.Token)
+	if got := bearerFromAuthHeader(r); got != "" {
+		if subtle.ConstantTimeCompare([]byte(got), expected) == 1 {
+			return true
+		}
+	}
+	if fallback != "" && subtle.ConstantTimeCompare([]byte(fallback), expected) == 1 {
+		return true
+	}
+	return false
+}
+
+// bearerFromAuthHeader extracts the token from "Authorization: Bearer …".
+// Returns "" if the header is absent or malformed.
+func bearerFromAuthHeader(r *http.Request) string {
+	v := r.Header.Get("Authorization")
+	if v == "" {
+		return ""
+	}
+	const prefix = "Bearer "
+	if len(v) < len(prefix) || !strings.EqualFold(v[:len(prefix)], prefix) {
+		return ""
+	}
+	return strings.TrimSpace(v[len(prefix):])
+}
+
+// decodeActorHeaders pulls X-Actor-User / X-Actor-Email / X-Actor-Roles /
+// X-Actor-Extra-* headers off the request and returns an actor.User. The
+// boolean is false (and the User is zero) when no X-Actor-User is present —
+// the caller skips actor.WithUser in that case.
+func decodeActorHeaders(r *http.Request) (actor.User, bool) {
+	id := strings.TrimSpace(r.Header.Get("X-Actor-User"))
+	if id == "" {
+		return actor.User{}, false
+	}
+	u := actor.User{
+		ID:    id,
+		Email: strings.TrimSpace(r.Header.Get("X-Actor-Email")),
+	}
+	if rolesHdr := r.Header.Get("X-Actor-Roles"); rolesHdr != "" {
+		for role := range strings.SplitSeq(rolesHdr, ",") {
+			if role = strings.TrimSpace(role); role != "" {
+				u.Roles = append(u.Roles, role)
+			}
+		}
+	}
+	const extraPrefix = "X-Actor-Extra-"
+	for name, vals := range r.Header {
+		if !strings.HasPrefix(name, extraPrefix) || len(vals) == 0 {
+			continue
+		}
+		if u.Extra == nil {
+			u.Extra = make(map[string]string)
+		}
+		key := strings.ToLower(name[len(extraPrefix):])
+		u.Extra[key] = vals[0]
+	}
+	return u, true
 }
 
 // corsMiddleware adds CORS headers for browser clients.
@@ -260,10 +395,12 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
-	// Extract workDir from request body or header for multi-project support.
+	// Extract workDir + session_options from request body or header for
+	// multi-project / multi-tenant support.
 	ctx := r.Context()
 	var body struct {
-		WorkDir string `json:"work_dir"`
+		WorkDir string                  `json:"work_dir"`
+		Options *service.SessionOptions `json:"session_options,omitempty"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.WorkDir == "" {
@@ -271,6 +408,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.WorkDir != "" {
 		ctx = context.WithValue(ctx, service.CtxWorkDir, body.WorkDir)
+	}
+	if body.Options != nil && !body.Options.IsZero() {
+		ctx = context.WithValue(ctx, service.CtxSessionOptions, *body.Options)
 	}
 	info, err := s.service.CreateSession(ctx)
 	if err != nil {

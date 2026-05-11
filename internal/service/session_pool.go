@@ -17,6 +17,13 @@ type ManagedSession struct {
 	WorkDir    string
 	CreatedAt  time.Time
 	LastActive time.Time
+
+	// Options are per-session overrides honored on each SendMessage. See
+	// SessionOptions for field semantics. Today multiple connections to
+	// the same workDir share an App and therefore overwrite each other's
+	// Options — full per-session isolation requires the G-I decoupling
+	// work and is tracked separately.
+	Options SessionOptions
 }
 
 // SessionPool manages multiple AppBackend instances, one per active session.
@@ -150,6 +157,7 @@ func (p *SessionPool) List() []SessionInfo {
 			WorkDir:      ms.WorkDir,
 			CreatedAt:    ms.CreatedAt.Format(time.RFC3339),
 			MessageCount: ms.App.MessageCount(),
+			Options:      optionsForResponse(ms.Options),
 		})
 	}
 	return infos
