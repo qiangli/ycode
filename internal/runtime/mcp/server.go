@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 )
 
 // ServerHandler handles incoming MCP requests when ycode acts as an MCP server.
@@ -19,6 +20,9 @@ type ServerHandler interface {
 type Server struct {
 	handler ServerHandler
 	logger  *slog.Logger
+
+	clientMu   sync.RWMutex
+	clientName string // populated by the initialize handshake
 }
 
 // NewServer creates a new MCP server.
@@ -27,6 +31,38 @@ func NewServer(handler ServerHandler) *Server {
 		handler: handler,
 		logger:  slog.Default(),
 	}
+}
+
+// ClientName returns the connected MCP client's reported name (from
+// the initialize handshake's `clientInfo.name`). Empty before any
+// initialize call, or when the client didn't supply clientInfo.
+func (s *Server) ClientName() string {
+	s.clientMu.RLock()
+	defer s.clientMu.RUnlock()
+	return s.clientName
+}
+
+// ctxKey is the unexported type used for context.Value identity.
+type ctxKey int
+
+const agentClientKey ctxKey = iota
+
+// WithAgentClient stashes the connected MCP client's name on ctx.
+// Downstream observers (e.g. tool middleware) read it via AgentClient.
+func WithAgentClient(ctx context.Context, name string) context.Context {
+	if name == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, agentClientKey, name)
+}
+
+// AgentClient returns the MCP client name previously stashed via
+// WithAgentClient. Empty when no MCP server is in the chain.
+func AgentClient(ctx context.Context) string {
+	if v, ok := ctx.Value(agentClientKey).(string); ok {
+		return v
+	}
+	return ""
 }
 
 // HandleRequest processes an incoming JSON-RPC request.
@@ -38,6 +74,24 @@ func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) (*JSONR
 
 	switch req.Method {
 	case "initialize":
+		// Capture clientInfo.name so subsequent tool calls can be
+		// attributed back to the foreign agent (Claude Code, Cursor,
+		// Codex, etc.). Best-effort: missing or malformed clientInfo
+		// is silently tolerated.
+		if raw, err := json.Marshal(req.Params); err == nil {
+			var params struct {
+				ClientInfo struct {
+					Name    string `json:"name"`
+					Version string `json:"version"`
+				} `json:"clientInfo"`
+			}
+			if json.Unmarshal(raw, &params) == nil && params.ClientInfo.Name != "" {
+				s.clientMu.Lock()
+				s.clientName = params.ClientInfo.Name
+				s.clientMu.Unlock()
+				s.logger.Info("mcp: client connected", "client", params.ClientInfo.Name, "version", params.ClientInfo.Version)
+			}
+		}
 		result := map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities": map[string]any{
@@ -73,6 +127,10 @@ func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) (*JSONR
 		if raw, err := json.Marshal(req.Params); err == nil {
 			_ = json.Unmarshal(raw, &params)
 		}
+		// Inject the connected client name (if any) into the call
+		// context so the tool middleware can attach it as a span /
+		// metric attribute.
+		ctx = WithAgentClient(ctx, s.ClientName())
 		output, err := s.handler.HandleToolCall(ctx, params.Name, params.Arguments)
 		if err != nil {
 			resp.Error = &JSONRPCError{Code: -32000, Message: err.Error()}
