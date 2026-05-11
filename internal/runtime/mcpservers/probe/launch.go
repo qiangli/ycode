@@ -3,12 +3,15 @@
 package probe
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"runtime"
 	"time"
+
+	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 // LaunchChrome starts the user's installed Chrome with
@@ -53,9 +56,15 @@ func LaunchChrome(chromePath string, port int, userDataDir string) (pid int, res
 		"--no-default-browser-check",
 	}
 	cmd := exec.Command(resolved, args...)
+	// Record only the launch event (Start). The browser keeps running
+	// detached; ycode doesn't observe its eventual exit. A successful
+	// Start means the spawn worked, not that the browser stays up.
+	_, finish := telotel.StartExecSpan(context.Background(), telotel.ExecScopeProbeLaunch, resolved, args)
 	if err := cmd.Start(); err != nil {
+		finish(1, err)
 		return 0, "", fmt.Errorf("launch chrome: %w", err)
 	}
+	finish(0, nil)
 
 	// Give Chrome a moment to bind the debug port.
 	deadline := time.Now().Add(5 * time.Second)

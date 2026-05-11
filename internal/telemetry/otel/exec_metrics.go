@@ -185,6 +185,37 @@ func recordExecMetric(ctx context.Context, scope string, success bool, class str
 	}
 }
 
+// RecordShellBuiltin emits per-verb attribution for `yc <verb>`
+// dispatch. Complements the existing aggregate
+// ycode.shell.command.duration (which lumps all dispatch under one
+// histogram) with a counter keyed on the actual verb name so
+// operators can see which builtins are used and which fail most.
+func RecordShellBuiltin(ctx context.Context, verb string, dur time.Duration, exitCode int) {
+	success := exitCode == 0
+	m := otel.Meter("ycode.shell")
+	counter, err := m.Int64Counter(
+		"ycode.shell.builtin.total",
+		metric.WithDescription("`yc <verb>` dispatches, tagged by verb and success"),
+	)
+	if err == nil {
+		counter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("verb", verb),
+			attribute.Bool("success", success),
+		))
+	}
+	hist, err := m.Float64Histogram(
+		"ycode.shell.builtin.duration",
+		metric.WithUnit("ms"),
+		metric.WithDescription("`yc <verb>` dispatch duration"),
+	)
+	if err == nil {
+		hist.Record(ctx, float64(dur.Milliseconds()), metric.WithAttributes(
+			attribute.String("verb", verb),
+			attribute.Bool("success", success),
+		))
+	}
+}
+
 func logExec(scope, binary, class string, code int, dur time.Duration, err error) {
 	base := filepath.Base(binary)
 	if class == ExitClassZero {

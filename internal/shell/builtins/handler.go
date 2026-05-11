@@ -3,8 +3,11 @@ package builtins
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"mvdan.cc/sh/v3/interp"
+
+	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 // Handler returns an interp.ExecHandler middleware that intercepts
@@ -38,7 +41,9 @@ func Handler() func(interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 				Stdout: hc.Stdout,
 				Stderr: hc.Stderr,
 			}
+			start := time.Now()
 			exit, err := verb.Run(ctx, args[2:], stdio, hc.Dir)
+			telotel.RecordShellBuiltin(ctx, verbName, time.Since(start), exit)
 			if err != nil {
 				fmt.Fprintf(hc.Stderr, "yc %s: %v\n", verbName, err)
 				if exit == 0 {

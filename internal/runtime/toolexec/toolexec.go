@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/qiangli/ycode/internal/container"
+	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 // ErrNotImplemented is returned by a NativeFunc to signal that the operation
@@ -184,6 +185,8 @@ func (e *Executor) hostExec(ctx context.Context, binaryPath, dir string, args []
 	cmd := exec.CommandContext(ctx, binaryPath, args...)
 	cmd.Dir = dir
 
+	ctx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeToolexec, binaryPath, args)
+	_ = ctx // span context not propagated further; toolexec calls are single-shot
 	out, err := cmd.CombinedOutput()
 	exitCode := 0
 	if err != nil {
@@ -191,9 +194,11 @@ func (e *Executor) hostExec(ctx context.Context, binaryPath, dir string, args []
 		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else {
+			finish(0, err)
 			return nil, fmt.Errorf("exec %s: %w", binaryPath, err)
 		}
 	}
+	finish(exitCode, err)
 
 	return &Result{
 		Stdout:   string(out),

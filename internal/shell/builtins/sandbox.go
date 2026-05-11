@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+
+	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 func init() { Register(&sandboxVerb{}) }
@@ -51,11 +53,24 @@ func (sandboxVerb) Run(ctx context.Context, args []string, stdio Stdio, cwd stri
 	cmd.Stdin = stdio.Stdin
 	cmd.Stdout = stdio.Stdout
 	cmd.Stderr = stdio.Stderr
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+
+	ctx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeSandbox, "podman", cmdArgs)
+	_ = ctx
+	runErr := cmd.Run()
+	exitCode := 0
+	if runErr != nil {
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+	finish(exitCode, runErr)
+	if runErr != nil {
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			return exitErr.ExitCode(), nil
 		}
-		fmt.Fprintf(stdio.Stderr, "yc sandbox: %v\n", err)
+		fmt.Fprintf(stdio.Stderr, "yc sandbox: %v\n", runErr)
 		return 1, nil
 	}
 	return 0, nil
