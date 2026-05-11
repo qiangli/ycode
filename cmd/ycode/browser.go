@@ -50,27 +50,40 @@ func defaultProfileDir(mode string) string {
 }
 
 func newBrowserSetupCmd() *cobra.Command {
-	return &cobra.Command{
+	var dest string
+	var noOpen bool
+	cmd := &cobra.Command{
 		Use:   "setup <mode>",
 		Short: "Per-mode one-time setup (live extracts the extension; probe/solo are no-ops)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
 			case mcpservers.ModeLive:
-				dst := live.DefaultExtractDir()
+				dst := dest
+				if dst == "" {
+					dst = live.DefaultExtractDir()
+				}
 				abs, err := live.ExtractExtension(dst)
 				if err != nil {
 					return err
 				}
-				fmt.Printf("Extracted ycode-live extension to: %s\n\n", abs)
-				fmt.Println("Next steps:")
+				fmt.Printf("Extracted ycode-live extension to:\n  %s\n\n", abs)
+				fmt.Println("Load it into Chrome:")
 				fmt.Println("  1. Open chrome://extensions")
 				fmt.Println("  2. Toggle Developer mode (top-right)")
 				fmt.Println("  3. Click Load unpacked → point at the path above")
+				fmt.Println("     (or drag the folder from the file-manager window")
+				fmt.Println("      that just opened onto the chrome://extensions tab)")
 				fmt.Println("  4. Pin the extension to the toolbar")
 				fmt.Println("  5. On the tab you want ycode to drive, click the extension icon → Connect")
 				fmt.Println()
-				fmt.Printf("Then set `browser.mode=live` in settings.json (port default: %d).\n", live.DefaultPort)
+				fmt.Printf("Then: `ycode config set browser.mode live` (port default: %d).\n", live.DefaultPort)
+				if !noOpen {
+					if err := openInFileManager(abs); err == nil {
+						fmt.Println()
+						fmt.Println("(A file-manager window has been opened at the extracted path.)")
+					}
+				}
 				return nil
 			case mcpservers.ModeProbe:
 				fmt.Printf("`probe` requires no setup beyond starting Chrome with the debug port — use `ycode browser launch`.\n")
@@ -82,6 +95,9 @@ func newBrowserSetupCmd() *cobra.Command {
 			return fmt.Errorf("unknown mode %q (want: live | probe | solo)", args[0])
 		},
 	}
+	cmd.Flags().StringVar(&dest, "dest", "", "Extract path (default: ~/Downloads/ycode-chrome-ext)")
+	cmd.Flags().BoolVar(&noOpen, "no-open", false, "Do not pop a file-manager window after extraction")
+	return cmd
 }
 
 func newBrowserLaunchCmd() *cobra.Command {

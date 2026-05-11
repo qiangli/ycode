@@ -13,7 +13,7 @@ third-party JavaScript, no minified bundles.
 ## Install (one-time)
 
 1. Run `ycode browser setup live`. ycode prints a path like
-   `~/.cache/ycode/live-ext/`.
+   `~/Downloads/ycode-chrome-ext/`.
 2. Open `chrome://extensions`.
 3. Toggle **Developer mode** (top-right).
 4. Click **Load unpacked** → point at the path from step 1.

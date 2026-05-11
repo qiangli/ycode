@@ -73,7 +73,7 @@ disable. The reliability layer wraps every mode uniformly.
 ## CLI
 
 ```bash
-ycode browser setup live          # extracts MV3 extension to ~/.cache/ycode/live-ext/
+ycode browser setup live          # extracts MV3 extension to ~/Downloads/ycode-chrome-ext/
 ycode browser launch              # starts host Chrome with --remote-debugging-port for probe
 ycode browser doctor              # diagnose readiness of each mode
 ycode browser install <mode>      # no-op today (kept for symmetry)

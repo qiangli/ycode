@@ -46,9 +46,22 @@ func ExtractExtension(dst string) (string, error) {
 	return abs, nil
 }
 
-// DefaultExtractDir is where `ycode browser setup live` places the
-// extension by default.
+// DefaultExtractDir is the one canonical location for the unpacked
+// ycode-live extension: ~/Downloads/ycode-chrome-ext.
+//
+// One name, one place, every time. Users who want a different
+// location pass `--dest` to `ycode browser setup live`. We pick
+// ~/Downloads because:
+//
+//   - It's universally visible in every file manager (Finder on
+//     macOS hides ~/.cache and ~/Library by default, blocking the
+//     Chrome "Load unpacked" dialog from navigating there).
+//   - Users expect extracted artifacts to land in Downloads.
+//   - It's easy to remove later if the user uninstalls.
+//
+// On the very rare host without a ~/Downloads (minimal Linux,
+// headless CI), ExtractExtension's MkdirAll creates it.
 func DefaultExtractDir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".cache", "ycode", "live-ext")
+	return filepath.Join(home, "Downloads", "ycode-chrome-ext")
 }
