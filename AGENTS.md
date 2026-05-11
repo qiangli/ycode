@@ -21,22 +21,25 @@ make install-hooks                     # recommended: symlinks pre-push hook so 
 ## Build Commands
 
 ```bash
-make build          # full quality gate: tidy → fmt → vet → compile → test → verify
-make compile        # quick compile (includes experimental features by default)
-make compile-wip    # add the next-tier `wip` features
-make compile-full   # single binary with embedded podman + runner (large; for offline distribution)
-make compile-debug  # compile with debug symbols (for profiling/debugging)
-make install        # build + install to ~/bin/ycode (re-signs on macOS)
-make test           # unit tests only (-short -race)
-make cross          # cross-compile all platforms (dist/)
+make build           # full quality gate: tidy → fmt → vet → compile → test → verify
+make compile         # quick compile (includes experimental features by default)
+make compile-stable  # explicit opt-out: compile WITHOUT the experimental tag
+make compile-wip     # add the next-tier `wip` features
+make compile-full    # single binary with embedded podman + runner (large; for offline distribution)
+make compile-debug   # compile with debug symbols (for profiling/debugging)
+make install         # build + install to ~/bin/ycode (re-signs on macOS)
+make test            # unit tests only (-short -race)
+make cross           # cross-compile all platforms (dist/)
 ```
 
-`experimental` is in the default tag list while ycode is pre-release.
-For a stable-only build (no experimental features) override the list:
+Convention: features in ycode are ON BY DEFAULT and opt-out — observability,
+the embedded MCP server, the experimental build tag, etc. The off-switch is
+always discoverable:
 
-```bash
-make compile TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
-```
+| Feature | On by default | Off-switch |
+|---|---|---|
+| OpenTelemetry observability | yes | `observability.enabled: false` in settings.json |
+| Experimental build tag | yes | `make compile-stable` (or `make compile TAG_LIST="sqlite,sqlite_unlock_notify,bindata"`) |
 
 Manual `go build` (handled automatically by `make compile`):
 ```bash

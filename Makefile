@@ -22,7 +22,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL TAG_LIST
 
-.PHONY: help init sync priorart-list priorart-sync compile compile-wip compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
+.PHONY: help init sync priorart-list priorart-sync compile compile-stable compile-wip compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
 
 .DEFAULT_GOAL := help
 
@@ -56,6 +56,10 @@ priorart-sync: ## Pull latest changes for all priorart repos
 compile: ## Compile the ycode binary to bin/ (no checks; includes experimental)
 	go build -trimpath $(TAGS) $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 	@echo "Built bin/ycode (tags: $(TAG_LIST))"
+
+compile-stable: ## Compile without the experimental tag (explicit opt-out)
+	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+	@echo "Built bin/ycode (stable-only; experimental features compiled out)"
 
 compile-wip: ## Compile with experimental + wip features enabled
 	go build -trimpath -tags "$(TAG_LIST),wip" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
