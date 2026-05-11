@@ -4,55 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/qiangli/ycode/internal/runtime/browser"
+	"github.com/qiangli/ycode/pkg/browser/wire"
 )
-
-// BrowserAction is the wire-level browser action shared between the
-// tool shim and whichever mcpservers backend is installed. Defined
-// here (rather than imported from internal/runtime/mcpservers) so the
-// stable build, which excludes the experimental browser package,
-// still compiles. The experimental wiring
-// (internal/tools/browser_experimental.go) copies fields one-for-one
-// into mcpservers.BrowserAction.
-type BrowserAction struct {
-	Type      string   `json:"action"`
-	URL       string   `json:"url,omitempty"`
-	ElementID int      `json:"element_id,omitempty"`
-	Selector  string   `json:"selector,omitempty"`
-	Text      string   `json:"text,omitempty"`
-	Direction string   `json:"direction,omitempty"`
-	Amount    int      `json:"amount,omitempty"`
-	Goal      string   `json:"goal,omitempty"`
-	TabID     int      `json:"tab_id,omitempty"`
-	TabAction string   `json:"tab_action,omitempty"`
-	Script    string   `json:"script,omitempty"`
-	URLs      []string `json:"urls,omitempty"`
-}
-
-// BrowserResult mirrors mcpservers.BrowserResult. See note on
-// BrowserAction.
-type BrowserResult struct {
-	Success      bool     `json:"success"`
-	Title        string   `json:"title,omitempty"`
-	URL          string   `json:"url,omitempty"`
-	Content      string   `json:"content,omitempty"`
-	Elements     string   `json:"elements,omitempty"`
-	Data         string   `json:"data,omitempty"`
-	Image        string   `json:"image,omitempty"`
-	Error        string   `json:"error,omitempty"`
-	Hints        []string `json:"hints,omitempty"`
-	OutcomeClass string   `json:"outcome_class,omitempty"`
-}
-
-// browserDispatchHook is installed by the experimental wiring
-// (SetBrowserManager in internal/tools/browser_experimental.go). When
-// nil, browser_* tools report "no browser backend configured."
-var browserDispatchHook func(ctx context.Context, action BrowserAction) (*BrowserResult, error)
-
-// SetBrowserDispatchHook installs a backend for the lifetime of the
-// session. Pass nil to clear.
-func SetBrowserDispatchHook(fn func(ctx context.Context, action BrowserAction) (*BrowserResult, error)) {
-	browserDispatchHook = fn
-}
 
 // RegisterBrowserHandlers registers the browser automation tools. The
 // 8 browser_* tools share one dispatch path; mode-specific actions
@@ -80,7 +35,7 @@ func registerBrowserNavigate(r *Registry) {
 		}`),
 		AlwaysAvailable: false,
 		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
-			return executeBrowserAction(ctx, input, "navigate")
+			return executeBrowserAction(ctx, input, wire.ActionNavigate)
 		},
 	})
 }
@@ -98,7 +53,7 @@ func registerBrowserClick(r *Registry) {
 		}`),
 		AlwaysAvailable: false,
 		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
-			return executeBrowserAction(ctx, input, "click")
+			return executeBrowserAction(ctx, input, wire.ActionClick)
 		},
 	})
 }
@@ -118,7 +73,7 @@ func registerBrowserType(r *Registry) {
 		}`),
 		AlwaysAvailable: false,
 		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
-			return executeBrowserAction(ctx, input, "type")
+			return executeBrowserAction(ctx, input, wire.ActionType)
 		},
 	})
 }
@@ -136,7 +91,7 @@ func registerBrowserScroll(r *Registry) {
 		}`),
 		AlwaysAvailable: false,
 		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
-			return executeBrowserAction(ctx, input, "scroll")
+			return executeBrowserAction(ctx, input, wire.ActionScroll)
 		},
 	})
 }
@@ -148,7 +103,7 @@ func registerBrowserScreenshot(r *Registry) {
 		InputSchema:     json.RawMessage(`{"type": "object", "properties": {}}`),
 		AlwaysAvailable: false,
 		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
-			return executeBrowserAction(ctx, input, "screenshot")
+			return executeBrowserAction(ctx, input, wire.ActionScreenshot)
 		},
 	})
 }
@@ -163,7 +118,7 @@ func registerBrowserExtract(r *Registry) {
 		}`),
 		AlwaysAvailable: false,
 		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
-			return executeBrowserAction(ctx, input, "extract")
+			return executeBrowserAction(ctx, input, wire.ActionExtract)
 		},
 	})
 }
@@ -175,7 +130,7 @@ func registerBrowserBack(r *Registry) {
 		InputSchema:     json.RawMessage(`{"type": "object", "properties": {}}`),
 		AlwaysAvailable: false,
 		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
-			return executeBrowserAction(ctx, input, "back")
+			return executeBrowserAction(ctx, input, wire.ActionBack)
 		},
 	})
 }
@@ -194,28 +149,29 @@ func registerBrowserTabs(r *Registry) {
 		}`),
 		AlwaysAvailable: false,
 		Handler: func(ctx context.Context, input json.RawMessage) (string, error) {
-			return executeBrowserAction(ctx, input, "tabs")
+			return executeBrowserAction(ctx, input, wire.ActionTabs)
 		},
 	})
 }
 
 // executeBrowserAction is the shared handler for all browser_* tools.
-// Dispatches to the experimental backend (if installed); otherwise
-// returns a clear "no backend" message.
+// Dispatches via the Client installed on ctx by main.go after
+// setupBrowserBackend; otherwise returns a clear "no backend" message.
 func executeBrowserAction(ctx context.Context, input json.RawMessage, actionType string) (string, error) {
-	var action BrowserAction
+	var action wire.Action
 	if err := json.Unmarshal(input, &action); err != nil {
 		return "", fmt.Errorf("parse browser input: %w", err)
 	}
 	action.Type = actionType
 
-	if browserDispatchHook == nil {
+	client, ok := browser.ClientFromContext(ctx)
+	if !ok {
 		return "Browser tools are not available. " +
 			"Set `browser.mode` to live, probe, or solo in settings.json " +
 			"(experimental build only). Use WebFetch for basic URL fetching.", nil
 	}
 
-	result, err := browserDispatchHook(ctx, action)
+	result, err := client.Execute(ctx, action)
 	if err != nil {
 		return "", fmt.Errorf("browser %s: %w", actionType, err)
 	}

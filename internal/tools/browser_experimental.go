@@ -5,48 +5,41 @@ package tools
 import (
 	"context"
 
+	"github.com/qiangli/ycode/internal/runtime/browser"
 	"github.com/qiangli/ycode/internal/runtime/mcpservers"
+	"github.com/qiangli/ycode/pkg/browser/wire"
 )
 
-// SetBrowserManager wires an mcpservers.Manager into the browser_*
-// tool dispatch path. Every browser_navigate/click/type/… call routes
-// through the manager's selected mode (live, probe, or solo).
-// Pass nil to clear.
-func SetBrowserManager(mgr *mcpservers.Manager) {
+// NewInprocClient returns a browser.Client that dispatches every
+// wire.Action through the given in-process mcpservers.Manager. The
+// experimental backends (live / probe / solo) plus the reliability
+// layer all live behind this seam.
+//
+// Wire it into the runtime by decorating rootCtx:
+//
+//	if cli := NewInprocClient(mgr); cli != nil {
+//	    rootCtx = browser.WithClient(rootCtx, cli)
+//	}
+func NewInprocClient(mgr *mcpservers.Manager) browser.Client {
 	if mgr == nil {
-		SetBrowserDispatchHook(nil)
-		return
+		return nil
 	}
-	SetBrowserDispatchHook(func(ctx context.Context, action BrowserAction) (*BrowserResult, error) {
-		mAction := mcpservers.BrowserAction{
-			Type:      action.Type,
-			URL:       action.URL,
-			ElementID: action.ElementID,
-			Selector:  action.Selector,
-			Text:      action.Text,
-			Direction: action.Direction,
-			Amount:    action.Amount,
-			Goal:      action.Goal,
-			TabID:     action.TabID,
-			TabAction: action.TabAction,
-			Script:    action.Script,
-			URLs:      action.URLs,
-		}
-		mr, err := mgr.Execute(ctx, mAction)
-		if err != nil {
-			return nil, err
-		}
-		return &BrowserResult{
-			Success:      mr.Success,
-			Title:        mr.Title,
-			URL:          mr.URL,
-			Content:      mr.Content,
-			Elements:     mr.Elements,
-			Data:         mr.Data,
-			Image:        mr.Image,
-			Error:        mr.Error,
-			Hints:        mr.Hints,
-			OutcomeClass: mr.OutcomeClass,
-		}, nil
-	})
+	return &inprocClient{mgr: mgr}
+}
+
+type inprocClient struct {
+	mgr *mcpservers.Manager
+}
+
+func (c *inprocClient) Execute(ctx context.Context, action wire.Action) (*wire.Result, error) {
+	// mcpservers.BrowserAction / BrowserResult are type aliases for
+	// wire.Action / wire.Result (see internal/runtime/mcpservers/types.go),
+	// so no copy is needed.
+	return c.mgr.Execute(ctx, action)
+}
+
+func (c *inprocClient) Close() error {
+	// Backend lifecycle (StopAll) is managed by the caller that
+	// constructed the Manager; the Client itself owns no resources.
+	return nil
 }

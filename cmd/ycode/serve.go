@@ -343,7 +343,13 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	// extension stays connected across TUI/prompt lifecycles. The
 	// TUI/prompt processes will see the port in use and forward via
 	// HTTP /dispatch instead of trying to bind.
-	setupBrowserBackend(ctx, fullCfg)
+	//
+	// We discard the returned browser.Client: tool dispatch happens
+	// inside per-App newApp() flows, each of which calls
+	// setupBrowserBackend and installs its own Client on its rootCtx.
+	// This call's only purpose is the side effect of binding the live
+	// hub port.
+	_ = setupBrowserBackend(ctx, fullCfg)
 
 	// 2. Build API/WebSocket + NATS (may take time or fail if no API key).
 	var api *apiStack

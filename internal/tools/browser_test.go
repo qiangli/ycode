@@ -5,24 +5,41 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/qiangli/ycode/internal/runtime/browser"
+	"github.com/qiangli/ycode/pkg/browser/wire"
 )
 
-// TestBrowserDispatchHook verifies that when a hook is installed,
-// every browser_* tool routes through it. This is the seam the
-// experimental backends (live / probe / solo) hook into.
-func TestBrowserDispatchHook(t *testing.T) {
-	t.Cleanup(func() { SetBrowserDispatchHook(nil) })
+// fakeClient is a test double for browser.Client. The Execute func is
+// captured so each test can assert what action it received.
+type fakeClient struct {
+	exec func(ctx context.Context, action wire.Action) (*wire.Result, error)
+}
 
+func (f *fakeClient) Execute(ctx context.Context, action wire.Action) (*wire.Result, error) {
+	return f.exec(ctx, action)
+}
+
+func (f *fakeClient) Close() error { return nil }
+
+// TestBrowserClientDispatch verifies that when a Client is installed
+// on ctx, every browser_* tool routes its wire.Action through it.
+// This is the seam the experimental backends (live / probe / solo)
+// reach via NewInprocClient.
+func TestBrowserClientDispatch(t *testing.T) {
 	var called int
 	var seenAction string
-	SetBrowserDispatchHook(func(ctx context.Context, action BrowserAction) (*BrowserResult, error) {
-		called++
-		seenAction = action.Type
-		return &BrowserResult{Success: true, Title: "via-hook", URL: action.URL}, nil
-	})
+	client := &fakeClient{
+		exec: func(_ context.Context, a wire.Action) (*wire.Result, error) {
+			called++
+			seenAction = a.Type
+			return &wire.Result{Success: true, Title: "via-hook", URL: a.URL}, nil
+		},
+	}
+	ctx := browser.WithClient(context.Background(), client)
 
-	out, err := executeBrowserAction(context.Background(),
-		json.RawMessage(`{"url":"https://example.com"}`), "navigate")
+	out, err := executeBrowserAction(ctx,
+		json.RawMessage(`{"url":"https://example.com"}`), wire.ActionNavigate)
 	if err != nil {
 		t.Fatalf("executeBrowserAction: %v", err)
 	}
@@ -30,22 +47,19 @@ func TestBrowserDispatchHook(t *testing.T) {
 		t.Fatalf("hook output not seen; got %q", out)
 	}
 	if called != 1 {
-		t.Fatalf("hook should be called exactly once; got %d", called)
+		t.Fatalf("client should be called exactly once; got %d", called)
 	}
-	if seenAction != "navigate" {
-		t.Fatalf("hook saw wrong action type; got %q", seenAction)
+	if seenAction != wire.ActionNavigate {
+		t.Fatalf("client saw wrong action type; got %q", seenAction)
 	}
 }
 
 // TestBrowserNoBackend verifies the friendly error message when no
-// hook is installed (stable build, or experimental build without a
+// client is installed (stable build, or experimental build without a
 // configured browser.mode).
 func TestBrowserNoBackend(t *testing.T) {
-	t.Cleanup(func() { SetBrowserDispatchHook(nil) })
-	SetBrowserDispatchHook(nil)
-
 	out, err := executeBrowserAction(context.Background(),
-		json.RawMessage(`{"url":"https://example.com"}`), "navigate")
+		json.RawMessage(`{"url":"https://example.com"}`), wire.ActionNavigate)
 	if err != nil {
 		t.Fatalf("executeBrowserAction: %v", err)
 	}

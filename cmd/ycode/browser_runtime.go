@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/qiangli/ycode/internal/runtime/browser"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/mcpservers"
 	"github.com/qiangli/ycode/internal/runtime/mcpservers/live"
@@ -16,11 +17,16 @@ import (
 )
 
 // setupBrowserBackend installs the configured browser mode (live,
-// probe, or solo) into the browser_* tool dispatch path. No-op when
-// browser.mode is unset. Stable builds bypass via the stub below.
-func setupBrowserBackend(ctx context.Context, cfg *config.Config) {
+// probe, or solo) and returns a browser.Client that dispatches
+// wire.Actions through the manager. Returns nil when browser.mode is
+// unset; callers install the client on their rootCtx via
+// browser.WithClient.
+//
+// Stable builds use the stub in browser_runtime_stub.go and always
+// return nil.
+func setupBrowserBackend(ctx context.Context, cfg *config.Config) browser.Client {
 	if cfg == nil || cfg.Browser == nil || cfg.Browser.Mode == "" {
-		return
+		return nil
 	}
 	mode := cfg.Browser.Mode
 	mgr := mcpservers.NewManager()
@@ -39,7 +45,7 @@ func setupBrowserBackend(ctx context.Context, cfg *config.Config) {
 		})
 	default:
 		slog.Warn("browser: unknown mode", "mode", mode)
-		return
+		return nil
 	}
 
 	// Wrap with the openchrome-inspired reliability primitives.
@@ -66,8 +72,8 @@ func setupBrowserBackend(ctx context.Context, cfg *config.Config) {
 	}
 	if err := mgr.SetDefault(mode); err != nil {
 		slog.Warn("browser: SetDefault failed", "error", err)
-		return
+		return nil
 	}
-	tools.SetBrowserManager(mgr)
 	slog.Info("browser: backend installed", "mode", mode)
+	return tools.NewInprocClient(mgr)
 }

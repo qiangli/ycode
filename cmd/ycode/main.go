@@ -23,6 +23,7 @@ import (
 	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/runtime/bash"
+	"github.com/qiangli/ycode/internal/runtime/browser"
 	"github.com/qiangli/ycode/internal/runtime/computer"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
@@ -338,11 +339,16 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	}
 
 	// Experimental ycode-native browser modes (live / probe / solo).
-	// Installs a dispatch hook on the browser_* tools when
-	// cfg.Browser.Mode is set. live mode eagerly binds its WS port
+	// Returns a browser.Client wrapping the configured Manager when
+	// cfg.Browser.Mode is set; nil otherwise. Installing the client on
+	// rootCtx makes it available to every browser_* tool dispatched in
+	// this App's goroutines (tool handlers retrieve it via
+	// browser.ClientFromContext). live mode eagerly binds its WS port
 	// here so the Chrome extension can connect immediately. probe /
 	// solo are lazily initialized on first browser tool call.
-	setupBrowserBackend(rootCtx, cfg)
+	if browserClient := setupBrowserBackend(rootCtx, cfg); browserClient != nil {
+		rootCtx = browser.WithClient(rootCtx, browserClient)
+	}
 
 	jobRegistry := bash.NewJobRegistry()
 	// Construct the unified Computer gateway. All agent-driven shell,
