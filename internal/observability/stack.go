@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -159,6 +160,18 @@ func (s *StackManager) AddRoute(pathPrefix string, backend *url.URL) {
 	}
 }
 
+// AddHandler registers an in-process HTTP handler on the proxy after the stack
+// has started. Use for endpoints that don't need component lifecycle (e.g.
+// the /.well-known manifest and /manifest endpoints), where a full Component
+// shape would be ceremony for nothing.
+func (s *StackManager) AddHandler(pathPrefix string, handler http.Handler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.proxy != nil {
+		s.proxy.AddHandler(pathPrefix, handler)
+	}
+}
+
 // AddLateComponent registers and starts a component after the stack is already running.
 // Its HTTP handler (if any) is mounted on the proxy.
 func (s *StackManager) AddLateComponent(ctx context.Context, c Component) error {
@@ -209,6 +222,7 @@ var componentPathMap = map[string]string{
 	"git":            "/git/",
 	"gitea-mcp":      "/gitea-mcp/",
 	"loom-mcp":       "/loom-mcp/",
+	"ycode-mcp":      "/mcp/",
 }
 
 // registerRoutes mounts each component's HTTP handler on the proxy mux.

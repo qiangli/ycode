@@ -15,6 +15,7 @@ import (
 	"github.com/qiangli/ycode/internal/gitserver/merger"
 	"github.com/qiangli/ycode/internal/gitserver/projects"
 	"github.com/qiangli/ycode/internal/observability"
+	"github.com/qiangli/ycode/internal/runtime/mcp"
 	"github.com/qiangli/ycode/internal/selfinit"
 	loompkg "github.com/qiangli/ycode/pkg/loom"
 )
@@ -25,6 +26,7 @@ import (
 // stopped wholesale when the component shuts down.
 type loomComponent struct {
 	httpHandler http.Handler
+	mcpHandler  mcp.ServerHandler // underlying MCP handler; exposed so the composite /mcp/ endpoint can fan out to loom without a second wrap
 	healthy     atomic.Bool
 
 	svc *loompkg.Service
@@ -95,9 +97,14 @@ func buildLoomComponent(_ context.Context, client *gitserver.Client, token, gite
 
 	handler := gitserverloom.NewMCPHandler(svc)
 	c.svc = svc
+	c.mcpHandler = handler
 	c.httpHandler = observability.NewMCPHTTPHandler(handler)
 	return c, svc, nil
 }
+
+// MCPHandler returns the underlying loom MCP ServerHandler. Used by the
+// composite /mcp/ endpoint to fan out without re-wrapping the same logic.
+func (c *loomComponent) MCPHandler() mcp.ServerHandler { return c.mcpHandler }
 
 func (c *loomComponent) Name() string { return "loom-mcp" }
 

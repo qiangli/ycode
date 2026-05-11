@@ -22,6 +22,7 @@ import (
 	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/observability/dashboards"
 	"github.com/qiangli/ycode/internal/runtime/config"
+	mcppkg "github.com/qiangli/ycode/internal/runtime/mcp"
 	"github.com/qiangli/ycode/internal/runtime/origin"
 	"github.com/qiangli/ycode/internal/tools"
 	loompkg "github.com/qiangli/ycode/pkg/loom"
@@ -244,6 +245,13 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	}
 	fmt.Printf("Observability at http://127.0.0.1:%d/\n", port)
 
+	// Collected MCP sub-handlers fanned out by the composite /mcp/ endpoint
+	// (G6). Each capability family (gitea, loom, pulse, future memex/repomap/
+	// inference) appends its mcp.ServerHandler here. The composite is built
+	// once at the bottom of this function, after every family has had its
+	// chance to register.
+	var compositeMCP []mcppkg.ServerHandler
+
 	// Propagate the dynamically-allocated collector gRPC address so that
 	// setupOTEL/setupFileOTEL (called inside newApp via buildAPIStack) connects
 	// to the actual embedded collector instead of the default 127.0.0.1:4317.
@@ -317,6 +325,7 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 			slog.Warn("Gitea MCP not available", "error", err)
 		} else {
 			fmt.Printf("Gitea MCP at       http://127.0.0.1:%d/gitea-mcp/\n", port)
+			compositeMCP = append(compositeMCP, giteaMCPHandler)
 		}
 
 		// Loom — workspace-isolation substrate for foreign agentic tools.
@@ -334,6 +343,9 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 				fmt.Printf("Loom MCP at        http://127.0.0.1:%d/loom-mcp/\n", port)
 				stack.loom = loomComp
 				stack.loomSvc = loomSvc
+				if h := loomComp.MCPHandler(); h != nil {
+					compositeMCP = append(compositeMCP, h)
+				}
 			}
 		}
 	}
@@ -384,6 +396,7 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 				slog.Warn("Pulse MCP not available", "error", err)
 			} else {
 				fmt.Printf("Pulse MCP at       http://127.0.0.1:%d/pulse/\n", port)
+				compositeMCP = append(compositeMCP, mcpHandler)
 			}
 
 			if api.natsSrv != nil {
@@ -403,6 +416,25 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		}
 	}
 
+	// Composite MCP endpoint (G6) — single /mcp/ URL that fans out to every
+	// registered capability family. This is the Agent OS "syscall interface":
+	// every client (claude code, opencode, codex, gemini-cli, ycode's own
+	// TUI/web UI) configures ONE MCP entry pointing here instead of one
+	// entry per family. Tool name collisions across families would panic at
+	// construction; current families (gitea, loom, pulse) use distinct
+	// prefixes so this is safe. Backward-compat: individual mounts at
+	// /gitea-mcp/, /loom-mcp/, /pulse/ remain available.
+	if len(compositeMCP) > 0 {
+		composite := mcppkg.NewCompositeHandler(compositeMCP...)
+		compositeHTTP := observability.NewMCPHTTPHandler(composite)
+		compositeComp := observability.NewMCPCompositeComponent(compositeHTTP)
+		if err := mgr.AddLateComponent(ctx, compositeComp); err != nil {
+			slog.Warn("Composite MCP not available", "error", err)
+		} else {
+			fmt.Printf("ycode MCP at       http://127.0.0.1:%d/mcp/\n", port)
+		}
+	}
+
 	fmt.Println("\nPress Ctrl+C to stop.")
 
 	// Write PID and port files for client discovery.
@@ -416,12 +448,24 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 
 	// Lighthouse manifest — single self-describing file foreign coding agents
 	// read to discover every live ycode endpoint. See docs/lighthouse.md.
-	if manifestPath, err := writeServeManifest(home, port, apiNATSPort, stack, api != nil && api.handler != nil, version); err != nil {
+	// Same data is also served over HTTP (G7) for remote-first clients that
+	// can't read the local filesystem.
+	apiUp := api != nil && api.handler != nil
+	manifestData := buildServeManifest(home, port, apiNATSPort, stack, apiUp, version)
+	if manifestPath, err := writeServeManifest(home, port, apiNATSPort, stack, apiUp, version); err != nil {
 		slog.Warn("failed to write manifest", "error", err)
 	} else {
 		fmt.Printf("Manifest at        %s\n", manifestPath)
 		defer os.Remove(manifestPath)
 	}
+	// G7 — HTTP-served manifest endpoints. Remote clients call these instead
+	// of reading ~/.agents/ycode/manifest.json from disk:
+	//   GET /.well-known/ycode-manifest.json — public subset (URLs only)
+	//   GET /manifest                        — full, bearer-authenticated
+	tokenFile := filepath.Join(home, ".agents", "ycode", "server.token")
+	mgr.AddHandler("/.well-known/ycode-manifest.json", manifestPublicHandler(manifestData))
+	mgr.AddHandler("/manifest", manifestFullHandler(manifestData, tokenFile, serveNoAuth))
+	fmt.Printf("Manifest HTTP at   http://127.0.0.1:%d/.well-known/ycode-manifest.json (public), /manifest (authed)\n", port)
 
 	// If auto-started, write sentinel and enable idle shutdown.
 	autoPath := filepath.Join(home, ".agents", "ycode", "serve.auto")
