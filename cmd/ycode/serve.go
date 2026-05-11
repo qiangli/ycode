@@ -336,6 +336,13 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		}
 	}
 
+	// Experimental ycode-native browser modes (live / probe / solo).
+	// The hub for live mode is durable — bind it here so the Chrome
+	// extension stays connected across TUI/prompt lifecycles. The
+	// TUI/prompt processes will see the port in use and forward via
+	// HTTP /dispatch instead of trying to bind.
+	setupBrowserBackend(ctx, fullCfg)
+
 	// 2. Build API/WebSocket + NATS (may take time or fail if no API key).
 	var api *apiStack
 	if !serveNoAPI || !serveNoNATS {

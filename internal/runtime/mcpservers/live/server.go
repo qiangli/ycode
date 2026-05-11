@@ -52,6 +52,19 @@ func (h *hub) start(ctx context.Context) error {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
+	// /connected reports whether the extension's websocket is up
+	// without poking the extension itself. Used by `ycode browser
+	// doctor` to surface real-time connection state.
+	mux.HandleFunc("/connected", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]bool{"connected": h.connected()})
+	})
+	// /dispatch is the cross-process bridge: a ycode prompt running
+	// in a separate process can POST a {method, params} JSON here
+	// instead of binding its own hub. The hub owner (typically
+	// `ycode serve`) forwards over the websocket and returns the
+	// extension's response synchronously. 30 s ceiling per call.
+	mux.HandleFunc("/dispatch", h.handleDispatch)
 	h.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := h.srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -180,4 +193,51 @@ func (h *hub) connected() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.conn != nil
+}
+
+// handleDispatch is the cross-process forwarder. Body:
+//
+//	{"method": "navigate", "params": {"url": "..."}}
+//
+// Response:
+//
+//	{"result": {...}}        // success
+//	{"error":  "..."}        // failure (HTTP 200 with error field)
+//
+// Returns 503 when no extension is currently connected.
+func (h *hub) handleDispatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Method string         `json:"method"`
+		Params map[string]any `json:"params"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("bad json: %v", err), http.StatusBadRequest)
+		return
+	}
+	if req.Method == "" {
+		http.Error(w, "method required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	resp, err := h.call(ctx, req.Method, req.Params)
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		// Extension not connected, or write to socket failed.
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	// resp.Result is already a json.RawMessage; either path goes
+	// through to the caller untouched.
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"result": resp.Result,
+		"error":  resp.Error,
+	})
 }

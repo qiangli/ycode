@@ -135,8 +135,18 @@ func newBrowserDoctorCmd() *cobra.Command {
 			fmt.Println("Browser modes:")
 
 			lv := live.New(0)
-			fmt.Printf("  live   available=%v   port=%d   ext-dir=%s\n",
-				lv.Available(ctx), lv.Port(), live.DefaultExtractDir())
+			hubURL := fmt.Sprintf("http://127.0.0.1:%d/health", lv.Port())
+			hubUp := false
+			if c, err := newQuickHTTPClient().Get(hubURL); err == nil {
+				hubUp = c.StatusCode == 200
+				c.Body.Close()
+			}
+			extConnected := false
+			if hubUp {
+				extConnected = liveExtensionConnected(lv.Port())
+			}
+			fmt.Printf("  live   port=%d   hub-running=%v   extension-connected=%v   ext-dir=%s\n",
+				lv.Port(), hubUp, extConnected, live.DefaultExtractDir())
 
 			pr := probe.New("")
 			fmt.Printf("  probe  available=%v   target=%s   profile=%s\n",
