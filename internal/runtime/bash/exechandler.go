@@ -12,6 +12,7 @@ import (
 	"mvdan.cc/sh/v3/interp"
 
 	"github.com/qiangli/ycode/internal/runtime/permission"
+	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 // NewSecurityExecHandler creates an ExecHandler middleware that enforces
@@ -33,8 +34,19 @@ func NewSecurityExecHandler(mode permission.Mode, killTimeout time.Duration) fun
 			path, err := interp.LookPathDir(hc.Dir, hc.Env, args[0])
 			if err != nil {
 				fmt.Fprintln(hc.Stderr, err)
+				telotel.RecordExec(ctx, telotel.ExecScopeBash, binary, 0, 127, err)
 				return interp.ExitStatus(127)
 			}
+
+			// Open a per-spawn span+metric. Closed in defer below
+			// after Start/Wait completes, with the resolved exit
+			// code + err so classification is exact.
+			ctx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeBash, path, args)
+			var (
+				runErr   error
+				exitCode int
+			)
+			defer func() { finish(exitCode, runErr) }()
 
 			// Build the command with process group isolation.
 			cmd := exec.Cmd{
@@ -50,8 +62,8 @@ func NewSecurityExecHandler(mode permission.Mode, killTimeout time.Duration) fun
 				},
 			}
 
-			err = cmd.Start()
-			if err == nil {
+			runErr = cmd.Start()
+			if runErr == nil {
 				// Forward context cancellation as SIGTERM→SIGKILL to process group.
 				stopf := context.AfterFunc(ctx, func() {
 					pgid := cmd.Process.Pid
@@ -65,11 +77,12 @@ func NewSecurityExecHandler(mode permission.Mode, killTimeout time.Duration) fun
 				})
 				defer stopf()
 
-				err = cmd.Wait()
+				runErr = cmd.Wait()
 			}
 
-			switch e := err.(type) {
+			switch e := runErr.(type) {
 			case *exec.ExitError:
+				exitCode = e.ExitCode()
 				if status, ok := e.Sys().(syscall.WaitStatus); ok && status.Signaled() {
 					if ctx.Err() != nil {
 						return ctx.Err()
@@ -79,9 +92,10 @@ func NewSecurityExecHandler(mode permission.Mode, killTimeout time.Duration) fun
 				return interp.ExitStatus(uint8(e.ExitCode()))
 			case *exec.Error:
 				fmt.Fprintf(hc.Stderr, "%v\n", e)
+				exitCode = 127
 				return interp.ExitStatus(127)
 			default:
-				return err
+				return runErr
 			}
 		}
 	}

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"mvdan.cc/sh/v3/interp"
+
+	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 // TTYRunner is the optional callback the shell-mode exec handler invokes
@@ -44,6 +46,7 @@ func NewShellExecHandler(killTimeout time.Duration, tty TTYRunner) func(interp.E
 			path, err := interp.LookPathDir(hc.Dir, hc.Env, args[0])
 			if err != nil {
 				fmt.Fprintln(hc.Stderr, err)
+				telotel.RecordExec(ctx, telotel.ExecScopeBashTTY, args[0], 0, 127, err)
 				return interp.ExitStatus(127)
 			}
 
@@ -52,7 +55,9 @@ func NewShellExecHandler(killTimeout time.Duration, tty TTYRunner) func(interp.E
 			// real controlling terminal.
 			resolved := append([]string{path}, args[1:]...)
 			if tty != nil && needsTTYArgs(resolved) {
+				ctx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeBashTTY, path, resolved)
 				exit, err := tty.RunTTY(ctx, resolved, execEnvFromExpand(hc.Env), hc.Dir)
+				finish(exit, err)
 				if err != nil {
 					return err
 				}
@@ -61,6 +66,13 @@ func NewShellExecHandler(killTimeout time.Duration, tty TTYRunner) func(interp.E
 				}
 				return nil
 			}
+
+			ctx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeBashTTY, path, args)
+			var (
+				runErr   error
+				exitCode int
+			)
+			defer func() { finish(exitCode, runErr) }()
 
 			cmd := exec.Cmd{
 				Path:   path,
@@ -76,9 +88,11 @@ func NewShellExecHandler(killTimeout time.Duration, tty TTYRunner) func(interp.E
 			}
 
 			if err := cmd.Start(); err != nil {
+				runErr = err
 				switch e := err.(type) {
 				case *exec.Error:
 					fmt.Fprintf(hc.Stderr, "%v\n", e)
+					exitCode = 127
 					return interp.ExitStatus(127)
 				default:
 					return err
@@ -97,9 +111,10 @@ func NewShellExecHandler(killTimeout time.Duration, tty TTYRunner) func(interp.E
 			})
 			defer stopf()
 
-			err = cmd.Wait()
-			switch e := err.(type) {
+			runErr = cmd.Wait()
+			switch e := runErr.(type) {
 			case *exec.ExitError:
+				exitCode = e.ExitCode()
 				if status, ok := e.Sys().(syscall.WaitStatus); ok && status.Signaled() {
 					if ctx.Err() != nil {
 						return ctx.Err()
@@ -110,7 +125,7 @@ func NewShellExecHandler(killTimeout time.Duration, tty TTYRunner) func(interp.E
 			case nil:
 				return nil
 			default:
-				return err
+				return runErr
 			}
 		}
 	}

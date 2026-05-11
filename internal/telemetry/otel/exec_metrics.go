@@ -3,7 +3,9 @@ package otel
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
@@ -71,8 +73,14 @@ func ClassifyExit(ctx context.Context, exitCode int, err error) (class string, n
 	if err == nil {
 		return ExitClassZero, 0, ""
 	}
+	// not-found: covers both *exec.Error (PATH lookup miss) and
+	// *fs.PathError ("no such file or directory" for absolute paths).
 	var notFound *exec.Error
 	if errors.As(err, &notFound) {
+		return ExitClassNotFound, 127, ""
+	}
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) && errors.Is(err, os.ErrNotExist) {
 		return ExitClassNotFound, 127, ""
 	}
 	var exitErr *exec.ExitError

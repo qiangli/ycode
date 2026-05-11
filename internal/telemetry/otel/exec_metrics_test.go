@@ -113,8 +113,12 @@ func TestStartExecSpan_RoundTripDoesNotPanic(t *testing.T) {
 }
 
 func TestStartExecSpan_FailureBranch(t *testing.T) {
+	// Run a real failing command so the ExitError has a valid
+	// ProcessState (a bare &exec.ExitError{} crashes Sys()).
+	cmd := exec.Command("/bin/sh", "-c", "exit 2")
+	runErr := cmd.Run()
 	ctx, finish := StartExecSpan(context.Background(), ExecScopeBash, "/bin/sh", []string{"/bin/sh", "-c", "exit 2"})
-	finish(2, &exec.ExitError{}) // synthetic — only the type matters for classification
+	finish(cmd.ProcessState.ExitCode(), runErr)
 	_ = ctx
 }
 
