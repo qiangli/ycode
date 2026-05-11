@@ -17,6 +17,8 @@ import (
 	"github.com/qiangli/ycode/pkg/oci/nettypes"
 	ociSpec "github.com/qiangli/ycode/pkg/oci/spec"
 	"github.com/qiangli/ycode/pkg/oci/specgen"
+
+	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
 // ContainerConfig holds the configuration for creating a container.
@@ -192,8 +194,28 @@ func (c *Container) Exec(ctx context.Context, command string, workDir string) (*
 		execCfg.WorkingDir = workDir
 	}
 
+	// Span around the whole round-trip. Two layers of instrumentation:
+	//   - telotel.StartExecSpan: the unified ycode.exec.* signal
+	//     shared with bash/toolexec/sandbox.
+	//   - RecordContainerExec: feeds the container-package legacy
+	//     counters (creates was wired; execs and failures were
+	//     orphaned before this commit).
+	spanCtx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeContainer, "sh", []string{"-c", command})
+	start := time.Now()
+	var (
+		execErr  error
+		exitCode int
+	)
+	defer func() {
+		dur := float64(time.Since(start).Milliseconds())
+		RecordContainerExec(spanCtx, execErr == nil && exitCode == 0, dur)
+		finish(exitCode, execErr)
+	}()
+
 	sessionID, err := containers.ExecCreate(c.engine.connCtx, c.ID, execCfg)
 	if err != nil {
+		execErr = err
+		exitCode = 1
 		return nil, fmt.Errorf("exec create: %w", err)
 	}
 
@@ -206,6 +228,8 @@ func (c *Container) Exec(ctx context.Context, command string, workDir string) (*
 		WithAttachError(true)
 
 	if err := containers.ExecStartAndAttach(c.engine.connCtx, sessionID, attachOpts); err != nil {
+		execErr = err
+		exitCode = 1
 		return &ExecResult{
 			Stdout:   stdout.String(),
 			Stderr:   stderr.String() + "\n" + err.Error(),
@@ -215,8 +239,9 @@ func (c *Container) Exec(ctx context.Context, command string, workDir string) (*
 
 	// Get exit code.
 	inspect, err := containers.ExecInspect(c.engine.connCtx, sessionID, nil)
-	exitCode := 0
-	if err == nil {
+	if err != nil {
+		execErr = err
+	} else {
 		exitCode = inspect.ExitCode
 	}
 

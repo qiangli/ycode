@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -148,6 +149,36 @@ func (c *ContainerComponent) traceContainerCreate(ctx context.Context, agentID, 
 	}
 	if c.otel.creates != nil {
 		c.otel.creates.Add(ctx, 1)
+	}
+}
+
+// RecordContainerExec emits the package-level execs/failures
+// counters and a duration histogram for one Container.Exec round-trip.
+// Called from Container.Exec where the per-component otel state is
+// not reachable (Container has no backlink to its component). Per-
+// call meter lookup mirrors the pattern in internal/telemetry/otel.
+func RecordContainerExec(ctx context.Context, success bool, dur float64) {
+	m := otel.Meter("ycode.container")
+	execs, err := m.Int64Counter("ycode.container.execs",
+		metric.WithDescription("Total exec operations in containers"),
+	)
+	if err == nil {
+		execs.Add(ctx, 1, metric.WithAttributes(attribute.Bool("success", success)))
+	}
+	hist, err := m.Float64Histogram("ycode.container.exec.duration",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Container.Exec round-trip duration"),
+	)
+	if err == nil {
+		hist.Record(ctx, dur, metric.WithAttributes(attribute.Bool("success", success)))
+	}
+	if !success {
+		failures, ferr := m.Int64Counter("ycode.container.failures",
+			metric.WithDescription("Total container operation failures"),
+		)
+		if ferr == nil {
+			failures.Add(ctx, 1)
+		}
 	}
 }
 
