@@ -323,11 +323,6 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 					}
 				}
 
-				// Optional: experimental ycode-native browser modes
-				// (live / probe / solo). Installs a dispatch hook on
-				// the browser_* tools when cfg.Browser.Mode is set.
-				setupBrowserBackend(rootCtx, cfg)
-
 				slog.Info("container sandbox active", "container", sandbox.Name, "image", image)
 				// Clean up sandbox on shutdown.
 				defer func() {
@@ -340,6 +335,13 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 			}
 		}
 	}
+
+	// Experimental ycode-native browser modes (live / probe / solo).
+	// Installs a dispatch hook on the browser_* tools when
+	// cfg.Browser.Mode is set. live mode eagerly binds its WS port
+	// here so the Chrome extension can connect immediately. probe /
+	// solo are lazily initialized on first browser tool call.
+	setupBrowserBackend(rootCtx, cfg)
 
 	jobRegistry := bash.NewJobRegistry()
 	// Construct the unified Computer gateway. All agent-driven shell,

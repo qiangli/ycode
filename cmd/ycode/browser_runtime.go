@@ -51,6 +51,19 @@ func setupBrowserBackend(ctx context.Context, cfg *config.Config) {
 		PatternLearner: cfg.Browser.PatternLearner,
 	})
 	mgr.Register(svc)
+
+	// live mode owns a long-lived WS listener that the Chrome
+	// extension reconnects to. Bind it eagerly so the extension
+	// can connect the moment ycode starts, rather than waiting
+	// for the first browser_* tool call (the lazy path).
+	// probe and solo are lazy-initialized — they need user
+	// action (`ycode browser launch` / a configured Chrome) that
+	// might not be ready at session start.
+	if mode == mcpservers.ModeLive {
+		if err := svc.EnsureReady(ctx); err != nil {
+			slog.Warn("browser: live EnsureReady failed", "error", err)
+		}
+	}
 	if err := mgr.SetDefault(mode); err != nil {
 		slog.Warn("browser: SetDefault failed", "error", err)
 		return

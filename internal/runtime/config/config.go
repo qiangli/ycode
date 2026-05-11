@@ -542,6 +542,45 @@ func mergeFromFile(cfg *Config, path string) error {
 			cfg.Tasks.PollSeconds = tk.PollSeconds
 		}
 	}
+	if overlay.Browser != nil {
+		if cfg.Browser == nil {
+			cfg.Browser = &BrowserConfig{}
+		}
+		b := overlay.Browser
+		if b.Mode != "" {
+			cfg.Browser.Mode = b.Mode
+		}
+		if b.LivePort != 0 {
+			cfg.Browser.LivePort = b.LivePort
+		}
+		if b.ProbeURL != "" {
+			cfg.Browser.ProbeURL = b.ProbeURL
+		}
+		if b.SoloChromePath != "" {
+			cfg.Browser.SoloChromePath = b.SoloChromePath
+		}
+		if b.SoloHeaded {
+			cfg.Browser.SoloHeaded = true
+		}
+		if b.SoloUserDataDir != "" {
+			cfg.Browser.SoloUserDataDir = b.SoloUserDataDir
+		}
+		if b.HintEngine != nil {
+			cfg.Browser.HintEngine = b.HintEngine
+		}
+		if b.RalphFallback != nil {
+			cfg.Browser.RalphFallback = b.RalphFallback
+		}
+		if b.CircuitBreaker != nil {
+			cfg.Browser.CircuitBreaker = b.CircuitBreaker
+		}
+		if b.CompactDOM != nil {
+			cfg.Browser.CompactDOM = b.CompactDOM
+		}
+		if b.PatternLearner != nil {
+			cfg.Browser.PatternLearner = b.PatternLearner
+		}
+	}
 	if overlay.Toolsets != nil {
 		if cfg.Toolsets == nil {
 			cfg.Toolsets = make(map[string][]string)
