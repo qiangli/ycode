@@ -103,6 +103,24 @@ type openaiRequest struct {
 	// ReasoningEffort controls thinking depth for OpenAI o-series models.
 	// Values: "low", "medium", "high".
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+
+	// ResponseFormat constrains the model output. Populated from
+	// Request.ResponseFormat when present.
+	ResponseFormat *openaiResponseFormat `json:"response_format,omitempty"`
+}
+
+// openaiResponseFormat is the OpenAI response_format wire shape.
+//   - Type "json_object" emits any JSON object (no schema required).
+//   - Type "json_schema" requires JSONSchema with a name + schema doc.
+type openaiResponseFormat struct {
+	Type       string                `json:"type"`
+	JSONSchema *openaiJSONSchemaSpec `json:"json_schema,omitempty"`
+}
+
+type openaiJSONSchemaSpec struct {
+	Name   string          `json:"name"`
+	Strict bool            `json:"strict,omitempty"`
+	Schema json.RawMessage `json:"schema"`
 }
 
 // openaiThinking controls thinking/reasoning for providers that use this format (e.g., Kimi).
@@ -152,6 +170,27 @@ func (c *OpenAICompatClient) buildRequest(req *Request) *openaiRequest {
 	// Enable usage reporting in streaming mode.
 	if req.Stream {
 		oReq.StreamOptions = &openaiStreamOptions{IncludeUsage: true}
+	}
+
+	// Map response_format / structured output.
+	if req.ResponseFormat != nil {
+		switch req.ResponseFormat.Type {
+		case "json_object":
+			oReq.ResponseFormat = &openaiResponseFormat{Type: "json_object"}
+		case "json_schema":
+			name := req.ResponseFormat.Name
+			if name == "" {
+				name = "response"
+			}
+			oReq.ResponseFormat = &openaiResponseFormat{
+				Type: "json_schema",
+				JSONSchema: &openaiJSONSchemaSpec{
+					Name:   name,
+					Strict: true,
+					Schema: req.ResponseFormat.Schema,
+				},
+			}
+		}
 	}
 
 	// Map reasoning effort to provider-specific fields.

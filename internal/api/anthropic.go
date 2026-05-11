@@ -59,6 +59,51 @@ func (c *AnthropicClient) Kind() ProviderKind {
 	return ProviderAnthropic
 }
 
+// applyResponseFormatShim translates Request.ResponseFormat into Anthropic's
+// native shape: a synthetic forced-tool_use whose InputSchema is the requested
+// JSON schema. Anthropic has no `response_format` field, so this is how
+// structured output is achieved. The caller (Extract) reads the tool_use
+// ContentBlock from the stream to recover the JSON bytes.
+//
+// No-op when ResponseFormat is nil or empty. Idempotent — if a "respond" tool
+// already exists in req.Tools, it is replaced.
+func applyResponseFormatShim(req *Request) {
+	if req.ResponseFormat == nil {
+		return
+	}
+	if req.ResponseFormat.Type != "json_schema" && req.ResponseFormat.Type != "json_object" {
+		return
+	}
+
+	const toolName = "respond"
+	schema := req.ResponseFormat.Schema
+	if len(schema) == 0 {
+		// json_object → accept any object.
+		schema = json.RawMessage(`{"type":"object"}`)
+	}
+
+	tool := ToolDefinition{
+		Name:        toolName,
+		Description: "Respond to the user by emitting JSON conforming to the schema. Always call this tool.",
+		InputSchema: schema,
+	}
+
+	// Replace any prior "respond" entry, else append.
+	replaced := false
+	for i, t := range req.Tools {
+		if t.Name == toolName {
+			req.Tools[i] = tool
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		req.Tools = append(req.Tools, tool)
+	}
+
+	req.AnthropicToolChoiceName = toolName
+}
+
 // applyCacheMarks adds Anthropic prompt caching annotations to the request.
 // It marks:
 //   - The system prompt with cache_control on its last block
@@ -100,6 +145,7 @@ func (c *AnthropicClient) Send(ctx context.Context, req *Request) (<-chan *Strea
 		defer close(errc)
 
 		req.Stream = true
+		applyResponseFormatShim(req)
 		applyCacheMarks(req)
 		body, err := json.Marshal(req)
 		if err != nil {

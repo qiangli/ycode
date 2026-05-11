@@ -103,20 +103,50 @@ type Request struct {
 	// control markers are needed (Anthropic). When non-nil, it takes
 	// precedence over the plain System string during JSON marshaling.
 	SystemBlocks []SystemBlock `json:"-"`
+
+	// ResponseFormat constrains the model to emit JSON conforming to a
+	// schema. Translated at the wire layer by each provider — OpenAI-
+	// compatible clients map it to `response_format`; the Anthropic client
+	// rewrites it as a forced tool_use (see applyResponseFormatShim).
+	// This field never serializes directly.
+	ResponseFormat *ResponseFormat `json:"-"`
+
+	// AnthropicToolChoiceName, when non-empty, forces the Anthropic API to
+	// invoke the named tool. Set by applyResponseFormatShim; not for
+	// general callers. Injected into the wire JSON by Request.MarshalJSON.
+	AnthropicToolChoiceName string `json:"-"`
+}
+
+// ResponseFormat constrains the model to emit JSON output conforming to a
+// schema. Provider clients translate this to their native shape.
+type ResponseFormat struct {
+	// Type is the response-format kind. The two supported values mirror
+	// OpenAI's API: "json_schema" (use Schema) and "json_object" (model
+	// emits any JSON object).
+	Type string `json:"type"`
+
+	// Schema is a JSON Schema document. Required when Type == "json_schema".
+	Schema json.RawMessage `json:"schema,omitempty"`
+
+	// Name labels the schema for providers that require it (OpenAI sends
+	// it on json_schema response_format). Defaults to "response" when
+	// empty.
+	Name string `json:"name,omitempty"`
 }
 
 // MarshalJSON implements custom marshaling for Request. When SystemBlocks is
 // populated, the "system" field is serialized as an array of content blocks
-// (required for Anthropic prompt caching). Otherwise falls back to the plain
-// string form.
+// (required for Anthropic prompt caching). When AnthropicToolChoiceName is
+// set, a "tool_choice" field is added (used by the Extract path to force a
+// specific tool). Otherwise it falls back to the plain string form.
 func (r Request) MarshalJSON() ([]byte, error) {
 	// Use an alias to avoid infinite recursion.
 	type requestAlias Request
-	if len(r.SystemBlocks) == 0 {
+	if len(r.SystemBlocks) == 0 && r.AnthropicToolChoiceName == "" {
 		return json.Marshal(requestAlias(r))
 	}
 
-	// Build a map from the alias, then replace "system" with the blocks array.
+	// Build a map from the alias, then patch the wire-only fields in.
 	data, err := json.Marshal(requestAlias(r))
 	if err != nil {
 		return nil, err
@@ -125,11 +155,23 @@ func (r Request) MarshalJSON() ([]byte, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, err
 	}
-	blocks, err := json.Marshal(r.SystemBlocks)
-	if err != nil {
-		return nil, err
+	if len(r.SystemBlocks) > 0 {
+		blocks, err := json.Marshal(r.SystemBlocks)
+		if err != nil {
+			return nil, err
+		}
+		m["system"] = blocks
 	}
-	m["system"] = blocks
+	if r.AnthropicToolChoiceName != "" {
+		choice, err := json.Marshal(map[string]string{
+			"type": "tool",
+			"name": r.AnthropicToolChoiceName,
+		})
+		if err != nil {
+			return nil, err
+		}
+		m["tool_choice"] = choice
+	}
 	return json.Marshal(m)
 }
 
