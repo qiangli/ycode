@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -114,4 +116,63 @@ func WriteEnvelopeJSON(env Envelope, w io.Writer) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(env)
+}
+
+// DispatchEnvelopeAt is DispatchEnvelope with a per-call working directory.
+// When workDir is empty, falls through to DispatchEnvelope (preserves stdio
+// behavior of inheriting the runtime's cwd). When workDir is set, validates
+// it (must be absolute, must exist, must be a directory) and runs the
+// command in a one-shot ShellRuntime rooted there. The shared runtime is
+// not mutated, so concurrent HTTP MCP callers each get their own bash
+// session at their own cwd.
+func DispatchEnvelopeAt(
+	ctx context.Context,
+	rt *ShellRuntime,
+	command string,
+	hints []Hint,
+	workDir string,
+) Envelope {
+	if workDir == "" {
+		return DispatchEnvelope(ctx, rt, command, hints)
+	}
+	if err := validateWorkDir(workDir); err != nil {
+		return Envelope{
+			ExitCode:   2,
+			Stderr:     "shell: " + err.Error() + "\n",
+			DurationMS: 0,
+			Intent:     IntentV{Kind: "Bash"},
+			Hints:      hints,
+			Command:    command,
+		}
+	}
+	callRT, err := rt.cloneAt(workDir)
+	if err != nil {
+		return Envelope{
+			ExitCode:   2,
+			Stderr:     "shell: cloneAt: " + err.Error() + "\n",
+			DurationMS: 0,
+			Intent:     IntentV{Kind: "Bash"},
+			Hints:      hints,
+			Command:    command,
+		}
+	}
+	defer func() { _ = callRT.Close() }()
+	return DispatchEnvelope(ctx, callRT, command, hints)
+}
+
+// validateWorkDir enforces the per-call cwd contract: absolute path that
+// exists and is a directory. Returns a structured error otherwise so the
+// caller can surface it in the Envelope's stderr.
+func validateWorkDir(workDir string) error {
+	if !filepath.IsAbs(workDir) {
+		return fmt.Errorf("cwd must be an absolute path, got %q", workDir)
+	}
+	info, err := os.Stat(workDir)
+	if err != nil {
+		return fmt.Errorf("cwd %q: %w", workDir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("cwd %q is not a directory", workDir)
+	}
+	return nil
 }

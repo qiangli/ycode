@@ -55,9 +55,12 @@ After step 2 the foreign tool sees `ycode:loom_lease`, `ycode:list_repos`,
 |---|---|---|
 | `GET /.well-known/ycode-manifest.json` | none | Capability discovery. Returns URLs, MCP endpoint, version. No local paths or secrets. |
 | `GET /manifest` | bearer | Full manifest including local-only fields (token paths, sandbox roots). |
-| `POST /mcp/` | bearer | Composite MCP endpoint. JSON-RPC body. Fans out to every registered capability family. |
-| `POST /loom-mcp/`, `/gitea-mcp/`, `/pulse/` | bearer | Individual capability families. Equivalent to `/mcp/` but pre-`<family>:` slicing. Kept for backward compat. |
+| `POST /mcp/` | bearer | Composite MCP endpoint. JSON-RPC body. Fans out to every registered capability family (treesitter, skills, shell, gitea, loom, pulse). |
 | `:4317` / `:4318` | none | OTLP ingest (gRPC / HTTP). Standard OpenTelemetry endpoints. |
+
+> Older builds also exposed per-family routes `/gitea-mcp/`, `/loom-mcp/`,
+> and `/pulse/`. These were retired in manifest `schemaVersion: "4"`;
+> clients configured with those URLs must switch to `/mcp/`.
 
 All non-OTLP endpoints listen on the proxy port (default `58080`). All
 bearer-authenticated endpoints accept `Authorization: Bearer <token>`. The
@@ -72,7 +75,7 @@ goes. The recognized targets and their destinations:
 | Tool | Destination | Format |
 |---|---|---|
 | `opencode` | `~/.opencode/opencode.jsonc` | JSONC `mcp` block |
-| `claude-code` | `~/.mcp.json` or project `.mcp.json` | JSON `mcpServers` block |
+| `claude-code` | project `.mcp.json` (recommended) or `~/.claude/settings.json` | JSON `mcpServers` block |
 | `codex` | `~/.codex/config.toml` | TOML `[mcp_servers.ycode]` block |
 | `gemini-cli` | `~/.gemini/settings.json` | JSON `mcpServers` block |
 | `ycode-tui` | shell init (`~/.zshrc` etc.) | `YCODE_URL` + `YCODE_TOKEN` env vars |
@@ -100,6 +103,10 @@ Drop it in `~/.opencode/opencode.jsonc` (or your project's
 `.opencode/opencode.jsonc`). opencode auto-discovers MCP servers on
 launch; restart opencode if it was already running.
 
+For the full opencode-specific recipe — including how `ycode_agent_shell`
+threads per-call cwd, per-agent permission expectations, and a loom
+worked example — see [integration-opencode.md](./integration-opencode.md).
+
 ### claude code
 
 ```json
@@ -114,8 +121,11 @@ launch; restart opencode if it was already running.
 }
 ```
 
-Goes in `~/.mcp.json` (user-global) or `.mcp.json` at the repo root
-(project-scoped).
+Goes in `.mcp.json` at the repo root (project-scoped, recommended for
+per-project pairing) or under `mcpServers` in `~/.claude/settings.json`
+(user-global). For the full Claude-Code-specific recipe — `mcp__ycode__*`
+tool naming, permission modes, hooks/plugins as future paths — see
+[integration-claude-code.md](./integration-claude-code.md).
 
 ### codex / gemini-cli / ycode-tui
 

@@ -10,14 +10,10 @@ import (
 func TestLoadCapabilities_BaselineWhenMissing(t *testing.T) {
 	home := t.TempDir() // empty — no manifest
 	caps := LoadCapabilities(home, 12345)
-	if len(caps) < 4 {
-		t.Fatalf("baseline should have at least 4 caps, got %d: %+v", len(caps), caps)
-	}
+	// schemaVersion 4: stdio + a single composite ycode HTTP entry.
 	wantNames := map[string]bool{
 		"ycode-stdio": true,
-		"ycode-pulse": true,
-		"ycode-gitea": true,
-		"ycode-loom":  true,
+		"ycode":       true,
 	}
 	for _, c := range caps {
 		delete(wantNames, c.Name)
@@ -39,12 +35,11 @@ func TestLoadCapabilities_ParsesManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := manifestShape{
-		SchemaVersion: "2",
+		SchemaVersion: "4",
 		MCP: manifestMCP{
 			Stdio: manifestStdio{Command: "ycode", Args: []string{"mcp", "serve"}},
 			HTTP: map[string]string{
-				"loom":  "http://127.0.0.1:58080/loom-mcp/",
-				"gitea": "http://127.0.0.1:58080/gitea-mcp/",
+				"ycode": "http://127.0.0.1:58080/mcp/",
 			},
 		},
 	}
@@ -53,8 +48,21 @@ func TestLoadCapabilities_ParsesManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	caps := LoadCapabilities(home, DefaultPort)
-	if len(caps) != 3 {
-		t.Fatalf("expected 3 (stdio + 2 http), got %d: %+v", len(caps), caps)
+	if len(caps) != 2 {
+		t.Fatalf("expected 2 (stdio + composite http), got %d: %+v", len(caps), caps)
+	}
+	// Composite entry must be named "ycode", not "ycode-ycode".
+	var sawComposite bool
+	for _, c := range caps {
+		if c.Family == "ycode" && c.Transport == "http" {
+			sawComposite = true
+			if c.Name != "ycode" {
+				t.Errorf("composite http cap name = %q, want %q", c.Name, "ycode")
+			}
+		}
+	}
+	if !sawComposite {
+		t.Errorf("missing composite ycode http cap: %+v", caps)
 	}
 }
 
@@ -66,7 +74,7 @@ func TestLoadCapabilities_FallsBackOnCorruptManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	caps := LoadCapabilities(home, DefaultPort)
-	if len(caps) < 4 {
+	if len(caps) < 2 {
 		t.Errorf("expected baseline fallback on corrupt manifest, got %d caps", len(caps))
 	}
 }

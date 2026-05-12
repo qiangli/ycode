@@ -231,9 +231,6 @@ color:rgba(255,255,255,0.4);font-size:14px}
 
 	// Endpoints that are not browsable (POST-only APIs, etc.) are hidden from the landing page.
 	hiddenTiles := map[string]bool{
-		"/pulse/":                          true,
-		"/gitea-mcp/":                      true,
-		"/loom-mcp/":                       true,
 		"/mcp/":                            true,
 		"/manifest":                        true,
 		"/.well-known/ycode-manifest.json": true,

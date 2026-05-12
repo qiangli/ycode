@@ -43,6 +43,7 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 			"type": "object",
 			"properties": {
 				"command":  {"type": "string", "description": "The bash command (or sentinel form) to dispatch."},
+				"cwd":      {"type": "string", "description": "Absolute working directory for this call. When omitted, the call runs in the ycode shell server's cwd; HTTP MCP callers should always pass this so commands run in their project root, not in ycode serve's launch directory."},
 				"hints":    {"type": "boolean", "description": "Emit agent-mode hints. Default true."},
 				"timeout_ms": {"type": "integer", "description": "Optional per-call timeout in milliseconds."}
 			},
@@ -66,6 +67,7 @@ func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json
 	}
 	var args struct {
 		Command   string `json:"command"`
+		Cwd       string `json:"cwd,omitempty"`
 		Hints     *bool  `json:"hints,omitempty"`
 		TimeoutMS int    `json:"timeout_ms,omitempty"`
 	}
@@ -91,7 +93,7 @@ func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json
 		hints = Suggestions(h.rt, args.Command)
 	}
 
-	env := DispatchEnvelope(ctx, h.rt, args.Command, hints)
+	env := DispatchEnvelopeAt(ctx, h.rt, args.Command, hints, args.Cwd)
 	out, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal envelope: %w", err)

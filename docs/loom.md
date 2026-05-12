@@ -49,13 +49,15 @@ ycode init --refresh
 
 ## Discovery
 
-`ycode serve` writes `~/.agents/ycode/manifest.json` (`schemaVersion=2`)
-with a top-level `loom` block:
+`ycode serve` writes `~/.agents/ycode/manifest.json` (`schemaVersion=4`)
+with a top-level `loom` block. As of schemaVersion 4 the loom MCP handler
+is exposed via the composite `/mcp/` endpoint (the per-family `/loom-mcp/`
+route was retired):
 
 ```json
 {
   "loom": {
-    "mcp": "http://127.0.0.1:PORT/loom-mcp/",
+    "mcp": "http://127.0.0.1:PORT/mcp/",
     "leaseTTLDefaultSeconds": 3600,
     "leaseTTLMaxSeconds": 28800,
     "subAgentIdentityConvention": "loom:<label>",
@@ -66,7 +68,7 @@ with a top-level `loom` block:
   },
   "mcp": {
     "http": {
-      "loom": "http://127.0.0.1:PORT/loom-mcp/"
+      "ycode": "http://127.0.0.1:PORT/mcp/"
     }
   }
 }
@@ -107,7 +109,7 @@ internal collab work, without provisioning per-sub-agent Gitea users.
 ## Worked example: Claude Code spawns 3 sub-agents
 
 1. Parent reads `~/.agents/ycode/manifest.json`, finds `loom.mcp =
-   http://127.0.0.1:PORT/loom-mcp/`, registers it as an HTTP MCP server
+   http://127.0.0.1:PORT/mcp/`, registers it as an HTTP MCP server
    in its own session.
 2. Parent splits a refactor 3 ways (`extract-types`, `migrate-callers`,
    `update-tests`) and calls `loom_lease` × 3 with distinct
@@ -163,5 +165,5 @@ The default ycode-bundled implementation is gitea-backed (under
   `merger.Config.CICommand`).
 - Conflict auto-resolution. Surface conflicts via `loom_status`; the
   foreign tool's LLM resolves.
-- Rich PR review tools. Already covered by the existing `/gitea-mcp/`
+- Rich PR review tools. Already covered by the gitea family on `/mcp/`
   endpoint.

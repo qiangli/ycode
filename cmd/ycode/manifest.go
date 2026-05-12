@@ -45,20 +45,13 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 		endpoints["memos"] = proxy + "/memos/"
 	}
 
-	mcpHTTP := map[string]string{}
-	if apiUp {
-		mcpHTTP["pulse"] = proxy + "/pulse/"
-	}
-	if stack.gitServer != nil && stack.gitServer.Healthy() {
-		mcpHTTP["gitea"] = proxy + "/gitea-mcp/"
-	}
-	if stack.loom != nil && stack.loom.Healthy() {
-		mcpHTTP["loom"] = proxy + "/loom-mcp/"
-	}
-	// Composite endpoint — single URL clients prefer (Agent OS syscall
-	// interface). Present whenever at least one sub-family is live.
-	if len(mcpHTTP) > 0 {
-		mcpHTTP["ycode"] = proxy + "/mcp/"
+	// Composite endpoint — the single URL every foreign agent points at
+	// (Agent OS syscall interface). Always live: treesitter and skills
+	// families are always-on. Per-family routes (/gitea-mcp/, /loom-mcp/,
+	// /pulse/) were retired in schemaVersion 4; clients using those URLs
+	// must switch to /mcp/.
+	mcpHTTP := map[string]string{
+		"ycode": proxy + "/mcp/",
 	}
 
 	authBlock := map[string]any{
@@ -76,7 +69,7 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 	}
 
 	manifest := map[string]any{
-		"schemaVersion": "3",
+		"schemaVersion": "4",
 		"ycodeVersion":  ycodeVersion,
 		"endpoints":     endpoints,
 		"auth":          authBlock,
@@ -96,7 +89,7 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 	}
 	if stack.loom != nil && stack.loom.Healthy() {
 		manifest["loom"] = map[string]any{
-			"mcp":                        proxy + "/loom-mcp/",
+			"mcp":                        proxy + "/mcp/",
 			"leaseTTLDefaultSeconds":     3600,
 			"leaseTTLMaxSeconds":         28800,
 			"subAgentIdentityConvention": "loom:<label>",

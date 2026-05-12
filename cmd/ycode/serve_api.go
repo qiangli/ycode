@@ -24,6 +24,7 @@ var (
 	serveNoPersona      bool
 	serveToolsAllowlist []string
 	serveToolsBlocklist []string
+	serveMCPPermission  string
 	apiNATSPort         int
 )
 

@@ -148,7 +148,7 @@ func pairSnippet(tool, url, token string) (snippet, dest string, ok bool) {
       "headers": { "Authorization": "Bearer %s" }
     }
   }
-}`, url, token), "~/.mcp.json or project .mcp.json", true
+}`, url, token), "project .mcp.json (recommended) or ~/.claude/settings.json under mcpServers", true
 	case "codex":
 		return fmt.Sprintf(`# Add to your codex config (~/.codex/config.toml):
 [mcp_servers.ycode]

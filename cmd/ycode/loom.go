@@ -14,20 +14,18 @@ import (
 	gitserverloom "github.com/qiangli/ycode/internal/gitserver/loom"
 	"github.com/qiangli/ycode/internal/gitserver/merger"
 	"github.com/qiangli/ycode/internal/gitserver/projects"
-	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/runtime/mcp"
 	"github.com/qiangli/ycode/internal/selfinit"
 	loompkg "github.com/qiangli/ycode/pkg/loom"
 )
 
-// loomComponent mounts the loom MCP server at /loom-mcp/ on the
-// observability proxy. It also owns one merger goroutine per active
-// project — started lazily via the Backend's OnProjectActive callback,
-// stopped wholesale when the component shuts down.
+// loomComponent owns loom's lifecycle on the observability stack: one
+// merger goroutine per active project (lazy via OnProjectActive),
+// stopped wholesale when the component shuts down. The MCP handler is
+// exposed via the composite /mcp/ endpoint, not a per-family route.
 type loomComponent struct {
-	httpHandler http.Handler
-	mcpHandler  mcp.ServerHandler // underlying MCP handler; exposed so the composite /mcp/ endpoint can fan out to loom without a second wrap
-	healthy     atomic.Bool
+	mcpHandler mcp.ServerHandler // underlying MCP handler; the composite /mcp/ endpoint fans out to loom through it
+	healthy    atomic.Bool
 
 	svc *loompkg.Service
 
@@ -95,10 +93,8 @@ func buildLoomComponent(_ context.Context, client *gitserver.Client, token, gite
 	// previous `ycode serve` are reaped before they accept new traffic.
 	go svc.ReapNow(mergerCtx)
 
-	handler := gitserverloom.NewMCPHandler(svc)
 	c.svc = svc
-	c.mcpHandler = handler
-	c.httpHandler = observability.NewMCPHTTPHandler(handler)
+	c.mcpHandler = gitserverloom.NewMCPHandler(svc)
 	return c, svc, nil
 }
 
@@ -126,7 +122,7 @@ func (c *loomComponent) Stop(_ context.Context) error {
 }
 
 func (c *loomComponent) Healthy() bool             { return c.healthy.Load() }
-func (c *loomComponent) HTTPHandler() http.Handler { return c.httpHandler }
+func (c *loomComponent) HTTPHandler() http.Handler { return nil }
 
 // makeOnProjectActive returns the OnProjectActive callback that lazy-
 // starts a merger goroutine for each project the first time loom sees

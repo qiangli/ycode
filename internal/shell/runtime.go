@@ -107,6 +107,17 @@ func (r *ShellRuntime) Close() error {
 	return nil
 }
 
+// cloneAt returns a fresh ShellRuntime with the same auxiliaries
+// (registry, skills, provider, permission) but a new bash session rooted
+// at workDir. Used by HTTP MCP callers that need per-call work-dir
+// isolation without mutating the shared runtime; safe for concurrent use
+// because each clone owns its own session.
+func (r *ShellRuntime) cloneAt(workDir string) (*ShellRuntime, error) {
+	opts := r.opts
+	opts.WorkDir = workDir
+	return New(opts)
+}
+
 // Provider returns the configured LLM provider, or nil when none is
 // wired. The dispatcher uses this for `!`/`?` sentinels.
 func (r *ShellRuntime) Provider() api.Provider { return r.opts.Provider }

@@ -217,11 +217,8 @@ var componentPathMap = map[string]string{
 	"bonsai":         "/graph/",
 	"ollama":         "/ollama/",
 	"chat":           "/chat/",
-	"pulse":          "/pulse/",
 	"containers":     "/containers/",
 	"git":            "/git/",
-	"gitea-mcp":      "/gitea-mcp/",
-	"loom-mcp":       "/loom-mcp/",
 	"ycode-mcp":      "/mcp/",
 }
 

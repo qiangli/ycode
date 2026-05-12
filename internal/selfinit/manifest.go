@@ -74,8 +74,14 @@ func tryLoadManifest(path string) ([]CapabilitySpec, bool) {
 		if url == "" {
 			continue
 		}
+		// The composite "ycode" key is the only HTTP MCP entry as of
+		// schemaVersion 4. Avoid the ugly "ycode-ycode" double name.
+		name := "ycode-" + f
+		if f == "ycode" {
+			name = "ycode"
+		}
 		out = append(out, CapabilitySpec{
-			Name:      "ycode-" + f,
+			Name:      name,
 			Transport: "http",
 			URL:       url,
 			Family:    f,
@@ -91,13 +97,15 @@ func tryLoadManifest(path string) ([]CapabilitySpec, bool) {
 // HTTP entries point at the default port; foreign tools' first call will
 // fail with connection-refused until `ycode serve` is up, but the wiring
 // is already in place — no second `ycode init` needed.
+//
+// As of manifest schemaVersion 4 there is a single composite HTTP MCP
+// endpoint at /mcp/ that fans out to every family (treesitter, skills,
+// gitea, loom, pulse). Per-family routes were retired.
 func baselineCapabilities(port int) []CapabilitySpec {
 	stdioCmd, stdioArgs := DetectYcodeCommand("ycode", []string{"mcp", "serve"})
 	return []CapabilitySpec{
 		{Name: "ycode-stdio", Transport: "stdio", Command: stdioCmd, Args: stdioArgs, Family: "stdio"},
-		{Name: "ycode-pulse", Transport: "http", URL: fmt.Sprintf("http://127.0.0.1:%d/pulse/", port), Family: "pulse"},
-		{Name: "ycode-gitea", Transport: "http", URL: fmt.Sprintf("http://127.0.0.1:%d/gitea-mcp/", port), Family: "gitea"},
-		{Name: "ycode-loom", Transport: "http", URL: fmt.Sprintf("http://127.0.0.1:%d/loom-mcp/", port), Family: "loom"},
+		{Name: "ycode", Transport: "http", URL: fmt.Sprintf("http://127.0.0.1:%d/mcp/", port), Family: "ycode"},
 	}
 }
 

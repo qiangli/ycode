@@ -23,7 +23,7 @@ Adding a new ycode capability to the MCP surface is a single file in five steps.
 
 4. **Register the handler.** Two places, depending on transport:
    - For `ycode mcp serve` (stdio): add an instance to the `mcp.NewCompositeHandler(...)` call in `cmd/ycode/mcp.go`.
-   - For `ycode serve` (HTTP): mount it under a sibling path of `/pulse/` and `/gitea-mcp/` in `cmd/ycode/serve.go`, using `observability.NewMCPHTTPHandler(handler)`.
+   - For `ycode serve` (HTTP): append the handler to `compositeMCP` in `cmd/ycode/serve.go` (around the always-on `treesitter`/`skills` block). The composite at `/mcp/` is the single HTTP MCP entrypoint; do not mount per-family routes.
 
 5. **Add a contract test in `internal/eval/contract/`** mirroring `mcpserve_validation_test.go`. The test must boot the same handler chain `ycode mcp serve` builds and assert at least one `tools/call` round-trip per family. This is the graduation gate per `docs/strategy.md`.
 
@@ -55,10 +55,13 @@ Architectural rule, non-negotiable: **ycode is the hub of *your* matrix, not the
 
 Phase 0 ships infrastructure only. The `tools/list` over `ycode mcp serve` returns an empty array. Capability handlers (AST search, Gitea workspaces, Ollama proxy, memex, repo-map, podman, ...) land in Phase 1+ following the recipe above.
 
-Already exposed via `ycode serve` HTTP MCP (predates this plan):
+Already exposed via `ycode serve` HTTP MCP, all behind the single composite endpoint at `/mcp/`:
 
-- `/pulse/` — observability stack (~25 tools): trace/log/metric queries, diagnostics, dashboards, alerts.
-- `/gitea-mcp/` — git server (~11 tools): repos, branches, PRs, issues.
+- treesitter — AST search across Go/Python/JS/TS/Rust/Java/C/Ruby (always on).
+- skills — discover and resolve skills (always on).
+- pulse — observability stack (~25 tools): trace/log/metric queries, diagnostics, dashboards, alerts.
+- gitea — git server (~11 tools): repos, branches, PRs, issues.
+- loom — workspace substrate: lease/push/merge/status/release.
 - OTLP ingest at `127.0.0.1:4317` (gRPC) and `:4318` (HTTP) — any process can ship spans into ycode's collector.
 
 The manifest at `~/.agents/ycode/manifest.json` advertises all of the above plus the stdio entry point.

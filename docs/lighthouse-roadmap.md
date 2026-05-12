@@ -46,7 +46,7 @@ The plan groups families in priority order. Each new capability is a single `mcp
 - A.2 Repo-map — `internal/runtime/repomap/mcpserver.go`. `generate_repomap`, `repomap_for_files`. `ReadOnly`.
 - A.3 Memex memory — `pkg/memex/memory/mcpserver.go`. `recall_memory`, `store_memory` (WorkspaceWrite), `search_memex`, `list_memory_types`. `PermissionAware`.
 - A.4 Memex graph — `pkg/memex/graph/mcpserver.go`. `query_graph_dql`, `graph_neighborhood`, `graph_path`. `ReadOnly`. Thin wrap over the existing `:58080/graph/` endpoint.
-- C **Loom (workspace substrate) — shipped.** Foreign agentic tools (Claude Code, OpenCode, Codex, Gemini CLI) hand each of their sub-agents an isolated clone+branch+author identity via a 5-verb MCP surface (`loom_lease`, `loom_push`, `loom_merge`, `loom_status`, `loom_release`). Implementation: public Go API `pkg/loom`, gitea-backed adapter + JSON-RPC handler `internal/gitserver/loom`, mounted at `/loom-mcp/` under `ycode serve`. Convergence via the existing merger/CI gate. Contract: see [`docs/loom.md`](./loom.md).
+- C **Loom (workspace substrate) — shipped.** Foreign agentic tools (Claude Code, OpenCode, Codex, Gemini CLI) hand each of their sub-agents an isolated clone+branch+author identity via a 5-verb MCP surface (`loom_lease`, `loom_push`, `loom_merge`, `loom_status`, `loom_release`). Implementation: public Go API `pkg/loom`, gitea-backed adapter + JSON-RPC handler `internal/gitserver/loom`, fanned out via the composite `/mcp/` endpoint under `ycode serve`. Convergence via the existing merger/CI gate. Contract: see [`docs/loom.md`](./loom.md).
 
 **Phase 2 — Family D (inference) + Family G (procedural reuse).** Ollama proxy → cheap-LLM subtasks. Skills/swarms → ycode's procedural knowledge as MCP tools.
 

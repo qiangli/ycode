@@ -24,6 +24,11 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/config"
 	mcppkg "github.com/qiangli/ycode/internal/runtime/mcp"
 	"github.com/qiangli/ycode/internal/runtime/origin"
+	"github.com/qiangli/ycode/internal/runtime/skills"
+	"github.com/qiangli/ycode/internal/runtime/treesitter"
+	"github.com/qiangli/ycode/internal/shell"
+	_ "github.com/qiangli/ycode/internal/shell/agentmode"
+	_ "github.com/qiangli/ycode/internal/shell/builtins"
 	"github.com/qiangli/ycode/internal/tools"
 	loompkg "github.com/qiangli/ycode/pkg/loom"
 )
@@ -317,30 +322,25 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 				[]byte(token), 0o600)
 		}
 
-		// Gitea MCP — expose git server API via MCP protocol for external AI agents.
+		// Gitea MCP handler — fanned out by the composite /mcp/ endpoint.
 		giteaMCPHandler := gitserver.NewGiteaMCPHandler(giteaClient)
-		giteaMCPHTTP := observability.NewMCPHTTPHandler(giteaMCPHandler)
-		giteaMCPComp := gitserver.NewGiteaMCPComponent(giteaMCPHTTP)
-		if err := mgr.AddLateComponent(ctx, giteaMCPComp); err != nil {
-			slog.Warn("Gitea MCP not available", "error", err)
-		} else {
-			fmt.Printf("Gitea MCP at       http://127.0.0.1:%d/gitea-mcp/\n", port)
-			compositeMCP = append(compositeMCP, giteaMCPHandler)
-		}
+		compositeMCP = append(compositeMCP, giteaMCPHandler)
 
 		// Loom — workspace-isolation substrate for foreign agentic tools.
 		// Hands each foreign sub-agent an isolated clone+branch+author so
 		// N parallel sub-agents converge through the merger/CI gate
-		// without stepping on each other. See docs/loom.md.
+		// without stepping on each other. See docs/loom.md. Registered as
+		// a lifecycle component (merger pool, service close on shutdown);
+		// its MCP handler is exposed via the composite /mcp/ endpoint, not
+		// a per-family route.
 		giteaDataDir := filepath.Join(dataDir, "gitea")
 		loomComp, loomSvc, err := buildLoomComponent(ctx, giteaClient, token, giteaDataDir)
 		if err != nil {
 			slog.Warn("Loom not available", "error", err)
 		} else {
 			if err := mgr.AddLateComponent(ctx, loomComp); err != nil {
-				slog.Warn("Loom MCP not available", "error", err)
+				slog.Warn("Loom not available", "error", err)
 			} else {
-				fmt.Printf("Loom MCP at        http://127.0.0.1:%d/loom-mcp/\n", port)
 				stack.loom = loomComp
 				stack.loomSvc = loomSvc
 				if h := loomComp.MCPHandler(); h != nil {
@@ -382,22 +382,17 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 					fmt.Printf("Web UI at          http://127.0.0.1:%d/ycode/\n", port)
 				}
 			}
-			// Add MCP server — exposes the entire observability stack to external AI agents.
+			// Pulse telemetry handler — exposes the observability stack
+			// (traces, logs, metrics, alerts, dashboards) via the composite
+			// /mcp/ endpoint. No per-family HTTP route.
 			proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 			persesDBDir := filepath.Join(dataDir, "perses", "data")
 			alertRulesDir := filepath.Join(home, ".agents", "ycode", "configs", "prometheus", "alerts")
 			if err := dashboards.ProvisionAlertRules(alertRulesDir); err != nil {
 				slog.Warn("failed to provision default alert rules", "error", err)
 			}
-			mcpHandler := observability.NewTelemetryHandler(proxyURL, persesDBDir, alertRulesDir)
-			mcpHTTP := observability.NewMCPHTTPHandler(mcpHandler)
-			mcpComp := observability.NewMCPComponent(mcpHTTP)
-			if err := mgr.AddLateComponent(ctx, mcpComp); err != nil {
-				slog.Warn("Pulse MCP not available", "error", err)
-			} else {
-				fmt.Printf("Pulse MCP at       http://127.0.0.1:%d/pulse/\n", port)
-				compositeMCP = append(compositeMCP, mcpHandler)
-			}
+			pulseHandler := observability.NewTelemetryHandler(proxyURL, persesDBDir, alertRulesDir)
+			compositeMCP = append(compositeMCP, pulseHandler)
 
 			if api.natsSrv != nil {
 				fmt.Printf("NATS server at     nats://127.0.0.1:%d\n", apiNATSPort)
@@ -416,22 +411,38 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		}
 	}
 
+	// Always-on families (no live-stack dependency). Treesitter and skills
+	// constructors are no-arg, stateless, and safe to share across requests
+	// — same handlers wired into the stdio composite at cmd/ycode/mcp.go.
+	// Shell exposes the agent_shell tool; HTTP callers thread their own
+	// project root via the per-call `cwd` field (see internal/shell/mcpserver.go).
+	shellRT, _ := shell.New(shell.Options{Permission: "danger-full-access"})
+	compositeMCP = append(compositeMCP,
+		treesitter.NewMCPHandler(),
+		skills.NewMCPHandler(),
+		shell.NewMCPHandler(shellRT),
+	)
+
 	// Composite MCP endpoint (G6) — single /mcp/ URL that fans out to every
 	// registered capability family. This is the Agent OS "syscall interface":
 	// every client (claude code, opencode, codex, gemini-cli, ycode's own
-	// TUI/web UI) configures ONE MCP entry pointing here instead of one
-	// entry per family. Tool name collisions across families would panic at
-	// construction; current families (gitea, loom, pulse) use distinct
-	// prefixes so this is safe. Backward-compat: individual mounts at
-	// /gitea-mcp/, /loom-mcp/, /pulse/ remain available.
+	// TUI/web UI) configures ONE MCP entry pointing here. Tool name
+	// collisions across families would panic at construction; current
+	// families (treesitter, skills, shell, gitea, loom, pulse) use distinct
+	// verbs or prefixes so this is safe.
 	if len(compositeMCP) > 0 {
 		composite := mcppkg.NewCompositeHandler(compositeMCP...)
-		compositeHTTP := observability.NewMCPHTTPHandler(composite)
+		// Server-side ceiling. Mirrors `ycode mcp serve --permission ...`
+		// at cmd/ycode/mcp.go. Independent of opencode/claude-code's
+		// own per-agent permission policy — defense in depth.
+		gateMode := parseMCPPermission(serveMCPPermission)
+		gated := mcppkg.NewGatedHandler(composite, mcppkg.StaticGate{Ceiling: gateMode})
+		compositeHTTP := observability.NewMCPHTTPHandler(gated)
 		compositeComp := observability.NewMCPCompositeComponent(compositeHTTP)
 		if err := mgr.AddLateComponent(ctx, compositeComp); err != nil {
 			slog.Warn("Composite MCP not available", "error", err)
 		} else {
-			fmt.Printf("ycode MCP at       http://127.0.0.1:%d/mcp/\n", port)
+			fmt.Printf("ycode MCP at       http://127.0.0.1:%d/mcp/  (ceiling: %s)\n", port, gateMode)
 		}
 	}
 
@@ -793,6 +804,23 @@ Connect from Claude Code or any MCP client:
   {"mcpServers": {"ycode-pulse": {"url": "http://localhost:58080/pulse/"}}}`,
 }
 
+// parseMCPPermission maps the user-facing flag value to an mcp.PermissionMode.
+// Unknown values fall back to DangerFullAccess with a warning so the server
+// still starts; the operator can fix the flag without a restart loop.
+func parseMCPPermission(s string) mcppkg.PermissionMode {
+	switch s {
+	case "read-only", "readonly":
+		return mcppkg.ModeReadOnly
+	case "workspace-write", "write":
+		return mcppkg.ModeWorkspaceWrite
+	case "", "danger-full-access", "full", "danger":
+		return mcppkg.ModeDangerFullAccess
+	default:
+		slog.Warn("unknown --mcp-permission, defaulting to danger-full-access", "value", s)
+		return mcppkg.ModeDangerFullAccess
+	}
+}
+
 func init() {
 	serveCmd.PersistentFlags().IntVar(&servePort, "port", 58080, "Port for the observability server")
 	serveCmd.Flags().BoolVar(&serveDetach, "detach", false, "Run server in background")
@@ -803,6 +831,7 @@ func init() {
 	serveCmd.Flags().BoolVar(&serveNoPersona, "no-persona", false, "Disable persona inference for shared/multi-tenant deployments")
 	serveCmd.Flags().StringSliceVar(&serveToolsAllowlist, "tools-allowlist", nil, "Register only these built-in tool names (process-wide; mutually exclusive with --tools-blocklist)")
 	serveCmd.Flags().StringSliceVar(&serveToolsBlocklist, "tools-blocklist", nil, "Register every built-in tool except these (process-wide; ignored when --tools-allowlist is set)")
+	serveCmd.Flags().StringVar(&serveMCPPermission, "mcp-permission", "danger-full-access", "Server-side MCP permission ceiling: read-only | workspace-write | danger-full-access")
 	_ = serveCmd.Flags().MarkHidden("auto")
 	serveCmd.Flags().IntVar(&apiNATSPort, "nats-port", 4222, "Port for the embedded NATS server")
 
