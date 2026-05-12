@@ -53,6 +53,7 @@ type ProjectContext struct {
 	GitServerURL  string                 `json:"git_server_url,omitempty"` // embedded Gitea URL for agent collaboration
 	Persona       *memory.Persona        `json:"persona,omitempty"`        // resolved user persona for tailored responses
 	SysInfo       *sysinfo.SystemContext `json:"sys_info,omitempty"`       // detected system capabilities
+	TodoBoard     TodoBoardRenderer      `json:"-"`                        // agent-facing todo board (nil in stable-tier builds)
 }
 
 // ContextFile is a discovered instruction file (e.g., CLAUDE.md).

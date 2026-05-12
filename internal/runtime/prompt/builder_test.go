@@ -156,3 +156,71 @@ func TestBuildDefault_ExploreModeSuppressesDiagnostics(t *testing.T) {
 		t.Error("explore mode should NOT include diagnostics (lean prompt)")
 	}
 }
+
+// fakeBoard implements TodoBoardRenderer for prompt-builder tests without
+// pulling in the todo package — keeps this test file dependency-free.
+type fakeBoard struct{ md string }
+
+func (f *fakeBoard) RenderMarkdown() string { return f.md }
+
+func TestBuildDefault_TodosRenderedInDynamicRegion(t *testing.T) {
+	ctx := &ProjectContext{
+		WorkDir:   "/tmp/test",
+		Platform:  "linux",
+		TodoBoard: &fakeBoard{md: "## Task Board\n\n| id | [~] | 0 | - | Fix login |\n"},
+	}
+
+	result := BuildDefault(ctx, "build", true, nil)
+
+	if !strings.Contains(result, "## Task Board") {
+		t.Fatal("non-empty todo board should render into prompt")
+	}
+
+	// The whole point of the deepagents pattern: board must land AFTER the
+	// dynamic boundary so it doesn't bust the prompt cache on every turn.
+	boundaryIdx := strings.Index(result, DynamicBoundary)
+	todosIdx := strings.Index(result, "## Task Board")
+	if boundaryIdx < 0 {
+		t.Fatal("missing dynamic boundary marker")
+	}
+	if todosIdx < boundaryIdx {
+		t.Errorf("todos rendered at %d, before boundary at %d — must be in dynamic region", todosIdx, boundaryIdx)
+	}
+}
+
+func TestBuildDefault_EmptyTodoBoardRendersNothing(t *testing.T) {
+	ctx := &ProjectContext{
+		WorkDir:   "/tmp/test",
+		Platform:  "linux",
+		TodoBoard: &fakeBoard{md: ""}, // todo.Board returns "" when empty
+	}
+	result := BuildDefault(ctx, "build", true, nil)
+	if strings.Contains(result, "Task Board") {
+		t.Error("empty board should not leak any 'Task Board' header into prompt")
+	}
+}
+
+func TestBuildDefault_NilTodoBoardIsSafe(t *testing.T) {
+	ctx := &ProjectContext{
+		WorkDir:  "/tmp/test",
+		Platform: "linux",
+		// TodoBoard intentionally nil — stable-tier build, no wiring.
+	}
+	result := BuildDefault(ctx, "build", true, nil)
+	if strings.Contains(result, "Task Board") {
+		t.Error("nil board should not produce a Task Board section")
+	}
+}
+
+func TestBuildDefault_ExploreModeOmitsTodos(t *testing.T) {
+	// Explore subagents get a lean prompt — todos shouldn't bloat it.
+	ctx := &ProjectContext{
+		WorkDir:   "/tmp/test",
+		Platform:  "linux",
+		TodoBoard: &fakeBoard{md: "## Task Board\n\n| id | [~] | 0 | - | x |\n"},
+	}
+	result := BuildDefault(ctx, "explore", true, nil)
+	if strings.Contains(result, "Task Board") {
+		t.Error("explore mode should NOT render todo board")
+	}
+}

@@ -162,11 +162,12 @@ func builtinSpecs() []*ToolSpec {
 			Category:     CategoryInteractive,
 		},
 		{
-			Name:         "TodoWrite",
-			Description:  "Write a structured task list.",
-			InputSchema:  mustJSON(todoWriteSchema),
-			RequiredMode: permission.WorkspaceWrite,
-			Source:       SourceBuiltin,
+			Name:            "TodoWrite",
+			Description:     "Write or replace your task plan. Re-call each turn with the full updated list — replacement semantics, not append. Use to make multi-step work legible: list what you intend to do, what's in progress, what's done. The rendered board is re-injected into your next turn's system prompt automatically. Pass an empty array to clear. Each todo: {content (imperative, e.g. \"Fix login bug\"), status (pending|in_progress|done), activeForm (optional present-continuous, e.g. \"Fixing login bug\")}.",
+			InputSchema:     mustJSON(todoWriteSchema),
+			RequiredMode:    permission.ReadOnly,
+			Source:          SourceBuiltin,
+			AlwaysAvailable: true,
 		},
 		{
 			Name:            "Skill",
@@ -1044,7 +1045,19 @@ var (
 	todoWriteSchema = `{
 		"type": "object",
 		"properties": {
-			"todos": {"type": "array", "items": {"type": "object"}, "description": "Task list items"}
+			"todos": {
+				"type": "array",
+				"description": "Full updated task list (replaces previous board)",
+				"items": {
+					"type": "object",
+					"properties": {
+						"content": {"type": "string", "description": "Imperative task description (e.g., \"Fix login bug\")"},
+						"status": {"type": "string", "enum": ["pending", "in_progress", "done", "blocked"], "description": "Task state"},
+						"activeForm": {"type": "string", "description": "Optional present-continuous form for in-progress display (e.g., \"Fixing login bug\")"}
+					},
+					"required": ["content", "status"]
+				}
+			}
 		},
 		"required": ["todos"]
 	}`

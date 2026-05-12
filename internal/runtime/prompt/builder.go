@@ -169,6 +169,7 @@ func BuildDefault(ctx *ProjectContext, mode string, cachingSupported bool, basel
 		b.AddDynamicSection(SectionRepoMap, ctx.RepoMapText)
 		b.AddDynamicSection(SectionMemory, MemoriesSection(ctx.Memories))
 		b.AddDynamicSection(SectionPersona, PersonaSection(ctx.Persona))
+		b.AddDynamicSection(SectionTodos, TodosSection(ctx.TodoBoard))
 
 		// L1 working memory: inject active topic as a focus signal.
 		if ctx.ActiveTopic != "" {

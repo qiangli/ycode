@@ -26,6 +26,7 @@ type TodoItem struct {
 	ID           string    `json:"id"`
 	ParentID     string    `json:"parent_id,omitempty"`
 	Title        string    `json:"title"`
+	ActiveForm   string    `json:"active_form,omitempty"` // present-continuous form for in-progress display (e.g., "Fixing login bug")
 	Description  string    `json:"description,omitempty"`
 	Status       Status    `json:"status"`
 	AssignedTo   string    `json:"assigned_to,omitempty"`
@@ -193,6 +194,19 @@ func (b *Board) Len() int {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return len(b.items)
+}
+
+// Replace atomically swaps the board contents with the provided items.
+// Callers supply pre-built TodoItems (with IDs); the board takes ownership.
+// Used by the write_todos tool (deepagents replacement semantics — the
+// agent rewrites the whole list each turn).
+func (b *Board) Replace(items []*TodoItem) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.items = make(map[string]*TodoItem, len(items))
+	for _, item := range items {
+		b.items[item.ID] = item
+	}
 }
 
 // RenderMarkdown renders the todo board as a markdown table for prompt injection.

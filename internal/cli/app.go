@@ -31,6 +31,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/swarm"
 	"github.com/qiangli/ycode/internal/runtime/task"
+	"github.com/qiangli/ycode/internal/runtime/todo"
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/runtime/team"
 	"github.com/qiangli/ycode/internal/runtime/usage"
@@ -69,6 +70,12 @@ type App struct {
 
 	// Task registry for background tasks (including background agents).
 	taskRegistry *task.Registry
+
+	// Agent-facing todo board. Populated by the TodoWrite tool, rendered
+	// into the dynamic prompt region so the agent sees its own plan on
+	// the next turn. Loaded from disk on session start for cross-session
+	// resume; saved after each TodoWrite call.
+	todoBoard *todo.Board
 
 	// Agent pool for tracking active subagents and progress reporting.
 	agentPool *agentpool.Pool
@@ -213,6 +220,21 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		agentPool:       agentpool.New(),
 	}
 
+	// Load todo board from disk (or create empty if no prior session). The
+	// same instance is registered with the TodoWrite tool handler AND
+	// attached to the prompt context, so writes flow back into the next
+	// turn's system prompt automatically.
+	todoPath := filepath.Join(o.WorkDir, ".agents", "ycode", "todos.json")
+	if board, err := todo.LoadBoard(todoPath); err == nil {
+		app.todoBoard = board
+	} else {
+		slog.Warn("todo board load failed; starting empty", "path", todoPath, "error", err)
+		app.todoBoard = todo.NewBoard()
+	}
+	if app.promptCtx != nil {
+		app.promptCtx.TodoBoard = app.todoBoard
+	}
+
 	// Create code graph manager (loaded from cache if available).
 	app.graphManager = codegraph.NewManager(o.WorkDir)
 
@@ -258,6 +280,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		tools.RegisterWorkerHandlers(app.toolRegistry, worker.NewRegistry())
 		tools.RegisterTeamHandlers(app.toolRegistry, team.NewRegistry(), team.NewCronRegistry())
 		tools.RegisterHandoffHandler(app.toolRegistry)
+		tools.RegisterTodoHandler(app.toolRegistry, app.todoBoard, todoPath)
 
 		// Register code graph query tools with live manager.
 		tools.RegisterGraphHandlers(app.toolRegistry, app.graphManager)
