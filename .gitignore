@@ -52,3 +52,7 @@ evals/results/
 
 # Backlog kill-switch sentinel (runtime; backlog/*.md ARE tracked)
 docs/backlog/PAUSE
+
+# Claude Code per-project state — permission allowlist, scheduled-task
+# locks, worktree state. Per-machine, contains absolute paths, not source.
+.claude/
