@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -72,26 +73,46 @@ Use --no-api or --no-nats to disable specific services.`,
 
 var serveStopCmd = &cobra.Command{
 	Use:   "stop",
-	Short: "Stop the running server",
+	Short: "Stop the running server (idempotent — no-op when nothing is running)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		home, _ := os.UserHomeDir()
 		pidPath := filepath.Join(home, ".agents", "ycode", "serve.pid")
 		data, err := os.ReadFile(pidPath)
 		if err != nil {
-			return fmt.Errorf("no server PID file found: %w", err)
+			// Missing PID file is the common "already stopped" case.
+			// Stay idempotent so `ycode serve stop` is safe to call
+			// from shell aliases / scripts that don't know whether
+			// the server is currently up.
+			if errors.Is(err, os.ErrNotExist) {
+				fmt.Println("ycode serve not running (no PID file).")
+				return nil
+			}
+			return fmt.Errorf("read PID file %s: %w", pidPath, err)
 		}
 		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 		if err != nil {
-			return fmt.Errorf("invalid PID: %w", err)
+			// Garbage PID file — clean it up and report rather than
+			// leave the user with an unactionable error.
+			_ = os.Remove(pidPath)
+			return fmt.Errorf("invalid PID in %s (file removed): %w", pidPath, err)
 		}
 		proc, err := os.FindProcess(pid)
 		if err != nil {
 			return fmt.Errorf("find process %d: %w", pid, err)
 		}
+		// Send SIGTERM. ESRCH means the process is already gone — the
+		// PID file outlived the server (crash, reboot, manual kill).
+		// Treat it the same as the missing-PID-file path: print + return
+		// success, and reap the stale file.
 		if err := proc.Signal(syscall.SIGTERM); err != nil {
+			if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
+				_ = os.Remove(pidPath)
+				fmt.Printf("ycode serve not running (PID %d already gone; stale PID file removed).\n", pid)
+				return nil
+			}
 			return fmt.Errorf("signal process %d: %w", pid, err)
 		}
-		os.Remove(pidPath)
+		_ = os.Remove(pidPath)
 		fmt.Printf("Sent SIGTERM to server (PID %d)\n", pid)
 		return nil
 	},
