@@ -27,6 +27,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/origin"
 	"github.com/qiangli/ycode/internal/runtime/skills"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
+	"github.com/qiangli/ycode/internal/runtime/widget"
 	"github.com/qiangli/ycode/internal/shell"
 	_ "github.com/qiangli/ycode/internal/shell/agentmode"
 	_ "github.com/qiangli/ycode/internal/shell/builtins"
@@ -438,6 +439,16 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		skills.NewMCPHandler(),
 		shell.NewMCPHandler(shellRT),
 	)
+
+	// Canvas / generative-UI tools. Foreign agents (claude-code, opencode,
+	// codex, gemini-cli) and ycode's own runtime publish A2UI ops + iframe
+	// widgets through these tools, routed onto the same in-process bus the
+	// /canvas/ route subscribes to. Requires an api stack so we have a bus
+	// to publish onto — if the API stack didn't come up (no provider, e.g.
+	// air-gapped first-time run), skip silently.
+	if api != nil && api.memBus != nil {
+		compositeMCP = append(compositeMCP, widget.NewMCPHandler(api.memBus))
+	}
 
 	// Composite MCP endpoint (G6) — single /mcp/ URL that fans out to every
 	// registered capability family. This is the Agent OS "syscall interface":
