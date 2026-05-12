@@ -4,12 +4,76 @@ package integration
 
 import (
 	"encoding/json"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+// canvasBearer reads the server bearer token from ~/.agents/ycode/server.token,
+// honoring the YCODE_TOKEN env var override. Empty string when neither is set
+// (a server in no-auth mode accepts that fine).
+func canvasBearer(t *testing.T) string {
+	t.Helper()
+	if v := os.Getenv("YCODE_TOKEN"); v != "" {
+		return v
+	}
+	home, _ := os.UserHomeDir()
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "ycode", "server.token"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// canvasWSURL builds the canvas WS URL with the bearer token appended as the
+// `?token=` query param (the WS handshake can't carry an Authorization header
+// in-browser, so the server accepts the token via query string).
+func canvasWSURL(t *testing.T, sessionID string) string {
+	t.Helper()
+	base := "ws" + strings.TrimPrefix(baseURL(t), "http") + "/ycode/api/sessions/" + sessionID + "/ws"
+	if tok := canvasBearer(t); tok != "" {
+		return base + "?token=" + tok
+	}
+	return base
+}
+
+// canvasMCPCall posts a JSONRPC tool call to the composite /mcp/ endpoint with
+// the bearer token if one is available. Returns the parsed response.
+func canvasMCPCall(t *testing.T, req jsonrpcRequest) jsonrpcResponse {
+	t.Helper()
+	tok := canvasBearer(t)
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	httpReq, err := http.NewRequest("POST", baseURL(t)+"/mcp/", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if tok != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := httpClient().Do(httpReq)
+	if err != nil {
+		t.Fatalf("mcp POST: %v", err)
+	}
+	defer resp.Body.Close()
+	rb, _ := readBody(resp)
+	if resp.StatusCode != 200 {
+		t.Fatalf("mcp POST returned %d; body: %s", resp.StatusCode, rb)
+	}
+	var out jsonrpcResponse
+	if err := json.Unmarshal([]byte(rb), &out); err != nil {
+		t.Fatalf("unmarshal: %v; body: %s", err, rb)
+	}
+	return out
+}
 
 // TestCanvas_WidgetRoundTrip verifies the full agent-OS canvas chain
 // against a running ycode serve instance:
@@ -25,7 +89,7 @@ func TestCanvas_WidgetRoundTrip(t *testing.T) {
 	requireConnectivity(t)
 
 	// 1. Open WS first so we don't race the MCP publish.
-	wsURL := "ws" + strings.TrimPrefix(baseURL(t), "http") + "/ycode/api/sessions/canvas-default/ws"
+	wsURL := canvasWSURL(t, "canvas-default")
 	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
 	conn, resp, err := dialer.Dial(wsURL, nil)
 	if err != nil {
@@ -72,7 +136,8 @@ func TestCanvas_WidgetRoundTrip(t *testing.T) {
 			},
 		},
 	}
-	mcpResp := mcpPost(t, mcpURL, req)
+	mcpResp := canvasMCPCall(t, req)
+	_ = mcpURL // kept for readability; canvasMCPCall constructs its own URL
 	if mcpResp.Error != nil {
 		t.Fatalf("mcp tools/call returned error: %d %s", mcpResp.Error.Code, mcpResp.Error.Message)
 	}
@@ -123,7 +188,7 @@ func TestCanvas_WidgetRoundTrip(t *testing.T) {
 func TestCanvas_A2UIRoundTrip(t *testing.T) {
 	requireConnectivity(t)
 
-	wsURL := "ws" + strings.TrimPrefix(baseURL(t), "http") + "/ycode/api/sessions/canvas-default/ws"
+	wsURL := canvasWSURL(t, "canvas-default")
 	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
 	conn, _, err := dialer.Dial(wsURL, nil)
 	if err != nil {
@@ -166,9 +231,10 @@ func TestCanvas_A2UIRoundTrip(t *testing.T) {
 			},
 		},
 	}
-	if mcpResp := mcpPost(t, mcpURL, req); mcpResp.Error != nil {
+	if mcpResp := canvasMCPCall(t, req); mcpResp.Error != nil {
 		t.Fatalf("mcp error: %d %s", mcpResp.Error.Code, mcpResp.Error.Message)
 	}
+	_ = mcpURL // kept for readability; canvasMCPCall builds its own URL
 
 	deadline := time.After(5 * time.Second)
 	for {

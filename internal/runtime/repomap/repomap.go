@@ -77,7 +77,7 @@ func DefaultOptions() *Options {
 			"**/*_test.go", "**/*.test.*", "**/*.spec.*",
 			"**/*.min.js", "**/*.min.css",
 			"**/testdata/**", "**/fixtures/**",
-			"priorart/**", "external/**",
+			"priorart/**", "external/**", "reference/**",
 		},
 	}
 }
