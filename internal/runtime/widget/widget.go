@@ -27,8 +27,8 @@ import (
 	"time"
 
 	"github.com/qiangli/ycode/internal/bus"
-	mcppkg "github.com/qiangli/ycode/internal/runtime/mcp"
 	"github.com/qiangli/ycode/internal/runtime/a2ui"
+	mcppkg "github.com/qiangli/ycode/internal/runtime/mcp"
 )
 
 // DefaultSession is the well-known session ID used when a caller
@@ -149,8 +149,8 @@ func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json
 // Wraps a batch of ops in the v0.9 OperationsKey container so renderers
 // can validate-and-route by looking for that key.
 type a2uiPayload struct {
-	Format string          `json:"format"`         // "a2ui"
-	Body   json.RawMessage `json:"body"`           // {"a2ui_operations": [...]}
+	Format string          `json:"format"`           // "a2ui"
+	Body   json.RawMessage `json:"body"`             // {"a2ui_operations": [...]}
 	Origin string          `json:"origin,omitempty"` // foreign agent name, if known
 }
 
@@ -194,7 +194,7 @@ func (h *MCPHandler) handleRenderA2UI(ctx context.Context, input json.RawMessage
 // HTML is verbatim — the canvas-side bridge wraps it with the bridge.js
 // shim that supplies postMessage + ResizeObserver behavior.
 type iframePayload struct {
-	Format   string `json:"format"`             // "iframe"
+	Format   string `json:"format"` // "iframe"
 	WidgetID string `json:"widget_id"`
 	HTML     string `json:"html"`
 	Origin   string `json:"origin,omitempty"`
