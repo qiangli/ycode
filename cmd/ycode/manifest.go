@@ -99,6 +99,32 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 			"branchNamePattern":          "agent/agent-loom:<label>-<id8>/free-<rand>",
 		}
 	}
+
+	// Canvas block — agent-rendered generative UI service. Foreign agents
+	// discover the A2UI op format ycode speaks, the bus event types that
+	// carry it, the MCP tools that publish, the canvas route to subscribe
+	// to via WS, and the well-known default session. The block is only
+	// advertised when the API stack is up (canvas requires a bus to
+	// publish onto). See internal/runtime/widget and docs/strategy.md.
+	if apiUp {
+		canvas := map[string]any{
+			"a2uiVersion":    "v0.9",
+			"a2uiCatalog":    "https://a2ui.org/specification/v0_9/basic_catalog.json",
+			"events":         []string{"state.update", "state.mutate"},
+			"defaultSession": "canvas-default",
+			"route":          proxy + "/ycode/canvas/",
+			"wsTemplate":     proxy + "/ycode/api/sessions/{sessionId}/ws",
+			"tools": map[string]string{
+				"renderA2UI":   "agent_render_a2ui",
+				"renderWidget": "agent_render_widget",
+			},
+			// First-class A2UI surfaces ycode publishes will be listed here
+			// as they ship (e.g. "health", "memos", "kanban", "lanes").
+			// Empty for now — surfaces land in their respective tracks.
+			"firstClassSurfaces": []string{},
+		}
+		manifest["canvas"] = canvas
+	}
 	return manifest
 }
 
@@ -131,6 +157,12 @@ func publicServeManifest(full map[string]any) map[string]any {
 			"cloneURLTemplate":           loom["cloneURLTemplate"],
 			"branchNamePattern":          loom["branchNamePattern"],
 		}
+	}
+	if canvas, ok := full["canvas"].(map[string]any); ok {
+		// Canvas block has no local-path fields — entire block is safe to
+		// re-publish unauthenticated. Foreign agents need the route,
+		// wsTemplate, A2UI version, and tool names to interop.
+		out["canvas"] = canvas
 	}
 	return out
 }
