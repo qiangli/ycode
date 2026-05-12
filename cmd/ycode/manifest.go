@@ -118,10 +118,11 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 				"renderA2UI":   "agent_render_a2ui",
 				"renderWidget": "agent_render_widget",
 			},
-			// First-class A2UI surfaces ycode publishes will be listed here
-			// as they ship (e.g. "health", "memos", "kanban", "lanes").
-			// Empty for now — surfaces land in their respective tracks.
-			"firstClassSurfaces": []string{},
+			// First-class A2UI surfaces ycode publishes. Foreign agents
+			// can target these by surfaceId via agent_render_a2ui to
+			// enrich the view without redeclaring the component tree.
+			// v2 adds "memos", "kanban", "lanes" as those tracks ship.
+			"firstClassSurfaces": []string{"health"},
 		}
 		manifest["canvas"] = canvas
 	}

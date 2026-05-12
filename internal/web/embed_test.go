@@ -19,13 +19,15 @@ func TestHandler_ServesCanvasShell(t *testing.T) {
 		path string
 		want string // substring expected in body
 	}{
-		{"/canvas/", "ycode canvas"},               // index.html title
-		{"/canvas/", "prompt-form"},                // human input bar present
+		{"/canvas/", "ycode canvas"}, // index.html title
+		{"/canvas/", "prompt-form"},  // human input bar present
 		{"/canvas/index.html", "ycode canvas"},
-		{"/canvas/canvas.css", "--accent:"},        // CSS variable signature
-		{"/canvas/canvas.js", "state.update"},      // canvas → bus dispatch the script subscribes to
-		{"/canvas/canvas.js", "message.send"},      // human → bus prompt path the script publishes on
-		{"/canvas/canvas.js", "resolveSession"},    // /api/status session adoption — humans driving /canvas/ join the /ycode/ session
+		{"/canvas/canvas.css", "--accent:"},     // CSS variable signature
+		{"/canvas/canvas.js", "state.update"},   // canvas → bus dispatch the script subscribes to
+		{"/canvas/canvas.js", "message.send"},   // human → bus prompt path the script publishes on
+		{"/canvas/canvas.js", "resolveSession"}, // /api/status session adoption — humans driving /canvas/ join the /ycode/ session
+		{"/canvas/a2ui.js", "applyOps"},         // vanilla A2UI renderer wired into canvas.js
+		{"/canvas/a2ui.js", "updateDataModel"},  // proves the renderer handles the v0.9 op set, not just createSurface
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {

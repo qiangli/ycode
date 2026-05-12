@@ -456,6 +456,22 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		// v1.5 swaps the static template for an agent-composed overlay
 		// with correlated logs / traces / recent commits.
 		widget.NewAlertHook(api.memBus, widget.DefaultSession).Start(ctx)
+
+		// Service-health A2UI surface: first-class structured view that
+		// auto-emits on canvas-default. Bootstraps the schema once and
+		// refreshes data every 30s. The agent can call agent_render_a2ui
+		// against the same surface ID to enrich the view (correlated
+		// telemetry, runbook excerpts) without needing to redeclare the
+		// component tree.
+		widget.NewHealthHook(api.memBus, widget.DefaultSession, func(_ context.Context) widget.HealthData {
+			return widget.HealthData{
+				YcodeVersion: version,
+				// alertsFiring / sessions are populated by agent enrichment in v1.5;
+				// the static placeholder demonstrates the surface end-to-end.
+				Incidents: []widget.HealthRow{},
+				Deploys:   []widget.HealthRow{},
+			}
+		}).Start(ctx)
 	}
 
 	// Composite MCP endpoint (G6) — single /mcp/ URL that fans out to every

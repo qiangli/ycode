@@ -143,6 +143,57 @@ body {
   margin: 0;
 }
 
+/* A2UI body (after the surface header). The renderer paints components
+   here; everything below is component-style. */
+.a2ui-body { display: block; }
+.a2ui-empty { color: var(--muted); font-style: italic; font-size: 13px; padding: 4px 0; }
+.a2ui-error { color: var(--error); font-size: 12px; padding: 4px 8px; border: 1px dashed var(--error); border-radius: 4px; margin: 4px 0; }
+.a2ui-unknown { color: var(--muted); font-style: italic; font-size: 12px; padding: 2px 0; }
+
+/* Type components. */
+.a2ui-text { margin: 4px 0; line-height: 1.5; }
+.a2ui-heading { margin: 12px 0 6px; font-weight: 600; }
+.a2ui-heading + .a2ui-text { margin-top: 0; }
+h1.a2ui-heading { font-size: 18px; }
+h2.a2ui-heading { font-size: 16px; }
+h3.a2ui-heading { font-size: 14px; }
+h4.a2ui-heading, h5.a2ui-heading, h6.a2ui-heading { font-size: 13px; }
+.a2ui-caption { font-size: 11px; color: var(--muted); }
+.a2ui-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #f3f4f6; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--border); font-size: 12px; }
+.a2ui-divider { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
+
+/* Stat: label/value pair, typical for KPI cards. */
+.a2ui-stat { display: inline-flex; flex-direction: column; gap: 2px; padding: 8px 4px; min-width: 80px; }
+.a2ui-stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.a2ui-stat-value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Layout containers. */
+.a2ui-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin: 8px 0; background: white; }
+.a2ui-row { display: flex; flex-direction: row; gap: 12px; align-items: center; flex-wrap: wrap; }
+.a2ui-column { display: flex; flex-direction: column; gap: 8px; }
+.a2ui-row-j-spaceBetween { justify-content: space-between; }
+.a2ui-row-j-end { justify-content: flex-end; }
+.a2ui-row-j-center { justify-content: center; }
+.a2ui-row-a-start { align-items: flex-start; }
+.a2ui-row-a-end { align-items: flex-end; }
+.a2ui-row-a-center { align-items: center; }
+.a2ui-col-j-spaceBetween { justify-content: space-between; }
+.a2ui-col-a-start { align-items: flex-start; }
+.a2ui-col-a-end { align-items: flex-end; }
+.a2ui-col-a-center { align-items: center; }
+
+/* List: vertical default, horizontal for side-by-side comparison views. */
+.a2ui-list-v { display: flex; flex-direction: column; gap: 8px; }
+.a2ui-list-h { display: flex; flex-direction: row; gap: 12px; flex-wrap: wrap; overflow-x: auto; }
+
+/* Buttons. */
+.a2ui-button { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: white; cursor: pointer; font: inherit; font-size: 13px; }
+.a2ui-button:hover { background: var(--bg); }
+.a2ui-button-primary { background: var(--accent); color: white; border-color: var(--accent); }
+.a2ui-button-primary:hover { background: #4338ca; }
+.a2ui-button-borderless { border-color: transparent; background: transparent; color: var(--accent); }
+.a2ui-button-borderless:hover { background: rgba(79, 70, 229, 0.08); }
+
 /* Sticky input bar — the human-facing prompt surface. Widgets are the
    primary record above; this is just how a user drives the agent. */
 #input-bar {

@@ -36,9 +36,14 @@
   const promptForm = document.getElementById('prompt-form');
   const promptEl = document.getElementById('prompt');
 
-  // Track rendered widgets/surfaces so re-emits replace in place.
+  // Track rendered widgets so re-emits replace in place. A2UI surfaces
+  // are owned by the renderer below — it maintains its own state map
+  // and DOM, we just feed it ops as they arrive.
   const widgets = new Map();   // widget_id  → iframe element
-  const surfaces = new Map();  // surface_id → surface container
+  const a2uiRenderer = window.A2UI && window.A2UI.attach(root, {
+    log: (...args) => console.warn(...args),
+    emit: (mut) => sendStateMutate(mut),
+  });
 
   let ws = null;
   let sessionID = '';
@@ -187,53 +192,30 @@
       try { body = JSON.parse(body); } catch (e) { /* leave as string */ }
     }
     const ops = (body && body.a2ui_operations) || [];
-    for (const op of ops) {
-      const surfaceID = surfaceIDOf(op);
-      if (!surfaceID) continue;
-      const container = ensureSurface(surfaceID, p.origin);
-      appendA2UIDump(container, op);
+    if (!a2uiRenderer) {
+      // Renderer didn't load — log and stop. Failed-load is rare (the
+      // file is embedded), but we don't want to silently drop A2UI ops.
+      console.error('canvas: A2UI renderer not available; A2UI ops dropped', ops);
+      return;
     }
+    a2uiRenderer.applyOps(ops, p.origin);
   }
 
-  function surfaceIDOf(op) {
-    if (op.createSurface) return op.createSurface.surfaceId;
-    if (op.updateComponents) return op.updateComponents.surfaceId;
-    if (op.updateDataModel) return op.updateDataModel.surfaceId;
-    return '';
-  }
-
-  function ensureSurface(surfaceID, origin) {
-    let container = surfaces.get(surfaceID);
-    if (container) return container;
-
-    container = document.createElement('div');
-    container.className = 'a2ui-surface';
-    container.dataset.surfaceId = surfaceID;
-
-    const header = document.createElement('div');
-    header.className = 'a2ui-surface-header';
-    const idEl = document.createElement('span');
-    idEl.className = 'a2ui-surface-id';
-    idEl.textContent = 'a2ui: ' + surfaceID;
-    header.appendChild(idEl);
-    if (origin) {
-      const originEl = document.createElement('span');
-      originEl.className = 'widget-origin';
-      originEl.textContent = 'via ' + origin;
-      header.appendChild(originEl);
-    }
-    container.appendChild(header);
-
-    root.appendChild(container);
-    surfaces.set(surfaceID, container);
-    return container;
-  }
-
-  function appendA2UIDump(container, op) {
-    const pre = document.createElement('pre');
-    pre.className = 'a2ui-dump';
-    pre.textContent = JSON.stringify(op, null, 2);
-    container.appendChild(pre);
+  // sendStateMutate is the renderer's outbound callback — fires when a
+  // Button is clicked or any other surface gesture wants to round-trip
+  // back to the agent. Wraps the mutation in the bus's state.mutate
+  // shape; the agent observes the event on the same session.
+  function sendStateMutate(mut) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: 'state.mutate',
+      data: {
+        format: 'a2ui',
+        surface: mut.surface,
+        action: mut.action,
+        context: mut.context,
+      },
+    }));
   }
 
   // --- Response strip (text.delta surface) --------------------------------

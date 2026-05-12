@@ -221,7 +221,7 @@ color:rgba(255,255,255,0.4);font-size:14px}
 <div id="grid-mode">
 <div id="grid-home">
 <div class="grid-container">
-<h1>Favorites</h1><div class="grid">`)
+<h1>ycode</h1><div class="grid">`)
 
 	// Predefined colors for consistent icon appearance.
 	colors := []string{
@@ -234,6 +234,30 @@ color:rgba(255,255,255,0.4);font-size:14px}
 		"/mcp/":                            true,
 		"/manifest":                        true,
 		"/.well-known/ycode-manifest.json": true,
+	}
+
+	// Featured tiles surface ycode-native UIs above the auto-listed
+	// observability backends. Canvas is primary (the generative-UI
+	// service for the agent-OS rethink); Chat, Memos, Graph are siblings.
+	// Each is a sub-path under one of the proxy-registered routes (e.g.
+	// /ycode/canvas/ is part of the /ycode/ route), so they don't show up
+	// in the auto-list of registered routes — they need to be added
+	// explicitly.
+	type featuredTile struct {
+		href, label, color, initial string
+	}
+	featured := []featuredTile{
+		{"/ycode/canvas/", "Canvas", "#4f46e5", "✦"},
+		{"/ycode/", "Chat", "#1f2328", "Y"},
+		{"/memos/", "Memos", "#10b981", "M"},
+		{"/graph/", "Graph", "#8b5cf6", "G"},
+		{"/chat/", "Team Chat", "#ec4899", "T"},
+	}
+	for _, ft := range featured {
+		b.WriteString(fmt.Sprintf(
+			`<div class="tile" onclick="gridOpen('%s')"><div class="icon" style="background:%s">%s</div><span class="label">%s</span></div>`,
+			ft.href, ft.color, ft.initial, ft.label,
+		))
 	}
 
 	p.mu.RLock()
@@ -251,7 +275,20 @@ color:rgba(255,255,255,0.4);font-size:14px}
 	p.mu.RUnlock()
 	sort.Strings(allPrefixes)
 
+	// Auto-listed routes are the raw observability backends — proxied
+	// third-party UIs (Prometheus, Alertmanager, Perses, Jaeger, etc.).
+	// Demoted below the ycode-native featured tiles since /canvas/ is
+	// the agent-rendered surface that answers most of the same
+	// questions on demand.
+	b.WriteString(`</div>
+<h1 style="margin-top:48px;font-size:1.1em;color:rgba(255,255,255,0.55)">Raw observability backends</h1>
+<div class="grid">`)
 	for i, prefix := range allPrefixes {
+		// Skip prefixes that share a tile with a featured entry (e.g. /memos/, /graph/, /chat/).
+		featuredHrefs := map[string]bool{"/memos/": true, "/graph/": true, "/chat/": true, "/ycode/": true}
+		if featuredHrefs[prefix] {
+			continue
+		}
 		name := strings.Trim(prefix, "/")
 		initial := strings.ToUpper(name[:1])
 		displayName := strings.ToUpper(name[:1]) + name[1:]
@@ -272,7 +309,19 @@ color:rgba(255,255,255,0.4);font-size:14px}
 <div id="list-view" class="hidden">
 <div class="list-panel">`)
 
+	// Featured first in list mode too.
+	for _, ft := range featured {
+		b.WriteString(fmt.Sprintf(
+			`<div class="list-item" data-href="%s" onclick="selectItem(this)"><div class="icon" style="background:%s">%s</div><span class="label">%s</span></div>`,
+			ft.href, ft.color, ft.initial, ft.label,
+		))
+	}
+	b.WriteString(`<div style="margin:16px 12px 6px 12px;font-size:11px;color:rgba(255,255,255,0.45);text-transform:uppercase;letter-spacing:0.06em">Raw backends</div>`)
 	for i, prefix := range allPrefixes {
+		featuredHrefs := map[string]bool{"/memos/": true, "/graph/": true, "/chat/": true, "/ycode/": true}
+		if featuredHrefs[prefix] {
+			continue
+		}
 		name := strings.Trim(prefix, "/")
 		initial := strings.ToUpper(name[:1])
 		displayName := strings.ToUpper(name[:1]) + name[1:]
