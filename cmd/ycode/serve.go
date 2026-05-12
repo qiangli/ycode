@@ -100,21 +100,34 @@ var serveStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show status of the server and components",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, dataDir, err := loadServeConfig()
+		fullCfg, cfg, dataDir, err := loadFullServeConfig()
 		if err != nil {
 			return err
 		}
 		if servePort > 0 {
 			cfg.ProxyPort = servePort
 		}
-
-		stack, err := buildStackManager(cfg, dataDir, nil, nil, nil)
-		if err != nil {
-			return err
-		}
 		port := cfg.ProxyPort
 		if port == 0 {
 			port = 58080
+		}
+
+		// Short-circuit when nothing is listening. The local component
+		// table (built from a fresh stack manager that was never Start'd)
+		// would otherwise print "unknown" for every row, which is
+		// misleading. Probing /.well-known/ycode-manifest.json is the
+		// same cheap signal used by the runAllServices idempotency guard.
+		if !alreadyRunning(port) {
+			fmt.Printf("ycode serve not running on http://127.0.0.1:%d/\n", port)
+			return nil
+		}
+
+		// buildStackManager dereferences fields on each sub-config (e.g.
+		// containerCfg.SocketPath), so passing nil panics. Use the full
+		// config so default-valued structs are present instead.
+		stack, err := buildStackManager(cfg, dataDir, fullCfg.Inference, fullCfg.Container, fullCfg.GitServer)
+		if err != nil {
+			return err
 		}
 		fmt.Printf("Observability Server — http://127.0.0.1:%d/\n", port)
 
