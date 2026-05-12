@@ -96,7 +96,16 @@ func runUnderPTY(ctx context.Context, bin string, args, env []string, cwd string
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = env
 	cmd.Dir = cwd
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Setctty: false}
+	// Do NOT set SysProcAttr.Setpgid here. creack/pty.StartWithSize
+	// adds Setsid: true + Setctty: true unconditionally; on macOS the
+	// kernel rejects fork/exec with EPERM when both Setpgid and Setsid
+	// are set (setsid creates a new process group with the child's PID
+	// as PGID; setpgid afterwards is a no-op on Linux but returns
+	// EPERM on Darwin). Leave the field zeroed so creack/pty installs
+	// only its own required fields. Signal delivery to the wrapped
+	// agent in PTY mode happens through the controlling terminal —
+	// the inherit-FD path keeps its own Setpgid for the separate
+	// signal-forwarding goroutine.
 
 	rows, cols := terminalSize(os.Stdout)
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
