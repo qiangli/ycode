@@ -87,12 +87,17 @@ func TestAlwaysAvailable_CoreCount(t *testing.T) {
 	RegisterBuiltins(r)
 
 	always := r.AlwaysAvailable()
-	// Should be 9: bash, read_file, write_file, edit_file, glob_search, grep_search, Skill, ToolSearch, Agent
-	if len(always) != 9 {
+	// Should be 10: bash, read_file, write_file, edit_file, glob_search,
+	// grep_search, Skill, ToolSearch, Agent, TodoWrite. TodoWrite is
+	// AlwaysAvailable because it backs the deepagents-style write_todos
+	// pattern — the agent must see the tool every turn to declare/update
+	// its plan; the rendered board re-injects into the system prompt.
+	const want = 10
+	if len(always) != want {
 		names := make([]string, len(always))
 		for i, s := range always {
 			names[i] = s.Name
 		}
-		t.Errorf("expected 9 always-available tools, got %d: %v", len(always), names)
+		t.Errorf("expected %d always-available tools, got %d: %v", want, len(always), names)
 	}
 }
