@@ -50,6 +50,7 @@ const (
 	ToolServe    = "serve"
 	ToolMCPServe = "mcp-serve"
 	ToolShell    = "shell"
+	ToolWrap     = "wrap"
 	ToolCLIOther = "cli-other"
 )
 

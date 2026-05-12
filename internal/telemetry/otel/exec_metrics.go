@@ -46,12 +46,15 @@ const (
 
 // Scopes — bounded enum, one per call-site family.
 const (
-	ExecScopeBash        = "bash"         // mvdan/sh ExecHandler — agent's bash tool internals
-	ExecScopeBashTTY     = "bash-tty"     // ycode shell's TTY exec (ssh, vi, sudo)
-	ExecScopeToolexec    = "toolexec"     // 3-tier toolexec host-exec tier
-	ExecScopeSandbox     = "sandbox"      // yc sandbox builtin (podman run …)
-	ExecScopeProbeLaunch = "probe-launch" // ycode browser launch (experimental)
-	ExecScopeContainer   = "container"    // Container.Exec REST API
+	ExecScopeBash         = "bash"          // mvdan/sh ExecHandler — agent's bash tool internals
+	ExecScopeBashTTY      = "bash-tty"      // ycode shell's TTY exec (ssh, vi, sudo)
+	ExecScopeToolexec     = "toolexec"      // 3-tier toolexec host-exec tier
+	ExecScopeSandbox      = "sandbox"       // yc sandbox builtin (podman run …)
+	ExecScopeProbeLaunch  = "probe-launch"  // ycode browser launch (experimental)
+	ExecScopeContainer    = "container"     // Container.Exec REST API
+	ExecScopeWrappedAgent = "wrapped-agent" // `ycode wrap` PATH-shim dispatcher
+	ExecScopeWASM         = "wasm"          // wazero+WASI sandboxed tool (rg/jq/sed/awk/…)
+	ExecScopeMCPGateway   = "mcp-gateway"   // proxy_tool_call federation forward
 )
 
 // execMeter looks up the global meter fresh each call. Same pattern

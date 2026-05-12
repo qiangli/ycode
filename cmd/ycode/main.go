@@ -41,6 +41,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/searxng"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/vfs"
+	"github.com/qiangli/ycode/internal/runtime/wrap"
 	"github.com/qiangli/ycode/internal/selfheal"
 	"github.com/qiangli/ycode/internal/tools"
 	memexgraph "github.com/qiangli/ycode/pkg/memex/graph"
@@ -73,6 +74,16 @@ func main() {
 	// API and update PR/issue state correctly. See docs/agent-collab.md.
 	if maybeHandleGiteaHook() {
 		return
+	}
+
+	// Intercept `ycode wrap` shim invocations. When the ycode binary is
+	// exec'd via a symlink named `bash`/`rg`/`git`/... that lives in a
+	// wrap-managed shim directory (argv[0]!="ycode" AND YCODE_WRAP_SHIM=1),
+	// dispatch to the shim child path which resolves the real binary
+	// and exec's it under an ExecScopeWrappedAgent OTel span. See
+	// internal/runtime/wrap/.
+	if wrap.IsShimInvocation() {
+		os.Exit(wrap.ShimMain())
 	}
 
 	// Intercept `ycode shell …` before cobra. The wrapper at
@@ -1383,6 +1394,11 @@ func init() {
 	// `ycode yc <verb>` — same built-in registry as the bash middleware,
 	// reachable from any shell since the ycode binary is on PATH.
 	rootCmd.AddCommand(newYcCmd())
+
+	// `ycode wrap <agent-cmd>` — PATH-shim involuntary interception for
+	// foreign agentic CLIs (Claude Code, Codex, Aider, Gemini CLI,
+	// opencode, ...). Complements the voluntary lighthouse MCP beam.
+	rootCmd.AddCommand(newWrapCmd())
 
 	// Evaluation framework
 	registerEvalCmd(rootCmd)
