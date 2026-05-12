@@ -113,6 +113,20 @@ type Options struct {
 	// that shell out to project-specific tooling.
 	ExtraShims []string
 
+	// Profile is the per-agent profile key to resolve in AgentProfiles.
+	// When empty, ResolveProfile auto-detects from AgentArgs[0] basename
+	// (so `ycode wrap claude-code` matches the "claude" profile).
+	// An explicit value that does not match a known profile is an error
+	// — the caller must surface it before invoking Run.
+	Profile string
+
+	// RuntimeHooks lists language patchers to install for the wrapped
+	// agent process ("python", "node"). Default off unless populated
+	// either by a matched profile or by an explicit CLI flag. Honored
+	// by Piece D; today the field is stored but no hook materialization
+	// happens.
+	RuntimeHooks []string
+
 	// Env is the base environment passed to the foreign agent.
 	// Defaults to os.Environ() when nil. PATH, SHELL, and the
 	// YCODE_WRAP_* coordination env are overwritten.
@@ -135,6 +149,7 @@ type Options struct {
 // scaffold is in place (Loom field) but today the foreign agent
 // runs in WorkDir as-is.
 func Run(ctx context.Context, opts Options) (int, error) {
+	initLoggerFromEnv()
 	if len(opts.AgentArgs) == 0 {
 		return 1, errors.New("wrap.Run: AgentArgs is required")
 	}
@@ -150,10 +165,29 @@ func Run(ctx context.Context, opts Options) (int, error) {
 			"loom", opts.Loom)
 	}
 
+	// Resolve a per-agent profile and merge its defaults into opts.
+	// Explicit --profile that does not match a registered agent is an
+	// error so the user sees the typo immediately; auto-detect failure
+	// is silent (the wrap still runs, just without profile defaults).
+	if opts.Profile != "" {
+		profile, ok := ResolveProfile(opts.Profile, opts.AgentArgs)
+		if !ok {
+			return 1, fmt.Errorf("wrap.Run: unknown --profile %q (known: %v)", opts.Profile, ProfileNames())
+		}
+		profile.Apply(&opts)
+	} else if profile, ok := ResolveProfile("", opts.AgentArgs); ok {
+		profile.Apply(&opts)
+	}
+
 	self, err := os.Executable()
 	if err != nil {
 		return 1, fmt.Errorf("wrap.Run: locate ycode binary: %w", err)
 	}
+
+	// Reap any per-PID shim dirs left over from earlier sessions that
+	// crashed without cleanup. Best-effort — failure here doesn't block
+	// the new session.
+	reapStaleShimDirs(chooseShimRoot())
 
 	shimDir, err := materializeShimDir(self, append(append([]string{}, defaultShims...), opts.ExtraShims...))
 	if err != nil {
@@ -179,10 +213,22 @@ func Run(ctx context.Context, opts Options) (int, error) {
 	cmd.Stdin = orStdin(opts.Stdin)
 	cmd.Stdout = orStdout(opts.Stdout)
 	cmd.Stderr = orStderr(opts.Stderr)
+	// Run the foreign agent in its own process group so signal
+	// forwarding can address descendants and SIGKILL escalation
+	// reaches every spawned subprocess.
+	cmd.SysProcAttr = newProcessGroupAttr()
 
 	telCtx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeWrappedAgent, bin, args)
 	_ = telCtx
-	err = cmd.Run()
+
+	if err := cmd.Start(); err != nil {
+		finish(0, err)
+		return 1, fmt.Errorf("wrap.Run: start %s: %w", bin, err)
+	}
+	stopSignals := forwardSignalsToChild(cmd)
+	err = cmd.Wait()
+	stopSignals()
+
 	exitCode := 0
 	if cmd.ProcessState != nil {
 		exitCode = cmd.ProcessState.ExitCode()
@@ -221,13 +267,19 @@ func IsShimInvocation() bool {
 // exit code the calling main() should propagate.
 //
 // Behavior:
-//  1. Check the recursion-depth counter; bail if too deep.
-//  2. Strip the shim directory from $PATH (so the real-binary lookup
+//  1. Initialize slog from YCODE_LOG_LEVEL so the per-exec span debug
+//     line (emitted by telotel.StartExecSpan's finish closure) is
+//     visible when operators ask for it. Without this, ShimMain runs
+//     under the default no-op handler and `ycode wrap --debug` would
+//     silently drop every shim-level exec span.
+//  2. Check the recursion-depth counter; bail if too deep.
+//  3. Strip the shim directory from $PATH (so the real-binary lookup
 //     does not re-hit the shim).
-//  3. Look up the real binary by basename via the cleaned $PATH.
-//  4. Open an ExecScopeWrappedAgent span and exec the real binary
+//  4. Look up the real binary by basename via the cleaned $PATH.
+//  5. Open an ExecScopeWrappedAgent span and exec the real binary
 //     with stdin/out/err inherited.
 func ShimMain() int {
+	initLoggerFromEnv()
 	base := filepath.Base(os.Args[0])
 	depth := 0
 	if v := os.Getenv(envDepth); v != "" {
