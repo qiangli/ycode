@@ -648,6 +648,24 @@ type stackComponents struct {
 // All internal ports are allocated dynamically to avoid conflicts when running
 // multiple instances. Only the proxy port (--port) is user-specified.
 func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg *config.InferenceConfig, containerCfg *config.ContainerConfig, gitServerCfg *config.GitServerConfig) (*stackComponents, error) {
+	// Normalize nil sub-configs to empty structs. IsEnabled() is already
+	// nil-safe (returns true on nil receiver per the default-on policy),
+	// so the conditional branches enter — and then immediately dereferenced
+	// nil pointers when reading fields like containerCfg.SocketPath. Empty
+	// structs make IsEnabled() return the same default-true while making
+	// every field read return its zero value. Mirrors the fix that landed
+	// for `ycode serve status` (34fb72b) but applied at the constructor
+	// so all callers stay safe.
+	if inferCfg == nil {
+		inferCfg = &config.InferenceConfig{}
+	}
+	if containerCfg == nil {
+		containerCfg = &config.ContainerConfig{}
+	}
+	if gitServerCfg == nil {
+		gitServerCfg = &config.GitServerConfig{}
+	}
+
 	mgr := observability.NewStackManager(cfg, dataDir)
 
 	// Allocate ephemeral ports for all internal components.

@@ -397,6 +397,17 @@ func DefaultConfig() *Config {
 			// Set `gitserver.enabled: false` in settings.json to opt out.
 			HTTPOnly: true,
 		},
+		// Every default-on sub-config needs a non-nil pointer at this
+		// stage. Without it, IsEnabled() returns true (nil-safe default)
+		// but consumers that read fields off the sub-config (SocketPath,
+		// RunnerPath, etc.) panic on nil deref. Mirrors the Observability
+		// + GitServer treatment above. Mid-2026: this is what the
+		// "default-on, real opt-out" policy commit (6d563ea) implicitly
+		// requires — callers must trust the sub-config exists.
+		Inference: &InferenceConfig{},
+		Container: &ContainerConfig{},
+		NATS:      &NATSConfig{},
+		Chat:      &ChatConfig{},
 	}
 }
 
