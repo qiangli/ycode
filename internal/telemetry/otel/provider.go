@@ -128,8 +128,22 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 
 	p := &Provider{resource: res}
 
+	// Lifecycle invariant: each provider (Tracer/Meter/Logger) owns its
+	// processors/readers, which own their exporters. Provider.Shutdown
+	// recurses down that chain, so we MUST NOT append Exporter.Shutdown
+	// into p.shutdownFuncs separately — doing so calls Shutdown twice
+	// on a one-shot exporter and produces "gRPC exporter is shutdown"
+	// errors that silently drop the final batch.
+	//
+	// File exporters are the one exception: the underlying *os.File is
+	// not part of the SDK's lifecycle, so a separate fileClose closure
+	// must run AFTER the owning provider has shut down (so the BSP /
+	// PeriodicReader can drain into the still-open file). We collect
+	// those here and append them per-signal below.
+
 	// --- Trace provider ---
 	var spanExporters []sdktrace.SpanExporter
+	var traceFileCloses []func(context.Context) error
 
 	if cfg.CollectorAddr != "" {
 		grpcCtx, grpcCancel := context.WithTimeout(ctx, grpcConnectTimeout)
@@ -142,7 +156,6 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 			slog.Warn("OTEL trace gRPC exporter unavailable, skipping", "addr", cfg.CollectorAddr, "error", err)
 		} else {
 			spanExporters = append(spanExporters, grpcExp)
-			p.shutdownFuncs = append(p.shutdownFuncs, grpcExp.Shutdown)
 		}
 	}
 
@@ -151,12 +164,12 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 		if exportDir == "" {
 			exportDir = cfg.DataDir
 		}
-		fileExp, shutdown, err := newRotatingTraceExporter(exportDir, cfg.Opener)
+		fileExp, closeFile, err := newRotatingTraceExporter(exportDir, cfg.Opener)
 		if err != nil {
 			return nil, fmt.Errorf("create trace file exporter: %w", err)
 		}
 		spanExporters = append(spanExporters, fileExp)
-		p.shutdownFuncs = append(p.shutdownFuncs, shutdown)
+		traceFileCloses = append(traceFileCloses, closeFile)
 	}
 
 	var traceOpts []sdktrace.TracerProviderOption
@@ -169,10 +182,14 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 	}
 	p.TracerProvider = sdktrace.NewTracerProvider(traceOpts...)
 	p.shutdownFuncs = append(p.shutdownFuncs, p.TracerProvider.Shutdown)
+	for _, c := range traceFileCloses {
+		p.shutdownFuncs = append(p.shutdownFuncs, c)
+	}
 	otel.SetTracerProvider(p.TracerProvider)
 
 	// --- Metric provider ---
 	var metricReaders []sdkmetric.Reader
+	var metricFileCloses []func(context.Context) error
 
 	if cfg.CollectorAddr != "" {
 		grpcCtx, grpcCancel := context.WithTimeout(ctx, grpcConnectTimeout)
@@ -186,7 +203,6 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 		} else {
 			metricReaders = append(metricReaders,
 				sdkmetric.NewPeriodicReader(grpcExp, sdkmetric.WithInterval(15*time.Second)))
-			p.shutdownFuncs = append(p.shutdownFuncs, grpcExp.Shutdown)
 		}
 	}
 
@@ -195,13 +211,13 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 		if exportDir == "" {
 			exportDir = cfg.DataDir
 		}
-		fileExp, shutdown, err := newRotatingMetricExporter(exportDir, cfg.Opener)
+		fileExp, closeFile, err := newRotatingMetricExporter(exportDir, cfg.Opener)
 		if err != nil {
 			return nil, fmt.Errorf("create metric file exporter: %w", err)
 		}
 		metricReaders = append(metricReaders,
 			sdkmetric.NewPeriodicReader(fileExp, sdkmetric.WithInterval(30*time.Second)))
-		p.shutdownFuncs = append(p.shutdownFuncs, shutdown)
+		metricFileCloses = append(metricFileCloses, closeFile)
 	}
 
 	p.metricReaders = metricReaders // preserve for MeterProvider rebuild in TryConnectCollector
@@ -213,10 +229,14 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 	}
 	p.MeterProvider = sdkmetric.NewMeterProvider(meterOpts...)
 	p.shutdownFuncs = append(p.shutdownFuncs, p.MeterProvider.Shutdown)
+	for _, c := range metricFileCloses {
+		p.shutdownFuncs = append(p.shutdownFuncs, c)
+	}
 	otel.SetMeterProvider(p.MeterProvider)
 
 	// --- Log provider (structured records: gRPC to collector and/or rotating file) ---
 	var logProcessors []sdklog.Processor
+	var logFileCloses []func(context.Context) error
 
 	if cfg.CollectorAddr != "" {
 		grpcCtx, grpcCancel := context.WithTimeout(ctx, grpcConnectTimeout)
@@ -229,7 +249,6 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 			slog.Warn("OTEL log gRPC exporter unavailable, skipping", "addr", cfg.CollectorAddr, "error", err)
 		} else {
 			logProcessors = append(logProcessors, sdklog.NewBatchProcessor(grpcLogExp))
-			p.shutdownFuncs = append(p.shutdownFuncs, grpcLogExp.Shutdown)
 		}
 	}
 
@@ -238,12 +257,12 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 		if exportDir == "" {
 			exportDir = cfg.DataDir
 		}
-		fileExp, shutdown, err := newRotatingLogExporter(exportDir, cfg.Opener)
+		fileExp, closeFile, err := newRotatingLogExporter(exportDir, cfg.Opener)
 		if err != nil {
 			return nil, fmt.Errorf("create log file exporter: %w", err)
 		}
 		logProcessors = append(logProcessors, sdklog.NewBatchProcessor(fileExp))
-		p.shutdownFuncs = append(p.shutdownFuncs, shutdown)
+		logFileCloses = append(logFileCloses, closeFile)
 	}
 
 	if len(logProcessors) > 0 {
@@ -253,6 +272,9 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 		}
 		p.LoggerProvider = sdklog.NewLoggerProvider(logOpts...)
 		p.shutdownFuncs = append(p.shutdownFuncs, p.LoggerProvider.Shutdown)
+		for _, c := range logFileCloses {
+			p.shutdownFuncs = append(p.shutdownFuncs, c)
+		}
 		otellog.SetLoggerProvider(p.LoggerProvider)
 	}
 
@@ -313,12 +335,23 @@ func (p *Provider) TryConnectCollector(ctx context.Context, addr string) bool {
 		return false
 	}
 
-	// Register gRPC trace exporter as additional batch processor.
+	// Register gRPC trace exporter as additional batch processor. The
+	// new BSP owns traceExp; TracerProvider.Shutdown (already in
+	// p.shutdownFuncs from NewProvider) walks the BSP chain and shuts
+	// the exporter down. Appending traceExp.Shutdown here would call
+	// Shutdown twice on a one-shot exporter.
 	p.TracerProvider.RegisterSpanProcessor(sdktrace.NewBatchSpanProcessor(traceExp))
-	p.shutdownFuncs = append(p.shutdownFuncs, traceExp.Shutdown)
 
 	// Rebuild MeterProvider with the gRPC exporter added alongside existing file reader(s).
 	// The SDK doesn't support dynamic reader addition, so we create a new provider.
+	// newMeter owns grpcReader, which owns metricExp; newMeter.Shutdown
+	// recurses down that chain. Do NOT append metricExp.Shutdown — that
+	// would close the gRPC client before the PeriodicReader's final
+	// collect+export, dropping the in-flight batch with a
+	// "gRPC exporter is shutdown" error. (The old p.MeterProvider's
+	// Shutdown is already in p.shutdownFuncs; it shares readers with
+	// newMeter but Reader.Shutdown is idempotent, so the redundant call
+	// is harmless.)
 	grpcReader := sdkmetric.NewPeriodicReader(metricExp, sdkmetric.WithInterval(15*time.Second))
 	meterOpts := []sdkmetric.Option{sdkmetric.WithResource(p.resource)}
 	for _, r := range p.metricReaders {
@@ -327,7 +360,6 @@ func (p *Provider) TryConnectCollector(ctx context.Context, addr string) bool {
 	meterOpts = append(meterOpts, sdkmetric.WithReader(grpcReader))
 	p.metricReaders = append(p.metricReaders, grpcReader)
 	newMeter := sdkmetric.NewMeterProvider(meterOpts...)
-	p.shutdownFuncs = append(p.shutdownFuncs, metricExp.Shutdown)
 	p.shutdownFuncs = append(p.shutdownFuncs, newMeter.Shutdown)
 	otel.SetMeterProvider(newMeter)
 
@@ -349,6 +381,16 @@ func (p *Provider) TryConnectCollector(ctx context.Context, addr string) bool {
 	}
 
 	// Set up log provider with the original resource (preserves service.instance.id).
+	// LoggerProvider.Shutdown walks each BatchProcessor → Exporter, so
+	// appending logExp.Shutdown separately would double-shut a one-shot
+	// exporter — same hazard the metric branch above documents.
+	//
+	// Limitation: when NewProvider already created p.LoggerProvider
+	// (e.g. PersistLogs=true), we cannot dynamically add the gRPC log
+	// processor (sdklog has no AddProcessor API). Logs in that case
+	// reach the file exporter only — collector connect upgrades traces
+	// and metrics, but not logs. Promoting logs to dual-export requires
+	// the same provider-rebuild dance the metric branch does above.
 	if p.LoggerProvider == nil {
 		p.LoggerProvider = sdklog.NewLoggerProvider(
 			sdklog.WithResource(p.resource),
@@ -356,14 +398,25 @@ func (p *Provider) TryConnectCollector(ctx context.Context, addr string) bool {
 		)
 		p.shutdownFuncs = append(p.shutdownFuncs, p.LoggerProvider.Shutdown)
 		otellog.SetLoggerProvider(p.LoggerProvider)
+	} else {
+		// p.LoggerProvider was created in NewProvider without this gRPC
+		// processor wired in. Shut the orphaned logExp down now so its
+		// gRPC connection doesn't leak past wrap exit; the file path
+		// remains the only log sink in this configuration.
+		_ = logExp.Shutdown(ctx)
 	}
-	p.shutdownFuncs = append(p.shutdownFuncs, logExp.Shutdown)
 
 	slog.Info("otel: connected to collector", "addr", addr)
 	return true
 }
 
 // newRotatingTraceExporter creates a file-based trace exporter writing to dataDir/traces/.
+//
+// The returned closeFile only closes the underlying *os.File — the
+// exporter's own Shutdown is invoked by the TracerProvider's shutdown
+// chain (BSP → Exporter). Callers MUST register closeFile AFTER the
+// TracerProvider's shutdown so the BSP can drain into the still-open
+// file; running closeFile first writes pending spans to a closed FD.
 func newRotatingTraceExporter(dataDir string, opener FileOpener) (sdktrace.SpanExporter, func(context.Context) error, error) {
 	dir := filepath.Join(dataDir, "traces")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -386,20 +439,18 @@ func newRotatingTraceExporter(dataDir string, opener FileOpener) (sdktrace.SpanE
 		f.Close()
 		return nil, nil, err
 	}
-	shutdown := func(ctx context.Context) error {
-		if err := exp.Shutdown(ctx); err != nil {
-			f.Close()
-			return err
-		}
-		return f.Close()
-	}
-	return exp, shutdown, nil
+	closeFile := func(context.Context) error { return f.Close() }
+	return exp, closeFile, nil
 }
 
 // newRotatingLogExporter creates a file-based log exporter writing to dataDir/logs/.
 // File-mode parity with newRotatingTraceExporter / newRotatingMetricExporter:
 // without this, structured logs are dropped whenever the gRPC collector is
 // unreachable (the file-only mode common in standalone ycode runs).
+//
+// Same lifecycle contract as newRotatingTraceExporter: the returned
+// closeFile only closes *os.File; the exporter's Shutdown is owned by
+// LoggerProvider → BatchProcessor → Exporter.
 func newRotatingLogExporter(dataDir string, opener FileOpener) (sdklog.Exporter, func(context.Context) error, error) {
 	dir := filepath.Join(dataDir, "logs")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -422,17 +473,15 @@ func newRotatingLogExporter(dataDir string, opener FileOpener) (sdklog.Exporter,
 		f.Close()
 		return nil, nil, err
 	}
-	shutdown := func(ctx context.Context) error {
-		if err := exp.Shutdown(ctx); err != nil {
-			f.Close()
-			return err
-		}
-		return f.Close()
-	}
-	return exp, shutdown, nil
+	closeFile := func(context.Context) error { return f.Close() }
+	return exp, closeFile, nil
 }
 
 // newRotatingMetricExporter creates a file-based metric exporter writing to dataDir/metrics/.
+//
+// Same lifecycle contract as newRotatingTraceExporter: the returned
+// closeFile only closes *os.File; the exporter's Shutdown is owned by
+// MeterProvider → PeriodicReader → Exporter.
 func newRotatingMetricExporter(dataDir string, opener FileOpener) (sdkmetric.Exporter, func(context.Context) error, error) {
 	dir := filepath.Join(dataDir, "metrics")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -455,12 +504,6 @@ func newRotatingMetricExporter(dataDir string, opener FileOpener) (sdkmetric.Exp
 		f.Close()
 		return nil, nil, err
 	}
-	shutdown := func(ctx context.Context) error {
-		if err := exp.Shutdown(ctx); err != nil {
-			f.Close()
-			return err
-		}
-		return f.Close()
-	}
-	return exp, shutdown, nil
+	closeFile := func(context.Context) error { return f.Close() }
+	return exp, closeFile, nil
 }

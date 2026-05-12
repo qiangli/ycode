@@ -99,9 +99,22 @@ func setupOTel(ctx context.Context, mode ExportMode, agentName, profileName stri
 		DataDir:        dataDir,
 		InstanceDir:    instanceDir,
 		PersistTraces:  true,
-		PersistMetrics: false, // wrap doesn't emit metrics today
-		PersistLogs:    false,
-		AgentTool:      "wrap",
+		// StartExecSpan records ycode.exec.total / ycode.exec.duration
+		// through the global meter, but enabling local PersistMetrics
+		// here would build a file PeriodicReader that TryConnectCollector
+		// then cannot share with the rebuilt MeterProvider (SDK forbids
+		// binding the same Reader to two providers, and the orphaned
+		// reader fails its second Shutdown with "reader is shutdown").
+		// Until TryConnectCollector grows a proper provider-rebuild
+		// dance (today it limps via duplicate-registration skip), wrap
+		// ships exec metrics via gRPC only — fine for the canonical
+		// "serve is up" path, dropped silently otherwise.
+		PersistMetrics: false,
+		// Wrap itself emits no OTel log records (its diagnostics go to
+		// slog/stderr). Leave false until something in the wrap path
+		// starts producing structured logs.
+		PersistLogs: false,
+		AgentTool:   "wrap",
 	})
 	if err != nil {
 		slog.Warn("wrap: OTel provider init failed; continuing without telemetry",
@@ -122,38 +135,38 @@ func setupOTel(ctx context.Context, mode ExportMode, agentName, profileName stri
 
 	// Dual-export upgrade: when a running `ycode serve` advertises an
 	// OTLP endpoint in ~/.agents/ycode/manifest.json, push to it as
-	// well. The connect itself uses a 5s timeout internally; we don't
-	// block wrap startup on it. Failure is silent — Debug log only.
+	// well. Failure is non-fatal — we stay in file-only mode and
+	// surface the fallback at INFO so operators can tell which path
+	// is active without enabling debug logging.
+	dualExport := false
+	collectorAddr := ""
 	if addr, ok := ReadServeManifest(); ok {
-		// TryConnectCollector's context governs the gRPC dial timeout
-		// indirectly via its internal 5s WithTimeout; we wrap with our
-		// own 2s context so a misbehaving collector can't stall wrap
-		// past the documented budget. The shorter timeout is the wrap-
-		// specific tightening called out in the plan's "One known
-		// risk" section.
+		collectorAddr = addr
+		// 2s budget keeps wrap startup snappy when serve is down or
+		// hung; the SDK's per-exporter dial timeout is bounded by
+		// this parent context.
 		connectCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		_ = provider.TryConnectCollector(connectCtx, addr)
+		dualExport = provider.TryConnectCollector(connectCtx, addr)
 		cancel()
 	}
 
-	slog.Debug("wrap: OTel exporter installed",
+	slog.Info("wrap: OTel exporter installed",
 		"mode", mode,
 		"data_dir", instanceDir,
 		"agent", agentName,
 		"profile", profileName,
+		"collector", collectorAddr,
+		"dual_export", dualExport,
 	)
 
 	return func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		// Force-flush the tracer batch processors before Shutdown so
-		// in-flight spans reach disk. The default Provider.Shutdown
-		// iterates shutdown funcs in append order, which closes the
-		// rotating file exporter before the TracerProvider's batches
-		// flush — without ForceFlush, file-mode traces silently drop.
-		if provider.TracerProvider != nil {
-			_ = provider.TracerProvider.ForceFlush(shutdownCtx)
-		}
+		// Provider.Shutdown now drains each provider (Tracer → Meter →
+		// Logger) before closing the underlying files, so no callsite
+		// ForceFlush is required. If a short-lived wrap exits before
+		// the metric PeriodicReader's 15s tick, the provider's final
+		// collect+export still ships the buffered batch.
 		if err := provider.Shutdown(shutdownCtx); err != nil {
 			slog.Debug("wrap: OTel shutdown error", "err", err)
 		}
