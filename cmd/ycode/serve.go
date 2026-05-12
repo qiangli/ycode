@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -224,20 +225,22 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		port = 58080
 	}
 
-	// Check for an already-running instance.
-	pidPath := filepath.Join(home, ".agents", "ycode", "serve.pid")
-	if data, err := os.ReadFile(pidPath); err == nil {
-		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
-			if proc, err := os.FindProcess(pid); err == nil {
-				// Signal 0 checks if process exists without actually signaling it.
-				if proc.Signal(syscall.Signal(0)) == nil {
-					return fmt.Errorf("another ycode server is already running (PID %d). Stop it with 'ycode serve stop' or 'ycode pulse stop'", pid)
-				}
-			}
+	// Idempotency guard. Probing the public manifest endpoint is the
+	// authoritative test — it survives PID reuse after a crash or
+	// reboot, where a bare PID-liveness check would false-positive on an
+	// unrelated process. Lets a `SessionStart` hook collapse from
+	// `pgrep -f 'ycode serve' || ycode serve &` to just `ycode serve &`.
+	if alreadyRunning(port) {
+		if pid := readServePID(home); pid > 0 {
+			fmt.Printf("ycode serve already running (PID %d) at http://127.0.0.1:%d/\n", pid, port)
+		} else {
+			fmt.Printf("ycode serve already running at http://127.0.0.1:%d/\n", port)
 		}
-		// Stale PID file — clean it up.
-		os.Remove(pidPath)
+		return nil
 	}
+	// Nothing is listening — drop any stale PID file from a prior crash
+	// before we proceed to bind ports below.
+	_ = os.Remove(filepath.Join(home, ".agents", "ycode", "serve.pid"))
 
 	// 1. Build and start observability stack first (no dependencies on API).
 	stack, err := buildStackManager(cfg, dataDir, fullCfg.Inference, fullCfg.Container, fullCfg.GitServer)
@@ -449,7 +452,7 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	fmt.Println("\nPress Ctrl+C to stop.")
 
 	// Write PID and port files for client discovery.
-	pidPath = filepath.Join(home, ".agents", "ycode", "serve.pid")
+	pidPath := filepath.Join(home, ".agents", "ycode", "serve.pid")
 	portPath := filepath.Join(home, ".agents", "ycode", "serve.port")
 	_ = os.MkdirAll(filepath.Dir(pidPath), 0o755)
 	_ = os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644)
@@ -520,6 +523,33 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		slog.Warn("observability: stop error", "error", err)
 	}
 	return nil
+}
+
+// alreadyRunning reports whether a healthy ycode server is already
+// listening on `port`. It probes the unauthenticated public manifest
+// endpoint; a 200 there is definitive. Anything slower than the short
+// timeout is treated as "not us" so an unrelated listener that grabbed
+// the same port doesn't trick us into a false-positive no-op.
+func alreadyRunning(port int) bool {
+	client := &http.Client{Timeout: time.Second}
+	url := fmt.Sprintf("http://127.0.0.1:%d/.well-known/ycode-manifest.json", port)
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+// readServePID is best-effort decoration for the "already running" log
+// line — returns 0 on any read/parse failure rather than propagating.
+func readServePID(home string) int {
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "ycode", "serve.pid"))
+	if err != nil {
+		return 0
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	return pid
 }
 
 // detachServer forks the current process as a background server.
