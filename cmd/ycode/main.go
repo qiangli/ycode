@@ -334,14 +334,28 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 				containerEngine = engine
 
 				// Start containerized SearXNG for web search (if enabled).
+				// Async — the searxng/searxng:latest image pull is slow on
+				// first run (and can hang outright when podman storage or
+				// the registry is unreachable). Blocking newApp on it
+				// stalls the entire serve startup, holding back the API
+				// stack + canvas/MCP/manifest registration that everything
+				// else waits on. Run start in a goroutine with a wall-clock
+				// timeout; the web-search tool falls back to other
+				// providers (Brave, Tavily, DuckDuckGo) until SearXNG is
+				// ready, then flips automatically via SetSearXNGProvider.
 				if os.Getenv("YCODE_SEARXNG") == "true" || cfg.Container.IsEnabled() {
 					searxngSvc := searxng.NewService(engine, instanceID, cfg.Container.Network)
-					if err := searxngSvc.Start(rootCtx); err != nil {
-						slog.Warn("searxng: failed to start, web search will use other providers", "error", err)
-					} else {
+					go func() {
+						startCtx, cancel := context.WithTimeout(rootCtx, 5*time.Minute)
+						defer cancel()
+						if err := searxngSvc.Start(startCtx); err != nil {
+							slog.Warn("searxng: failed to start, web search will use other providers", "error", err)
+							return
+						}
 						tools.SetSearXNGProvider(tools.NewSearXNGContainerProvider(searxngSvc))
-						defer searxngSvc.Stop(context.Background())
-					}
+						slog.Info("searxng: ready", "instance", instanceID)
+					}()
+					defer searxngSvc.Stop(context.Background())
 				}
 
 				slog.Info("container sandbox active", "container", sandbox.Name, "image", image)
