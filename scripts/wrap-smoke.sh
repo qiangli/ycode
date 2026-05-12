@@ -103,11 +103,34 @@ run_row "fixture-python-list"  "aider"    "$FIXTURES_DIR/py_list_form.py"
 run_row "fixture-node-shell"   "claude"   "$FIXTURES_DIR/node_shell_true.cjs"
 run_row "fixture-node-list"    "claude"   "$FIXTURES_DIR/node_list_form.cjs"
 
-# --- Real-agent rows (skipped when binary missing) ---
-run_row "real-claude"   "claude"   "claude"   --help
-run_row "real-codex"    "codex"    "codex"    --help
-run_row "real-aider"    "aider"    "aider"    --help
-run_row "real-gemini"   "gemini"   "gemini"   --help
-run_row "real-opencode" "opencode" "opencode" --help
+# --- Real-agent help rows (skipped when binary missing) ---
+# Quick "does wrap not break the agent" gate. Most agents don't shell
+# out for --help / --version, so span counts here are minimal.
+run_row "real-claude-help"   "claude"   "claude"   --help
+run_row "real-codex-help"    "codex"    "codex"    --help
+run_row "real-aider-help"    "aider"    "aider"    --help
+run_row "real-gemini-help"   "gemini"   "gemini"   --help
+run_row "real-opencode-help" "opencode" "opencode" --help
+
+# --- Real-agent task rows ---
+# Headless Claude Code: `-p` runs the task and exits. This is the row
+# that actually exercises the runtime hooks against a real agent's
+# Bash tool. The prompt itself is intentionally trivial so the agent
+# can complete it deterministically (one shell command, no LLM
+# back-and-forth needed). Span count > help row indicates the hooks
+# are firing.
+run_row "real-claude-task" "claude" "claude" -p "Run \`echo hello-from-wrap\` and tell me the output." --output-format text
+
+# opencode's --version is the only deterministic non-interactive
+# entry point that exits quickly; the interactive REPL is documented
+# as a manual checklist in the matrix header above. Real Bash-tool
+# coverage for opencode is a manual test (run `bin/ycode wrap opencode`,
+# ask it to `ls -la`, ctrl-c, inspect pulse for spans).
+run_row "real-opencode-task" "opencode" "opencode" --version
 
 echo "wrap-smoke: matrix at $MATRIX"
+echo
+echo "Manual interactive checklist (PTY mode — not automated):"
+echo "  1. bin/ycode wrap claude       — cursor positions correctly; resize repaints; ctrl-c exits cleanly"
+echo "  2. bin/ycode wrap opencode     — same"
+echo "  3. After each session, check ~/.agents/ycode/otel/instances/wrap-*/traces/ for spans tagged with wrap.agent"
