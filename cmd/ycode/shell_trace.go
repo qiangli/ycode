@@ -17,6 +17,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/bash"
 	"github.com/qiangli/ycode/internal/runtime/bash/shellparse"
 	"github.com/qiangli/ycode/internal/runtime/origin"
+	"github.com/qiangli/ycode/internal/runtime/wrap"
 	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
@@ -92,6 +93,20 @@ func runShellTrace(ctx context.Context, stdin io.Reader, stdout io.Writer, argvM
 		return fmt.Errorf("shell-trace: read stdin: %w", err)
 	}
 	body := strings.TrimRight(string(raw), "\n")
+
+	// When invoked from a `ycode wrap` session (YCODE_WRAP_AGENT in env),
+	// install an OTel provider so the parent + child spans emitted below
+	// land in the same file (and same collector) as the wrap parent's
+	// session span. The TRACEPARENT env nests this subprocess under the
+	// wrap session, so spans link across the process boundary.
+	if os.Getenv("YCODE_WRAP_AGENT") != "" {
+		mode := wrap.ParseExportMode(os.Getenv("YCODE_WRAP_OTEL_EXPORT"))
+		shutdown := wrap.SetupOTel(ctx, mode,
+			os.Getenv("YCODE_WRAP_AGENT"),
+			os.Getenv("YCODE_WRAP_PROFILE"),
+		)
+		defer shutdown()
+	}
 
 	// Honor W3C trace context from env so the parent span nests under
 	// the wrapping `ycode wrap` invocation. The hook subprocess inherits
@@ -171,16 +186,24 @@ func runShellTrace(ctx context.Context, stdin io.Reader, stdout io.Writer, argvM
 	// Emit OTel spans: parent for the whole shell-out, one child per
 	// parsed CommandNode. Each child carries binary + args.count so
 	// cardinality stays bounded (same discipline as
-	// telotel.StartExecSpan).
+	// telotel.StartExecSpan). Pick up wrap.agent / wrap.profile from
+	// the inherited env so dashboards can slice by foreign agent.
 	tracer := otel.Tracer("ycode.wrap.shell-trace")
+	parentAttrs := []attribute.KeyValue{
+		attribute.String("exec.scope", telotel.ExecScopeWrappedAgent),
+		attribute.String("exec.mode", envelope.Mode),
+		attribute.String("exec.intent", envelope.Intent),
+		attribute.String("exec.cmdline", truncate(shellString, 1024)),
+		attribute.Int("exec.parsed.count", len(parsed)),
+	}
+	if v := os.Getenv("YCODE_WRAP_AGENT"); v != "" {
+		parentAttrs = append(parentAttrs, attribute.String("wrap.agent", v))
+	}
+	if v := os.Getenv("YCODE_WRAP_PROFILE"); v != "" {
+		parentAttrs = append(parentAttrs, attribute.String("wrap.profile", v))
+	}
 	parentCtx, parentSpan := tracer.Start(ctx, "ycode.exec.wrapped-agent",
-		trace.WithAttributes(
-			attribute.String("exec.scope", telotel.ExecScopeWrappedAgent),
-			attribute.String("exec.mode", envelope.Mode),
-			attribute.String("exec.intent", envelope.Intent),
-			attribute.String("exec.cmdline", truncate(shellString, 1024)),
-			attribute.Int("exec.parsed.count", len(parsed)),
-		),
+		trace.WithAttributes(parentAttrs...),
 	)
 	for _, c := range parsed {
 		_, child := tracer.Start(parentCtx, "ycode.exec.wrapped-agent.cmd",

@@ -128,6 +128,12 @@ type Options struct {
 	// happens.
 	RuntimeHooks []string
 
+	// OTelExport selects the wrap-parent's OTel local sink:
+	// "file" (default), "console", or "off". Empty resolves to file.
+	// The YCODE_WRAP_OTEL_EXPORT env always wins when set —
+	// ParseExportMode handles both the flag and the env.
+	OTelExport string
+
 	// Env is the base environment passed to the foreign agent.
 	// Defaults to os.Environ() when nil. PATH, SHELL, and the
 	// YCODE_WRAP_* coordination env are overwritten.
@@ -180,6 +186,28 @@ func Run(ctx context.Context, opts Options) (int, error) {
 		profile.Apply(&opts)
 	}
 
+	// Codex limitation warning — the Rust runtime has no language-level
+	// hook, so absolute-path shell-outs from the Codex binary itself
+	// bypass tracing. Emit a one-line stderr warn at wrap-start so the
+	// limitation is visible to the operator. The PATH shim still
+	// catches what it can.
+	if isResolvedProfile(&opts, "codex") {
+		_, _ = fmt.Fprintln(os.Stderr,
+			"[ycode wrap] codex: Rust runtime — no language-level hook; "+
+				"shell-outs via absolute paths bypass tracing. PATH-shim coverage only.")
+	}
+
+	// Install the wrap-parent's OTel exporter (file / console / off)
+	// before opening any span so the first StartExecSpan call lands
+	// in the configured sink. The shutdown closure is deferred so
+	// exporters flush on normal Run exit; SIGKILL'd processes lose
+	// in-flight spans, same trade-off the main app accepts.
+	otelShutdown := setupOTel(ctx, ParseExportMode(opts.OTelExport),
+		exportEnv("YCODE_WRAP_AGENT", filepath.Base(opts.AgentArgs[0])),
+		exportEnv("YCODE_WRAP_PROFILE", resolvedProfileName(&opts)),
+	)
+	defer otelShutdown()
+
 	self, err := os.Executable()
 	if err != nil {
 		return 1, fmt.Errorf("wrap.Run: locate ycode binary: %w", err)
@@ -200,11 +228,22 @@ func Run(ctx context.Context, opts Options) (int, error) {
 		_ = os.RemoveAll(sessionDir)
 	}()
 
+	bin := opts.AgentArgs[0]
+	args := opts.AgentArgs[1:]
+
+	// Open the wrap-parent's session span before building env so
+	// TRACEPARENT can be injected into the child's environment.
+	// Every per-call span the runtime hooks emit (via `ycode
+	// internal-shell-trace`) will nest under this one, producing a
+	// single tree per wrap invocation.
+	telCtx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeWrappedAgent, bin, args)
+
 	env := opts.Env
 	if env == nil {
 		env = os.Environ()
 	}
 	env = injectShimEnv(env, shimDir, opts)
+	env = injectTraceparent(telCtx, env)
 
 	// Runtime hooks (Phase 1.2): materialize Python sitecustomize.py
 	// and/or Node ycode-trace.cjs under <shimDir>/python|node/ and
@@ -225,10 +264,7 @@ func Run(ctx context.Context, opts Options) (int, error) {
 		}
 	}
 
-	bin := opts.AgentArgs[0]
-	args := opts.AgentArgs[1:]
-
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd := exec.CommandContext(telCtx, bin, args...)
 	cmd.Dir = opts.WorkDir
 	cmd.Env = env
 	cmd.Stdin = orStdin(opts.Stdin)
@@ -238,9 +274,6 @@ func Run(ctx context.Context, opts Options) (int, error) {
 	// forwarding can address descendants and SIGKILL escalation
 	// reaches every spawned subprocess.
 	cmd.SysProcAttr = newProcessGroupAttr()
-
-	telCtx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeWrappedAgent, bin, args)
-	_ = telCtx
 
 	if err := cmd.Start(); err != nil {
 		finish(0, err)
@@ -372,13 +405,21 @@ func ShimMain() int {
 // shim's bash so subprocess shells use it. The YCODE_WRAP_* vars
 // signal to ycode child invocations that they are running as a shim.
 func injectShimEnv(env []string, shimDir string, opts Options) []string {
+	// YCODE_BIN points the runtime hooks at the *same* ycode binary
+	// the wrap parent is running, not at whatever `ycode` happens to
+	// resolve first on PATH (which is often a stale installed copy).
+	// The hooks honor it before falling back to PATH lookup.
+	selfBin, _ := os.Executable()
 	overrides := map[string]string{
-		"PATH":          shimDir + string(os.PathListSeparator) + extractEnv(env, "PATH"),
-		"SHELL":         filepath.Join(shimDir, "bash"),
-		envShim:         "1",
-		envDepth:        "0",
-		envShimDir:      shimDir,
-		envWrappedAgent: filepath.Base(opts.AgentArgs[0]),
+		"PATH":                   shimDir + string(os.PathListSeparator) + extractEnv(env, "PATH"),
+		"SHELL":                  filepath.Join(shimDir, "bash"),
+		envShim:                  "1",
+		envDepth:                 "0",
+		envShimDir:               shimDir,
+		envWrappedAgent:          filepath.Base(opts.AgentArgs[0]),
+		"YCODE_BIN":              selfBin,
+		"YCODE_WRAP_OTEL_EXPORT": string(ParseExportMode(opts.OTelExport)),
+		"YCODE_WRAP_PROFILE":     resolvedProfileName(&opts),
 	}
 	out := make([]string, 0, len(env)+len(overrides))
 	seen := make(map[string]bool, len(overrides))

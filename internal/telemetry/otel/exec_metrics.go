@@ -119,6 +119,17 @@ func StartExecSpan(ctx context.Context, scope, binary string, args []string) (co
 		attribute.String("exec.binary", binary),
 		attribute.Int("exec.args.count", len(args)),
 	}
+	// Foreign-agent attribution for ycode wrap. The wrap parent and
+	// every shim/runtime-hook descendant inherit YCODE_WRAP_AGENT and
+	// YCODE_WRAP_PROFILE in env, so any StartExecSpan call inside a
+	// wrap session gets these attached without per-call-site plumbing.
+	// Bounded cardinality: both are short, fixed-set strings.
+	if v := os.Getenv("YCODE_WRAP_AGENT"); v != "" {
+		attrs = append(attrs, attribute.String("wrap.agent", v))
+	}
+	if v := os.Getenv("YCODE_WRAP_PROFILE"); v != "" {
+		attrs = append(attrs, attribute.String("wrap.profile", v))
+	}
 	spanCtx, span := tracer.Start(ctx, spanName, trace.WithAttributes(attrs...))
 	start := time.Now()
 

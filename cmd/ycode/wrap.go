@@ -29,6 +29,7 @@ func newWrapCmd() *cobra.Command {
 		extraShims   []string
 		profile      string
 		runtimeHooks string
+		otelExport   string
 	)
 	cmd := &cobra.Command{
 		Use:   "wrap [flags] -- <agent-cmd> [args...]",
@@ -68,6 +69,7 @@ func newWrapCmd() *cobra.Command {
 				ExtraShims:   extraShims,
 				Profile:      profile,
 				RuntimeHooks: hooks,
+				OTelExport:   otelExport,
 			})
 			if err != nil {
 				return fmt.Errorf("wrap: %w", err)
@@ -90,6 +92,8 @@ func newWrapCmd() *cobra.Command {
 		"Per-agent profile to apply (claude | opencode | codex | aider | gemini). Auto-detected from the agent's basename when omitted.")
 	cmd.Flags().StringVar(&runtimeHooks, "runtime-hooks", "auto",
 		"Language runtime hooks to install in the wrapped process: auto (default, follows profile) | off | comma-separated list (python,node)")
+	cmd.Flags().StringVar(&otelExport, "otel-export", "file",
+		"OTel exporter mode: file (default — ~/.agents/ycode/otel/instances/wrap-<pid>/) | console (file plus stderr JSON) | off (no provider). YCODE_WRAP_OTEL_EXPORT env wins when set.")
 	return cmd
 }
 
