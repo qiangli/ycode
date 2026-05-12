@@ -104,6 +104,16 @@ func Generate(root string, opts *Options) (*RepoMap, error) {
 				base == "__pycache__" || base == ".tox" || base == ".venv" {
 				return filepath.SkipDir
 			}
+			// Also short-circuit user-supplied directory exclusions
+			// ("priorart/**", "external/**", "testdata/**", ...) at
+			// the dir level so the walker doesn't descend into multi-
+			// gigabyte subtrees just to filter their files out later.
+			// Without this, scanning a project with a vendored
+			// reference checkout takes minutes per startup.
+			rel, _ := filepath.Rel(root, path)
+			if rel != "." && shouldExcludeDir(rel, opts.ExcludePatterns) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
@@ -217,6 +227,22 @@ func (rm *RepoMap) Format() string {
 	}
 
 	return b.String()
+}
+
+// shouldExcludeDir returns true when a directory should be pruned from
+// the walk entirely. Only `dir/**`-style patterns prune directories;
+// file-shaped patterns like `**/*_test.go` don't, since dir paths
+// can't match a filename glob anyway. Mirrors shouldExclude's
+// matching logic for the `**`-suffix subset only.
+func shouldExcludeDir(rel string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if prefix, ok := strings.CutSuffix(pattern, "/**"); ok {
+			if rel == prefix || strings.HasPrefix(rel, prefix+"/") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // shouldExclude checks if a relative path matches any exclusion pattern.
