@@ -3,19 +3,24 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
 
+	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/runtime/mcp"
+	"github.com/qiangli/ycode/internal/runtime/memexmcp"
 	"github.com/qiangli/ycode/internal/runtime/origin"
 	"github.com/qiangli/ycode/internal/runtime/skills"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
 	"github.com/qiangli/ycode/internal/shell"
 	_ "github.com/qiangli/ycode/internal/shell/agentmode"
 	_ "github.com/qiangli/ycode/internal/shell/builtins"
+	"github.com/qiangli/ycode/pkg/memex/memory"
 )
 
 // newMcpCmd builds the `ycode mcp` subcommand tree. Today only `serve` exists,
@@ -78,11 +83,31 @@ func newMcpServeCmd() *cobra.Command {
 			shellRT, _ := shell.New(shell.Options{
 				Permission: "danger-full-access",
 			})
-			composite := mcp.NewCompositeHandler(
+
+			handlers := []mcp.ServerHandler{
 				treesitter.NewMCPHandler(),
 				shell.NewMCPHandler(shellRT),
 				skills.NewMCPHandler(),
-			)
+			}
+
+			// Family A.3: memex memory. Best-effort — if the manager
+			// can't be opened (no writable home dir, missing memory
+			// tree, etc.) we just skip the family rather than fail
+			// the whole serve. The other capabilities still work.
+			if memMgr, err := openMemexForMCP(); err == nil {
+				handlers = append(handlers, memexmcp.NewMCPHandler(memMgr))
+			} else {
+				slog.Warn("memexmcp disabled (memory manager unavailable)", "error", err)
+			}
+
+			// Family D: Ollama proxy. Same-machine HTTP. The handler
+			// resolves its base URL via env / default — no precheck
+			// here, since Ollama may come up after the MCP serve
+			// process starts and tools must list even when Ollama is
+			// down.
+			handlers = append(handlers, inference.NewMCPHandler(""))
+
+			composite := mcp.NewCompositeHandler(handlers...)
 
 			// Permission ceiling. Default is DangerFullAccess so the
 			// agent_shell tool (and any other write-capable handler)
@@ -113,4 +138,23 @@ func newMcpServeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&ceiling, "permission", "", "Permission ceiling: read-only | workspace-write | danger-full-access (default)")
 	return cmd
+}
+
+// openMemexForMCP opens a memory.Manager rooted at the same paths
+// newApp() uses: ~/.agents/ycode/memory (global) + <cwd>/.agents/ycode/memory
+// (project). Kept private to the MCP entry point — the standalone
+// `ycode mcp serve` process doesn't share newApp's full storage stack,
+// so we re-derive the dirs here rather than depending on cli.App.
+func openMemexForMCP() (*memory.Manager, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("locate home dir: %w", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("getwd: %w", err)
+	}
+	globalDir := filepath.Join(home, ".agents", "ycode", "memory")
+	projectDir := filepath.Join(cwd, ".agents", "ycode", "memory")
+	return memory.NewManagerWithGlobal(globalDir, projectDir)
 }
