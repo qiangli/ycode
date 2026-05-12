@@ -1,0 +1,50 @@
+package web
+
+import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+// TestHandler_ServesCanvasShell guards the canvas/ subdirectory embed.
+// If the directory layout breaks (renamed/deleted/forgotten asset)
+// this fails loudly instead of silently 404'ing in the browser.
+func TestHandler_ServesCanvasShell(t *testing.T) {
+	srv := httptest.NewServer(Handler())
+	defer srv.Close()
+
+	cases := []struct {
+		path string
+		want string // substring expected in body
+	}{
+		{"/canvas/", "ycode canvas"},          // index.html title
+		{"/canvas/index.html", "ycode canvas"},
+		{"/canvas/canvas.css", "--accent:"},   // CSS variable signature
+		{"/canvas/canvas.js", "state.update"}, // the dispatch the script subscribes to
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			resp, err := http.Get(srv.URL + tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			if !strings.Contains(string(body), tc.want) {
+				t.Errorf("body missing %q; got first 200 bytes: %q", tc.want, head(string(body), 200))
+			}
+		})
+	}
+}
+
+func head(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ycode canvas</title>
+  <link rel="stylesheet" href="canvas.css">
+</head>
+<body>
+  <header id="header">
+    <div class="header-left">
+      <h1>ycode canvas</h1>
+      <span id="status-badge" class="badge">connecting…</span>
+    </div>
+    <div class="header-right">
+      <span id="session-label" class="session-label"></span>
+    </div>
+  </header>
+  <main id="canvas-root" role="main">
+    <div id="welcome" class="welcome">
+      <p>Empty canvas. Ask the agent to render something — a dashboard, a trace, an A2UI surface — and it appears here.</p>
+      <p class="hint">Foreign agents call <code>agent_render_a2ui</code> or <code>agent_render_widget</code> over MCP.</p>
+    </div>
+  </main>
+  <script src="canvas.js"></script>
+</body>
+</html>
