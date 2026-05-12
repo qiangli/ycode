@@ -30,6 +30,7 @@ func newWrapCmd() *cobra.Command {
 		profile      string
 		runtimeHooks string
 		otelExport   string
+		ptyMode      string
 	)
 	cmd := &cobra.Command{
 		Use:   "wrap [flags] -- <agent-cmd> [args...]",
@@ -70,6 +71,7 @@ func newWrapCmd() *cobra.Command {
 				Profile:      profile,
 				RuntimeHooks: hooks,
 				OTelExport:   otelExport,
+				PTY:          ptyMode,
 			})
 			if err != nil {
 				return fmt.Errorf("wrap: %w", err)
@@ -94,6 +96,8 @@ func newWrapCmd() *cobra.Command {
 		"Language runtime hooks to install in the wrapped process: auto (default, follows profile) | off | comma-separated list (python,node)")
 	cmd.Flags().StringVar(&otelExport, "otel-export", "file",
 		"OTel exporter mode: file (default — ~/.agents/ycode/otel/instances/wrap-<pid>/) | console (file plus stderr JSON) | off (no provider). YCODE_WRAP_OTEL_EXPORT env wins when set.")
+	cmd.Flags().StringVar(&ptyMode, "pty", "auto",
+		"PTY allocation: auto (default — when stdin & stdout are terminals) | always (force PTY) | never (inherit stdio). Interactive TUIs (claude, opencode) need a PTY to render correctly.")
 	return cmd
 }
 

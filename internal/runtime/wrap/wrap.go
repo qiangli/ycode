@@ -134,6 +134,13 @@ type Options struct {
 	// ParseExportMode handles both the flag and the env.
 	OTelExport string
 
+	// PTY selects how stdio is plumbed:
+	//   "auto"   — PTY when both stdin and stdout are terminals.
+	//   "always" — PTY regardless.
+	//   "never"  — inherit-FD always.
+	// Empty resolves to auto. See ParsePTYMode.
+	PTY string
+
 	// Env is the base environment passed to the foreign agent.
 	// Defaults to os.Environ() when nil. PATH, SHELL, and the
 	// YCODE_WRAP_* coordination env are overwritten.
@@ -262,6 +269,22 @@ func Run(ctx context.Context, opts Options) (int, error) {
 		} else {
 			env = applyRuntimeOverrides(env, overrides)
 		}
+	}
+
+	// PTY path: when both stdio are terminals (auto), or when the
+	// user explicitly set --pty=always, run the wrapped agent under
+	// a freshly-allocated PTY. SIGWINCH propagation and raw-mode
+	// switching happen inside runUnderPTY; signal forwarding is not
+	// needed because the controlling terminal delivers SIGINT/
+	// SIGTERM/SIGHUP to the foreground PG directly.
+	ptyMode := ParsePTYMode(opts.PTY)
+	if shouldAllocatePTY(ptyMode, opts) {
+		exitCode, err := runUnderPTY(telCtx, bin, args, env, opts.WorkDir)
+		finish(exitCode, err)
+		if err != nil {
+			return exitCode, err
+		}
+		return exitCode, nil
 	}
 
 	cmd := exec.CommandContext(telCtx, bin, args...)
@@ -408,8 +431,10 @@ func injectShimEnv(env []string, shimDir string, opts Options) []string {
 	// YCODE_BIN points the runtime hooks at the *same* ycode binary
 	// the wrap parent is running, not at whatever `ycode` happens to
 	// resolve first on PATH (which is often a stale installed copy).
-	// The hooks honor it before falling back to PATH lookup.
-	selfBin, _ := os.Executable()
+	// The hooks honor it before falling back to PATH lookup. Caller-
+	// provided YCODE_BIN (e.g. the e2e test's tap script) wins: tests
+	// route the trace subprocess through a recorder, and wrap must
+	// not stomp that.
 	overrides := map[string]string{
 		"PATH":                   shimDir + string(os.PathListSeparator) + extractEnv(env, "PATH"),
 		"SHELL":                  filepath.Join(shimDir, "bash"),
@@ -417,9 +442,13 @@ func injectShimEnv(env []string, shimDir string, opts Options) []string {
 		envDepth:                 "0",
 		envShimDir:               shimDir,
 		envWrappedAgent:          filepath.Base(opts.AgentArgs[0]),
-		"YCODE_BIN":              selfBin,
 		"YCODE_WRAP_OTEL_EXPORT": string(ParseExportMode(opts.OTelExport)),
 		"YCODE_WRAP_PROFILE":     resolvedProfileName(&opts),
+	}
+	if extractEnv(env, "YCODE_BIN") == "" {
+		if selfBin, err := os.Executable(); err == nil {
+			overrides["YCODE_BIN"] = selfBin
+		}
 	}
 	out := make([]string, 0, len(env)+len(overrides))
 	seen := make(map[string]bool, len(overrides))
