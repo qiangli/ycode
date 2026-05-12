@@ -45,13 +45,14 @@ type Origin struct {
 
 // Bounded enum for AgentTool — matches the labels dashboards expect.
 const (
-	ToolTUI      = "tui"
-	ToolPrompt   = "prompt"
-	ToolServe    = "serve"
-	ToolMCPServe = "mcp-serve"
-	ToolShell    = "shell"
-	ToolWrap     = "wrap"
-	ToolCLIOther = "cli-other"
+	ToolTUI        = "tui"
+	ToolPrompt     = "prompt"
+	ToolServe      = "serve"
+	ToolMCPServe   = "mcp-serve"
+	ToolShell      = "shell"
+	ToolWrap       = "wrap"
+	ToolShellTrace = "shell-trace"
+	ToolCLIOther   = "cli-other"
 )
 
 // currentAgentTool is set by each cobra subcommand's RunE before

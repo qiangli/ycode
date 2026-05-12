@@ -150,7 +150,12 @@ func (p *Profile) Apply(opts *Options) {
 		merged = append(merged, opts.ExtraShims...)
 		opts.ExtraShims = dedupPreserveOrder(merged)
 	}
-	if len(p.RuntimeHooks) > 0 && len(opts.RuntimeHooks) == 0 {
+	// Only fill RuntimeHooks when the caller didn't express an
+	// intent. nil means "auto — follow the profile"; an empty but
+	// non-nil slice means "the user explicitly opted out" and Apply
+	// must leave it as-is. cmd/ycode/wrap.go's parseRuntimeHooks
+	// produces these two shapes from --runtime-hooks=auto vs =off.
+	if len(p.RuntimeHooks) > 0 && opts.RuntimeHooks == nil {
 		opts.RuntimeHooks = append([]string{}, p.RuntimeHooks...)
 	}
 }

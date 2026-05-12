@@ -25,16 +25,22 @@ import (
 // The <pid> suffix keeps concurrent ycode wrap invocations from
 // stomping each other and makes leftover dirs from crashed sessions
 // easy to attribute.
-func materializeShimDir(selfBinary string, commands []string) (string, error) {
+//
+// Returns (binDir, sessionDir, error). binDir is the PATH-prepended
+// directory full of symlinks; sessionDir is the parent under which
+// other per-session artefacts (runtime-hook payloads) live. Callers
+// remove sessionDir on exit to clean up both at once.
+func materializeShimDir(selfBinary string, commands []string) (string, string, error) {
 	root := chooseShimRoot()
-	dir := filepath.Join(root, "ycode-wrap", strconv.Itoa(os.Getpid()), "bin")
+	sessionDir := filepath.Join(root, "ycode-wrap", strconv.Itoa(os.Getpid()))
+	dir := filepath.Join(sessionDir, "bin")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("mkdir %s: %w", dir, err)
+		return "", "", fmt.Errorf("mkdir %s: %w", dir, err)
 	}
 
 	abs, err := filepath.Abs(selfBinary)
 	if err != nil {
-		return "", fmt.Errorf("abs %s: %w", selfBinary, err)
+		return "", "", fmt.Errorf("abs %s: %w", selfBinary, err)
 	}
 
 	for _, name := range commands {
@@ -51,13 +57,13 @@ func materializeShimDir(selfBinary string, commands []string) (string, error) {
 			// Symlink can fail on filesystems that don't support
 			// them (e.g. some Windows mounts). Fall back to a copy.
 			if cpErr := copyFile(abs, dst); cpErr != nil {
-				return "", fmt.Errorf("symlink/copy %s: %w", dst, err)
+				return "", "", fmt.Errorf("symlink/copy %s: %w", dst, err)
 			}
 			// Make sure the copy is executable.
 			_ = os.Chmod(dst, 0o755)
 		}
 	}
-	return dir, nil
+	return dir, sessionDir, nil
 }
 
 func chooseShimRoot() string {

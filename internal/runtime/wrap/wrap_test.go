@@ -107,11 +107,11 @@ func TestMaterializeShimDirCreatesSymlinks(t *testing.T) {
 	// user's runtime dir if running locally.
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 
-	dir, err := materializeShimDir(self, []string{"bash", "rg", "ycode"}) // "ycode" must be skipped
+	dir, sessionDir, err := materializeShimDir(self, []string{"bash", "rg", "ycode"}) // "ycode" must be skipped
 	if err != nil {
 		t.Fatalf("materializeShimDir: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Cleanup(func() { _ = os.RemoveAll(sessionDir) })
 
 	for _, name := range []string{"bash", "rg"} {
 		p := filepath.Join(dir, name)

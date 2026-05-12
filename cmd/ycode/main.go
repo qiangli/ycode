@@ -1400,6 +1400,12 @@ func init() {
 	// opencode, ...). Complements the voluntary lighthouse MCP beam.
 	rootCmd.AddCommand(newWrapCmd())
 
+	// `ycode internal-shell-trace` — hidden subcommand the Python
+	// sitecustomize.py and Node ycode-trace.cjs hooks installed by
+	// `ycode wrap` call into for parse+validate+trace of every
+	// intercepted subprocess shell-out. Not user-facing.
+	rootCmd.AddCommand(newShellTraceCmd())
+
 	// Evaluation framework
 	registerEvalCmd(rootCmd)
 }

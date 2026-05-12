@@ -35,6 +35,7 @@ import (
 	"strconv"
 	"strings"
 
+	hookruntime "github.com/qiangli/ycode/internal/runtime/wrap/runtime"
 	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
@@ -189,13 +190,14 @@ func Run(ctx context.Context, opts Options) (int, error) {
 	// the new session.
 	reapStaleShimDirs(chooseShimRoot())
 
-	shimDir, err := materializeShimDir(self, append(append([]string{}, defaultShims...), opts.ExtraShims...))
+	shimDir, sessionDir, err := materializeShimDir(self, append(append([]string{}, defaultShims...), opts.ExtraShims...))
 	if err != nil {
 		return 1, fmt.Errorf("wrap.Run: materialize shim dir: %w", err)
 	}
 	defer func() {
-		// Best-effort cleanup. RemoveAll handles missing dirs.
-		_ = os.RemoveAll(shimDir)
+		// Best-effort cleanup of the whole per-session directory
+		// (bin + hooks). RemoveAll handles missing dirs.
+		_ = os.RemoveAll(sessionDir)
 	}()
 
 	env := opts.Env
@@ -203,6 +205,25 @@ func Run(ctx context.Context, opts Options) (int, error) {
 		env = os.Environ()
 	}
 	env = injectShimEnv(env, shimDir, opts)
+
+	// Runtime hooks (Phase 1.2): materialize Python sitecustomize.py
+	// and/or Node ycode-trace.cjs under <shimDir>/python|node/ and
+	// prepend PYTHONPATH / append NODE_OPTIONS so the wrapped agent's
+	// runtime loads them at startup.
+	//
+	// Fail-open: any error here logs a warn and proceeds without
+	// hooks — the wrap shim's value-add stays available even when
+	// runtime hooks can't be installed (e.g. read-only shimDir).
+	if len(opts.RuntimeHooks) > 0 {
+		hooksDir := filepath.Join(sessionDir, "hooks")
+		overrides, err := hookruntime.Materialize(hooksDir, opts.RuntimeHooks)
+		if err != nil {
+			slog.Warn("wrap: runtime hook materialize failed; proceeding without hooks",
+				"langs", opts.RuntimeHooks, "err", err)
+		} else {
+			env = applyRuntimeOverrides(env, overrides)
+		}
+	}
 
 	bin := opts.AgentArgs[0]
 	args := opts.AgentArgs[1:]
