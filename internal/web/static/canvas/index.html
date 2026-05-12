@@ -19,9 +19,21 @@
   <main id="canvas-root" role="main">
     <div id="welcome" class="welcome">
       <p>Empty canvas. Ask the agent to render something — a dashboard, a trace, an A2UI surface — and it appears here.</p>
-      <p class="hint">Foreign agents call <code>agent_render_a2ui</code> or <code>agent_render_widget</code> over MCP.</p>
+      <p class="hint">Foreign agents can call <code>agent_render_a2ui</code> or <code>agent_render_widget</code> over MCP.</p>
     </div>
   </main>
+  <div id="response-strip" class="response-strip hidden" role="status" aria-live="polite"></div>
+  <footer id="input-bar">
+    <form id="prompt-form" autocomplete="off">
+      <textarea id="prompt" rows="1" placeholder="Ask the agent — e.g. 'show me p99 auth latency last 6h' or 'list firing alerts'" aria-label="Prompt"></textarea>
+      <button type="submit" id="send-btn" title="Send (⌘+Enter)" aria-label="Send">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+      </button>
+    </form>
+  </footer>
   <script src="canvas.js"></script>
 </body>
 </html>

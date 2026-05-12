@@ -62,6 +62,7 @@ body {
 
 #canvas-root {
   padding: 20px;
+  padding-bottom: 140px; /* clear room for sticky input bar + response strip */
   display: grid;
   grid-template-columns: 1fr;
   gap: 20px;
@@ -140,4 +141,83 @@ body {
   white-space: pre-wrap;
   word-break: break-all;
   margin: 0;
+}
+
+/* Sticky input bar — the human-facing prompt surface. Widgets are the
+   primary record above; this is just how a user drives the agent. */
+#input-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: white;
+  border-top: 1px solid var(--border);
+  padding: 12px 20px;
+  box-shadow: 0 -2px 12px rgba(0,0,0,0.04);
+  z-index: 5;
+}
+#prompt-form {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  max-width: 920px;
+  margin: 0 auto;
+}
+#prompt {
+  flex: 1;
+  min-height: 36px;
+  max-height: 160px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  resize: none;
+  outline: none;
+  background: var(--bg);
+}
+#prompt:focus {
+  border-color: var(--accent);
+  background: white;
+}
+#send-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#send-btn:hover { background: #4338ca; }
+
+/* Transient response strip — text.delta accumulator above the input bar.
+   Hidden by default; widgets stay the primary surface, this strip is
+   for short prose acknowledgments + error messages. */
+.response-strip {
+  position: fixed;
+  bottom: 68px;
+  left: 20px;
+  right: 20px;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 10px 14px;
+  background: rgba(31, 35, 40, 0.94);
+  color: #f3f4f6;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 8px;
+  z-index: 4;
+  max-height: 30vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  transition: opacity 0.2s;
+}
+.response-strip.hidden {
+  display: none;
 }
