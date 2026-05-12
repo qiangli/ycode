@@ -448,6 +448,14 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	// air-gapped first-time run), skip silently.
 	if api != nil && api.memBus != nil {
 		compositeMCP = append(compositeMCP, widget.NewMCPHandler(api.memBus))
+
+		// Alert → incident overlay hook: subscribes to EventAlertFired on
+		// the same bus and renders a static-template incident overlay onto
+		// the canvas-default session. Agent IS the SRE — alerts become
+		// canvas events automatically, no Alertmanager UI click-through.
+		// v1.5 swaps the static template for an agent-composed overlay
+		// with correlated logs / traces / recent commits.
+		widget.NewAlertHook(api.memBus, widget.DefaultSession).Start(ctx)
 	}
 
 	// Composite MCP endpoint (G6) — single /mcp/ URL that fans out to every
