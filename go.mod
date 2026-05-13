@@ -32,6 +32,11 @@ replace go.yaml.in/yaml/v4 => go.yaml.in/yaml/v4 v4.0.0-rc.3
 
 replace github.com/nektos/act => gitea.com/gitea/act v0.261.10
 
+// Local sibling: nadir (skill-router library). Pinned to the working copy
+// while the integration is being prototyped; switch to a tagged version
+// once the integration stabilises.
+replace github.com/qiangli/nadir => ../nadir
+
 require (
 	code.gitea.io/gitea v1.26.1
 	codeberg.org/readeck/go-readability/v2 v2.1.1
@@ -90,7 +95,7 @@ require (
 	golang.org/x/term v0.42.0
 	google.golang.org/grpc v1.80.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.48.2
+	modernc.org/sqlite v1.50.1
 	mvdan.cc/sh/v3 v3.13.1
 )
 
@@ -609,6 +614,7 @@ require (
 	github.com/prometheus/sigv4 v0.4.1 // indirect
 	github.com/prometheus/statsd_exporter v0.29.0 // indirect
 	github.com/protocolbuffers/txtpbfmt v0.0.0-20260217160748-a481f6a22f94 // indirect
+	github.com/qiangli/nadir v0.0.0-20260513032315-67009486cf9c // indirect
 	github.com/quasoft/websspi v1.1.2 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/redis/go-redis/v9 v9.18.0 // indirect
@@ -703,6 +709,7 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/xuri/efp v0.0.1 // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
+	github.com/yalue/onnxruntime_go v1.30.1 // indirect
 	github.com/yohcop/openid-go v1.0.1 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yuin/goldmark v1.8.2 // indirect
@@ -858,7 +865,7 @@ require (
 	k8s.io/kms v0.35.4 // indirect
 	k8s.io/kube-openapi v0.0.0-20260330154417-16be699c7b31 // indirect
 	k8s.io/utils v0.0.0-20260319190234-28399d86e0b5 // indirect
-	modernc.org/libc v1.70.0 // indirect
+	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 	mvdan.cc/xurls/v2 v2.6.0 // indirect

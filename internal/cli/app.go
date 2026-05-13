@@ -77,6 +77,11 @@ type App struct {
 	// resume; saved after each TodoWrite call.
 	todoBoard *todo.Board
 
+	// Memoised pre-LLM skill router (nadir TF-IDF over command Specs).
+	// Lazily built on first use, gated by YCODE_SKILL_ROUTER=1. See
+	// skillrouter.go for the integration design.
+	skillRouterCache *appSkillRouter
+
 	// Agent pool for tracking active subagents and progress reporting.
 	agentPool *agentpool.Pool
 
@@ -507,6 +512,22 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 			return err
 		}
 		fmt.Fprint(a.stdout, output)
+		return nil
+	}
+
+	// Opt-in pre-LLM skill routing (YCODE_SKILL_ROUTER=1). Tries to map a
+	// freeform prompt to a registered slash command using nadir's TF-IDF
+	// matcher; only fires on high-confidence, high-margin picks.
+	// Falls through silently when uncertain — the LLM agentic loop is
+	// still the default path. See skillrouter.go.
+	if cmdName, ok := a.trySkillRouter(ctx, userPrompt); ok {
+		output, err := a.commands.Execute(ctx, cmdName, userPrompt)
+		if err != nil {
+			return err
+		}
+		if output != "" {
+			fmt.Fprint(a.stdout, output)
+		}
 		return nil
 	}
 
