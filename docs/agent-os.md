@@ -1,5 +1,7 @@
 # Agent OS — `ycode wrap`
 
+> For the framing-level reference (what an Agent OS is in 2026 and where ycode stands against the SOTA bar), see [`agent-os-reference.md`](./agent-os-reference.md). This file documents one axis of that framing.
+
 `ycode wrap` is the involuntary-interception axis of ycode's Agent OS framing. Foreign agentic CLIs (Claude Code, opencode, Aider, Gemini CLI, Codex) launched through it inherit ycode's observability and best-effort policy *whether the agent knows about ycode or not* — complementing the voluntary [lighthouse MCP beam](./lighthouse.md) for agents that opt in via `~/.agents/ycode/manifest.json`.
 
 > **Honest scope:** Ring 1 (PATH shim + runtime hooks) is **observability + best-effort policy, not a security boundary**. Hardened sandboxing on Linux (Landlock + seccomp_unotify) lands in a separate plan. macOS gets best-effort `sandbox-exec`; Windows is telemetry-only.

@@ -17,10 +17,12 @@ import (
 // shim PATH so their bash, rg, git, jq, sed, awk, ... invocations flow
 // through ycode for OTel observability and best-effort policy.
 //
-// See docs/agent-os.md for the broader Agent OS framing (Ring 1
-// telemetry, Ring 1.5 WASM sandbox, Ring 2 Linux Landlock+seccomp).
-// Today this command implements Ring 1 only — Ring 1.5 and Ring 2
-// land in follow-up phases.
+// See docs/agent-os-reference.md for the broader Agent OS framing
+// (SOTA reference + ycode coverage map). The wrap-specific ring
+// model (Ring 1 telemetry, Ring 1.5 WASM sandbox, Ring 2 Linux
+// Landlock+seccomp) is documented in docs/agent-os.md. Today this
+// command implements Ring 1 only — Ring 1.5 and Ring 2 land in
+// follow-up phases.
 func newWrapCmd() *cobra.Command {
 	var (
 		permission   string

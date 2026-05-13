@@ -212,6 +212,8 @@ Read on demand:
 - [docs/autonomous-loop.md](./docs/autonomous-loop.md) — RESEARCH→PLAN→BUILD→EVALUATE→LEARN loop implementation
 - [docs/lighthouse.md](./docs/lighthouse.md) — exposing ycode capabilities to foreign coding agents via MCP; matrix + federation
 - [docs/lighthouse-roadmap.md](./docs/lighthouse-roadmap.md) — what shipped (Phase 0), what's queued (Phase 1+), strategic anchors; pointer to canonical plan file
+- [docs/agent-os-reference.md](./docs/agent-os-reference.md) — SOTA Agent OS reference (AIOS + 2026 stack + lighthouse) and ycode's coverage map + prioritized gaps
+- [docs/agent-os.md](./docs/agent-os.md) — `ycode wrap` involuntary-interception axis (PATH shim + runtime hooks) of the Agent OS framing
 
 <!-- BEGIN YCODE -->
 ## ycode
