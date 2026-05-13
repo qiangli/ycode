@@ -6,11 +6,14 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/qiangli/nadir"
+	"github.com/qiangli/nadir/provider/openai"
 	"github.com/qiangli/nadir/skillrouter"
 
 	"github.com/qiangli/ycode/internal/commands"
+	"github.com/qiangli/ycode/internal/inference"
 )
 
 // Skill-router integration — prototype.
@@ -21,6 +24,15 @@ import (
 // commands, and if there's a clear winner (top-1 score ≥ MinScore,
 // margin ≥ MinMargin), the corresponding command runs directly.
 // Otherwise the prompt falls through to the existing LLM agentic loop.
+//
+// Two backends are available:
+//
+//   - Lexical (default)  pure-Go TF-IDF. Zero deps, microsecond
+//     Route calls, ~94% top-1 on a synthetic eval corpus.
+//   - Hybrid (Ollama)    TF-IDF primary + Ollama LLM rerank when the
+//     primary is uncertain. Activated by YCODE_SKILL_ROUTER_LLM_MODEL.
+//     ~97% top-1 with qwen2.5:7b; base URL respects OLLAMA_HOST and
+//     defaults to ycode's inference.DefaultOllamaURL().
 //
 // Default is off — opt-in only. When enabled, the App logs every
 // intercepted route so the user can see what the matcher chose and
@@ -43,6 +55,12 @@ const skillRouterRouteThreshold = 0.40
 // slightly more — better to fall through to the LLM in that case.
 const skillRouterMinMargin = 0.15
 
+// skillRouterLLMTimeout caps the per-call LLM rerank deadline. Kept
+// generous (8 s) since first-call cold-load of a 7B model on a fresh
+// daemon can exceed the nadir default of 2 s. The Cascade falls back
+// to the primary's verdict on timeout — never blocks routing.
+const skillRouterLLMTimeout = 8 * time.Second
+
 // skillRouter is the lazily-initialised matcher for the App. nil
 // until first use; one instance per process. The catalog is rebuilt
 // each time RegisterCommand fires, which means a freshly-registered
@@ -52,6 +70,7 @@ const skillRouterMinMargin = 0.15
 type appSkillRouter struct {
 	once    sync.Once
 	matcher skillrouter.Matcher
+	label   string // "lexical" or "hybrid:<model>"
 	err     error
 }
 
@@ -59,11 +78,31 @@ func (a *App) skillRouterEnabled() bool {
 	return os.Getenv("YCODE_SKILL_ROUTER") == "1"
 }
 
+// skillRouterLLMModel returns the configured rerank model, if any.
+// Presence of this env var switches the router from Lexical to
+// Hybrid mode.
+func skillRouterLLMModel() string {
+	return os.Getenv("YCODE_SKILL_ROUTER_LLM_MODEL")
+}
+
+// skillRouterLLMBaseURL resolves the Ollama base URL used for the
+// LLM rerank step. Explicit override wins; otherwise we use ycode's
+// existing DefaultOllamaURL() which respects OLLAMA_HOST and falls
+// back to http://127.0.0.1:11434. The "/v1" OpenAI-compat suffix is
+// appended here so the matcher can rely on the OpenAI-compatible
+// chat endpoint nadir uses.
+func skillRouterLLMBaseURL() string {
+	if v := os.Getenv("YCODE_SKILL_ROUTER_LLM_BASE_URL"); v != "" {
+		return strings.TrimSuffix(v, "/") + "/v1"
+	}
+	return strings.TrimSuffix(inference.DefaultOllamaURL(), "/") + "/v1"
+}
+
 // skillRouterMatcher returns a memoised matcher built from the
 // command registry. Built once; if the catalog is empty or
 // construction fails, returns (nil, nil) and the caller treats it as
 // "skip routing for this prompt".
-func (a *App) skillRouterMatcher() (skillrouter.Matcher, error) {
+func (a *App) skillRouterMatcher(ctx context.Context) (skillrouter.Matcher, string, error) {
 	if a.skillRouterCache == nil {
 		a.skillRouterCache = &appSkillRouter{}
 	}
@@ -72,14 +111,33 @@ func (a *App) skillRouterMatcher() (skillrouter.Matcher, error) {
 		if len(skills) == 0 {
 			return
 		}
+		// Hybrid path: requires an LLM model configured. Falls back
+		// silently to Lexical if construction fails (e.g., Ollama not
+		// reachable at startup).
+		if model := skillRouterLLMModel(); model != "" {
+			client := openai.New("ycode-skill-router", skillRouterLLMBaseURL(), "")
+			m, err := nadir.NewHybridSkillMatcher(ctx, client, model, skills)
+			if err == nil {
+				a.skillRouterCache.matcher = m
+				a.skillRouterCache.label = "hybrid:" + model
+				return
+			}
+			// Fall through to Lexical on Hybrid construction failure
+			// rather than disabling routing entirely. The error gets
+			// surfaced as a one-line warning when first used.
+			a.skillRouterCache.err = fmt.Errorf("hybrid init failed (%w); using lexical fallback", err)
+		}
 		m, err := nadir.NewLexicalSkillMatcher(skills)
 		if err != nil {
 			a.skillRouterCache.err = err
 			return
 		}
 		a.skillRouterCache.matcher = m
+		if a.skillRouterCache.label == "" {
+			a.skillRouterCache.label = "lexical"
+		}
 	})
-	return a.skillRouterCache.matcher, a.skillRouterCache.err
+	return a.skillRouterCache.matcher, a.skillRouterCache.label, a.skillRouterCache.err
 }
 
 // buildSkillCatalogFromCommands maps the command Specs into nadir's
@@ -118,10 +176,10 @@ func (a *App) trySkillRouter(ctx context.Context, prompt string) (string, bool) 
 	if !a.skillRouterEnabled() {
 		return "", false
 	}
-	matcher, err := a.skillRouterMatcher()
+	matcher, label, err := a.skillRouterMatcher(ctx)
 	if err != nil {
-		fmt.Fprintf(a.stdout, "skill-router: init failed: %v (falling through)\n", err)
-		return "", false
+		// One-shot warning so the user knows we degraded silently.
+		fmt.Fprintf(a.stdout, "skill-router: %v\n", err)
 	}
 	if matcher == nil {
 		return "", false
@@ -135,15 +193,14 @@ func (a *App) trySkillRouter(ctx context.Context, prompt string) (string, bool) 
 		return "", false
 	}
 	if d.Confidence < skillRouterRouteThreshold || d.Margin < skillRouterMinMargin {
-		fmt.Fprintf(a.stdout, "skill-router: uncertain pick %q (conf=%.2f margin=%.2f) — deferring to LLM\n",
-			d.Skill, d.Confidence, d.Margin)
+		fmt.Fprintf(a.stdout, "skill-router[%s]: uncertain pick %q (conf=%.2f margin=%.2f) — deferring to LLM\n",
+			label, d.Skill, d.Confidence, d.Margin)
 		return "", false
 	}
 	// Strip any leading slash on the skill name — registry keys are
 	// bare names ("init", "review"), not "/init".
 	name := strings.TrimPrefix(d.Skill, "/")
-	fmt.Fprintf(a.stdout, "skill-router: routed to /%s (conf=%.2f margin=%.2f)\n",
-		name, d.Confidence, d.Margin)
+	fmt.Fprintf(a.stdout, "skill-router[%s]: routed to /%s (conf=%.2f margin=%.2f)\n",
+		label, name, d.Confidence, d.Margin)
 	return name, true
 }
-
