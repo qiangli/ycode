@@ -172,4 +172,3 @@ func findProjectBySlug(r *projects.Registry, slug string) *projects.Project {
 	}
 	return nil
 }
-

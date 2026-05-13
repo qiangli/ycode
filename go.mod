@@ -70,6 +70,7 @@ require (
 	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
 	github.com/qiangli/bonsai v0.0.0-20260505184649-a3cb69dbf211
 	github.com/qiangli/gfy v0.0.0-20260504062854-764095a2877d
+	github.com/qiangli/nadir v0.0.0-20260513032315-67009486cf9c
 	github.com/qiangli/ycode/pkg/oci v0.0.0-00010101000000-000000000000
 	github.com/qiangli/ycode/pkg/ollm v0.0.0-00010101000000-000000000000
 	github.com/qiangli/ycode/pkg/otel v0.0.0-00010101000000-000000000000
@@ -614,7 +615,6 @@ require (
 	github.com/prometheus/sigv4 v0.4.1 // indirect
 	github.com/prometheus/statsd_exporter v0.29.0 // indirect
 	github.com/protocolbuffers/txtpbfmt v0.0.0-20260217160748-a481f6a22f94 // indirect
-	github.com/qiangli/nadir v0.0.0-20260513032315-67009486cf9c // indirect
 	github.com/quasoft/websspi v1.1.2 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/redis/go-redis/v9 v9.18.0 // indirect

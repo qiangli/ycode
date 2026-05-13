@@ -63,4 +63,3 @@ func TestHasBlock(t *testing.T) {
 		t.Errorf("HasBlock false negative")
 	}
 }
-
