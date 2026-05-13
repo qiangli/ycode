@@ -29,6 +29,15 @@ type Spec struct {
 	// or ModelSwitcher should leave this false — invoking them in shell
 	// mode would dereference nil and crash the shell.
 	ShellSafe bool
+
+	// Examples lists representative natural-language invocations that
+	// map to this command. Used by the optional pre-LLM skill router
+	// (internal/cli/skillrouter.go) to fit per-command embedding
+	// prototypes. 3–10 paraphrases is the sweet spot — short, varied,
+	// no need to be exhaustive. Empty Examples is fine; the matcher
+	// falls back to embedding Description alone, just with weaker
+	// paraphrase coverage.
+	Examples []string
 }
 
 // Registry holds all registered slash commands.

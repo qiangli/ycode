@@ -110,6 +110,13 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Name:        "help",
 		Description: "Show available commands",
 		Category:    "session",
+		Examples: []string{
+			"show me the commands",
+			"what can I do here",
+			"list available commands",
+			"help me",
+			"what slash commands are there",
+		},
 		Handler: func(ctx context.Context, args string) (string, error) {
 			var b strings.Builder
 			b.WriteString("Available commands:\n\n")
@@ -136,6 +143,12 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Name:        "status",
 		Description: "Show session status",
 		Category:    "session",
+		Examples: []string{
+			"what's the session status",
+			"how is the session doing",
+			"show session info",
+			"current state",
+		},
 		Handler: func(ctx context.Context, args string) (string, error) {
 			msgCount := 0
 			if deps.MessageCount != nil {
@@ -154,6 +167,13 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Name:        "cost",
 		Description: "Show token usage and cost",
 		Category:    "session",
+		Examples: []string{
+			"how much have I spent",
+			"show token usage",
+			"how many tokens did I use",
+			"what's my bill",
+			"cost so far",
+		},
 		Handler: func(ctx context.Context, args string) (string, error) {
 			if deps.CostSummary != nil {
 				return deps.CostSummary(), nil
@@ -176,6 +196,13 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Description: "Show or switch the current model",
 		Usage:       "/model [name|alias]",
 		Category:    "session",
+		Examples: []string{
+			"what model am I using",
+			"switch models",
+			"change to opus",
+			"current model",
+			"swap to a cheaper model",
+		},
 		Handler: func(ctx context.Context, args string) (string, error) {
 			name := strings.TrimSpace(args)
 			if name == "" {
@@ -210,6 +237,13 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Name:        "clear",
 		Description: "Clear conversation history",
 		Category:    "workspace",
+		Examples: []string{
+			"start over",
+			"wipe the conversation",
+			"reset the chat",
+			"clear my history",
+			"new session please",
+		},
 		Handler: func(ctx context.Context, args string) (string, error) {
 			return "Conversation cleared.", nil
 		},
@@ -219,6 +253,12 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Name:        "compact",
 		Description: "Compact conversation by summarizing older messages",
 		Category:    "workspace",
+		Examples: []string{
+			"compress the conversation",
+			"summarize older messages",
+			"shrink the context",
+			"compact history",
+		},
 		Handler: func(ctx context.Context, args string) (string, error) {
 			return "Compaction triggered.", nil
 		},
@@ -313,7 +353,14 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Description: "Initialize workspace and generate context-aware AGENTS.md",
 		Usage:       "/init [focus]",
 		Category:    "workspace",
-		Handler:     initHandler(deps),
+		Examples: []string{
+			"set up AGENTS.md",
+			"initialize this repo",
+			"create the agent guidance file",
+			"bootstrap ycode for this project",
+			"scaffold AGENTS.md",
+		},
+		Handler: initHandler(deps),
 	})
 
 	// /netscan: discover servers on the local network via mDNS +
@@ -463,7 +510,13 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Name:        "context",
 		Description: "Show context usage and instruction files",
 		Category:    "discovery",
-		Handler:     contextHandler(deps),
+		Examples: []string{
+			"how much context am I using",
+			"context usage",
+			"show loaded instruction files",
+			"how full is the context window",
+		},
+		Handler: contextHandler(deps),
 	})
 
 	r.Register(&Spec{
@@ -484,6 +537,12 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Name:        "tasks",
 		Description: "List running tasks",
 		Category:    "discovery",
+		Examples: []string{
+			"what tasks are running",
+			"show me background tasks",
+			"list active jobs",
+			"any tasks in progress",
+		},
 		Handler: func(ctx context.Context, args string) (string, error) {
 			return "No tasks running.", nil
 		},
@@ -505,7 +564,13 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Description: "Commit changes with AI-generated message",
 		Usage:       "/commit [hint]",
 		Category:    "automation",
-		Handler:     commitFn,
+		Examples: []string{
+			"commit my changes",
+			"create a git commit",
+			"check in this work",
+			"commit the staged files",
+		},
+		Handler: commitFn,
 	})
 	// NOTE: We intentionally do NOT register a builtin skill executor for
 	// "commit". When the main agent calls Skill("commit"), it should fall
@@ -518,6 +583,13 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Description: "Review code changes (staged or recent commits)",
 		Usage:       "/review [commit|staged|branch]",
 		Category:    "automation",
+		Examples: []string{
+			"review my PR",
+			"look at my diff",
+			"code review the staged changes",
+			"give me feedback on this code",
+			"check my pull request",
+		},
 		Handler: func(ctx context.Context, args string) (string, error) {
 			scope := "staged"
 			if args != "" {

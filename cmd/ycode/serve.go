@@ -872,27 +872,34 @@ func resolveOTLPPort(configured, defaultPort int, label string, alloc func() (in
 	return port, nil
 }
 
-// warmSkillRouterModel ensures the skill-router rerank model is
-// available in Ollama by the time the first routing request arrives.
-// No-op when YCODE_SKILL_ROUTER_LLM_MODEL is unset.
+// warmSkillRouterModel ensures both Ollama models the skill router
+// can use — the embedder primary AND the LLM rerank — are pulled in
+// the background before the first routing request arrives. No-op for
+// any model env var that's unset.
 //
-// Base URL precedence:
-//  1. YCODE_SKILL_ROUTER_LLM_BASE_URL (explicit override)
+// Models pulled:
+//   - YCODE_SKILL_ROUTER_EMBED_MODEL (e.g. mxbai-embed-large:latest)
+//   - YCODE_SKILL_ROUTER_LLM_MODEL   (e.g. qwen2.5:7b)
+//
+// Base URL precedence (shared across both pulls):
+//  1. YCODE_SKILL_ROUTER_OLLAMA_BASE_URL (explicit override)
 //  2. The managed Ollama runner, if stack.ollama is healthy
 //  3. inference.DefaultOllamaURL() — respects OLLAMA_HOST, falls back
 //     to http://127.0.0.1:11434
 //
-// Failure semantics: every step is best-effort. If Ollama isn't
-// reachable, the model is already present, or the pull fails, we log
-// and return — the skill router itself silently degrades to its
-// lexical primary on miss.
+// Each pull is independent and best-effort: a failure on one doesn't
+// affect the other, and a failure on either silently degrades the
+// skill router to its TF-IDF lexical fallback. No 5xx ever leaks
+// from a warmup failure — routing always produces an answer.
 func warmSkillRouterModel(ctx context.Context, stack *stackComponents) {
-	model := os.Getenv("YCODE_SKILL_ROUTER_LLM_MODEL")
-	if model == "" {
+	embedModel := os.Getenv("YCODE_SKILL_ROUTER_EMBED_MODEL")
+	llmModel := os.Getenv("YCODE_SKILL_ROUTER_LLM_MODEL")
+	if embedModel == "" && llmModel == "" {
 		return
 	}
+
 	var baseURL string
-	if v := os.Getenv("YCODE_SKILL_ROUTER_LLM_BASE_URL"); v != "" {
+	if v := os.Getenv("YCODE_SKILL_ROUTER_OLLAMA_BASE_URL"); v != "" {
 		baseURL = v
 	} else if stack.ollama != nil && stack.ollama.Healthy() {
 		baseURL = stack.ollama.BaseURL()
@@ -900,32 +907,40 @@ func warmSkillRouterModel(ctx context.Context, stack *stackComponents) {
 		baseURL = inference.DefaultOllamaURL()
 	}
 
-	go func() {
-		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		models, err := inference.OllamaListModels(probeCtx, baseURL)
-		if err != nil {
-			slog.Info("skill-router: ollama not reachable; skipping model warmup",
-				"base_url", baseURL, "model", model, "err", err)
+	if embedModel != "" {
+		go pullSkillRouterModel(ctx, baseURL, embedModel, "embed")
+	}
+	if llmModel != "" {
+		go pullSkillRouterModel(ctx, baseURL, llmModel, "rerank")
+	}
+}
+
+// pullSkillRouterModel is the per-model body of warmSkillRouterModel.
+// Lists the Ollama models, no-ops if the target is already present,
+// else issues a pull. Logs at info/warn levels — no progress noise.
+func pullSkillRouterModel(ctx context.Context, baseURL, model, role string) {
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	models, err := inference.OllamaListModels(probeCtx, baseURL)
+	if err != nil {
+		slog.Info("skill-router: ollama not reachable; skipping model warmup",
+			"role", role, "base_url", baseURL, "model", model, "err", err)
+		return
+	}
+	for _, m := range models {
+		if m.Name == model {
+			slog.Info("skill-router: model already present", "role", role, "model", model)
 			return
 		}
-		for _, m := range models {
-			if m.Name == model {
-				slog.Info("skill-router: rerank model already present", "model", model)
-				return
-			}
-		}
-		slog.Info("skill-router: pulling rerank model in background",
-			"model", model, "base_url", baseURL)
-		// No progress callback — pull noise belongs in ollama's own
-		// logs, not ours. The completion-line is enough signal.
-		if err := inference.OllamaPullModel(ctx, baseURL, model, nil); err != nil {
-			slog.Warn("skill-router: background pull failed",
-				"model", model, "err", err)
-			return
-		}
-		slog.Info("skill-router: rerank model ready", "model", model)
-	}()
+	}
+	slog.Info("skill-router: pulling model in background",
+		"role", role, "model", model, "base_url", baseURL)
+	if err := inference.OllamaPullModel(ctx, baseURL, model, nil); err != nil {
+		slog.Warn("skill-router: background pull failed",
+			"role", role, "model", model, "err", err)
+		return
+	}
+	slog.Info("skill-router: model ready", "role", role, "model", model)
 }
 
 func loadServeConfig() (*config.ObservabilityConfig, string, error) {
