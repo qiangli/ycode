@@ -319,6 +319,13 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		fmt.Printf("Graph at           http://127.0.0.1:%d/graph/\n", port)
 	}
 
+	// Skill-router LLM warmup: when YCODE_SKILL_ROUTER_LLM_MODEL is
+	// set, kick off a background pull of the rerank model so the first
+	// routing request doesn't pay cold-pull latency. Best-effort —
+	// failures are logged and the Cascade falls back to its TF-IDF
+	// primary when the LLM isn't ready.
+	warmSkillRouterModel(ctx, stack)
+
 	// Wire Git server client for agent collaboration tools.
 	if stack.gitServer != nil && stack.gitServer.Healthy() {
 		token, err := resolveGitServerToken(ctx, home, fullCfg.GitServer.Token, stack.gitServer)
@@ -863,6 +870,62 @@ func resolveOTLPPort(configured, defaultPort int, label string, alloc func() (in
 		return 0, fmt.Errorf("%s port %d already in use; configure observability.otlp%sPort to override or set negative to allocate ephemerally", label, port, "GRPC/HTTP")
 	}
 	return port, nil
+}
+
+// warmSkillRouterModel ensures the skill-router rerank model is
+// available in Ollama by the time the first routing request arrives.
+// No-op when YCODE_SKILL_ROUTER_LLM_MODEL is unset.
+//
+// Base URL precedence:
+//  1. YCODE_SKILL_ROUTER_LLM_BASE_URL (explicit override)
+//  2. The managed Ollama runner, if stack.ollama is healthy
+//  3. inference.DefaultOllamaURL() — respects OLLAMA_HOST, falls back
+//     to http://127.0.0.1:11434
+//
+// Failure semantics: every step is best-effort. If Ollama isn't
+// reachable, the model is already present, or the pull fails, we log
+// and return — the skill router itself silently degrades to its
+// lexical primary on miss.
+func warmSkillRouterModel(ctx context.Context, stack *stackComponents) {
+	model := os.Getenv("YCODE_SKILL_ROUTER_LLM_MODEL")
+	if model == "" {
+		return
+	}
+	var baseURL string
+	if v := os.Getenv("YCODE_SKILL_ROUTER_LLM_BASE_URL"); v != "" {
+		baseURL = v
+	} else if stack.ollama != nil && stack.ollama.Healthy() {
+		baseURL = stack.ollama.BaseURL()
+	} else {
+		baseURL = inference.DefaultOllamaURL()
+	}
+
+	go func() {
+		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		models, err := inference.OllamaListModels(probeCtx, baseURL)
+		if err != nil {
+			slog.Info("skill-router: ollama not reachable; skipping model warmup",
+				"base_url", baseURL, "model", model, "err", err)
+			return
+		}
+		for _, m := range models {
+			if m.Name == model {
+				slog.Info("skill-router: rerank model already present", "model", model)
+				return
+			}
+		}
+		slog.Info("skill-router: pulling rerank model in background",
+			"model", model, "base_url", baseURL)
+		// No progress callback — pull noise belongs in ollama's own
+		// logs, not ours. The completion-line is enough signal.
+		if err := inference.OllamaPullModel(ctx, baseURL, model, nil); err != nil {
+			slog.Warn("skill-router: background pull failed",
+				"model", model, "err", err)
+			return
+		}
+		slog.Info("skill-router: rerank model ready", "model", model)
+	}()
 }
 
 func loadServeConfig() (*config.ObservabilityConfig, string, error) {
