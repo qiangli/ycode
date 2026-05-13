@@ -19,6 +19,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/gitserver"
+	"github.com/qiangli/ycode/internal/gitserver/backlog"
 	"github.com/qiangli/ycode/internal/gitserver/projects"
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/observability"
@@ -337,15 +338,31 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		overrideGitServerURL = fmt.Sprintf("http://127.0.0.1:%d/git/", port)
 		fmt.Printf("Git server at      %s\n", overrideGitServerURL)
 
-		// Backlog reconciler (docs/backlog/ ↔ Gitea issues). Resolves the
-		// project for the cwd and seeds Gitea from the markdown source-
-		// of-truth. See docs/backlog.md.
+		// Backlog reconciler (backlog markdown ↔ Gitea issues). The backlog
+		// lives at ~/.agents/ycode/projects/<id>/backlog/ — see
+		// docs/backlog.md. Two checkouts of the same repo share one
+		// backlog because the id is logical (git remote / explicit), not
+		// keyed by cwd path.
 		if cwd, err := os.Getwd(); err == nil {
 			if reg, err := projects.NewRegistry(filepath.Join(home, ".agents", "ycode", "gitea")); err == nil {
 				if proj, err := reg.Resolve(ctx, cwd); err == nil {
 					if _, err := projects.EnsureRepo(ctx, giteaClient, proj); err == nil {
-						if err := startBacklogReconciler(ctx, slog.Default(), cwd, giteaClient, proj); err != nil {
-							slog.Warn("backlog: reconciler not started", "error", err)
+						bdir, derr := backlogDir()
+						if derr != nil {
+							slog.Warn("backlog: resolve dir", "error", derr)
+						} else {
+							if err := backlog.MigrateLegacy(filepath.Join(cwd, "docs", "backlog"), bdir, slog.Default()); err != nil {
+								slog.Warn("backlog: legacy migration failed", "error", err)
+							}
+							if err := startBacklogReconciler(ctx, slog.Default(), bdir, giteaClient, proj); err != nil {
+								slog.Warn("backlog: reconciler not started", "error", err)
+							}
+						}
+						// Foreman state migration: <cwd>/.agents/ycode/foreman → user-home.
+						if fdir, ferr := foremanDir(); ferr == nil {
+							if err := migrateLegacyForemanDir(filepath.Join(cwd, ".agents", "ycode", "foreman"), fdir, slog.Default()); err != nil {
+								slog.Warn("foreman: legacy migration failed", "error", err)
+							}
 						}
 					} else {
 						slog.Warn("backlog: ensure repo", "error", err)

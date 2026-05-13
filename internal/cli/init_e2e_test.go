@@ -74,16 +74,24 @@ func TestE2E_Init_FreshRepo_WritesAllFiles(t *testing.T) {
 		t.Fatalf("ycode init: %v\n%s", err, out)
 	}
 
-	// Project-scope files.
+	// `ycode init` writes ONLY the foreign-agent breadcrumb plus the
+	// idempotency marker. Root AGENTS.md / CLAUDE.md and docs/backlog.md
+	// are never written by ycode — those belong to the user.
 	for _, p := range []string{
-		"AGENTS.md",
 		".agents/ycode/AGENTS.md",
 		".agents/ycode/.init-done",
-		"docs/backlog.md",
-		"docs/backlog/README.md",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, p)); err != nil {
 			t.Errorf("expected %s after init: %v\noutput:\n%s", p, err, out)
+		}
+	}
+	for _, p := range []string{
+		"AGENTS.md",
+		"CLAUDE.md",
+		"docs/backlog.md",
+	} {
+		if _, err := os.Stat(filepath.Join(repo, p)); !os.IsNotExist(err) {
+			t.Errorf("ycode init should not create %s (got err=%v)", p, err)
 		}
 	}
 	// User-global Foreman skill.
@@ -123,8 +131,7 @@ func TestE2E_Init_Refresh_NoContentDrift_NoMtimeChange(t *testing.T) {
 		t.Fatalf("first init: %v", err)
 	}
 	files := []string{
-		filepath.Join(repo, "AGENTS.md"),
-		filepath.Join(repo, "docs/backlog.md"),
+		filepath.Join(repo, ".agents/ycode/AGENTS.md"),
 		filepath.Join(home, ".config/ycode/skills/ycode-foreman/skill.md"),
 	}
 	before := make(map[string]int64)
@@ -175,32 +182,5 @@ func TestE2E_Init_SelfHealsDeletedUserSkill(t *testing.T) {
 	}
 	if _, err := os.Stat(skill); err != nil {
 		t.Errorf("user-global skill not restored: %v", err)
-	}
-}
-
-func TestE2E_Init_PreservesUserEditedReadme(t *testing.T) {
-	if testing.Short() {
-		t.Skip("e2e test skipped in -short")
-	}
-	repo := initRepo(t)
-	home := t.TempDir()
-	readme := filepath.Join(repo, "docs/backlog/README.md")
-
-	if _, err := runYcode(t, repo, home, "init"); err != nil {
-		t.Fatalf("first init: %v", err)
-	}
-	custom := []byte("# my custom backlog notes\n")
-	if err := os.WriteFile(readme, custom, 0o644); err != nil {
-		t.Fatalf("write custom readme: %v", err)
-	}
-	if _, err := runYcode(t, repo, home, "init", "--refresh"); err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
-	got, err := os.ReadFile(readme)
-	if err != nil {
-		t.Fatalf("read readme: %v", err)
-	}
-	if string(got) != string(custom) {
-		t.Errorf("README.md was overwritten; want %q got %q", custom, got)
 	}
 }

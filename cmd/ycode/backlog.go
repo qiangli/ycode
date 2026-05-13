@@ -15,6 +15,7 @@ import (
 	"github.com/qiangli/ycode/internal/gitserver"
 	"github.com/qiangli/ycode/internal/gitserver/backlog"
 	"github.com/qiangli/ycode/internal/gitserver/projects"
+	"github.com/qiangli/ycode/internal/runtime/projectid"
 )
 
 // newBacklogCmd builds the `ycode backlog` command tree. The backlog
@@ -183,28 +184,32 @@ func newBacklogShowCmd() *cobra.Command {
 	}
 }
 
-// backlogDir returns docs/backlog/ relative to the current working
-// directory. The Foreman is always invoked from a project root.
+// backlogDir resolves the per-project backlog directory under
+// ~/.agents/ycode/projects/<id>/backlog/. The id is the logical
+// project id (see projectStateDir), so two checkouts of the same repo
+// share a backlog.
 func backlogDir() (string, error) {
-	cwd, err := os.Getwd()
+	stateDir, err := projectStateDir(context.Background())
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(cwd, "docs", "backlog"), nil
+	dir := projectid.BacklogDir(stateDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 // startBacklogReconciler runs an initial Reconcile then a 60s polling
-// loop. Hooked from serve.go via the experimental build tag.
+// loop. The caller supplies the resolved backlog directory so this
+// function doesn't need to know about path layout.
 //
 // Errors from Reconcile are logged but do not abort the loop — a
 // transient Gitea hiccup must not take down `ycode serve`.
-func startBacklogReconciler(ctx context.Context, log *slog.Logger, cwd string, c *gitserver.Client, p *projects.Project) error {
+func startBacklogReconciler(ctx context.Context, log *slog.Logger, dir string, c *gitserver.Client, p *projects.Project) error {
 	if log == nil {
 		log = slog.Default()
 	}
-	dir := filepath.Join(cwd, "docs", "backlog")
-	// Initial sync is synchronous so the first list-issues from a
-	// freshly-booted serve already reflects markdown state.
 	if err := backlog.Reconcile(ctx, dir, c, p, log); err != nil {
 		log.Warn("backlog: initial reconcile failed", "err", err)
 	}

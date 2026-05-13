@@ -5,16 +5,12 @@ import (
 	"strings"
 )
 
-// Markdown markers used to scope ycode's edits. Stable strings — the
-// regeneration logic finds and replaces by these literals.
+// Markdown markers used to scope ycode's edits in foreign-tool config
+// files (~/.claude.json, ~/.config/opencode/mcp.json). SpliceBlock
+// replaces by these literals so re-runs are idempotent.
 const (
 	BeginMarker = "<!-- BEGIN YCODE -->"
 	EndMarker   = "<!-- END YCODE -->"
-
-	// OwnedMarker is written as the first line of files SelfInit
-	// creates from scratch (greenfield). Presence ⇒ ycode owns the
-	// whole file; absence ⇒ user has reclaimed it, treat as brownfield.
-	OwnedMarker = "<!-- ycode-owned: auto-generated; run `ycode init --refresh` to update; remove this line to reclaim the file -->"
 )
 
 // SpliceBlock returns existing with the YCODE block replaced by block.
@@ -64,19 +60,6 @@ func WrapBlock(body string) string {
 func HasBlock(existing string) bool {
 	_, _, ok := findBlock(existing)
 	return ok
-}
-
-// IsOwnedFile reports whether the first non-empty line of existing is
-// the OwnedMarker. Used to distinguish greenfield (ycode owns whole
-// file) from brownfield (user owns; ycode just splices a block).
-func IsOwnedFile(existing string) bool {
-	for _, line := range strings.SplitN(existing, "\n", 4) {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		return strings.TrimSpace(line) == OwnedMarker
-	}
-	return false
 }
 
 // findBlock returns the byte range covering [BEGIN-line .. END-line]

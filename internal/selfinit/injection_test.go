@@ -64,17 +64,3 @@ func TestHasBlock(t *testing.T) {
 	}
 }
 
-func TestIsOwnedFile(t *testing.T) {
-	owned := OwnedMarker + "\n\n# content\n"
-	if !IsOwnedFile(owned) {
-		t.Errorf("expected owned, got false: %q", owned)
-	}
-	if IsOwnedFile("# regular header\nstuff\n") {
-		t.Errorf("regular file flagged as owned")
-	}
-	// Whitespace-only prefix lines are skipped.
-	withBlanks := "\n\n" + OwnedMarker + "\n"
-	if !IsOwnedFile(withBlanks) {
-		t.Errorf("expected owned with leading blanks: %q", withBlanks)
-	}
-}

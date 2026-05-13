@@ -18,10 +18,47 @@ import (
 //
 // HOME is isolated per test so user-global skill writes don't leak.
 
-// readForemanState parses .agents/ycode/foreman/state.json from repo.
-func readForemanState(t *testing.T, repo string) map[string]any {
+// stateDirGlob returns the per-project state directory under HOME.
+// In e2e tests the repo isn't a git remote, so the project id falls
+// back to "cwd-hash:<sha8>"; rather than recomputing it the tests just
+// glob the single per-project dir that ycode created.
+func stateDirGlob(t *testing.T, home string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(repo, ".agents/ycode/foreman/state.json"))
+	matches, err := filepath.Glob(filepath.Join(home, ".agents", "ycode", "projects", "*"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(matches) == 0 {
+		t.Fatalf("no per-project state dir under %s", home)
+	}
+	if len(matches) > 1 {
+		t.Fatalf("multiple per-project dirs found under %s: %v", home, matches)
+	}
+	return matches[0]
+}
+
+// foremanStatePath returns <home>/.agents/ycode/projects/<id>/foreman/state.json.
+func foremanStatePath(t *testing.T, home string) string {
+	t.Helper()
+	return filepath.Join(stateDirGlob(t, home), "foreman", "state.json")
+}
+
+// foremanCommandsPath returns the commands.jsonl path.
+func foremanCommandsPath(t *testing.T, home string) string {
+	t.Helper()
+	return filepath.Join(stateDirGlob(t, home), "foreman", "commands.jsonl")
+}
+
+// backlogEntryPath returns the slug.md path inside the per-project backlog dir.
+func backlogEntryPath(t *testing.T, home, slug string) string {
+	t.Helper()
+	return filepath.Join(stateDirGlob(t, home), "backlog", slug+".md")
+}
+
+// readForemanState parses the per-project foreman state.json.
+func readForemanState(t *testing.T, home string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(foremanStatePath(t, home))
 	if err != nil {
 		t.Fatalf("read state.json: %v", err)
 	}
@@ -56,16 +93,18 @@ func startDaemon(t *testing.T, repo, home string) *exec.Cmd {
 }
 
 // waitForState polls state.json until state == want or timeout.
-func waitForState(t *testing.T, repo, want string, timeout time.Duration) {
+func waitForState(t *testing.T, home, want string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		path := filepath.Join(repo, ".agents/ycode/foreman/state.json")
-		if data, err := os.ReadFile(path); err == nil {
-			var s map[string]any
-			if json.Unmarshal(data, &s) == nil {
-				if s["state"] == want {
-					return
+		matches, _ := filepath.Glob(filepath.Join(home, ".agents", "ycode", "projects", "*", "foreman", "state.json"))
+		if len(matches) == 1 {
+			if data, err := os.ReadFile(matches[0]); err == nil {
+				var s map[string]any
+				if json.Unmarshal(data, &s) == nil {
+					if s["state"] == want {
+						return
+					}
 				}
 			}
 		}
@@ -88,7 +127,7 @@ func TestE2E_Foreman_DaemonStateMachine(t *testing.T) {
 	}
 
 	startDaemon(t, repo, home)
-	waitForState(t, repo, "running", 10*time.Second) // daemon writes state=running on launch
+	waitForState(t, home, "running", 10*time.Second) // daemon writes state=running on launch
 
 	mustForeman := func(args ...string) {
 		t.Helper()
@@ -99,16 +138,16 @@ func TestE2E_Foreman_DaemonStateMachine(t *testing.T) {
 	}
 
 	mustForeman("pause")
-	waitForState(t, repo, "paused", 8*time.Second)
+	waitForState(t, home, "paused", 8*time.Second)
 
 	mustForeman("resume")
-	waitForState(t, repo, "running", 8*time.Second)
+	waitForState(t, home, "running", 8*time.Second)
 
 	mustForeman("stop")
-	waitForState(t, repo, "stopped", 8*time.Second)
+	waitForState(t, home, "stopped", 8*time.Second)
 
 	// Sanity: state file final content reflects last_command_id (queue cursor).
-	s := readForemanState(t, repo)
+	s := readForemanState(t, home)
 	if s["last_command_id"] == nil || s["last_command_id"] == "" {
 		t.Errorf("last_command_id not persisted: %+v", s)
 	}
@@ -131,7 +170,7 @@ func TestE2E_Foreman_PrioWritesMarkdownFrontmatter(t *testing.T) {
 	if out, err := runYcode(t, repo, home, "backlog", "new", "Test task", "--slug", "demo"); err != nil {
 		t.Fatalf("backlog new: %v\n%s", err, out)
 	}
-	mdPath := filepath.Join(repo, "docs/backlog/demo.md")
+	mdPath := backlogEntryPath(t, home, "demo")
 	if data, err := os.ReadFile(mdPath); err != nil {
 		t.Fatalf("read backlog file: %v", err)
 	} else if !strings.Contains(string(data), "priority: p2") {
@@ -178,7 +217,7 @@ func TestE2E_Foreman_QueueIsAppendOnly(t *testing.T) {
 		}
 	}
 
-	data, err := os.ReadFile(filepath.Join(repo, ".agents/ycode/foreman/commands.jsonl"))
+	data, err := os.ReadFile(foremanCommandsPath(t, home))
 	if err != nil {
 		t.Fatalf("read commands.jsonl: %v", err)
 	}

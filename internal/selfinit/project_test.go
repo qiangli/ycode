@@ -8,9 +8,7 @@ import (
 	"testing"
 )
 
-// makeRepo creates a temp directory with `git init` run inside. Used
-// to exercise FindGitRoot and the project-scope writers without real
-// repositories.
+// makeRepo creates a temp directory with `git init` run inside.
 func makeRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -27,43 +25,58 @@ var testCaps = []CapabilitySpec{
 	{Name: "ycode-loom", Transport: "http", URL: "http://127.0.0.1:58080/loom-mcp/", Family: "loom"},
 }
 
-func TestWriteProjectFiles_Greenfield(t *testing.T) {
+// WriteProjectFiles is intentionally minimal: writes ONLY the
+// foreign-agent breadcrumb at <repo>/.agents/ycode/AGENTS.md. Root
+// AGENTS.md / CLAUDE.md and docs/backlog.md are never touched.
+func TestWriteProjectFiles_BreadcrumbOnly(t *testing.T) {
 	repo := makeRepo(t)
 
-	written, _, err := WriteProjectFiles(repo, testCaps)
+	written, warnings, err := WriteProjectFiles(repo, testCaps)
 	if err != nil {
 		t.Fatalf("WriteProjectFiles: %v", err)
 	}
-	// Greenfield should write .agents/ycode/AGENTS.md AND a fresh AGENTS.md
-	// (owned, no delimiters).
-	wantWritten := map[string]bool{
-		filepath.Join(repo, ".agents", "ycode", "AGENTS.md"): true,
-		filepath.Join(repo, "AGENTS.md"):                     true,
-	}
-	for _, w := range written {
-		delete(wantWritten, w)
-	}
-	if len(wantWritten) > 0 {
-		t.Errorf("expected greenfield to write both files, missing: %v", wantWritten)
+	if len(warnings) > 0 {
+		t.Errorf("unexpected warnings: %v", warnings)
 	}
 
-	body, _ := os.ReadFile(filepath.Join(repo, "AGENTS.md"))
-	if !IsOwnedFile(string(body)) {
-		t.Errorf("greenfield AGENTS.md should carry OwnedMarker, got:\n%s", body)
+	breadcrumb := filepath.Join(repo, ".agents", "ycode", "AGENTS.md")
+	if len(written) != 1 || written[0] != breadcrumb {
+		t.Fatalf("expected single write of %s, got %v", breadcrumb, written)
 	}
-	if HasBlock(string(body)) {
-		t.Errorf("greenfield AGENTS.md should not have BEGIN/END markers, got:\n%s", body)
+
+	// Confirm content was actually written and references ycode capabilities.
+	body, err := os.ReadFile(breadcrumb)
+	if err != nil {
+		t.Fatalf("read breadcrumb: %v", err)
 	}
 	if !strings.Contains(string(body), "ycode-loom") {
-		t.Errorf("expected long-form content with capability list, got:\n%s", body)
+		t.Errorf("breadcrumb does not list capabilities:\n%s", body)
+	}
+
+	// Critically: must NOT have touched these.
+	for _, p := range []string{
+		filepath.Join(repo, "AGENTS.md"),
+		filepath.Join(repo, "CLAUDE.md"),
+		filepath.Join(repo, "docs", "backlog.md"),
+	} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("ycode should not have created %s (stat err=%v)", p, err)
+		}
 	}
 }
 
-func TestWriteProjectFiles_BrownfieldExistingAgents(t *testing.T) {
+func TestWriteProjectFiles_DoesNotPatchExistingRoot(t *testing.T) {
 	repo := makeRepo(t)
-	existing := "# AGENTS.md\n\nUser-curated content goes here.\n"
-	agentsPath := filepath.Join(repo, "AGENTS.md")
-	if err := os.WriteFile(agentsPath, []byte(existing), 0o644); err != nil {
+
+	// User authored both root files; ycode must leave them alone.
+	agents := filepath.Join(repo, "AGENTS.md")
+	claude := filepath.Join(repo, "CLAUDE.md")
+	agentsContent := "# AGENTS.md\n\nUser content.\n"
+	claudeContent := "# CLAUDE.md\n\nClaude note.\n"
+	if err := os.WriteFile(agents, []byte(agentsContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(claude, []byte(claudeContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -71,101 +84,42 @@ func TestWriteProjectFiles_BrownfieldExistingAgents(t *testing.T) {
 		t.Fatalf("WriteProjectFiles: %v", err)
 	}
 
-	body, _ := os.ReadFile(agentsPath)
-	bodyStr := string(body)
-	if !strings.HasPrefix(bodyStr, "# AGENTS.md") {
-		t.Errorf("user content lost: %q", bodyStr)
+	gotAgents, _ := os.ReadFile(agents)
+	if string(gotAgents) != agentsContent {
+		t.Errorf("AGENTS.md was modified:\nbefore=%q\nafter=%q", agentsContent, gotAgents)
 	}
-	if !strings.Contains(bodyStr, "User-curated content goes here.") {
-		t.Errorf("user content missing: %q", bodyStr)
-	}
-	if !HasBlock(bodyStr) {
-		t.Errorf("BEGIN/END block missing: %q", bodyStr)
-	}
-	if IsOwnedFile(bodyStr) {
-		t.Errorf("brownfield should not carry OwnedMarker")
-	}
-}
-
-func TestWriteProjectFiles_BrownfieldClaudeMd(t *testing.T) {
-	repo := makeRepo(t)
-	existing := "# CLAUDE.md\n\nClaude-specific note.\n"
-	if err := os.WriteFile(filepath.Join(repo, "CLAUDE.md"), []byte(existing), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	written, _, err := WriteProjectFiles(repo, testCaps)
-	if err != nil {
-		t.Fatalf("WriteProjectFiles: %v", err)
-	}
-	// Should patch CLAUDE.md, NOT create AGENTS.md.
-	if _, err := os.Stat(filepath.Join(repo, "AGENTS.md")); !os.IsNotExist(err) {
-		t.Errorf("AGENTS.md should not be created when CLAUDE.md exists")
-	}
-	wantPatched := false
-	for _, w := range written {
-		if filepath.Base(w) == "CLAUDE.md" {
-			wantPatched = true
-		}
-	}
-	if !wantPatched {
-		t.Errorf("CLAUDE.md not patched: %v", written)
-	}
-	body, _ := os.ReadFile(filepath.Join(repo, "CLAUDE.md"))
-	if !HasBlock(string(body)) || !strings.Contains(string(body), "# CLAUDE.md") {
-		t.Errorf("CLAUDE.md unexpected:\n%s", body)
+	gotClaude, _ := os.ReadFile(claude)
+	if string(gotClaude) != claudeContent {
+		t.Errorf("CLAUDE.md was modified:\nbefore=%q\nafter=%q", claudeContent, gotClaude)
 	}
 }
 
 func TestWriteProjectFiles_Idempotent(t *testing.T) {
 	repo := makeRepo(t)
+	breadcrumb := filepath.Join(repo, ".agents", "ycode", "AGENTS.md")
 
 	if _, _, err := WriteProjectFiles(repo, testCaps); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
-	body1, _ := os.ReadFile(filepath.Join(repo, "AGENTS.md"))
+	body1, _ := os.ReadFile(breadcrumb)
 
 	if _, _, err := WriteProjectFiles(repo, testCaps); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
-	body2, _ := os.ReadFile(filepath.Join(repo, "AGENTS.md"))
+	body2, _ := os.ReadFile(breadcrumb)
 
 	if string(body1) != string(body2) {
 		t.Errorf("not idempotent\nfirst:\n%s\nsecond:\n%s", body1, body2)
 	}
 }
 
-func TestWriteProjectFiles_MarkerRemoval_DegradesToBrownfield(t *testing.T) {
-	repo := makeRepo(t)
-
-	// First run: greenfield, file is owned.
-	if _, _, err := WriteProjectFiles(repo, testCaps); err != nil {
-		t.Fatal(err)
+func TestRootPointerSnippet(t *testing.T) {
+	s := RootPointerSnippet()
+	if !strings.Contains(s, ".agents/ycode/AGENTS.md") {
+		t.Errorf("snippet should reference the breadcrumb: %q", s)
 	}
-	agentsPath := filepath.Join(repo, "AGENTS.md")
-	body, _ := os.ReadFile(agentsPath)
-	if !IsOwnedFile(string(body)) {
-		t.Fatal("expected owned after greenfield")
-	}
-
-	// User reclaims the file by removing the OwnedMarker line.
-	stripped := strings.Replace(string(body), OwnedMarker+"\n", "", 1)
-	stripped = strings.TrimLeft(stripped, "\n")
-	if err := os.WriteFile(agentsPath, []byte(stripped), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Second run: file is now brownfield; we should splice rather
-	// than re-take ownership.
-	if _, _, err := WriteProjectFiles(repo, testCaps); err != nil {
-		t.Fatal(err)
-	}
-	body2, _ := os.ReadFile(agentsPath)
-	if IsOwnedFile(string(body2)) {
-		t.Errorf("ycode reclaimed user-owned file: %s", body2)
-	}
-	if !HasBlock(string(body2)) {
-		t.Errorf("expected brownfield delimited block, got:\n%s", body2)
+	if !strings.Contains(s, "ycode init --refresh") {
+		t.Errorf("snippet should mention the refresh command: %q", s)
 	}
 }
 

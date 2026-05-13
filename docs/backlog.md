@@ -2,28 +2,55 @@
 
 This is ycode's own task queue. The flow:
 
-> A **Boss** (the human user) writes tasks as markdown files in
-> `docs/backlog/`. A reconciler running inside `ycode serve` mirrors
-> those files into Gitea issues in `admin/<project-slug>` every 60s.
-> A **Foreman** (the agent the user is talking to — Claude Code, the
-> ycode TUI, Cursor, Codex) picks the highest-priority unclaimed
-> issue, leases a Loom workspace, and dispatches a **Worker** (a
-> sandboxed `ycode autopilot worker` subprocess) to do the coding.
-> The Worker opens a PR, the merger auto-merges on green CI, and the
-> Foreman loops to the next task.
+> A **Boss** (the human user) writes tasks as markdown files in the
+> per-project backlog dir at
+> `~/.agents/ycode/projects/<id>/backlog/`. A reconciler running
+> inside `ycode serve` mirrors those files into Gitea issues in
+> `admin/<project-slug>` every 60s. A **Foreman** (the agent the user
+> is talking to — Claude Code, the ycode TUI, Cursor, Codex) picks
+> the highest-priority unclaimed issue, leases a Loom workspace, and
+> dispatches a **Worker** (a sandboxed `ycode autopilot worker`
+> subprocess) to do the coding. The Worker opens a PR, the merger
+> auto-merges on green CI, and the Foreman loops to the next task.
 
-Source of truth: **`docs/backlog/<slug>.md` files**, not Gitea. Wipe
-`~/.agents/ycode/gitea/` any time and the reconciler rebuilds the
-queue from these markdown files.
+Source of truth: **`~/.agents/ycode/projects/<id>/backlog/<slug>.md`
+files**, not Gitea. Wipe `~/.agents/ycode/gitea/` any time and the
+reconciler rebuilds the queue from these markdown files.
+
+`<id>` is the **logical** project id (resolved by
+`internal/runtime/projectid`: explicit `cfg.Project.ID` → normalized
+git remote URL → cwd-hash fallback). Two checkouts of the same repo
+at different paths converge on the same backlog dir. The durability
+story is "lives in `~/.agents/`; back that up alongside your repo,"
+not "lives in git." This protocol doc itself stays in the repo.
 
 ## Source-of-truth contract
 
 | | Authoritative for | Persistence | Recovery |
 |---|---|---|---|
-| `docs/backlog/<slug>.md` | task spec (title, body, priority, acceptance criteria) | git-tracked | survives Gitea wipe |
-| Gitea issue `admin/<slug>#N` | runtime coordination state (claim labels, in-progress, comments) | `~/.agents/ycode/gitea/` (gitignored) | rebuilt by reconciler |
+| `~/.agents/ycode/projects/<id>/backlog/<slug>.md` | task spec (title, body, priority, acceptance criteria) | per-OS-user (back up `~/.agents/`) | survives Gitea wipe |
+| Gitea issue `admin/<slug>#N` | runtime coordination state (claim labels, in-progress, comments) | `~/.agents/ycode/gitea/` | rebuilt by reconciler |
 | Loom lease (`loom_id`) | worker workspace (clone + branch + author) | `~/.agents/ycode/gitea/loom/leases.json` | TTL-bounded; reaped after 8h |
-| `.agents/ycode/foreman/{state,commands}` | Foreman lifecycle + Boss commands | gitignored | rebuilt on next start |
+| `~/.agents/ycode/projects/<id>/foreman/{state,commands}` | Foreman lifecycle + Boss commands | per-OS-user | rebuilt on next start |
+
+### Asymmetric convergence (known gap)
+
+Backlog and Foreman state are keyed by the logical project id, so two
+checkouts of the same repo share them. The Gitea **tracking repo**
+slug, on the other hand, is still derived from the absolute cwd path
+(see `internal/gitserver/projects/projects.go`). Two checkouts still
+get distinct Gitea coordination repos — they converge on backlog
+markdown, but diverge on the issue/branch namespace. Unifying the
+Gitea slug with the logical project id is the follow-up tracked as
+`unify-gitea-slug-with-projectid`.
+
+### Migrating an existing in-repo backlog
+
+If your repo has a legacy `docs/backlog/<slug>.md` tree, `ycode serve`
+auto-imports the entries to the new user-home location on first
+startup (one-time, idempotent, copy-not-move). Legacy files are left
+in place for one release as a safety net; delete them after you've
+confirmed the new location.
 
 ## Entry format
 

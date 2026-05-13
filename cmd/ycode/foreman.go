@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/gitserver/backlog"
+	"github.com/qiangli/ycode/internal/runtime/projectid"
 )
 
 // Boss → Foreman control channel.
@@ -59,14 +61,15 @@ type ForemanStateFile struct {
 	LastTransition time.Time    `json:"last_transition"`
 }
 
-// foremanDir resolves .agents/ycode/foreman/ relative to cwd, creating
-// it if missing.
+// foremanDir resolves ~/.agents/ycode/projects/<id>/foreman/ for the
+// current logical project (two checkouts of the same repo share one
+// foreman state). Creates the directory if missing.
 func foremanDir() (string, error) {
-	cwd, err := os.Getwd()
+	stateDir, err := projectStateDir(context.Background())
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(cwd, ".agents", "ycode", "foreman")
+	dir := projectid.ForemanDir(stateDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -246,10 +249,9 @@ func newForemanStatusCmd() *cobra.Command {
 			fmt.Printf("last_transition: %s\n", s.LastTransition.Format(time.RFC3339))
 			fmt.Printf("commands.jsonl:  %s\n", commandsPath(dir))
 			fmt.Printf("state.json:      %s\n", statePath(dir))
-			// Pause sentinel hint.
-			cwd, _ := os.Getwd()
-			if backlog.PauseSentinelExists(filepath.Join(cwd, "docs", "backlog")) {
-				fmt.Println("PAUSE sentinel:  present (docs/backlog/PAUSE)")
+			// Pause sentinel hint — sentinel lives next to backlog markdown.
+			if bdir, err := backlogDir(); err == nil && backlog.PauseSentinelExists(bdir) {
+				fmt.Printf("PAUSE sentinel:  present (%s/PAUSE)\n", bdir)
 			}
 			return nil
 		},
@@ -308,11 +310,10 @@ func newForemanPrioCmd() *cobra.Command {
 			}
 			// Apply directly to the markdown source of truth — the
 			// reconciler picks up the change on its next 60s poll.
-			cwd, err := os.Getwd()
+			dir, err := backlogDir()
 			if err != nil {
 				return err
 			}
-			dir := filepath.Join(cwd, "docs", "backlog")
 			if err := backlog.SetPriority(dir, slug, prio); err != nil {
 				return err
 			}

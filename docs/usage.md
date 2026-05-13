@@ -125,11 +125,24 @@ Reads the prompt file each iteration, so edits take effect on the next run. Pres
 
 ## Configuration
 
-Config is loaded from three tiers (later overrides earlier):
+Config is loaded from up to four tiers (later overrides earlier):
 
-1. `~/.config/ycode/settings.json` (user)
-2. `.agents/ycode/settings.json` (project)
-3. `.agents/ycode/settings.local.json` (local, git-ignored)
+1. `~/.config/ycode/settings.json` (user-global, all projects)
+2. `~/.agents/ycode/projects/<id>/settings.json` (user-global, this project across checkouts) — `<id>` is the logical project id (see `internal/runtime/projectid`)
+3. `<cwd>/.agents/ycode/settings.json` (team-shared via git)
+4. `<cwd>/.agents/ycode/settings.local.json` (per-checkout, git-ignored)
+
+`Instructions` and `AllowedDirectories` append across tiers; other
+fields override. Tier 2 lets two checkouts of the same repo share
+settings without committing them through git.
+
+### Backups
+
+ycode keeps per-user-per-project state (backlog, foreman, settings)
+under `~/.agents/ycode/`. Back this directory up alongside your
+repos — losing it loses your task queue. The repo itself contains
+only the protocol doc (`docs/backlog.md`) and team-shared bits
+(`AGENTS.md`, `<cwd>/.agents/ycode/settings.json`).
 
 ### Settings
 

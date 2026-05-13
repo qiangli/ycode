@@ -99,7 +99,7 @@ Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one
 - **Provider layer** (`internal/api/`) — `Provider` interface (`Send(ctx, *Request) → stream`). Anthropic native + OpenAI-compatible (covers OpenAI, xAI, Gemini, Ollama). Model aliases resolved in `api/provider.go`.
 - **Tool system** (`internal/tools/registry.go`) — `Registry` maps tool names to `ToolSpec` handlers. Tools are either always-available (sent every request: bash, file ops, search) or deferred (discovered via `ToolSearch`, activated with TTL=8 turns). New tools: add a `RegisterXxxHandlers(r *Registry)` function.
 - **Prompt assembly** (`internal/runtime/prompt/builder.go`) — static sections (cacheable) above a dynamic boundary (environment, git, instructions, memories).
-- **Config** (`internal/runtime/config/config.go`) — merges three files in order, later wins: `~/.config/ycode/settings.json` (user defaults across every project) → `<cwd>/.agents/ycode/settings.json` (shared, committed) → `<cwd>/.agents/ycode/settings.local.json` (gitignored, personal overrides). `Instructions` and `AllowedDirectories` append; all other fields override. Edit the user tier with `ycode model use <name>` or `ycode config set/get/show` — no need to hand-edit JSON. The `config.NewLoader` API accepts separate `projectDir` and `localDir` arguments for forward-compatible monorepo-subdir overrides, but `main.go` aliases them to the same path today (both = `<cwd>/.agents/ycode/`).
+- **Config** (`internal/runtime/config/config.go`) — merges up to four files in order, later wins: `~/.config/ycode/settings.json` (user defaults across every project) → `~/.agents/ycode/projects/<id>/settings.json` (per-OS-user per-logical-project; shared across checkouts of the same repo) → `<cwd>/.agents/ycode/settings.json` (team-shared, committed via git) → `<cwd>/.agents/ycode/settings.local.json` (gitignored, per-checkout overrides). `Instructions` and `AllowedDirectories` append; all other fields override. Edit the user tier with `ycode model use <name>` or `ycode config set/get/show`. The per-project tier is keyed by `internal/runtime/projectid.Resolve` (explicit `project.id` > git remote > cwd-hash); see `config.BootstrapLoader`.
 - **Permission modes** — ReadOnly (read/search only) → WorkspaceWrite (file modifications within VFS boundaries) → DangerFullAccess (shell, process control, MCP). Each tool declares its required mode in `ToolSpec.RequiredMode`. The `Registry`'s `PermissionPrompter` is interface-shaped — direct mode installs a TUI prompter; `ycode serve` installs a remote prompter (`internal/service/permission.go`) that publishes `permission.request` over the bus and blocks on the connected client's response. Do not install an in-process prompter on the server-side `App` — it must be the remote one so web/IDE clients see the request.
 - **Client/server topology** (`cmd/ycode/autoserve.go`) — auto-spawns a server when no client URL is given; the TUI then connects via `WSClient`. Slash commands in this mode are not dispatched locally — the TUI sends the raw `/<name> <args>` text via `SendMessage`, the server's `LocalService.SendMessage` detects the leading `/` and routes to `executeCommandFromMessage`, which streams progress back as `EventCommandProgress`/`EventCommandDelta`/`EventCommandComplete` bus events. Direct mode (`m.cl == nil`) dispatches via the local `commands.Registry`.
 
@@ -123,9 +123,9 @@ When the user's message starts with `/<name>`, read `skills/<name>/skill.md` and
 
 ## Self-Bootstrap (Foreman role)
 
-**You are the Foreman.** Any agent reading this file with source-tree access is acting as the Foreman for this session. The Foreman holds full privileges (source tree, `docs/backlog/`, `ycode backlog`/`ycode foreman` CLIs, full Gitea admin token, all MCP tools). **Workers** are sandboxed subprocesses spawned via `/foreman` — they receive only one Gitea issue and one Loom workspace and do not read this file. The **Boss** (human user) talks to the Foreman either in chat or via `ycode foreman <verb>`. See `docs/backlog.md` for the full chain-of-command and privilege boundaries.
+**You are the Foreman.** Any agent reading this file with source-tree access is acting as the Foreman for this session. The Foreman holds full privileges (source tree, the per-project backlog at `~/.agents/ycode/projects/<id>/backlog/`, `ycode backlog`/`ycode foreman` CLIs, full Gitea admin token, all MCP tools). **Workers** are sandboxed subprocesses spawned via `/foreman` — they receive only one Gitea issue and one Loom workspace and do not read this file. The **Boss** (human user) talks to the Foreman either in chat or via `ycode foreman <verb>`. See `docs/backlog.md` for the full chain-of-command and privilege boundaries.
 
-**Planning behavior.** When helping the user plan or brainstorm, write `docs/backlog/<slug>.md` files (one per task) with frontmatter `priority: p1|p2|p3`, `state: open`, `title`, optional `acceptance: [...]`. The reconciler (running inside `ycode serve`) syncs them to Gitea automatically every 60s. **`docs/backlog/` is the source of truth — Gitea is a derived coordination cache that can be wiped and rebuilt from the markdown.**
+**Planning behavior.** When helping the user plan or brainstorm, write backlog entries with `ycode backlog new "<title>" --priority p1|p2|p3` (or directly as `~/.agents/ycode/projects/<id>/backlog/<slug>.md` with frontmatter `title`, `priority`, `state: open`, optional `acceptance: [...]`). The `<id>` is the logical project id (`internal/runtime/projectid`: explicit > git remote > cwd-hash), so two checkouts of the same repo share one backlog. The reconciler (running inside `ycode serve`) syncs entries to Gitea every 60s. **The markdown files are the source of truth — Gitea is a derived coordination cache that can be wiped and rebuilt from them.**
 
 **Working behavior.** If you start a session with no specific user task, run `/foreman` (or for non-ycode agents that don't have the skill loaded: `ycode backlog list --priority p1` then dispatch a Worker via `ycode autopilot worker --issue N --loom-id ID` after `mcp__ycode-loom__loom_lease`). The reconciler / queue / orchestrator primitives live in `internal/gitserver/{backlog,queue,collab}/`; the loop body lives at `~/.config/ycode/skills/ycode-foreman/skill.md` (user-global, written by `ycode init`; the binary also embeds the canonical copy). Drop `.agents/ycode/skills/ycode-foreman/skill.md` in any repo to override per-project. Foreign agents discover this protocol via the `## Foreign agents (lighthouse pattern)` section below.
 
@@ -226,12 +226,14 @@ prefer them. Run `ycode init --refresh` to update this section.
 ### Self-Bootstrap (Foreman role)
 
 You are the **Foreman** for this session. The Boss → Foreman → Worker
-protocol is universal across every ycode-aware repo. When helping the
-user plan, write tasks as `docs/backlog/<slug>.md` files (frontmatter:
-`title`, `priority: p1|p2|p3`, `state: open`). When starting cold with no
-specific user task, invoke `/foreman`. The skill body is at
-`~/.config/ycode/skills/ycode-foreman/skill.md` (user-global, written
-by `ycode init`; embedded in the binary as fallback). Boss control:
+protocol is universal across every ycode-aware repo. Backlog state
+lives per OS user, per logical project at
+`~/.agents/ycode/projects/<id>/backlog/` — two checkouts of the same
+repo share one queue. Use `ycode backlog new`/`list`/`show` to manage
+it. When starting cold with no specific user task, invoke `/foreman`.
+The skill body is at `~/.config/ycode/skills/ycode-foreman/skill.md`
+(user-global, written by `ycode init`; embedded in the binary as
+fallback). Boss control:
 `ycode foreman pause/resume/stop/skip/prio/tell/status`.
 Full protocol: [`docs/backlog.md`](docs/backlog.md). Available skills are
 listed in [`.agents/ycode/AGENTS.md`](.agents/ycode/AGENTS.md#skills-available-via-ycode).

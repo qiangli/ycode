@@ -10,31 +10,6 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/config"
 )
 
-func TestNormalizeRemote(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"https://github.com/foo/bar.git", "github.com/foo/bar"},
-		{"https://github.com/foo/bar", "github.com/foo/bar"},
-		{"https://USER:TOKEN@github.com/foo/bar.git", "github.com/foo/bar"},
-		{"git@github.com:foo/bar.git", "github.com/foo/bar"},
-		{"git@github.com:foo/bar", "github.com/foo/bar"},
-		{"ssh://git@gitlab.example.com:2222/x/y.git", "gitlab.example.com:2222/x/y"},
-		{"HTTPS://Github.com/Foo/Bar.git", "github.com/Foo/Bar"},
-		{"/abs/local/path/repo", "/abs/local/path/repo"},
-		{"./relative/path", "./relative/path"},
-		{"", ""},
-	}
-	for _, c := range cases {
-		t.Run(c.in, func(t *testing.T) {
-			got := NormalizeRemote(c.in)
-			if got != c.want {
-				t.Fatalf("NormalizeRemote(%q) = %q; want %q", c.in, got, c.want)
-			}
-		})
-	}
-}
-
 func TestProjectNameFromRemote(t *testing.T) {
 	cases := map[string]string{
 		"https://github.com/foo/bar.git":             "bar",
@@ -46,17 +21,6 @@ func TestProjectNameFromRemote(t *testing.T) {
 		if got := projectNameFromRemote(in); got != want {
 			t.Fatalf("projectNameFromRemote(%q) = %q; want %q", in, got, want)
 		}
-	}
-}
-
-func TestCwdHashIDStable(t *testing.T) {
-	a := cwdHashID("/tmp/foo")
-	b := cwdHashID("/tmp/foo")
-	if a != b {
-		t.Fatalf("cwd-hash is not deterministic")
-	}
-	if !strings.HasPrefix(a, "cwd-hash:") || len(a) != len("cwd-hash:")+8 {
-		t.Fatalf("unexpected shape: %q", a)
 	}
 }
 

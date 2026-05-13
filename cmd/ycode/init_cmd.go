@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -133,5 +134,14 @@ func printInitResult(res selfinit.Result) {
 	}
 	for _, f := range res.UserGlobalFiles {
 		fmt.Printf("  ✓ %s (user-global)\n", f)
+	}
+	if res.RepoRoot != "" && len(res.ProjectFiles) > 0 {
+		fmt.Println()
+		fmt.Println("ycode did not touch your AGENTS.md / CLAUDE.md. If you want")
+		fmt.Println("your root file to point at ycode's capability list, paste:")
+		fmt.Println()
+		for _, line := range strings.Split(selfinit.RootPointerSnippet(), "\n") {
+			fmt.Println("    " + line)
+		}
 	}
 }

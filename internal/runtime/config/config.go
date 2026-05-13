@@ -412,13 +412,27 @@ func DefaultConfig() *Config {
 }
 
 // Loader loads and merges configuration from multiple tiers.
+//
+// Tiers, in order of increasing precedence (later overrides earlier):
+//
+//  1. userDir        — ~/.config/ycode/                       (user-global, all projects)
+//  2. perProjectDir  — ~/.agents/ycode/projects/<id>/         (user-global, this project across checkouts)
+//  3. projectDir     — <cwd>/.agents/ycode/                   (team-shared via git)
+//  4. localDir       — <cwd>/.agents/ycode/                   (per-checkout settings.local.json)
+//
+// perProjectDir is optional; empty string skips that tier. It is keyed
+// by the logical project id from internal/runtime/projectid so two
+// checkouts of the same repo converge on shared settings without
+// committing them through git.
 type Loader struct {
-	userDir    string // ~/.config/ycode/
-	projectDir string // .agents/ycode/ in project root
-	localDir   string // .agents/ycode/ in CWD
+	userDir       string
+	perProjectDir string
+	projectDir    string
+	localDir      string
 }
 
-// NewLoader creates a config loader.
+// NewLoader creates a config loader with three tiers (user/project/local).
+// Callers that want the per-project tier should use NewLoaderWithPerProject.
 func NewLoader(userDir, projectDir, localDir string) *Loader {
 	return &Loader{
 		userDir:    userDir,
@@ -427,18 +441,33 @@ func NewLoader(userDir, projectDir, localDir string) *Loader {
 	}
 }
 
-// Load loads and merges config from all tiers: user < project < local.
+// NewLoaderWithPerProject creates a four-tier loader. perProjectDir is
+// the resolved ~/.agents/ycode/projects/<id>/ directory; empty disables
+// the tier.
+func NewLoaderWithPerProject(userDir, perProjectDir, projectDir, localDir string) *Loader {
+	return &Loader{
+		userDir:       userDir,
+		perProjectDir: perProjectDir,
+		projectDir:    projectDir,
+		localDir:      localDir,
+	}
+}
+
+// Load loads and merges config from all configured tiers.
 func (l *Loader) Load() (*Config, error) {
 	cfg := DefaultConfig()
 
-	// Load tiers in order (later overrides earlier).
-	// settings.local.json is the highest-priority tier (typically gitignored).
 	tiers := []string{
 		filepath.Join(l.userDir, "settings.json"),
+	}
+	if l.perProjectDir != "" {
+		tiers = append(tiers, filepath.Join(l.perProjectDir, "settings.json"))
+	}
+	tiers = append(tiers,
 		filepath.Join(l.projectDir, "settings.json"),
 		filepath.Join(l.localDir, "settings.json"),
 		filepath.Join(l.localDir, "settings.local.json"),
-	}
+	)
 
 	for _, path := range tiers {
 		if err := mergeFromFile(cfg, path); err != nil {

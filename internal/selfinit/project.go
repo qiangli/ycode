@@ -8,98 +8,46 @@ import (
 	"strings"
 )
 
-// referenceBlock is the small AGENTS.md / CLAUDE.md snippet inserted
-// in brownfield repos. The body is intentionally concise — readers
-// follow the link to .agents/ycode/AGENTS.md for capability detail.
-const referenceBlock = `## ycode
-
-This repo expects [ycode](https://github.com/qiangli/ycode) running locally as
-agentic infrastructure. When acting as an agentic coding tool, see
-[` + "`" + `.agents/ycode/AGENTS.md` + "`" + `](.agents/ycode/AGENTS.md) for capability descriptions and when to
-prefer them. Run ` + "`" + `ycode init --refresh` + "`" + ` to update this section.
-
-### Self-Bootstrap (Foreman role)
-
-You are the **Foreman** for this session. The Boss → Foreman → Worker
-protocol is universal across every ycode-aware repo. When helping the
-user plan, write tasks as ` + "`docs/backlog/<slug>.md`" + ` files (frontmatter:
-` + "`title`" + `, ` + "`priority: p1|p2|p3`" + `, ` + "`state: open`" + `). When starting cold with no
-specific user task, invoke ` + "`/foreman`" + `. The skill body is at
-` + "`~/.config/ycode/skills/ycode-foreman/skill.md`" + ` (user-global, written
-by ` + "`ycode init`" + `; embedded in the binary as fallback). Boss control:
-` + "`ycode foreman pause/resume/stop/skip/prio/tell/status`" + `.
-Full protocol: [` + "`docs/backlog.md`" + `](docs/backlog.md). Available skills are
-listed in [` + "`.agents/ycode/AGENTS.md`" + `](.agents/ycode/AGENTS.md#skills-available-via-ycode).`
-
-// WriteProjectFiles regenerates <repo>/.agents/ycode/AGENTS.md (long-form
-// awareness, manifest-derived) and patches <repo>/AGENTS.md and/or
-// <repo>/CLAUDE.md (or creates one of them in greenfield repos) per
-// the rules described in the package doc.
+// WriteProjectFiles writes ycode's foreign-agent breadcrumb to
+// <repo>/.agents/ycode/AGENTS.md. It is the ONLY in-repo file ycode
+// will touch — by design.
 //
-// Returns the list of files written/patched, and a slice of warnings
-// for non-fatal issues (e.g. failed write to a single file when others
-// succeeded).
+// What we deliberately do NOT do:
+//   - Patch <repo>/AGENTS.md or <repo>/CLAUDE.md. Those files belong
+//     to the user / their team; ycode rewriting them on first contact
+//     was the intrusive behavior we backed out of.
+//   - Write <repo>/docs/backlog.md. The protocol doc ships in the
+//     ycode source tree; foreign repos discover it via
+//     .agents/ycode/AGENTS.md (which links to the GitHub copy) and
+//     via the Foreman skill body.
+//   - Run at all on a non-init invocation. Only `ycode init` calls
+//     here; every other entry point leaves the repo untouched.
+//
+// Returns the list of files written (typically one) and a slice of
+// warnings for non-fatal issues.
 func WriteProjectFiles(repoRoot string, caps []CapabilitySpec) ([]string, []string, error) {
 	if repoRoot == "" {
 		return nil, nil, ErrNoGitRoot
 	}
-	var written []string
-	var warnings []string
-
-	// 1. Always write .agents/ycode/AGENTS.md — the canonical long-form copy.
 	longPath := filepath.Join(repoRoot, selfinitSubdir, "AGENTS.md")
 	longContent := buildLongFormDoc(caps)
 	if err := writeFileIfChanged(longPath, longContent); err != nil {
 		return nil, nil, fmt.Errorf("write %s: %w", longPath, err)
 	}
-	written = append(written, longPath)
+	return []string{longPath}, nil, nil
+}
 
-	// 2. Decide which root-level file(s) to update.
-	agentsPath := filepath.Join(repoRoot, "AGENTS.md")
-	claudePath := filepath.Join(repoRoot, "CLAUDE.md")
-	agentsExists := fileExists(agentsPath)
-	claudeExists := fileExists(claudePath)
+// RootPointerSnippet returns the one-paragraph snippet a user can
+// paste into their <repo>/AGENTS.md if they want their root file to
+// link to ycode's capabilities. We do NOT write this anywhere — it's
+// printed by `ycode init` and the user adds it manually if they want.
+func RootPointerSnippet() string {
+	return `## ycode (optional)
 
-	switch {
-	case agentsExists && claudeExists:
-		// Brownfield, both — patch both.
-		for _, p := range []string{agentsPath, claudePath} {
-			if err := patchExisting(p, caps); err != nil {
-				warnings = append(warnings, fmt.Sprintf("patch %s: %v", p, err))
-				continue
-			}
-			written = append(written, p)
-		}
-	case agentsExists:
-		if err := patchExisting(agentsPath, caps); err != nil {
-			warnings = append(warnings, fmt.Sprintf("patch %s: %v", agentsPath, err))
-		} else {
-			written = append(written, agentsPath)
-		}
-	case claudeExists:
-		if err := patchExisting(claudePath, caps); err != nil {
-			warnings = append(warnings, fmt.Sprintf("patch %s: %v", claudePath, err))
-		} else {
-			written = append(written, claudePath)
-		}
-	default:
-		// Greenfield: ycode owns AGENTS.md outright.
-		ownedContent := OwnedMarker + "\n\n" + buildLongFormDoc(caps)
-		if err := writeFileIfChanged(agentsPath, ownedContent); err != nil {
-			return nil, warnings, fmt.Errorf("write greenfield %s: %w", agentsPath, err)
-		}
-		written = append(written, agentsPath)
-	}
-
-	// 3. Install the Foreman protocol scaffolding (universal).
-	foremanWritten, foremanWarnings, err := writeForemanProtocol(repoRoot)
-	warnings = append(warnings, foremanWarnings...)
-	if err != nil {
-		warnings = append(warnings, fmt.Sprintf("foreman protocol: %v", err))
-	}
-	written = append(written, foremanWritten...)
-
-	return written, warnings, nil
+This repo can use [ycode](https://github.com/qiangli/ycode) as local
+agentic infrastructure. Capability descriptions live at
+` + "`.agents/ycode/AGENTS.md`" + `. If installed, run ` + "`ycode init --refresh`" + ` to
+regenerate that file after updates.`
 }
 
 // WriteForemanUserSkill writes the canonical /foreman skill body to
@@ -122,95 +70,6 @@ func WriteForemanUserSkill(home string) (string, error) {
 	return skillPath, nil
 }
 
-// writeForemanProtocol drops the per-project Boss → Foreman → Worker
-// scaffolding into <repo>: docs/backlog.md (protocol doc) and an empty
-// docs/backlog/ with a README. The /foreman skill itself is NOT
-// written here — it lives at the user-global level via
-// WriteForemanUserSkill so the same body serves every repo. All writes
-// are idempotent. Existing files are not overwritten unless content
-// drifted from the embedded canonical.
-func writeForemanProtocol(repoRoot string) ([]string, []string, error) {
-	var written []string
-	var warnings []string
-
-	protocolPath := filepath.Join(repoRoot, "docs", "backlog.md")
-	if err := writeFileIfChanged(protocolPath, backlogProtocolMD); err != nil {
-		warnings = append(warnings, fmt.Sprintf("write %s: %v", protocolPath, err))
-	} else {
-		written = append(written, protocolPath)
-	}
-
-	backlogDir := filepath.Join(repoRoot, "docs", "backlog")
-	if err := os.MkdirAll(backlogDir, 0o755); err != nil {
-		warnings = append(warnings, fmt.Sprintf("mkdir %s: %v", backlogDir, err))
-	} else {
-		readmePath := filepath.Join(backlogDir, "README.md")
-		// Only seed README if the dir is otherwise empty — don't clobber
-		// a user-authored backlog README.
-		if _, err := os.Stat(readmePath); os.IsNotExist(err) {
-			if err := writeFileIfChanged(readmePath, backlogReadme); err != nil {
-				warnings = append(warnings, fmt.Sprintf("write %s: %v", readmePath, err))
-			} else {
-				written = append(written, readmePath)
-			}
-		}
-	}
-
-	return written, warnings, nil
-}
-
-// backlogReadme is the seed README dropped into a fresh docs/backlog/.
-const backlogReadme = `# docs/backlog/
-
-Canonical task list. **One ` + "`.md`" + ` per task, slug = filename stem.**
-See [` + "`docs/backlog.md`" + `](../backlog.md) for the source-of-truth
-contract, the Boss → Foreman → Worker chain, the Boss control
-protocol, and the reconciler semantics.
-
-This ` + "`README.md`" + ` is not an issue — the reconciler skips it.
-
-## Adding a new task
-
-` + "```bash" + `
-ycode backlog new "Implement <feature>" --priority p1
-ycode backlog list                  # show all
-ycode backlog list --priority p1    # only top tier
-ycode backlog show <slug>           # render one
-` + "```" + `
-
-The reconciler (running inside ` + "`ycode serve`" + `) syncs new entries to
-Gitea on its next 60s poll; force a sync with ` + "`ycode backlog reconcile`" + `.
-`
-
-// patchExisting reads path, splices/replaces the YCODE delimited block,
-// and writes back if changed. If the file's first non-empty line is
-// the OwnedMarker, ycode owns the whole file and we regenerate it
-// fully. Otherwise the file is brownfield: splice in the delimited
-// block.
-//
-// Note: when a previously-greenfield AGENTS.md has had the OwnedMarker
-// removed by the user, IsOwnedFile returns false and we treat the
-// file as brownfield; the next refresh appends a delimited block, and
-// the user's manual edits are preserved.
-func patchExisting(path string, caps []CapabilitySpec) error {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	s := string(body)
-
-	if IsOwnedFile(s) {
-		ownedContent := OwnedMarker + "\n\n" + buildLongFormDoc(caps)
-		return writeFileIfChanged(path, ownedContent)
-	}
-
-	new := SpliceBlock(s, referenceBlock)
-	if new == s {
-		return nil
-	}
-	return writeFileIfChanged(path, new)
-}
-
 // writeFileIfChanged writes content atomically if the on-disk content
 // differs. Returns nil if the file was already up to date (no rewrite,
 // preserves mtime).
@@ -229,11 +88,6 @@ func writeFileIfChanged(path, content string) error {
 		return err
 	}
 	return os.Rename(tmp, path)
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 // buildLongFormDoc builds the contents of <repo>/.agents/ycode/AGENTS.md (and,

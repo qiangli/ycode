@@ -2,24 +2,18 @@ package selfinit
 
 import _ "embed"
 
-// Foreman protocol assets embedded in the binary. Written into every
-// repo by WriteProjectFiles so the protocol is universally available
-// without manual file copies. The canonical source for each is the
-// matching .md in internal/selfinit/embed/.
+// Foreman skill body embedded in the binary. The canonical source is
+// internal/selfinit/embed/foreman_skill.md. Written to the user-global
+// location (~/.config/ycode/skills/ycode-foreman/skill.md) by
+// WriteForemanUserSkill — never into a repo.
 
 //go:embed embed/foreman_skill.md
 var foremanSkillMD string
-
-//go:embed embed/backlog_protocol.md
-var backlogProtocolMD string
 
 // ForemanSkillBody returns the embedded /foreman skill body. Useful
 // to callers that want to inject the skill into a runtime registry
 // without touching the filesystem.
 func ForemanSkillBody() string { return foremanSkillMD }
-
-// BacklogProtocolDoc returns the embedded docs/backlog.md content.
-func BacklogProtocolDoc() string { return backlogProtocolMD }
 
 // SkillInventoryEntry is one row in the "Skills available via ycode"
 // table that gets rendered into .agents/ycode/AGENTS.md by every
@@ -45,6 +39,6 @@ var SkillInventory = []SkillInventoryEntry{
 		Name:     "/foreman",
 		Summary:  "Boss → Foreman → Worker autonomous task loop",
 		BodyPath: "~/.config/ycode/skills/ycode-foreman/skill.md",
-		When:     "you start a session with no specific user task; pick up the next prioritized item from docs/backlog/ and ship it",
+		When:     "you start a session with no specific user task; pick up the next prioritized item from the project backlog (`ycode backlog list`) and ship it",
 	},
 }

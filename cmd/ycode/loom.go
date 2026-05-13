@@ -15,7 +15,6 @@ import (
 	"github.com/qiangli/ycode/internal/gitserver/merger"
 	"github.com/qiangli/ycode/internal/gitserver/projects"
 	"github.com/qiangli/ycode/internal/runtime/mcp"
-	"github.com/qiangli/ycode/internal/selfinit"
 	loompkg "github.com/qiangli/ycode/pkg/loom"
 )
 
@@ -77,13 +76,10 @@ func buildLoomComponent(_ context.Context, client *gitserver.Client, token, gite
 		Store:       store,
 		SandboxRoot: sandboxRoot,
 		Logger:      slog.Default(),
-		// When a foreign tool calls loom_lease for a project ycode
-		// hasn't touched yet, self-establish in that repo too. This
-		// is the "first-class citizen regardless of entry point" rule
-		// — a Claude Code session driving loom from a fresh repo gets
-		// the same project-scope footprint as if the user had run
-		// `ycode` directly there.
-		OnLeaseCwd: onLeaseCwd,
+		// OnLeaseCwd is intentionally nil: ycode does not modify a
+		// foreign repo just because someone leased a workspace inside
+		// it. To establish ycode in a repo, the user runs `ycode init`
+		// explicitly.
 	})
 	if err != nil {
 		mergerCancel()
@@ -177,25 +173,3 @@ func findProjectBySlug(r *projects.Registry, slug string) *projects.Project {
 	return nil
 }
 
-// onLeaseCwd is the callback the loom service invokes on the first
-// successful Lease for a given cwd. We run SelfInit synchronously so
-// the foreign tool's first Lease always happens against an already-
-// established repo. Errors are logged and never propagated.
-func onLeaseCwd(ctx context.Context, cwd string) {
-	res, err := selfinit.Run(ctx, selfinit.Options{
-		Cwd:          cwd,
-		YcodeVersion: version,
-		Logger:       slog.Default(),
-	})
-	if err != nil {
-		slog.Warn("loom: selfinit on lease", "cwd", cwd, "err", err)
-		return
-	}
-	if res.Skipped || res.OptedOut {
-		return
-	}
-	if len(res.ProjectFiles) > 0 {
-		slog.Info("loom: ycode self-installed in foreign-tool repo",
-			"cwd", cwd, "files", res.ProjectFiles)
-	}
-}
