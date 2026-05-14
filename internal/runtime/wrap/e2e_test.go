@@ -246,6 +246,70 @@ exec `+ycodeBin+` "$@"
 	}
 }
 
+// TestWrapClaudePrintTraced exercises the M2 claude profile honesty
+// pass: a real `claude` binary wrapped via `ycode wrap` should
+//
+//  1. exit cleanly (the wrap is fail-open, the Bun runtime hook is a no-op);
+//  2. emit the one-line Bun-limitation notice on stderr;
+//  3. land at least one ExecScopeWrappedAgent span in the wrap-*
+//     instance dir under $HOME/.agents/ycode/otel/instances/.
+//
+// Uses `claude --version` so no Anthropic API key or network is
+// required. Skipped under -short or when claude is not on PATH.
+func TestWrapClaudePrintTraced(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e: skipped under -short")
+	}
+	claude := mustHave(t, "claude")
+
+	// Redirect HOME so the wrap's OTel instance dir lands in the
+	// tempdir and we can introspect it without colliding with the
+	// user's real ~/.agents/ycode/otel/.
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	out := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exitCode, err := wrap.Run(ctx, wrap.Options{
+		AgentArgs:  []string{claude, "--version"},
+		OTelExport: "file",
+		Stdout:     out,
+		Stderr:     stderr,
+	})
+	if err != nil {
+		t.Fatalf("wrap.Run: %v\nstderr: %s", err, stderr.String())
+	}
+	if exitCode != 0 {
+		t.Fatalf("wrap exit=%d stderr=%s", exitCode, stderr.String())
+	}
+
+	// (2) Bun-limitation stderr notice fires.
+	if !strings.Contains(stderr.String(), "claude: Bun runtime") {
+		t.Errorf("expected Bun-limitation notice on stderr; got:\n%s", stderr.String())
+	}
+
+	// (3) OTel instance dir exists.
+	dir := filepath.Join(tmpHome, ".agents", "ycode", "otel", "instances")
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatalf("read instances dir: %v", readErr)
+	}
+	foundWrap := false
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "wrap-") {
+			foundWrap = true
+			break
+		}
+	}
+	if !foundWrap {
+		t.Errorf("no wrap-*-prefixed OTel instance dir under %s; entries: %v", dir, entries)
+	}
+}
+
 // --- helpers ---------------------------------------------------------
 
 // mustHave skips the test when the binary isn't on PATH.

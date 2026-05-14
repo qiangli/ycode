@@ -120,10 +120,14 @@ func FamilyDescription(family string) string {
 }
 
 var familyDescriptions = map[string]string{
-	"stdio": "treesitter AST search (`list_symbols`, `search_symbols_by_pattern`, `find_symbol_references`). Prefer over `grep` when the language is supported (Go, Python, JS/TS, Rust, Java, C, Ruby).",
-	"loom":  "workspace substrate. When the user asks for parallel sub-agents, refactors that touch many files, or anything that benefits from isolated git workspaces, lease one workspace per sub-agent via `loom_lease`. Push with `loom_push`, open a PR with `loom_merge`, poll `loom_status`. Do not mutate cwd in parallel branches; sub-agents will collide.",
-	"pulse": "observability stack (~25 tools): traces, logs, metrics, alerts, dashboards. Query pulse instead of grepping logs on disk.",
-	"gitea": "local Gitea forge ops (~11 tools): repos, branches, PRs, issues. Use these instead of shelling out to `gh` or `git`.",
+	"stdio":     "treesitter AST search (`list_symbols`, `search_symbols_by_pattern`, `find_symbol_references`). Prefer over `grep` when the language is supported (Go, Python, JS/TS, Rust, Java, C, Ruby). The stdio entry also exposes the M1 families below (repomap, codegraph, sandbox, github) — same process.",
+	"loom":      "workspace substrate. When the user asks for parallel sub-agents, refactors that touch many files, or anything that benefits from isolated git workspaces, lease one workspace per sub-agent via `loom_lease`. Push with `loom_push`, open a PR with `loom_merge`, poll `loom_status`. Do not mutate cwd in parallel branches; sub-agents will collide.",
+	"pulse":     "observability stack (~25 tools): traces, logs, metrics, alerts, dashboards. Query pulse instead of grepping logs on disk.",
+	"gitea":     "local Gitea forge ops (~11 tools): repos, branches, PRs, issues. Use these instead of shelling out to `gh` or `git`.",
+	"repomap":   "token-budgeted file→symbol overview (`build_repomap`). Call once early in a session to seed system-prompt context for unfamiliar codebases; pass `query` to rank files by relevance.",
+	"codegraph": "code-knowledge graph (gfy): summary, semantic query, neighbors, god nodes, shortest path. Loads `.agents/ycode/graph.json` if present, otherwise builds on first call. Use to answer architectural questions (\"what touches the auth flow?\") without grepping.",
+	"sandbox":   "podman-isolated execution (`sandbox_exec`). Alpine by default, network=none, cwd mounted at /workspace. Use for running untrusted or AI-generated code without exposing the host filesystem or network.",
+	"github":    "GitHub PRs, issues, and CI checks (`github_list_prs`, `github_get_pr_diff`, `github_create_pr_review`, `github_get_check_runs`, ...). Auth from GITHUB_TOKEN, GH_TOKEN, or `~/.config/gh/hosts.yml` — no `gh` binary required.",
 }
 
 // manifestShape is the slice of ~/.agents/ycode/manifest.json we read.

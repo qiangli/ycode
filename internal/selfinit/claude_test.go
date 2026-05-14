@@ -167,6 +167,79 @@ func TestClaude_WriteInstructions(t *testing.T) {
 	}
 }
 
+// TestClaudeRoundTrip runs the full SelfInit orchestrator with the real
+// claude Tool implementation against a tempdir HOME, asserting that the
+// opt-in gate works end-to-end: default Run() does not touch
+// ~/.claude.json, but Run(..., RegisterForeignTools: true) writes both
+// the stdio and HTTP composite entries with correct command/args.
+func TestClaudeRoundTrip(t *testing.T) {
+	home := withFakeHome(t)
+	repo := makeRepo(t)
+	t.Setenv("YCODE_SELFINIT_FOREIGN", "") // ensure env doesn't leak opt-in
+
+	configPath := filepath.Join(home, ".claude.json")
+
+	// Default Run: opt-in gate is closed, no write.
+	if _, err := Run(context.Background(), Options{
+		Cwd: repo, Home: home, YcodeVersion: "test-default",
+	}); err != nil {
+		t.Fatalf("Run default: %v", err)
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Errorf("default Run wrote ~/.claude.json without opt-in (err=%v)", err)
+	}
+
+	// Opt-in Run: entries must appear.
+	if _, err := Run(context.Background(), Options{
+		Cwd: repo, Home: home, YcodeVersion: "test-optin", Force: true,
+		RegisterForeignTools: true,
+	}); err != nil {
+		t.Fatalf("Run opt-in: %v", err)
+	}
+
+	body, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read ~/.claude.json: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, body)
+	}
+	servers, _ := parsed["mcpServers"].(map[string]any)
+
+	stdio, ok := servers["ycode-stdio"].(map[string]any)
+	if !ok {
+		t.Fatalf("ycode-stdio missing or wrong shape: %v", servers["ycode-stdio"])
+	}
+	if cmd, _ := stdio["command"].(string); cmd == "" {
+		t.Errorf("ycode-stdio.command empty: %v", stdio)
+	}
+	args, _ := stdio["args"].([]any)
+	if len(args) < 2 || args[0] != "mcp" || args[1] != "serve" {
+		t.Errorf("ycode-stdio.args want [mcp serve ...], got %v", args)
+	}
+
+	http, ok := servers["ycode"].(map[string]any)
+	if !ok {
+		t.Fatalf("ycode (HTTP composite) missing: %v", servers["ycode"])
+	}
+	if typ, _ := http["type"].(string); typ != "http" {
+		t.Errorf("ycode.type want http, got %v", http["type"])
+	}
+	if url, _ := http["url"].(string); !strings.HasPrefix(url, "http://127.0.0.1:") {
+		t.Errorf("ycode.url unexpected: %v", http["url"])
+	}
+
+	// L2 memory file must also be written under opt-in.
+	memBody, err := os.ReadFile(filepath.Join(home, ".claude", "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("read CLAUDE.md: %v", err)
+	}
+	if !strings.Contains(string(memBody), BeginMarker) {
+		t.Errorf("CLAUDE.md missing BEGIN marker:\n%s", memBody)
+	}
+}
+
 func TestClaude_WriteInstructions_PreservesUserContent(t *testing.T) {
 	home := withFakeHome(t)
 	dir := filepath.Join(home, ".claude")

@@ -155,6 +155,52 @@ func TestRun_UndetectedToolSkipped(t *testing.T) {
 	}
 }
 
+// TestRun_ForeignToolsOptIn verifies that auto-discovery of foreign-tool
+// writers from the package registry is gated by RegisterForeignTools
+// (or YCODE_SELFINIT_FOREIGN=1). Explicit Tools lists are unaffected.
+func TestRun_ForeignToolsOptIn(t *testing.T) {
+	saved := toolRegistry
+	t.Cleanup(func() { toolRegistry = saved })
+	toolRegistry = nil
+
+	registered := &stubTool{name: "registered", detected: true}
+	RegisterTool(registered)
+
+	repo := makeRepo(t)
+	home := t.TempDir()
+
+	// Default: no opt-in → registered tool not invoked.
+	t.Setenv("YCODE_SELFINIT_FOREIGN", "")
+	if _, err := Run(context.Background(), Options{Cwd: repo, Home: home, YcodeVersion: "v1"}); err != nil {
+		t.Fatalf("Run default: %v", err)
+	}
+	if registered.mcpCalls != 0 {
+		t.Errorf("registered tool invoked without opt-in: mcpCalls=%d", registered.mcpCalls)
+	}
+
+	// Opt-in via Options field.
+	if _, err := Run(context.Background(), Options{
+		Cwd: repo, Home: home, YcodeVersion: "v2", Force: true,
+		RegisterForeignTools: true,
+	}); err != nil {
+		t.Fatalf("Run opt-in: %v", err)
+	}
+	if registered.mcpCalls != 1 {
+		t.Errorf("opt-in via Options did not invoke registered tool: mcpCalls=%d", registered.mcpCalls)
+	}
+
+	// Opt-in via env var.
+	t.Setenv("YCODE_SELFINIT_FOREIGN", "1")
+	if _, err := Run(context.Background(), Options{
+		Cwd: repo, Home: home, YcodeVersion: "v3", Force: true,
+	}); err != nil {
+		t.Fatalf("Run env opt-in: %v", err)
+	}
+	if registered.mcpCalls != 2 {
+		t.Errorf("env opt-in did not invoke registered tool: mcpCalls=%d", registered.mcpCalls)
+	}
+}
+
 func TestRegisterTool_Idempotent(t *testing.T) {
 	// Save and restore the registry — this test mutates package state.
 	saved := toolRegistry

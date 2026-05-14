@@ -193,15 +193,32 @@ func Run(ctx context.Context, opts Options) (int, error) {
 		profile.Apply(&opts)
 	}
 
+	// Per-profile limitation warnings. Route through opts.Stderr (falling
+	// back to os.Stderr when the caller didn't override it) so tests and
+	// embedded uses can capture the notice in their own buffer.
+	noticeOut := opts.Stderr
+	if noticeOut == nil {
+		noticeOut = os.Stderr
+	}
+
 	// Codex limitation warning — the Rust runtime has no language-level
 	// hook, so absolute-path shell-outs from the Codex binary itself
-	// bypass tracing. Emit a one-line stderr warn at wrap-start so the
-	// limitation is visible to the operator. The PATH shim still
-	// catches what it can.
+	// bypass tracing. The PATH shim still catches what it can.
 	if isResolvedProfile(&opts, "codex") {
-		_, _ = fmt.Fprintln(os.Stderr,
+		_, _ = fmt.Fprintln(noticeOut,
 			"[ycode wrap] codex: Rust runtime — no language-level hook; "+
 				"shell-outs via absolute paths bypass tracing. PATH-shim coverage only.")
+	}
+
+	// Claude Code limitation warning — Bun-compiled binary doesn't
+	// honor NODE_OPTIONS=--require, so the Node runtime hook would be
+	// a no-op. The PATH shim still catches bash/git/rg/etc., and the
+	// supported integration path remains MCP via ~/.claude.json (see
+	// internal/selfinit/claude.go and the repo-root .mcp.json).
+	if isResolvedProfile(&opts, "claude") {
+		_, _ = fmt.Fprintln(noticeOut,
+			"[ycode wrap] claude: Bun runtime — NODE_OPTIONS not honored; "+
+				"PATH-shim coverage only. MCP integration via .mcp.json / ~/.claude.json is the supported path.")
 	}
 
 	// Install the wrap-parent's OTel exporter (file / console / off)

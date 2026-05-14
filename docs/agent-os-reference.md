@@ -70,6 +70,32 @@ Legend: ✅ table-stakes met · 🟡 partial / scaffolded · ❌ missing · ⛔ 
 
 ---
 
+## 2a. Foreign-agent coverage matrix
+
+`ycode wrap` and the MCP-server (`ycode mcp serve`) together cover the two interception axes — involuntary and voluntary. Each foreign agent gets a different mix of coverage depending on its runtime. Be honest about what's hooked and what isn't so operators don't expect more than they have.
+
+| Agent | Runtime | PATH-shim | Language hook | MCP (via `~/.claude.json` / equivalent) | Notes |
+|---|---|---|---|---|---|
+| **claude** (Anthropic Claude Code) | Bun-compiled binary | ✅ | ❌ (Bun ignores `NODE_OPTIONS=--require`) | ✅ — opt-in via `ycode init --register-foreign-agents` or repo-root `.mcp.json` | Wrap emits a one-line `[ycode wrap] claude: Bun runtime …` notice on stderr at start. **Supported integration path is MCP.** |
+| **opencode** | Bun/Node CLI | ✅ | ✅ (Node `--require`) | ✅ | Full coverage on both axes. |
+| **codex** (OpenAI Codex CLI) | Rust + Node helper | ✅ | ❌ (no language-level hook for Rust) | ⛔ — Codex MCP support TBD | Wrap emits a `[ycode wrap] codex: Rust runtime …` notice. |
+| **aider** | Python CLI | ✅ | ✅ (`sitecustomize.py` patches `subprocess`) | ⛔ — Aider MCP support TBD | Full Python-runtime coverage; absolute-path shell-outs from Python caught by the runtime hook. |
+| **gemini** (Google Gemini CLI) | Node CLI | ✅ | ✅ (Node `--require`) | ⛔ — Gemini MCP support TBD | Full Node-runtime coverage. |
+
+**Worked example — Claude Code calling ycode tools via MCP** (post-M1):
+
+```bash
+# 1. Opt in: register ycode in ~/.claude.json (and seed L2 instructions).
+ycode init --register-foreign-agents
+
+# 2. Run a Claude Code session in any directory.
+claude --print "use the ycode mcp server to build_repomap and summarize the codebase"
+```
+
+Claude's tool surface now includes `mcp__ycode-stdio__build_repomap`, `mcp__ycode-stdio__graph_summary`, `mcp__ycode-stdio__sandbox_exec`, `mcp__ycode-stdio__github_list_prs`, plus the existing `list_symbols`, `agent_shell`, `list_skills`, `memex_recall`, and `ollama_chat`. These resolve to in-process Go implementations — no shelling out to `gh`, `rg`, or `podman` from the model's tool-use loop.
+
+For projects opening Claude Code inside the ycode source tree, the committed `.mcp.json` at the repo root advertises the same servers automatically, without any `ycode init` step.
+
 ## 3. Gaps grouped by tier
 
 ### Tier 1 — Must-have to credibly be called an Agent OS

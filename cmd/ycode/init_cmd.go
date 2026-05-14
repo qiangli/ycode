@@ -13,10 +13,11 @@ import (
 )
 
 var (
-	initRefresh bool
-	initDoctor  bool
-	initOptOut  bool
-	initJSON    bool
+	initRefresh         bool
+	initDoctor          bool
+	initOptOut          bool
+	initJSON            bool
+	initRegisterForeign bool
 )
 
 func newInitCmd() *cobra.Command {
@@ -29,9 +30,13 @@ By default ycode runs this automatically on every invocation; the marker
 at <repo>/.agents/ycode/.init-done makes idempotent re-runs no-ops. Use this
 command to:
 
-  --refresh   Force a regeneration even if the marker matches.
-  --doctor    Print what is/would be registered without writing.
-  --opt-out   Disable selfinit for this repo (writes <repo>/.agents/ycode/.no-init).
+  --refresh                   Force a regeneration even if the marker matches.
+  --doctor                    Print what is/would be registered without writing.
+  --opt-out                   Disable selfinit for this repo (writes <repo>/.agents/ycode/.no-init).
+  --register-foreign-agents   Write MCP entries + instruction blocks into
+                              detected foreign agentic CLIs (Claude Code,
+                              OpenCode). Off by default — opt-in only.
+                              Env: YCODE_SELFINIT_FOREIGN=1 has the same effect.
 
 In a fresh repo the first auto-run is enough; this command is mainly
 for explicit refreshes after manifest changes or for diagnosing why a
@@ -61,10 +66,11 @@ foreign tool isn't seeing a particular ycode capability.`,
 			}
 
 			res, err := selfinit.Run(ctx, selfinit.Options{
-				Cwd:          cwd,
-				YcodeVersion: version,
-				Force:        initRefresh,
-				Logger:       slog.Default(),
+				Cwd:                  cwd,
+				YcodeVersion:         version,
+				Force:                initRefresh,
+				RegisterForeignTools: initRegisterForeign,
+				Logger:               slog.Default(),
 			})
 			if err != nil {
 				return err
@@ -77,6 +83,8 @@ foreign tool isn't seeing a particular ycode capability.`,
 	cmd.Flags().BoolVar(&initDoctor, "doctor", false, "Print what would be registered without writing")
 	cmd.Flags().BoolVar(&initOptOut, "opt-out", false, "Disable selfinit for this repo")
 	cmd.Flags().BoolVar(&initJSON, "json", false, "Print result as JSON")
+	cmd.Flags().BoolVar(&initRegisterForeign, "register-foreign-agents", false,
+		"Write MCP entries into detected foreign agentic CLIs (off by default)")
 	return cmd
 }
 

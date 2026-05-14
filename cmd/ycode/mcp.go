@@ -11,10 +11,14 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/inference"
+	"github.com/qiangli/ycode/internal/runtime/codegraph"
+	gh "github.com/qiangli/ycode/internal/runtime/github"
 	"github.com/qiangli/ycode/internal/runtime/mcp"
 	"github.com/qiangli/ycode/internal/runtime/memexmcp"
 	"github.com/qiangli/ycode/internal/runtime/origin"
+	"github.com/qiangli/ycode/internal/runtime/repomap"
 	"github.com/qiangli/ycode/internal/runtime/skills"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
 	"github.com/qiangli/ycode/internal/shell"
@@ -88,6 +92,31 @@ func newMcpServeCmd() *cobra.Command {
 				treesitter.NewMCPHandler(),
 				shell.NewMCPHandler(shellRT),
 				skills.NewMCPHandler(),
+
+				// Family A.2: repomap. Token-budgeted file→symbol
+				// overview. Stateless — each call walks the tree and
+				// re-parses; foreign agents typically call once early
+				// for system-prompt seeding.
+				repomap.NewMCPHandler(),
+
+				// Family A.4: codegraph. gfy-backed code knowledge
+				// graph. Loads the cached graph from
+				// .agents/ycode/graph.json when present; rebuilds on
+				// first call (or `force_rebuild`). Read-only — the
+				// cache write is project-managed scratch.
+				codegraph.NewMCPHandler(),
+
+				// Family B: podman sandbox. Mirrors `yc sandbox` —
+				// one-shot `podman run --rm` with cwd mounted at
+				// /workspace, network disabled. DangerFullAccess
+				// since arbitrary code runs inside the container.
+				container.NewMCPHandler(),
+
+				// Family E: GitHub. PRs / issues / CI checks via
+				// go-github. Auth from GITHUB_TOKEN / GH_TOKEN /
+				// ~/.config/gh/hosts.yml. Reads ReadOnly; create_*
+				// tools WorkspaceWrite.
+				gh.NewMCPHandler(),
 			}
 
 			// Family A.3: memex memory. Best-effort — if the manager

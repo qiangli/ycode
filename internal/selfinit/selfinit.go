@@ -30,6 +30,18 @@ type Options struct {
 	// the explicit `ycode init --refresh` and the /init skill.
 	Force bool
 
+	// RegisterForeignTools gates auto-discovery of foreign-agent
+	// writers (Claude Code, OpenCode, …) from the package-level
+	// registry. Off by default — touching another tool's user-scope
+	// config is opt-in. When true, registered Tools whose Detect()
+	// returns true get their WriteMCP / WriteInstructions called.
+	//
+	// Has no effect when Tools is non-nil; callers passing an
+	// explicit list have already opted in by enumerating writers.
+	// The env var YCODE_SELFINIT_FOREIGN=1 also flips this to true
+	// (so autostart paths can be enabled without code changes).
+	RegisterForeignTools bool
+
 	// Tools, if non-nil, is the explicit list of tool writers to
 	// consult. Defaults to the package-level registry. Tests override
 	// this to inject stubs.
@@ -91,9 +103,15 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 
 	caps := LoadCapabilities(home, opts.DefaultPort)
 
+	// Foreign-tool writers are opt-in. An explicit Tools list means
+	// the caller has already chosen to enumerate writers, so honor it.
+	// Otherwise consult the registry only if RegisterForeignTools or
+	// YCODE_SELFINIT_FOREIGN=1.
 	tools := opts.Tools
 	if tools == nil {
-		tools = registeredTools()
+		if opts.RegisterForeignTools || os.Getenv("YCODE_SELFINIT_FOREIGN") == "1" {
+			tools = registeredTools()
+		}
 	}
 	var detected []Tool
 	var detectedNames []string
