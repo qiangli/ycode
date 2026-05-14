@@ -1,240 +1,129 @@
 # AGENTS.md
 
-This file provides guidance to AI coding assistants working in this repository.
+Instructions for AI coding assistants working in this repository.
 
-ycode — pure Go CLI agent harness for autonomous software development. Go 1.26+, permissive-license dependencies only. CLAUDE.md is a symlink to this file.
+ycode — pure Go CLI agent harness. Single static binary, Go 1.26+, permissive-license dependencies only.
 
-> **Read first:** [`docs/strategy.md`](./docs/strategy.md) — the wedge, feature-tier build-tag policy, roadmap, and operating principles. Before suggesting features, refactors, or architectural changes, consult the strategy doc to confirm alignment with the current wedge ("local-first, single-binary, runs offline") and graduation criteria. New features land behind the `experimental` build tag by default and graduate to `stable` only after meeting the criteria documented there.
-
-## Quick Orientation
-
-ycode is a single Go binary that runs an LLM-driven coding agent locally. The conversation loop lives in `internal/runtime/conversation/runtime.go` (assemble request → send to provider → dispatch tool calls → repeat). Entry is `cmd/ycode/main.go`; the public embedding API is `pkg/ycode/`. State flows through `RuntimeContext` — there is no global mutable state. When in doubt about scope or architecture, read `docs/strategy.md` first.
+> **Start here:** [`docs/strategy.md`](./docs/strategy.md) — the wedge ("local-first, single-binary, runs offline"), feature-tier policy, graduation criteria.
 
 ## First-Time Setup
 
 ```bash
-make init                              # REQUIRED: initialize submodules, fetch Perses plugins, gzip embedded assets
-export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY for OpenAI-compatible providers
-make install-hooks                     # recommended: symlinks pre-push hook so `make ci` runs before every push
+make init                              # REQUIRED: submodules, Perses plugins, gzip assets, Gitea bindata
+export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY
+make install-hooks                     # recommended: pre-push hook runs `make ci`
 ```
 
-## Build Commands
+## Build Quality Gate
 
 ```bash
-make build           # full quality gate: tidy → fmt → vet → compile → test → verify
-make compile         # quick compile (includes experimental features by default)
-make compile-stable  # explicit opt-out: compile WITHOUT the experimental tag
-make compile-wip     # add the next-tier `wip` features
-make compile-full    # single binary with embedded podman + runner (large; for offline distribution)
-make compile-debug   # compile with debug symbols (for profiling/debugging)
-make install         # build + install to ~/bin/ycode (re-signs on macOS)
+make build           # full gate: tidy → fmt → vet → compile → test → verify
+make compile         # quick compile (experimental features ON by default)
+make compile-stable  # explicit opt-out: without experimental tag
 make test            # unit tests only (-short -race)
-make cross           # cross-compile all platforms (dist/)
 ```
 
-Convention: features in ycode are ON BY DEFAULT and opt-out — observability,
-the embedded MCP server, the experimental build tag, etc. The off-switch is
-always discoverable:
+**Build tags** (see `Makefile`):
+- Default: `sqlite,sqlite_unlock_notify,bindata,experimental`
+- Features are **ON by default** and opt-out — check `docs/strategy.md` for graduation criteria
+- Manual: `go build -tags "sqlite,sqlite_unlock_notify,bindata,experimental" -o bin/ycode ./cmd/ycode/`
 
-| Feature | On by default | Off-switch |
-|---|---|---|
-| OpenTelemetry observability | yes | `observability.enabled: false` in settings.json |
-| Experimental build tag | yes | `make compile-stable` (or `make compile TAG_LIST="sqlite,sqlite_unlock_notify,bindata"`) |
-
-Manual `go build` (handled automatically by `make compile`):
+**Test patterns**:
 ```bash
-go build -tags "sqlite,sqlite_unlock_notify,bindata,experimental" -o bin/ycode ./cmd/ycode/
-```
-
-Single test and integration test (use the first for fast unit iteration; the second when the test needs container/network setup):
-```bash
+# Single package / test (fast iteration)
 go test -short -race -run TestName ./internal/path/to/package/
+
+# Integration tests (needs container/network)
 go test -tags integration -v -count=1 ./internal/integration/...
+
+# Never use bare `./...` — always exclude priorart/:
+PACKAGES=$(go list ./... | grep -v '/priorart/')
 ```
 
-Additional test targets:
-```bash
-make test-container   # container integration tests (requires podman)
-make test-gitserver   # git server workspace tests
-make test-tui         # TUI integration tests (direct Update + teatest)
-make test-tui-e2e     # TUI E2E tests in a PTY (requires compiled binary)
-make test-tui-fuzz    # TUI fuzz tests (30s each)
-make test-ui          # Playwright browser tests (e2e/ dir, requires running server + npx)
-make test-all         # all of the above combined
-```
+## Critical Conventions
 
-Validation against a running instance:
-```bash
-make validate         # Go integration tests against running server
-make validate-ui      # Playwright browser tests against running server
-make validate-all     # both
-```
+**Directory boundaries:**
+- `priorart/` — **read-only.** Never modify. Use `$(go list ./... | grep -v '/priorart/')` for Go commands.
+- `external/` — vendored submodules. Do not modify directly.
+- `peers/` — peer Go modules with own `go.mod`. Run `go mod tidy` inside peer directories, not at root.
 
-Inference runner (local Ollama):
+**Code standards:**
+- No package-level `var` for mutable state — use `RuntimeContext` (see `internal/runtime/conversation/runtime.go`)
+- No `log.Printf` or `fmt.Println` — use structured logger from `RuntimeContext`
+- Layered build system: logic in Go, orchestration in `scripts/`, dependency graph in `Makefile`
+- No test logic in bash scripts — Go tests only
+
+**Commits:**
+- Stage files by name (never `git add -A` or `git add .`)
+- Match repo prefix style: `fix:`, `feat:`, `docs:`, `refactor:`, `chore:`
+- **Always run `make build` before committing** — must pass with no errors
+
+## Architecture
+
+Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one-shot.
+
+Core loop: `internal/runtime/conversation/runtime.go` — assemble request → send to provider → dispatch tool calls → repeat.
+
+Key components:
+- **Provider layer** (`internal/api/`) — Anthropic native + OpenAI-compatible
+- **Tool registry** (`internal/tools/registry.go`) — always-available vs deferred (discovered via `ToolSearch`)
+- **Config** (`internal/runtime/config/config.go`) — 4-tier merge: `~/.config/ycode/settings.json` → `~/.agents/ycode/projects/<id>/settings.json` → `<cwd>/.agents/ycode/settings.json` → `<cwd>/.agents/ycode/settings.local.json`
+- **Permission modes** — ReadOnly → WorkspaceWrite → DangerFullAccess (declared in `ToolSpec.RequiredMode`)
+
+## Foreman / Worker Model
+
+**You are the Foreman.** Full privileges: source tree, backlog at `~/.agents/ycode/projects/<id>/backlog/`, all MCP tools.
+
+**Workers** are sandboxed subprocesses spawned via `/foreman` — they receive one Gitea issue and one Loom workspace.
+
+**Planning:** Write backlog entries:
 ```bash
-make runner-download  # download pre-built Ollama runner for current platform
-make runner-build     # build runner from source (requires C++ toolchain)
-make runner-check     # verify runner binary + health check
+ycode backlog new "title" --priority p1|p2|p3
 ```
+Or directly: `~/.agents/ycode/projects/<id>/backlog/<slug>.md` with frontmatter `title`, `priority`, `state: open`. Markdown files are source of truth; Gitea is a cache.
+
+**Working:** If no specific task, run `/foreman` (or: `ycode backlog list --priority p1`, then `ycode autopilot worker --issue N --loom-id ID`).
+
+Boss control: `ycode foreman pause/resume/stop/skip/prio/tell/status`
 
 ## Running
 
 ```bash
-bin/ycode                              # interactive REPL (auto-spawns a server if --connect not given)
-bin/ycode prompt "explain the runtime" # one-shot; add --print for plain text (no markdown)
-bin/ycode --model claude-sonnet-4-6    # override the configured model for this session
-bin/ycode --connect ws://host:58080    # attach to an already-running server
-bin/ycode serve                        # run the server explicitly (Gitea, Ollama, SearXNG, NATS, observability)
+bin/ycode                              # interactive REPL (auto-spawns server)
+bin/ycode prompt "explain the runtime" # one-shot; add --print for plain text
+bin/ycode serve                        # explicit server (Gitea, Ollama, SearXNG, NATS)
 ```
 
-When the TUI auto-spawns a server, its stdout/stderr go to `~/.agents/ycode/observability/serve.log` — check there if the client connects but the server appears silent.
+Server logs when auto-spawned: `~/.agents/ycode/observability/serve.log`
 
-The model and provider come from settings.json (`model` field, schema in `internal/runtime/config/config.go`); `--model` overrides per-invocation. `bin/ycode model` manages the local Ollama registry.
-
-## Architecture
-
-Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one-shot mode. Core loop in `internal/runtime/conversation/runtime.go`: assemble request → send to provider → dispatch tool calls → loop until done. Public embedding API: `pkg/ycode/`. Design: `RuntimeContext` (no global state), three-tier config merge, five-layer memory.
-
-### Request lifecycle
-- **Provider layer** (`internal/api/`) — `Provider` interface (`Send(ctx, *Request) → stream`). Anthropic native + OpenAI-compatible (covers OpenAI, xAI, Gemini, Ollama). Model aliases resolved in `api/provider.go`.
-- **Tool system** (`internal/tools/registry.go`) — `Registry` maps tool names to `ToolSpec` handlers. Tools are either always-available (sent every request: bash, file ops, search) or deferred (discovered via `ToolSearch`, activated with TTL=8 turns). New tools: add a `RegisterXxxHandlers(r *Registry)` function.
-- **Prompt assembly** (`internal/runtime/prompt/builder.go`) — static sections (cacheable) above a dynamic boundary (environment, git, instructions, memories).
-- **Config** (`internal/runtime/config/config.go`) — merges up to four files in order, later wins: `~/.config/ycode/settings.json` (user defaults across every project) → `~/.agents/ycode/projects/<id>/settings.json` (per-OS-user per-logical-project; shared across checkouts of the same repo) → `<cwd>/.agents/ycode/settings.json` (team-shared, committed via git) → `<cwd>/.agents/ycode/settings.local.json` (gitignored, per-checkout overrides). `Instructions` and `AllowedDirectories` append; all other fields override. Edit the user tier with `ycode model use <name>` or `ycode config set/get/show`. The per-project tier is keyed by `internal/runtime/projectid.Resolve` (explicit `project.id` > git remote > cwd-hash); see `config.BootstrapLoader`.
-- **Permission modes** — ReadOnly (read/search only) → WorkspaceWrite (file modifications within VFS boundaries) → DangerFullAccess (shell, process control, MCP). Each tool declares its required mode in `ToolSpec.RequiredMode`. The `Registry`'s `PermissionPrompter` is interface-shaped — direct mode installs a TUI prompter; `ycode serve` installs a remote prompter (`internal/service/permission.go`) that publishes `permission.request` over the bus and blocks on the connected client's response. Do not install an in-process prompter on the server-side `App` — it must be the remote one so web/IDE clients see the request.
-- **Client/server topology** (`cmd/ycode/autoserve.go`) — auto-spawns a server when no client URL is given; the TUI then connects via `WSClient`. Slash commands in this mode are not dispatched locally — the TUI sends the raw `/<name> <args>` text via `SendMessage`, the server's `LocalService.SendMessage` detects the leading `/` and routes to `executeCommandFromMessage`, which streams progress back as `EventCommandProgress`/`EventCommandDelta`/`EventCommandComplete` bus events. Direct mode (`m.cl == nil`) dispatches via the local `commands.Registry`.
-
-### Tools & capabilities
-- **AST search** (`internal/runtime/treesitter/`) — pure Go tree-sitter (gotreesitter) for Go, Python, JS/TS, Rust, Java, C, Ruby. Structural code search, symbol extraction, impact analysis. No CGO required. Container fallback via `internal/runtime/astgrep/` for rewrite operations only.
-- **MCP** (`internal/runtime/mcp/`) — full MCP client (stdio + SSE transports) for connecting to external tool servers, and MCP server mode (`ycode mcp serve`) to expose ycode tools. Config: `~/.config/ycode/mcp.json` or `.agents/ycode/mcp.json`.
-- **GitHub** (`internal/runtime/github/`) — PR create/list/review/comment, issue list/get/comment, CI check status. Auth: `GITHUB_TOKEN` → `GH_TOKEN` → `~/.config/gh/hosts.yml` (no external `gh` binary). Tools registered as deferred (via ToolSearch).
-- **Git & shell** — `internal/runtime/toolexec/` exposes 31 native go-git NativeFuncs (3-tier: native → host exec → container). `internal/runtime/bash/` runs an in-process mvdan/sh interpreter with security ExecHandler middleware (Setpgid, pre-exec validation).
-- **Container tools** (`internal/container/`) — browser automation and sandbox tools that require podman.
-- **Repo map** (`internal/runtime/repomap/`) — generates token-budgeted file→symbol overview for LLM context. PageRank scoring with Aider-inspired heuristics. Injected into system prompt.
-
-### Embedded services
-Started by `ycode serve`: Gitea git server (`internal/gitserver/`), Ollama inference runner (`internal/inference/`), SearXNG search (`internal/runtime/searxng/`).
-
-### Memory & state
-Five layers — working (context window) → episodic (JSONL sessions) → compaction (LLM summaries) → procedural (AGENTS.md discovery) → persistent (markdown files with YAML frontmatter). 7 types × 4 scopes. Retrieval uses RRF fusion across 4 backends (vector, Bleve, keyword, entity) + MMR diversity re-ranking. Dynamic value scoring with reward backpropagation. Entity extraction and linking. Structured user profile. Turn-time memory injection. Temporal validity windows. Background dreaming with similarity-based consolidation. Managed in `pkg/memex/memory/`, persisted via `pkg/memex/store/` (SQLite, Bleve FTS, vector). Relations between memories and a mirror of the gfy code-knowledge graph live in `pkg/memex/graph/` (bonsai-backed, DQL queryable; Explorer UI mounted at `/graph/` in `ycode serve`; agent tool `query_graph_dql`).
-
-## Skills
-
-When the user's message starts with `/<name>`, read `skills/<name>/skill.md` and follow it. Everything after `/<name> ` is `ARGS`. See `skills/` for the project-skill catalog; `/init` and `/commit` are embedded in the binary.
-
-## Self-Bootstrap (Foreman role)
-
-**You are the Foreman.** Any agent reading this file with source-tree access is acting as the Foreman for this session. The Foreman holds full privileges (source tree, the per-project backlog at `~/.agents/ycode/projects/<id>/backlog/`, `ycode backlog`/`ycode foreman` CLIs, full Gitea admin token, all MCP tools). **Workers** are sandboxed subprocesses spawned via `/foreman` — they receive only one Gitea issue and one Loom workspace and do not read this file. The **Boss** (human user) talks to the Foreman either in chat or via `ycode foreman <verb>`. See `docs/backlog.md` for the full chain-of-command and privilege boundaries.
-
-**Planning behavior.** When helping the user plan or brainstorm, write backlog entries with `ycode backlog new "<title>" --priority p1|p2|p3` (or directly as `~/.agents/ycode/projects/<id>/backlog/<slug>.md` with frontmatter `title`, `priority`, `state: open`, optional `acceptance: [...]`). The `<id>` is the logical project id (`internal/runtime/projectid`: explicit > git remote > cwd-hash), so two checkouts of the same repo share one backlog. The reconciler (running inside `ycode serve`) syncs entries to Gitea every 60s. **The markdown files are the source of truth — Gitea is a derived coordination cache that can be wiped and rebuilt from them.**
-
-**Working behavior.** If you start a session with no specific user task, run `/foreman` (or for non-ycode agents that don't have the skill loaded: `ycode backlog list --priority p1` then dispatch a Worker via `ycode autopilot worker --issue N --loom-id ID` after `mcp__ycode-loom__loom_lease`). The reconciler / queue / orchestrator primitives live in `internal/gitserver/{backlog,queue,collab}/`; the loop body lives at `~/.config/ycode/skills/ycode-foreman/skill.md` (user-global, written by `ycode init`; the binary also embeds the canonical copy). Drop `.agents/ycode/skills/ycode-foreman/skill.md` in any repo to override per-project. Foreign agents discover this protocol via the `## Foreign agents (lighthouse pattern)` section below.
-
-## Development Cycle: Build → Deploy → Validate
+## CI Parity
 
 ```bash
-make build                              # full quality gate (must pass before deploy)
-bin/ycode serve                         # start local server (Gitea, Ollama, SearXNG on :58080)
-make deploy                             # deploy to localhost:58080 (or remote with HOST=)
-make validate                           # integration/acceptance/perf tests against running instance
-
-make deploy HOST=staging PORT=58080     # remote deploy (passwordless SSH required)
-make validate HOST=staging PORT=58080   # validate remote
+make ci         # full GitHub Actions matrix in Docker (~5-10 min cold, ~2 min cached)
+make ci-fast    # verify-features + unit tests only
 ```
 
-Each step depends on the previous one succeeding. On failure: diagnose, fix source, re-run from `make build`.
-
-## Conventions
-
-**Layered build system** — strict three-layer separation. Do not put logic in the Makefile (dependency graph only). Do not put logic in scripts/ (orchestration only). All logic must be in Go.
-
-**No test logic in bash.** Scripts may invoke `go test` but must not contain assertions, HTTP calls for validation, or result parsing.
-
-**Dependencies** — never add a dependency with a non-permissive license (GPL, AGPL, SSPL, CPAL). Only MIT, Apache-2.0, BSD, ISC, and MPL-2.0 are allowed.
-
-**Feature tiers** — new features land behind the `experimental` build tag and graduate to `stable` only after meeting the criteria in [`docs/strategy.md`](./docs/strategy.md). Check the strategy doc before proposing scope/architecture changes; the wedge ("local-first, single-binary, runs offline") is load-bearing.
-
-**No global state** — never use package-level `var` for mutable state or registries. All state belongs on `RuntimeContext` or function parameters.
-
-**Logging discipline** — do not add `log.Printf` or `fmt.Println` for debugging. Always use the structured logger from `RuntimeContext`. Never leave debug output on stderr — noisy shutdown logs have been a repeated source of fixes.
-
-**Test isolation** — always use `t.TempDir()` for test files, never write to the working directory. Always use `testing.Short()` to skip slow tests. Do not add `//go:build integration` tags to unit tests.
-
-**Commit conventions**: stage files by name (never `git add -A` or `git add .`). Only stage your own changes — do not stage pre-existing modifications. Match the repo's prefix style from `git log` (`fix:`, `feat:`, `docs:`).
-
-**Pre-commit checks** — ALWAYS run `make build` before committing. It runs tidy, fmt, vet, compile, and test in the correct order with `priorart/` excluded. If you need to run steps manually:
-```bash
-PACKAGES=$(go list ./... | grep -v '/priorart/')
-go fmt $PACKAGES          # fix formatting
-go vet $PACKAGES          # catch issues
-go mod tidy               # sync dependencies
-make compile              # ensure it builds
-```
-Never use bare `./...` — it hits read-only `priorart/` packages. All steps must pass with no errors.
-
-**Pre-push CI parity** — `make ci` runs the exact same commands GitHub Actions does, in the same `ycode-builder` Docker image, with the same CGO system deps. Run it before push when you've touched anything CGO-adjacent (podman/storage, sqlite, gpgme), workflow files, or `go.work`. Slow (~5–10 min cold; ~2 min after the image cache warms). For pre-push automation, `make install-hooks` symlinks `scripts/git-hooks/pre-push` so every push runs `make ci` first; bypass with `git push --no-verify` or `YCODE_SKIP_CI_HOOK=1 git push`.
-
-## Directory Boundaries
-
-- **`priorart/`** — **read-only.** Never modify, create, or delete anything under `priorart/`. Use `$(go list ./... | grep -v '/priorart/')` instead of `./...` for manual Go commands.
-- **`external/`** — vendored submodules for the ycode build. Do not modify directly; vendor new code with attribution.
-- **`peers/`** — peer Go modules wired into `go.work` (e.g. `peers/bonsai`, the embedded graph database backing `pkg/memex/graph/`). Modules here are owned by this project and editable, but they are independent `go.mod`s — run `go mod tidy` inside the peer directory, not at the repo root.
-
-## Foreign agents (lighthouse pattern)
-
-ycode exposes its capabilities to *any* coding agent (Claude Code, Codex, Cursor, Continue, an older ycode build) via MCP, so agents in this tree can use ycode's AST search, sandbox, local Ollama, isolated Gitea workspaces, etc. without plugins or shell exec.
-
-- `.mcp.json` at the repo root — committed lighthouse beam: any Claude Code session opened in this tree auto-registers `ycode mcp serve`. No manual MCP config needed.
-- `~/.agents/ycode/manifest.json` — written by `ycode serve` listing every live endpoint (MCP routes, OTLP, NATS, Gitea, graph, ...). User-home global, so foreign agents in any codebase find it.
-- `bin/ycode mcp serve` — stdio MCP server. Phase 0 ships infra only (empty `tools/list`); capability families plug into `mcp.NewCompositeHandler` per the recipe in [docs/lighthouse.md](./docs/lighthouse.md).
-
-Adding a capability is one new `mcpserver.go` per family. See [docs/lighthouse.md](./docs/lighthouse.md) for the template and the federation discipline (ycode is the hub of *your* matrix, never the central hub).
-
-## Evaluation
-
-```bash
-make eval-agentsmd                     # validate AGENTS.md quality (static, no LLM)
-make eval-contract                     # contract-tier evals (no LLM, deterministic)
-make eval-smoke                        # smoke-tier evals (real LLM, requires provider)
-make eval-behavioral                   # behavioral evals (trajectory analysis)
-make eval-e2e                          # E2E evals (full coding tasks)
-make eval-all-evals                    # all tiers combined
-```
+Run `make ci` before push when touching CGO-adjacent code (podman/storage, sqlite, gpgme), workflow files, or `go.work`.
 
 ## References
 
-Read on demand:
-- [docs/instructions.md](./docs/instructions.md) — conventions, skill system, build/test/commit rules
-- [docs/usage.md](./docs/usage.md) — CLI modes, config, tools, workflows
-- [docs/architecture.md](./docs/architecture.md) — full architecture, design decisions, component details
-- [docs/memory.md](./docs/memory.md) — five-layer memory system, search backends, temporal decay
-- [docs/swarm.md](./docs/swarm.md) — agent orchestration, YAML definitions, handoff flows
-- [docs/persistence.md](./docs/persistence.md) — storage technology analysis and design decisions
-- [docs/autonomous-loop.md](./docs/autonomous-loop.md) — RESEARCH→PLAN→BUILD→EVALUATE→LEARN loop implementation
-- [docs/lighthouse.md](./docs/lighthouse.md) — exposing ycode capabilities to foreign coding agents via MCP; matrix + federation
-- [docs/lighthouse-roadmap.md](./docs/lighthouse-roadmap.md) — what shipped (Phase 0), what's queued (Phase 1+), strategic anchors; pointer to canonical plan file
-- [docs/agent-os-reference.md](./docs/agent-os-reference.md) — SOTA Agent OS reference (AIOS + 2026 stack + lighthouse) and ycode's coverage map + prioritized gaps
-- [docs/agent-os.md](./docs/agent-os.md) — `ycode wrap` involuntary-interception axis (PATH shim + runtime hooks) of the Agent OS framing
+- `docs/instructions.md` — conventions, skill system, build/test rules
+- `docs/architecture.md` — full architecture, design decisions
+- `docs/memory.md` — five-layer memory system
+- `docs/swarm.md` — agent orchestration
+- `docs/lighthouse.md` — MCP federation for foreign agents
 
 <!-- BEGIN YCODE -->
 ## ycode
 
-This repo expects [ycode](https://github.com/qiangli/ycode) running locally as
-agentic infrastructure. When acting as an agentic coding tool, see
-[`.agents/ycode/AGENTS.md`](.agents/ycode/AGENTS.md) for capability descriptions and when to
-prefer them. Run `ycode init --refresh` to update this section.
+This repo expects [ycode](https://github.com/qiangli/ycode) running locally.
+See [`.agents/ycode/AGENTS.md`](.agents/ycode/AGENTS.md) for capability descriptions.
+Run `ycode init --refresh` to update this section.
 
 ### Self-Bootstrap (Foreman role)
 
-You are the **Foreman** for this session. The Boss → Foreman → Worker
-protocol is universal across every ycode-aware repo. Backlog state
-lives per OS user, per logical project at
-`~/.agents/ycode/projects/<id>/backlog/` — two checkouts of the same
-repo share one queue. Use `ycode backlog new`/`list`/`show` to manage
-it. When starting cold with no specific user task, invoke `/foreman`.
-The skill body is at `~/.config/ycode/skills/ycode-foreman/skill.md`
-(user-global, written by `ycode init`; embedded in the binary as
-fallback). Boss control:
-`ycode foreman pause/resume/stop/skip/prio/tell/status`.
-Full protocol: [`docs/backlog.md`](docs/backlog.md). Available skills are
-listed in [`.agents/ycode/AGENTS.md`](.agents/ycode/AGENTS.md#skills-available-via-ycode).
+You are the **Foreman**. The Boss → Foreman → Worker protocol is universal.
+Backlog state lives at `~/.agents/ycode/projects/<id>/backlog/` — shared across checkouts of the same repo.
+When starting cold with no specific task, invoke `/foreman`.
+Full protocol: [`docs/backlog.md`](docs/backlog.md).
 <!-- END YCODE -->
