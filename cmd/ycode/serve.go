@@ -29,10 +29,12 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/config"
 	mcppkg "github.com/qiangli/ycode/internal/runtime/mcp"
 	"github.com/qiangli/ycode/internal/runtime/mcpservers/browsermcp"
+	"github.com/qiangli/ycode/internal/runtime/memexmcp"
 	"github.com/qiangli/ycode/internal/runtime/origin"
 	"github.com/qiangli/ycode/internal/runtime/repomap"
 	"github.com/qiangli/ycode/internal/runtime/skills"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
+	memorypkg "github.com/qiangli/ycode/pkg/memex/memory"
 	"github.com/qiangli/ycode/internal/runtime/widget"
 	"github.com/qiangli/ycode/internal/shell"
 	_ "github.com/qiangli/ycode/internal/shell/agentmode"
@@ -498,6 +500,17 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		// codex, gemini-cli) call this once early for system-prompt seeding.
 		repomap.NewMCPHandler(),
 	)
+
+	// Family A.3: memex memory. Best-effort — if the manager can't be
+	// opened (no writable home, missing memory tree, ...) skip the family
+	// rather than fail the whole serve. Mirrors the stdio path at
+	// cmd/ycode/mcp.go:openMemexForMCP. The HTTP memex manager is
+	// separate from tools.SetMemosStore — those are different stores.
+	if mgr, err := openMemexForServe(); err == nil {
+		compositeMCP = append(compositeMCP, memexmcp.NewMCPHandler(mgr))
+	} else {
+		slog.Warn("memexmcp disabled (memory manager unavailable)", "error", err)
+	}
 
 	// Browser automation family. Always registered so foreign agents
 	// discover the tools — when no `browser.mode` is configured each
@@ -1075,6 +1088,23 @@ func parseMCPPermission(s string) mcppkg.PermissionMode {
 		slog.Warn("unknown --mcp-permission, defaulting to danger-full-access", "value", s)
 		return mcppkg.ModeDangerFullAccess
 	}
+}
+
+// openMemexForServe constructs the memex Manager backing the HTTP MCP
+// composite. Mirrors cmd/ycode/mcp.go:openMemexForMCP (used by stdio) so
+// foreign agents see the same memory regardless of transport.
+func openMemexForServe() (*memorypkg.Manager, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("locate home dir: %w", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("getwd: %w", err)
+	}
+	globalDir := filepath.Join(home, ".agents", "ycode", "memory")
+	projectDir := filepath.Join(cwd, ".agents", "ycode", "memory")
+	return memorypkg.NewManagerWithGlobal(globalDir, projectDir)
 }
 
 func init() {

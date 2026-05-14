@@ -97,6 +97,27 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 			Description: "Read the MEMORY.md index file — the canonical entry-point for orientation. Returns the markdown verbatim.",
 			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
 		},
+		{
+			Name: "search_memex",
+			Description: "Search memex with optional backend selection. Wraps memex_recall and post-filters " +
+				"results by the Source field — useful when the agent wants only Bleve full-text hits, only " +
+				"vector matches, or only keyword/entity matches. Accepts the same query and max_results " +
+				"as memex_recall plus a sources[] filter. Returns the same JSON shape as memex_recall.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"query":       {"type": "string", "description": "Free-text query."},
+					"max_results": {"type": "integer", "description": "Cap on returned records. Default 10, max 50."},
+					"sources":     {"type": "array", "items": {"type": "string"}, "description": "Optional. Only return records whose Source matches one of these. Common values: vector, bleve, keyword."}
+				},
+				"required": ["query"]
+			}`),
+		},
+		{
+			Name:        "list_memory_types",
+			Description: "Return the seven canonical memory types ycode supports: user, feedback, project, reference, episodic, procedural, task. Useful for foreign agents that need to validate the `type` argument before calling memex_save.",
+			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+		},
 	}
 }
 
@@ -127,6 +148,10 @@ func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json
 		return h.handleForget(input)
 	case "memex_index":
 		return h.handleIndex()
+	case "search_memex":
+		return h.handleSearch(ctx, input)
+	case "list_memory_types":
+		return h.handleListTypes()
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
@@ -218,6 +243,19 @@ func (h *MCPHandler) handleSave(_ context.Context, input json.RawMessage) (strin
 		return "", fmt.Errorf("name, type, description, and content are required")
 	}
 
+	// Safety: foreign agents calling over MCP can only write to project
+	// scope. Global/user/team are user-driven operations and should be
+	// performed through the ycode TUI/CLI by the operator directly. The
+	// empty-scope default resolves to ScopeProject via EffectiveScope.
+	switch memory.Scope(args.Scope) {
+	case "", memory.ScopeProject:
+		// allowed
+	case memory.ScopeGlobal, memory.ScopeUser, memory.ScopeTeam:
+		return "", fmt.Errorf("scope %q is not allowed over MCP — use ycode CLI/TUI for non-project writes", args.Scope)
+	default:
+		return "", fmt.Errorf("unknown scope %q (allowed: project)", args.Scope)
+	}
+
 	importance := args.Importance
 	if importance == 0 {
 		importance = 0.5
@@ -239,6 +277,85 @@ func (h *MCPHandler) handleSave(_ context.Context, input json.RawMessage) (strin
 		return "", fmt.Errorf("save: %w", err)
 	}
 	return fmt.Sprintf(`{"ok":true,"name":%q,"scope":%q}`, mem.Name, mem.EffectiveScope()), nil
+}
+
+func (h *MCPHandler) handleSearch(_ context.Context, input json.RawMessage) (string, error) {
+	var args struct {
+		Query      string   `json:"query"`
+		MaxResults int      `json:"max_results"`
+		Sources    []string `json:"sources"`
+	}
+	if err := json.Unmarshal(input, &args); err != nil {
+		return "", fmt.Errorf("parse input: %w", err)
+	}
+	if strings.TrimSpace(args.Query) == "" {
+		return "", fmt.Errorf("query is required")
+	}
+	if args.MaxResults <= 0 {
+		args.MaxResults = defaultRecallResults
+	}
+	if args.MaxResults > maxRecallResults {
+		args.MaxResults = maxRecallResults
+	}
+
+	results, err := h.mgr.Recall(args.Query, args.MaxResults)
+	if err != nil {
+		return "", fmt.Errorf("recall: %w", err)
+	}
+
+	allow := make(map[string]bool, len(args.Sources))
+	for _, s := range args.Sources {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if s != "" {
+			allow[s] = true
+		}
+	}
+
+	views := make([]recallView, 0, len(results))
+	for _, r := range results {
+		if r.Memory == nil {
+			continue
+		}
+		if len(allow) > 0 && !allow[strings.ToLower(r.Source)] {
+			continue
+		}
+		views = append(views, recallView{
+			Name:        r.Memory.Name,
+			Description: r.Memory.Description,
+			Type:        string(r.Memory.Type),
+			Scope:       string(r.Memory.EffectiveScope()),
+			Importance:  r.Memory.Importance,
+			Score:       r.Score,
+			Source:      r.Source,
+			Content:     r.Memory.Content,
+		})
+	}
+	out, err := json.Marshal(views)
+	if err != nil {
+		return "", fmt.Errorf("marshal results: %w", err)
+	}
+	return string(out), nil
+}
+
+func (h *MCPHandler) handleListTypes() (string, error) {
+	types := []memory.Type{
+		memory.TypeUser,
+		memory.TypeFeedback,
+		memory.TypeProject,
+		memory.TypeReference,
+		memory.TypeEpisodic,
+		memory.TypeProcedural,
+		memory.TypeTask,
+	}
+	strs := make([]string, len(types))
+	for i, t := range types {
+		strs[i] = string(t)
+	}
+	out, err := json.Marshal(strs)
+	if err != nil {
+		return "", fmt.Errorf("marshal: %w", err)
+	}
+	return string(out), nil
 }
 
 func (h *MCPHandler) handleList() (string, error) {
