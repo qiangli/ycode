@@ -84,6 +84,10 @@ Queries impossible with regex become trivial with AST patterns.
 
 - Connect chromem-go vector store for natural language queries. Opt-in (requires embedding model via Ollama).
 
+### Phase 5+: Unified Filesystem + Codebase + Memory Graph (Design)
+
+See [`docs/unified-graph.md`](./unified-graph.md). Extends the bonsai graph (which already hosts `memory.*` and `code.*` schemas) with first-class `Directory` / `File` / `Region` nodes, cross-layer `memory.mentions_*` edges, and graph-resident tool calls (`fs_walk`, `region_read`, `node_for_query`, ...). Retrieval becomes RRF over BM25 × HNSW × Personalized PageRank — the GraphRAG pattern adapted to ycode's stack. Streaming updates use Dynamic Frontier; community detection upgrades from Louvain to Leiden. Phase 0 spikes pending; no production code yet.
+
 ## Validation
 
 Contract-tier tests (deterministic, no LLM) validate that the search infrastructure produces correct, complete results. Run against ycode's own codebase and synthetic projects.
