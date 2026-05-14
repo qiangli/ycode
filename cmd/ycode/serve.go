@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -124,7 +126,7 @@ var serveStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show status of the server and components",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fullCfg, cfg, dataDir, err := loadFullServeConfig()
+		_, cfg, _, err := loadFullServeConfig()
 		if err != nil {
 			return err
 		}
@@ -136,33 +138,38 @@ var serveStatusCmd = &cobra.Command{
 			port = 58080
 		}
 
-		// Short-circuit when nothing is listening. The local component
-		// table (built from a fresh stack manager that was never Start'd)
-		// would otherwise print "unknown" for every row, which is
-		// misleading. Probing /.well-known/ycode-manifest.json is the
-		// same cheap signal used by the runAllServices idempotency guard.
 		if !alreadyRunning(port) {
 			fmt.Printf("ycode serve not running on http://127.0.0.1:%d/\n", port)
 			return nil
 		}
 
-		// buildStackManager dereferences fields on each sub-config (e.g.
-		// containerCfg.SocketPath), so passing nil panics. Use the full
-		// config so default-valued structs are present instead.
-		stack, err := buildStackManager(cfg, dataDir, fullCfg.Inference, fullCfg.Container, fullCfg.GitServer)
-		if err != nil {
-			return err
+		home, _ := os.UserHomeDir()
+		fmt.Printf("ycode serve running at http://127.0.0.1:%d/\n", port)
+		if pid := readServePID(home); pid > 0 {
+			fmt.Printf("PID: %d\n", pid)
 		}
-		fmt.Printf("Observability Server — http://127.0.0.1:%d/\n", port)
 
+		// Read endpoints from the manifest the running server wrote.
+		// Avoids re-constructing a stack manager here — which would
+		// re-bind OTLP ports already held by the live process and fail
+		// with "port 4317 already in use".
+		endpoints, err := readManifestEndpoints(home)
+		if err != nil {
+			fmt.Printf("(manifest unavailable: %v)\n", err)
+			return nil
+		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "COMPONENT\tHEALTH")
-		for _, s := range stack.mgr.Status() {
-			health := "unknown"
-			if s.Healthy {
-				health = "healthy"
+		fmt.Fprintln(w, "\nENDPOINT\tURL")
+		names := make([]string, 0, len(endpoints))
+		for k := range endpoints {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			if endpoints[name] == "" {
+				continue
 			}
-			fmt.Fprintf(w, "%s\t%s\n", s.Name, health)
+			fmt.Fprintf(w, "%s\t%s\n", name, endpoints[name])
 		}
 		w.Flush()
 		return nil
@@ -644,6 +651,25 @@ func alreadyRunning(port int) bool {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
+}
+
+// readManifestEndpoints loads endpoints from ~/.agents/ycode/manifest.json,
+// the lighthouse file written by the running server. Used by `serve status`
+// to enumerate live URLs without spinning up a local stack manager (which
+// would re-bind ports the running server already holds).
+func readManifestEndpoints(home string) (map[string]string, error) {
+	path := filepath.Join(home, ".agents", "ycode", "manifest.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var m struct {
+		Endpoints map[string]string `json:"endpoints"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	return m.Endpoints, nil
 }
 
 // readServePID is best-effort decoration for the "already running" log
