@@ -1,5 +1,3 @@
-//go:build experimental
-
 // DOM compression — when the action returns a large extracted page,
 // strip the parts that have no agent value and dedupe sibling
 // boilerplate. Modeled after openchrome's (MIT) 15× DOM compression

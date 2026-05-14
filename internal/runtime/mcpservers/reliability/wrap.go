@@ -1,5 +1,3 @@
-//go:build experimental
-
 // Package reliability ports the openchrome (MIT) reliability
 // primitives to Go and applies them uniformly to every browser mode
 // (live, probe, solo) via Wrap. The primitives are intentionally

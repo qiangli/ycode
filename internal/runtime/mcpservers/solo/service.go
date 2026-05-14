@@ -1,5 +1,3 @@
-//go:build experimental
-
 // Package solo is ycode's "solo" browser mode — chromedp launches a
 // fresh isolated Chrome. Tries the host Chrome first; falls back to
 // a podman-managed Chromium image so the mode works in environments

@@ -1,5 +1,3 @@
-//go:build experimental
-
 // Package probe is ycode's "probe" browser mode — pure-Go CDP attach
 // to a Chrome started with --remote-debugging-port. Drives real
 // DevTools data (perf traces, network waterfalls, source-mapped
@@ -33,6 +31,11 @@ type Service struct {
 	allocStop context.CancelFunc
 	ctx       context.Context
 	ctxStop   context.CancelFunc
+
+	// dev owns DevTools-flavored long-lived state (network + console
+	// ring buffers, trace recording state). Populated by
+	// installListeners on EnsureReady.
+	dev devtools
 }
 
 // New returns a probe-mode service. url defaults to
@@ -88,6 +91,14 @@ func (s *Service) EnsureReady(ctx context.Context) error {
 
 	s.allocCtx, s.allocStop = allocCtx, allocStop
 	s.ctx, s.ctxStop = cdpCtx, cdpStop
+
+	// Hook the long-lived event listener for the DevTools-flavored
+	// actions (network_list, console_get, perf_*). Failure here is
+	// non-fatal — the basic actions (navigate/click/type) work
+	// without it; only the DevTools surface degrades.
+	if err := s.dev.installListeners(cdpCtx); err != nil {
+		slog.Warn("probe: install DevTools listeners failed", "error", err)
+	}
 	slog.Info("probe: attached", "url", s.url)
 	return nil
 }
@@ -141,6 +152,16 @@ func (s *Service) Execute(ctx context.Context, action mcpservers.BrowserAction) 
 		return s.doTabs(callCtx, action)
 	case mcpservers.ActionEvaluate:
 		return s.doEvaluate(callCtx, action.Script)
+	case mcpservers.ActionPerfStart:
+		return s.doPerfStart(callCtx)
+	case mcpservers.ActionPerfStop:
+		return s.doPerfStop(callCtx)
+	case mcpservers.ActionNetworkList:
+		return s.doNetworkList()
+	case mcpservers.ActionConsoleGet:
+		return s.doConsoleGet()
+	case mcpservers.ActionLighthouse:
+		return s.doLighthouse(callCtx)
 	}
 	return &mcpservers.BrowserResult{
 		Error: fmt.Sprintf("probe: action %q not supported", action.Type),

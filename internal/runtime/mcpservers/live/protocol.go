@@ -1,5 +1,3 @@
-//go:build experimental
-
 package live
 
 import "encoding/json"

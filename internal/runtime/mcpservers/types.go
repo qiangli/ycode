@@ -1,5 +1,3 @@
-//go:build experimental
-
 // Package mcpservers provides ycode's pure-Go browser automation
 // stack. Three modes share one BrowserAction surface:
 //

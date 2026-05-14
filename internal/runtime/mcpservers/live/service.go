@@ -1,5 +1,3 @@
-//go:build experimental
-
 // Package live is ycode's "live" browser mode — a ycode-owned MV3
 // Chrome extension paired with a Go WebSocket server, used to drive
 // the user's real, logged-in Chrome (cookies, SSO, fingerprint).

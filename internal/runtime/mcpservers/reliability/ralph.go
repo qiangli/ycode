@@ -1,5 +1,3 @@
-//go:build experimental
-
 // Ralph fallback — when a click action fails, try alternative
 // strategies before giving up. Modeled after openchrome's Ralph
 // Engine (MIT) at a smaller scale: we ship 4 of openchrome's 7

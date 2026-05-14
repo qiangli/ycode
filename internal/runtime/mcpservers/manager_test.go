@@ -1,5 +1,3 @@
-//go:build experimental
-
 package mcpservers
 
 import (
@@ -21,7 +19,7 @@ type fakeService struct {
 	stopCalls  int
 }
 
-func (f *fakeService) Name() string                      { return f.name }
+func (f *fakeService) Name() string                       { return f.name }
 func (f *fakeService) Available(ctx context.Context) bool { return f.available }
 func (f *fakeService) EnsureReady(ctx context.Context) error {
 	f.readyCalls++

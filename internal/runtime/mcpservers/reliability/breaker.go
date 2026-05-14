@@ -1,5 +1,3 @@
-//go:build experimental
-
 // Circuit breaker — 3-level failure tracking that aborts further
 // attempts when a pattern of failures emerges. Modeled after
 // openchrome's (MIT) breaker:

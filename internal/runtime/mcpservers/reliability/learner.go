@@ -1,5 +1,3 @@
-//go:build experimental
-
 // Pattern Learner — observes (failure → recovery) tuples across
 // sessions, persists them, and surfaces them as additional Hint
 // Engine rules once a pattern crosses a confidence threshold.

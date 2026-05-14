@@ -50,6 +50,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260422141420-a6cbdff8a7e2
+	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc
 	github.com/chromedp/chromedp v0.15.1
 	github.com/creack/pty/v2 v2.0.1
 	github.com/dgraph-io/dgo/v250 v250.0.0
@@ -237,7 +238,6 @@ require (
 	github.com/checkpoint-restore/go-criu/v7 v7.2.0 // indirect
 	github.com/chewxy/math32 v1.11.1 // indirect
 	github.com/chi-middleware/proxy v1.1.1 // indirect
-	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/chzyer/readline v1.5.1 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect

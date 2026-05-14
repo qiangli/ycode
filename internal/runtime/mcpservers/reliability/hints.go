@@ -1,5 +1,3 @@
-//go:build experimental
-
 // Hint Engine — rule-based detection of common browser-automation
 // failure modes (bot walls, repetition loops, blocking pages,
 // CAPTCHAs). Each rule looks at the BrowserResult and may append a

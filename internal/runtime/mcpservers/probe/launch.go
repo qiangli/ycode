@@ -1,5 +1,3 @@
-//go:build experimental
-
 package probe
 
 import (

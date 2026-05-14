@@ -1,5 +1,3 @@
-//go:build experimental
-
 package tools
 
 import (
@@ -12,8 +10,8 @@ import (
 
 // NewInprocClient returns a browser.Client that dispatches every
 // wire.Action through the given in-process mcpservers.Manager. The
-// experimental backends (live / probe / solo) plus the reliability
-// layer all live behind this seam.
+// live / probe / solo backends plus the reliability layer all live
+// behind this seam.
 //
 // Wire it into the runtime by decorating rootCtx:
 //

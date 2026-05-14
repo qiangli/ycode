@@ -1,5 +1,3 @@
-//go:build experimental
-
 package reliability
 
 import (
@@ -19,10 +17,10 @@ type fakeService struct {
 	execute func(action mcpservers.BrowserAction) (*mcpservers.BrowserResult, error)
 }
 
-func (f *fakeService) Name() string                          { return f.name }
-func (f *fakeService) Available(_ context.Context) bool      { return true }
-func (f *fakeService) EnsureReady(_ context.Context) error   { return nil }
-func (f *fakeService) Stop(_ context.Context) error          { return nil }
+func (f *fakeService) Name() string                        { return f.name }
+func (f *fakeService) Available(_ context.Context) bool    { return true }
+func (f *fakeService) EnsureReady(_ context.Context) error { return nil }
+func (f *fakeService) Stop(_ context.Context) error        { return nil }
 func (f *fakeService) Execute(_ context.Context, a mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
 	return f.execute(a)
 }
