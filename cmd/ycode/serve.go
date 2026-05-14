@@ -30,6 +30,7 @@ import (
 	mcppkg "github.com/qiangli/ycode/internal/runtime/mcp"
 	"github.com/qiangli/ycode/internal/runtime/mcpservers/browsermcp"
 	"github.com/qiangli/ycode/internal/runtime/origin"
+	"github.com/qiangli/ycode/internal/runtime/repomap"
 	"github.com/qiangli/ycode/internal/runtime/skills"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
 	"github.com/qiangli/ycode/internal/runtime/widget"
@@ -491,6 +492,11 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		treesitter.NewMCPHandler(),
 		skills.NewMCPHandler(),
 		shell.NewMCPHandler(shellRT),
+		// Family A.2: repomap. Token-budgeted file→symbol overview plus
+		// per-file parse (repomap_for_files). Stateless — each call walks
+		// the tree and re-parses. Foreign agents (opencode, claude-code,
+		// codex, gemini-cli) call this once early for system-prompt seeding.
+		repomap.NewMCPHandler(),
 	)
 
 	// Browser automation family. Always registered so foreign agents

@@ -82,6 +82,94 @@ func DefaultOptions() *Options {
 	}
 }
 
+// GenerateForFiles builds a repo map from an explicit file list, skipping
+// the directory walk. Useful when the caller already knows which files to
+// inspect (foreign agents passing the conversation's open files, or tooling
+// that wants a per-PR-changed-files map).
+//
+// Each path may be absolute or relative to root. Unknown languages are
+// silently dropped. Returns an empty RepoMap (not nil) when no input file
+// produced any symbols.
+func GenerateForFiles(root string, files []string, opts *Options) (*RepoMap, error) {
+	if opts == nil {
+		opts = DefaultOptions()
+	}
+	rm := &RepoMap{Root: root}
+
+	var goFiles []string
+	var tsFiles []fileInfo
+	for _, p := range files {
+		abs := p
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(root, p)
+		}
+		info, err := os.Stat(abs)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if !isSupportedSourceFile(abs) {
+			continue
+		}
+		rel, err := filepath.Rel(root, abs)
+		if err != nil {
+			rel = abs
+		}
+		ext := strings.ToLower(filepath.Ext(abs))
+		if ext == ".go" {
+			goFiles = append(goFiles, abs)
+			continue
+		}
+		lang := langForExt(ext)
+		if lang == "" {
+			continue
+		}
+		tsFiles = append(tsFiles, fileInfo{path: abs, rel: rel, lang: lang})
+	}
+
+	for _, path := range goFiles {
+		rel, _ := filepath.Rel(root, path)
+		symbols := parseGoFile(path, rel)
+		if len(symbols) == 0 {
+			continue
+		}
+		rm.Entries = append(rm.Entries, FileEntry{Path: rel, Symbols: symbols, Score: 1.0})
+	}
+
+	if len(tsFiles) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		tsSymbols, err := parseFilesWithTreeSitter(ctx, tsFiles)
+		if err != nil {
+			slog.Warn("tree-sitter parsing unavailable in GenerateForFiles", "error", err)
+		} else {
+			byFile := make(map[string][]Symbol)
+			for _, sym := range tsSymbols {
+				byFile[sym.File] = append(byFile[sym.File], sym)
+			}
+			for file, symbols := range byFile {
+				rm.Entries = append(rm.Entries, FileEntry{Path: file, Symbols: symbols, Score: 1.0})
+			}
+		}
+	}
+
+	if opts.RelevanceQuery != "" {
+		scoreByRelevanceGraph(rm, opts.RelevanceQuery, opts.ChatContextFiles)
+	}
+	sort.Slice(rm.Entries, func(i, j int) bool {
+		if rm.Entries[i].Score != rm.Entries[j].Score {
+			return rm.Entries[i].Score > rm.Entries[j].Score
+		}
+		return rm.Entries[i].Path < rm.Entries[j].Path
+	})
+	if opts.MaxTokens > 0 {
+		truncateToTokenBudget(rm, opts.MaxTokens)
+	}
+	if opts.MaxFiles > 0 && len(rm.Entries) > opts.MaxFiles {
+		rm.Entries = rm.Entries[:opts.MaxFiles]
+	}
+	return rm, nil
+}
+
 // Generate creates a repo map for the given root directory.
 func Generate(root string, opts *Options) (*RepoMap, error) {
 	if opts == nil {
