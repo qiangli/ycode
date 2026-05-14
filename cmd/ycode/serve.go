@@ -512,6 +512,16 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		slog.Warn("memexmcp disabled (memory manager unavailable)", "error", err)
 	}
 
+	// Family D: Ollama proxy. Thread the managed runner's URL when it's
+	// healthy so foreign agents reach the same instance ycode's own
+	// skills do; otherwise pass empty and let the env-then-default chain
+	// resolve to whatever Ollama install the operator has running.
+	ollamaBase := ""
+	if stack.ollama != nil && stack.ollama.Healthy() {
+		ollamaBase = stack.ollama.BaseURL()
+	}
+	compositeMCP = append(compositeMCP, inference.NewMCPHandler(ollamaBase))
+
 	// Browser automation family. Always registered so foreign agents
 	// discover the tools — when no `browser.mode` is configured each
 	// call returns the friendly "configure browser.mode" message

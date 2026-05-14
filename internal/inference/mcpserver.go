@@ -32,10 +32,9 @@ type MCPHandler struct {
 
 // NewMCPHandler returns a handler that proxies to baseURL. Empty
 // baseURL resolves via the env-then-default chain documented at the
-// top of this file. A 60s per-request timeout is applied — most chat
-// completions on a local CPU fit comfortably; long-running streams
-// should call /api/chat directly via the HTTP endpoint exposed by
-// `ycode serve`.
+// top of this file. Default per-request timeout is 5 minutes — local
+// 7B-class generation routinely exceeds 60s. Override via
+// YCODE_OLLAMA_MCP_TIMEOUT (Go duration string, e.g. "10m").
 func NewMCPHandler(baseURL string) *MCPHandler {
 	if baseURL == "" {
 		if v := os.Getenv("YCODE_OLLAMA_BASE_URL"); v != "" {
@@ -46,9 +45,15 @@ func NewMCPHandler(baseURL string) *MCPHandler {
 			baseURL = "http://localhost:11434"
 		}
 	}
+	timeout := 5 * time.Minute
+	if v := os.Getenv("YCODE_OLLAMA_MCP_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			timeout = d
+		}
+	}
 	return &MCPHandler{
 		baseURL: strings.TrimRight(baseURL, "/"),
-		client:  &http.Client{Timeout: 60 * time.Second},
+		client:  &http.Client{Timeout: timeout},
 	}
 }
 
@@ -89,6 +94,22 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 				"required": ["model", "messages"]
 			}`),
 		},
+		{
+			Name: "ollama_embed",
+			Description: "Generate embeddings for one or more text inputs via the locally-running Ollama " +
+				"instance. `model` is an embedding-capable Ollama model tag (e.g. nomic-embed-text, " +
+				"mxbai-embed-large). `input` is a single string or array of strings. Returns the " +
+				"/api/embed JSON envelope verbatim: {embeddings: [[float, ...], ...]}. Use this when " +
+				"a foreign agent wants local semantic vectors without configuring its own provider.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"model": {"type": "string"},
+					"input": {"description": "Text to embed. String or array of strings."}
+				},
+				"required": ["model", "input"]
+			}`),
+		},
 	}
 }
 
@@ -107,6 +128,8 @@ func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json
 		return h.handleList(ctx)
 	case "ollama_chat":
 		return h.handleChat(ctx, input)
+	case "ollama_embed":
+		return h.handleEmbed(ctx, input)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
@@ -166,6 +189,51 @@ func (h *MCPHandler) handleChat(ctx context.Context, input json.RawMessage) (str
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.baseURL+"/api/chat", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("ollama unreachable at %s: %w", h.baseURL, err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("ollama returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return string(respBody), nil
+}
+
+func (h *MCPHandler) handleEmbed(ctx context.Context, input json.RawMessage) (string, error) {
+	var args struct {
+		Model string          `json:"model"`
+		Input json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(input, &args); err != nil {
+		return "", fmt.Errorf("parse input: %w", err)
+	}
+	if args.Model == "" {
+		return "", fmt.Errorf("model is required")
+	}
+	if len(args.Input) == 0 {
+		return "", fmt.Errorf("input is required")
+	}
+
+	payload := map[string]any{
+		"model": args.Model,
+		"input": json.RawMessage(args.Input),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.baseURL+"/api/embed", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
 	}
