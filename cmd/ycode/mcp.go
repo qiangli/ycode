@@ -16,6 +16,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/codegraph"
 	gh "github.com/qiangli/ycode/internal/runtime/github"
 	"github.com/qiangli/ycode/internal/runtime/mcp"
+	"github.com/qiangli/ycode/internal/runtime/mcpservers/browsermcp"
 	"github.com/qiangli/ycode/internal/runtime/memexmcp"
 	"github.com/qiangli/ycode/internal/runtime/origin"
 	"github.com/qiangli/ycode/internal/runtime/repomap"
@@ -117,6 +118,16 @@ func newMcpServeCmd() *cobra.Command {
 				// ~/.config/gh/hosts.yml. Reads ReadOnly; create_*
 				// tools WorkspaceWrite.
 				gh.NewMCPHandler(),
+
+				// Family F: browser automation. Exposed without a
+				// client so foreign agents discover the 14 browser_*
+				// tools — each call returns the friendly "configure
+				// browser.mode" message until the operator wires a
+				// backend. The HTTP /mcp/ variant in serve.go shares
+				// the same client ycode's runtime uses so attach state
+				// is unified; the stdio variant here is short-lived,
+				// so we don't try to share with a serve process.
+				browsermcp.NewMCPHandler(nil),
 			}
 
 			// Family A.3: memex memory. Best-effort — if the manager

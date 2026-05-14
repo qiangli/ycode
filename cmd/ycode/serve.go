@@ -26,6 +26,7 @@ import (
 	"github.com/qiangli/ycode/internal/observability/dashboards"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	mcppkg "github.com/qiangli/ycode/internal/runtime/mcp"
+	"github.com/qiangli/ycode/internal/runtime/mcpservers/browsermcp"
 	"github.com/qiangli/ycode/internal/runtime/origin"
 	"github.com/qiangli/ycode/internal/runtime/skills"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
@@ -483,6 +484,17 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		treesitter.NewMCPHandler(),
 		skills.NewMCPHandler(),
 		shell.NewMCPHandler(shellRT),
+	)
+
+	// Browser automation family. Always registered so foreign agents
+	// discover the tools — when no `browser.mode` is configured each
+	// call returns the friendly "configure browser.mode" message
+	// rather than a "tool not found" error. When a mode is set, the
+	// same client backs both the in-process LLM tools and the public
+	// MCP boundary, so attach state (probe Chrome, live extension
+	// hub) is shared across both surfaces.
+	compositeMCP = append(compositeMCP,
+		browsermcp.NewMCPHandler(setupBrowserBackend(ctx, fullCfg)),
 	)
 
 	// Canvas / generative-UI tools. Foreign agents (claude-code, opencode,
