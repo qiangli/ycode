@@ -1,6 +1,11 @@
-//go:build experimental
-
 package live
+
+// This file is intentionally NOT behind the `experimental` build tag.
+// The Chrome extension is shipped in every ycode binary (~few KB of
+// static assets) so `ycode browser setup live` and any future stable
+// extractor work without requiring a special build flag. The live
+// runtime hub (server.go, service.go, protocol.go) remains experimental
+// until it graduates per docs/strategy.md.
 
 import (
 	"embed"

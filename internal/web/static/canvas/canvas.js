@@ -28,6 +28,15 @@
   const URL_SESSION = new URLSearchParams(location.search).get('session') || '';
   const FALLBACK_SESSION = 'canvas-default';
 
+  // API requests must target whatever prefix this page is mounted under —
+  // direct (`/canvas/` → `/`) or behind the observability proxy
+  // (`/ycode/canvas/` → `/ycode/`). The substring before `/canvas/` in
+  // location.pathname is that prefix; fall back to `/` if not found.
+  const API_BASE = (function () {
+    const i = location.pathname.lastIndexOf('/canvas/');
+    return i >= 0 ? location.pathname.slice(0, i + 1) : '/';
+  })();
+
   const root = document.getElementById('canvas-root');
   const welcome = document.getElementById('welcome');
   const statusBadge = document.getElementById('status-badge');
@@ -69,7 +78,7 @@
     if (URL_SESSION) return URL_SESSION;
     try {
       const headers = TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {};
-      const resp = await fetch('/api/status', { headers });
+      const resp = await fetch(API_BASE + 'api/status', { headers });
       if (resp.ok) {
         const status = await resp.json();
         if (status && status.session_id) return status.session_id;
@@ -87,7 +96,7 @@
   function connect() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const tokenQS = TOKEN ? '?token=' + encodeURIComponent(TOKEN) : '';
-    const url = proto + '//' + location.host + '/api/sessions/' + encodeURIComponent(sessionID) + '/ws' + tokenQS;
+    const url = proto + '//' + location.host + API_BASE + 'api/sessions/' + encodeURIComponent(sessionID) + '/ws' + tokenQS;
     ws = new WebSocket(url);
 
     ws.onopen = () => { setStatus('connected', 'connected'); backoffMs = 1000; };

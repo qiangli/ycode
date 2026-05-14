@@ -22,7 +22,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL TAG_LIST
 
-.PHONY: help init sync priorart-list priorart-sync compile compile-stable compile-wip compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
+.PHONY: help init sync priorart-list priorart-sync compile compile-stable compile-wip compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all chrome-extension cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
 
 .DEFAULT_GOAL := help
 
@@ -176,6 +176,24 @@ install: build ## Install ycode to ~/bin/
 	@echo 'Make sure ~/bin is in your PATH: export PATH="$$HOME/bin:$$PATH"'
 
 all: build ## Full quality gate (alias for build)
+
+chrome-extension: compile ## Build ycode and print ycode-live Chrome extension setup
+	@echo ""
+	@echo "ycode binary built. The ycode-live Chrome extension is embedded inside it."
+	@echo ""
+	@echo "Extract the extension:"
+	@echo "  bin/ycode browser setup live"
+	@echo "      (or pass --dest <dir> to override the default ~/Downloads/ycode-chrome-ext)"
+	@echo ""
+	@echo "Load it into Chrome:"
+	@echo "  1. Open chrome://extensions"
+	@echo "  2. Toggle Developer mode (top-right)"
+	@echo "  3. Click 'Load unpacked' → point at the extracted folder"
+	@echo "  4. Pin the extension to the toolbar"
+	@echo "  5. On the tab you want ycode to drive, click the extension icon → Connect"
+	@echo ""
+	@echo "Then point ycode at it:"
+	@echo "  ycode config set browser.mode live"
 
 # ─── CI Parity ──────────────────────────────────────────────────────────────
 #

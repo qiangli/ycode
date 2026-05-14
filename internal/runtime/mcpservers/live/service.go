@@ -42,7 +42,7 @@ const DefaultPort = 58082
 type roleKind int
 
 const (
-	roleUnset roleKind = iota
+	roleUnset  roleKind = iota
 	roleHub             // this process binds 127.0.0.1:<port> and owns the WS to the extension
 	roleClient          // another ycode process owns the hub; we POST /dispatch
 )
