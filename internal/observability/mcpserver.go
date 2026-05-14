@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -416,11 +417,11 @@ func (h *TelemetryHandler) handlePromQLQuery(input json.RawMessage) (string, err
 	if err := json.Unmarshal(input, &params); err != nil {
 		return "", fmt.Errorf("parse promql_query input: %w", err)
 	}
-	path := fmt.Sprintf("/prometheus/api/v1/query?query=%s", params.Query)
+	q := url.Values{"query": {params.Query}}
 	if params.Time != "" {
-		path += "&time=" + params.Time
+		q.Set("time", params.Time)
 	}
-	return h.proxyGet(path)
+	return h.proxyGet("/prometheus/api/v1/query?" + q.Encode())
 }
 
 func (h *TelemetryHandler) handlePromQLQueryRange(input json.RawMessage) (string, error) {
@@ -442,13 +443,33 @@ func (h *TelemetryHandler) handlePromQLQueryRange(input json.RawMessage) (string
 	if params.Step == "" {
 		params.Step = "15s"
 	}
-	path := fmt.Sprintf("/prometheus/api/v1/query_range?query=%s&start=%s&end=%s&step=%s",
-		params.Query, params.Start, params.End, params.Step)
-	return h.proxyGet(path)
+	q := url.Values{
+		"query": {params.Query},
+		"start": {params.Start},
+		"end":   {params.End},
+		"step":  {params.Step},
+	}
+	return h.proxyGet("/prometheus/api/v1/query_range?" + q.Encode())
 }
 
 func (h *TelemetryHandler) handleListMetrics() (string, error) {
 	return h.proxyGet("/prometheus/api/v1/label/__name__/values")
+}
+
+// promqlURL builds a Prometheus instant-query URL with the query
+// properly URL-escaped. Raw fmt.Sprintf would corrupt PromQL queries
+// containing `+`, `&`, `=`, `#`, spaces, or quotes — e.g.
+// `ycode_.+` would silently decode to `ycode_. ` and match nothing.
+func promqlURL(query string) string {
+	return "/prometheus/api/v1/query?" + url.Values{"query": {query}}.Encode()
+}
+
+// logsqlURL is the VictoriaLogs analog of promqlURL.
+func logsqlURL(query string, limit int) string {
+	return "/logs/select/logsql/query?" + url.Values{
+		"query": {query},
+		"limit": {fmt.Sprintf("%d", limit)},
+	}.Encode()
 }
 
 // --- VictoriaLogs handlers ---
@@ -466,14 +487,17 @@ func (h *TelemetryHandler) handleSearchVictoriaLogs(input json.RawMessage) (stri
 	if params.Limit <= 0 {
 		params.Limit = 50
 	}
-	path := fmt.Sprintf("/logs/select/logsql/query?query=%s&limit=%d", params.Query, params.Limit)
+	q := url.Values{
+		"query": {params.Query},
+		"limit": {fmt.Sprintf("%d", params.Limit)},
+	}
 	if params.Start != "" {
-		path += "&start=" + params.Start
+		q.Set("start", params.Start)
 	}
 	if params.End != "" {
-		path += "&end=" + params.End
+		q.Set("end", params.End)
 	}
-	return h.proxyGet(path)
+	return h.proxyGet("/logs/select/logsql/query?" + q.Encode())
 }
 
 // --- Alertmanager handlers ---
@@ -671,7 +695,7 @@ func (h *TelemetryHandler) handleDiagnoseErrors(input json.RawMessage) (string, 
 		{"Message Warnings", "sum(ycode_message_structure_warnings) by (warning_type)"},
 	}
 	for _, q := range queries {
-		resp, err := h.proxyGet(fmt.Sprintf("/prometheus/api/v1/query?query=%s", q.query))
+		resp, err := h.proxyGet(promqlURL(q.query))
 		if err == nil {
 			fmt.Fprintf(&results, "\n### %s\n%s\n", q.label, resp)
 		}
@@ -686,7 +710,7 @@ func (h *TelemetryHandler) handleDiagnoseErrors(input json.RawMessage) (string, 
 	if params.SessionID != "" {
 		logQuery += fmt.Sprintf(" AND session.id:%s", params.SessionID)
 	}
-	logResp, err := h.proxyGet(fmt.Sprintf("/logs/select/logsql/query?query=%s&limit=%d", logQuery, params.Limit))
+	logResp, err := h.proxyGet(logsqlURL(logQuery, params.Limit))
 	if err == nil {
 		results.WriteString(logResp)
 	} else {
@@ -749,7 +773,7 @@ func (h *TelemetryHandler) handleDiagnoseAPIErrors(input json.RawMessage) (strin
 		{"Orphan Tool Call Warnings", "sum(ycode_message_structure_warnings{warning_type=\"orphan_tool_use\"})"},
 	}
 	for _, q := range metricQueries {
-		resp, err := h.proxyGet(fmt.Sprintf("/prometheus/api/v1/query?query=%s", q.query))
+		resp, err := h.proxyGet(promqlURL(q.query))
 		if err == nil {
 			fmt.Fprintf(&results, "\n### %s\n%s\n", q.label, resp)
 		}
@@ -764,7 +788,7 @@ func (h *TelemetryHandler) handleDiagnoseAPIErrors(input json.RawMessage) (strin
 	if params.SessionID != "" {
 		logQuery += fmt.Sprintf(" AND session.id:%s", params.SessionID)
 	}
-	logResp, err := h.proxyGet(fmt.Sprintf("/logs/select/logsql/query?query=%s&limit=%d", logQuery, params.Limit))
+	logResp, err := h.proxyGet(logsqlURL(logQuery, params.Limit))
 	if err == nil {
 		results.WriteString(logResp)
 	} else {
@@ -782,7 +806,7 @@ func (h *TelemetryHandler) handleDiagnoseAPIErrors(input json.RawMessage) (strin
 		{"Avg Pause Duration (ms)", "histogram_quantile(0.5, rate(ycode_pause_duration_bucket[1h]))"},
 	}
 	for _, q := range pauseMetrics {
-		resp, err := h.proxyGet(fmt.Sprintf("/prometheus/api/v1/query?query=%s", q.query))
+		resp, err := h.proxyGet(promqlURL(q.query))
 		if err == nil {
 			fmt.Fprintf(&results, "\n### %s\n%s\n", q.label, resp)
 		}
@@ -827,7 +851,7 @@ func (h *TelemetryHandler) handleDiagnosePauseResume(input json.RawMessage) (str
 		{"API Errors After Pause (correlation)", "sum(rate(ycode_api_error_total[5m]))"},
 	}
 	for _, q := range queries {
-		resp, err := h.proxyGet(fmt.Sprintf("/prometheus/api/v1/query?query=%s", q.query))
+		resp, err := h.proxyGet(promqlURL(q.query))
 		if err == nil {
 			fmt.Fprintf(&results, "\n### %s\n%s\n", q.label, resp)
 		}
@@ -839,7 +863,7 @@ func (h *TelemetryHandler) handleDiagnosePauseResume(input json.RawMessage) (str
 	if params.SessionID != "" {
 		logQuery += fmt.Sprintf(" AND session:%s", params.SessionID)
 	}
-	logResp, err := h.proxyGet(fmt.Sprintf("/logs/select/logsql/query?query=%s&limit=%d", logQuery, params.Limit))
+	logResp, err := h.proxyGet(logsqlURL(logQuery, params.Limit))
 	if err == nil {
 		results.WriteString(logResp)
 	} else {
@@ -852,7 +876,7 @@ func (h *TelemetryHandler) handleDiagnosePauseResume(input json.RawMessage) (str
 	if params.SessionID != "" {
 		errorQuery += fmt.Sprintf(" AND session.id:%s", params.SessionID)
 	}
-	errorResp, err := h.proxyGet(fmt.Sprintf("/logs/select/logsql/query?query=%s&limit=%d", errorQuery, params.Limit))
+	errorResp, err := h.proxyGet(logsqlURL(errorQuery, params.Limit))
 	if err == nil {
 		results.WriteString(errorResp)
 	}
@@ -886,7 +910,7 @@ func (h *TelemetryHandler) handleDiagnoseMessageStructure(input json.RawMessage)
 		{"Orphan Tool Use Count", "sum(ycode_message_structure_warnings{warning_type=\"orphan_tool_use\"})"},
 	}
 	for _, q := range queries {
-		resp, err := h.proxyGet(fmt.Sprintf("/prometheus/api/v1/query?query=%s", q.query))
+		resp, err := h.proxyGet(promqlURL(q.query))
 		if err == nil {
 			fmt.Fprintf(&results, "\n### %s\n%s\n", q.label, resp)
 		}
@@ -898,7 +922,7 @@ func (h *TelemetryHandler) handleDiagnoseMessageStructure(input json.RawMessage)
 	if params.SessionID != "" {
 		logQuery += fmt.Sprintf(" AND session.id:%s", params.SessionID)
 	}
-	logResp, err := h.proxyGet(fmt.Sprintf("/logs/select/logsql/query?query=%s&limit=%d", logQuery, params.Limit))
+	logResp, err := h.proxyGet(logsqlURL(logQuery, params.Limit))
 	if err == nil {
 		results.WriteString(logResp)
 	} else {

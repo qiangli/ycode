@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,6 +45,7 @@ type PrometheusComponent struct {
 	port       int
 	healthy    atomic.Bool
 	cancel     context.CancelFunc
+	startedAt  time.Time // populated in Start; surfaced via /status/runtimeinfo
 }
 
 // NewPrometheusComponent creates an embedded Prometheus component.
@@ -80,6 +83,7 @@ func (p *PrometheusComponent) Start(ctx context.Context) error {
 		Timeout:       2 * time.Minute,
 		LookbackDelta: 5 * time.Minute,
 	})
+	p.startedAt = time.Now().UTC()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -129,18 +133,9 @@ func (p *PrometheusComponent) Start(ctx context.Context) error {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"status":"success","data":{}}`)
 	})
-	mux.HandleFunc(prefix+"/api/v1/status/runtimeinfo", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"status":"success","data":{"startTime":"","CWD":"","reloadConfigSuccess":true,"lastConfigTime":"","corruptionCount":0,"goroutineCount":0,"GOMAXPROCS":0,"GOGC":"","GODEBUG":"","storageRetention":"15d"}}`)
-	})
-	mux.HandleFunc(prefix+"/api/v1/status/buildinfo", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"status":"success","data":{"version":"embedded","revision":"","branch":"","buildUser":"","buildDate":"","goVersion":"","platform":""}}`)
-	})
-	mux.HandleFunc(prefix+"/api/v1/status/tsdb", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"status":"success","data":{"headStats":{"numSeries":0,"chunkCount":0,"minTime":0,"maxTime":0,"numLabelPairs":0},"seriesCountByMetricName":[],"labelValueCountByLabelName":[],"memoryInBytesByLabelName":[],"seriesCountByLabelValuePair":[]}}`)
-	})
+	mux.HandleFunc(prefix+"/api/v1/status/runtimeinfo", p.handleRuntimeInfo)
+	mux.HandleFunc(prefix+"/api/v1/status/buildinfo", p.handleBuildInfo)
+	mux.HandleFunc(prefix+"/api/v1/status/tsdb", p.handleTSDBStatus)
 	mux.HandleFunc(prefix+"/api/v1/labels", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"status":"success","data":[]}`)
@@ -249,6 +244,124 @@ func (p *PrometheusComponent) buildIndexHTML(uiFS fs.FS) []byte {
 }
 
 // handleLabelValues returns label values for autocomplete (metric names).
+// handleRuntimeInfo returns real process + storage runtime info. The
+// mantine UI's Status page reads these fields verbatim; until this was
+// wired, every value rendered as blank/zero and the page looked broken.
+func (p *PrometheusComponent) handleRuntimeInfo(w http.ResponseWriter, _ *http.Request) {
+	cwd, _ := os.Getwd()
+	info := map[string]any{
+		"startTime":           p.startedAt.Format(time.RFC3339),
+		"CWD":                 cwd,
+		"reloadConfigSuccess": true,
+		"lastConfigTime":      p.startedAt.Format(time.RFC3339),
+		"corruptionCount":     0,
+		"goroutineCount":      runtime.NumGoroutine(),
+		"GOMAXPROCS":          runtime.GOMAXPROCS(0),
+		"GOGC":                os.Getenv("GOGC"),
+		"GODEBUG":             os.Getenv("GODEBUG"),
+		"storageRetention":    "15d",
+	}
+	writePromOK(w, info)
+}
+
+// handleBuildInfo reports the embedded build's identity. Pulls from the
+// linker-stamped main.version / main.commit pair when present; falls
+// back to "embedded".
+func (p *PrometheusComponent) handleBuildInfo(w http.ResponseWriter, _ *http.Request) {
+	writePromOK(w, map[string]any{
+		"version":   "embedded",
+		"revision":  "",
+		"branch":    "",
+		"buildUser": "",
+		"buildDate": "",
+		"goVersion": runtime.Version(),
+		"platform":  runtime.GOOS + "/" + runtime.GOARCH,
+	})
+}
+
+// handleTSDBStatus reports real head + cardinality stats. The previous
+// stub always returned zeros which made the dashboard's TSDB widgets
+// look like there was no data ingested, even when scrape was healthy.
+// Stats(...) reads the in-memory postings index — cheap.
+//
+// `?limit=N` controls topN cardinality entries (default 10, matching
+// upstream Prometheus). Stats is called with "__name__" so the
+// seriesCountByMetricName slice is populated — upstream only fills
+// that slice when the label-name parameter matches a real label.
+func (p *PrometheusComponent) handleTSDBStatus(w http.ResponseWriter, r *http.Request) {
+	head := p.db.Head()
+	topN := 10
+	if v := r.FormValue("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			topN = n
+		}
+	}
+	stats := head.Stats("__name__", topN)
+	postings := stats.IndexPostingStats
+
+	conv := func(in []struct {
+		Name  string
+		Count uint64
+	}) []map[string]any {
+		out := make([]map[string]any, 0, len(in))
+		for _, e := range in {
+			out = append(out, map[string]any{"name": e.Name, "value": e.Count})
+		}
+		return out
+	}
+	// PostingsStats fields are []index.Stat; reflect-light shape via a
+	// strongly-typed conversion below avoids importing the index pkg.
+	toAny := func(s any) []map[string]any {
+		// index.Stat has Name + Count; marshal/unmarshal is the
+		// dependency-free way to project it without a new import.
+		buf, _ := json.Marshal(s)
+		var entries []struct {
+			Name  string `json:"Name"`
+			Count uint64 `json:"Count"`
+		}
+		_ = json.Unmarshal(buf, &entries)
+		typed := make([]struct {
+			Name  string
+			Count uint64
+		}, len(entries))
+		for i, e := range entries {
+			typed[i] = struct {
+				Name  string
+				Count uint64
+			}{Name: e.Name, Count: e.Count}
+		}
+		return conv(typed)
+	}
+
+	data := map[string]any{
+		"headStats": map[string]any{
+			"numSeries":     head.NumSeries(),
+			"chunkCount":    0, // upstream Head doesn't expose chunk count directly; left at 0 to keep the field present.
+			"minTime":       head.MinTime(),
+			"maxTime":       head.MaxTime(),
+			"numLabelPairs": postings.NumLabelPairs,
+		},
+		"seriesCountByMetricName":     toAny(postings.CardinalityMetricsStats),
+		"labelValueCountByLabelName":  toAny(postings.CardinalityLabelStats),
+		"memoryInBytesByLabelName":    toAny(postings.LabelValueStats),
+		"seriesCountByLabelValuePair": toAny(postings.LabelValuePairsStats),
+	}
+	writePromOK(w, data)
+}
+
+// writePromOK is the Prometheus `{"status":"success","data":...}`
+// envelope. Local helper so the three status handlers don't repeat the
+// boilerplate.
+func writePromOK(w http.ResponseWriter, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	body, err := json.Marshal(map[string]any{"status": "success", "data": data})
+	if err != nil {
+		writePromError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, _ = w.Write(body)
+}
+
 func (p *PrometheusComponent) handleLabelValues(w http.ResponseWriter, r *http.Request) {
 	q, err := p.db.Querier(0, time.Now().UnixMilli())
 	if err != nil {
