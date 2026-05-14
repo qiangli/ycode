@@ -24,7 +24,11 @@
 (function () {
   'use strict';
 
-  const TOKEN = new URLSearchParams(location.search).get('token') || '';
+  // Token resolution: ?token=… overrides everything; otherwise fall
+  // back to the inline window.YCODE_TOKEN that the server injects into
+  // index.html (see internal/web/embed.go:HandlerWithToken). Empty
+  // when the server is in no-auth mode.
+  const TOKEN = new URLSearchParams(location.search).get('token') || window.YCODE_TOKEN || '';
   const URL_SESSION = new URLSearchParams(location.search).get('session') || '';
   const FALLBACK_SESSION = 'canvas-default';
 

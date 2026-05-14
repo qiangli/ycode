@@ -17,7 +17,10 @@
     return '';
   })();
   const API_BASE = window.location.origin + basePath;
-  const TOKEN = new URLSearchParams(window.location.search).get('token') || '';
+  // Token resolution: ?token=… overrides everything; otherwise fall
+  // back to the inline window.YCODE_TOKEN that the server injects into
+  // index.html (see internal/web/embed.go:HandlerWithToken).
+  const TOKEN = new URLSearchParams(window.location.search).get('token') || window.YCODE_TOKEN || '';
 
   // --- DOM ---
   const messagesEl = document.getElementById('messages');

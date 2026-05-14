@@ -207,8 +207,11 @@ func (s *Server) registerRoutes() {
 	// set arbitrary headers on a WebSocket upgrade request.
 	s.mux.HandleFunc("GET /api/sessions/{id}/ws", s.authMiddlewareWS(s.handleWebSocket))
 
-	// Web UI (embedded SPA).
-	s.mux.Handle("/", web.Handler())
+	// Web UI (embedded SPA). HandlerWithToken inlines the bearer into
+	// the served index.html so the canvas + chat surfaces can open
+	// the authed WebSocket without the user pasting ?token= manually.
+	// When config.Token is empty, this is identical to web.Handler().
+	s.mux.Handle("/", web.HandlerWithToken(s.config.Token))
 }
 
 // authMiddleware wraps a REST handler with Bearer token authentication and
