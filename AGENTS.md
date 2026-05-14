@@ -2,6 +2,8 @@
 
 Instructions for AI coding assistants working in this repository.
 
+> **Scope:** These rules apply when an agent is operating *inside the ycode repo*. Sessions running under `ycode wrap -- <other-agent>` (e.g. `ycode wrap -- claude` against an unrelated project) are independent contexts — do not carry this repo's conventions into wrapped third-party sessions.
+
 ycode — pure Go CLI agent harness. Single static binary, Go 1.26+, permissive-license dependencies only.
 
 > **Start here:** [`docs/strategy.md`](./docs/strategy.md) — the wedge ("local-first, single-binary, runs offline"), feature-tier policy, graduation criteria.
@@ -21,11 +23,12 @@ make build           # full gate: tidy → fmt → vet → compile → test → 
 make compile         # quick compile (experimental features ON by default)
 make compile-stable  # explicit opt-out: without experimental tag
 make test            # unit tests only (-short -race)
+make ci-fast         # quick CI check: verify-features + unit tests (skip Docker matrix)
 ```
 
 **Build tags** (see `Makefile`):
 - Default: `sqlite,sqlite_unlock_notify,bindata,experimental`
-- Features are **ON by default** and opt-out — check `docs/strategy.md` for graduation criteria
+- Features are **ON by default** and opt-out — full opt-out policy and graduation criteria in [`docs/strategy.md`](./docs/strategy.md) (also linked at the top of this file)
 - Manual: `go build -tags "sqlite,sqlite_unlock_notify,bindata,experimental" -o bin/ycode ./cmd/ycode/`
 
 **Test patterns**:
