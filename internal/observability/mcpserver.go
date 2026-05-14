@@ -157,7 +157,9 @@ func (h *TelemetryHandler) ListTools() []mcp.Tool {
 							"required": ["title", "query"]
 						},
 						"description": "List of panels to include"
-					}
+					},
+					"duration": {"type": "string", "description": "Default time-picker window, e.g. '30m', '1h', '6h', '24h'. Default 30m."},
+					"refresh_interval": {"type": "string", "description": "How often the dashboard auto-refreshes, e.g. '15s', '30s', '1m'. Default 30s."}
 				},
 				"required": ["project", "name", "panels"]
 			}`),
@@ -374,9 +376,11 @@ func (h *TelemetryHandler) handleCreateDashboard(input json.RawMessage) (string,
 		return "", fmt.Errorf("Perses data directory not configured")
 	}
 	var params struct {
-		Project string                       `json:"project"`
-		Name    string                       `json:"name"`
-		Panels  []dashboards.SimplifiedPanel `json:"panels"`
+		Project         string                       `json:"project"`
+		Name            string                       `json:"name"`
+		Panels          []dashboards.SimplifiedPanel `json:"panels"`
+		Duration        string                       `json:"duration"`
+		RefreshInterval string                       `json:"refresh_interval"`
 	}
 	if err := json.Unmarshal(input, &params); err != nil {
 		return "", fmt.Errorf("parse create_dashboard input: %w", err)
@@ -385,7 +389,11 @@ func (h *TelemetryHandler) handleCreateDashboard(input json.RawMessage) (string,
 		return "", fmt.Errorf("project, name, and at least one panel are required")
 	}
 
-	if err := dashboards.CreateDashboard(h.PersesDataDir, params.Project, params.Name, params.Panels, true); err != nil {
+	opts := dashboards.DashboardOptions{
+		Duration:        params.Duration,
+		RefreshInterval: params.RefreshInterval,
+	}
+	if err := dashboards.CreateDashboardWithOptions(h.PersesDataDir, params.Project, params.Name, params.Panels, true, opts); err != nil {
 		return "", err
 	}
 

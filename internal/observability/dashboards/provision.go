@@ -274,11 +274,26 @@ func slugify(s string) string {
 	return s
 }
 
-// CreateDashboard creates a single dashboard in the Perses file database.
-// project is the project slug, name is the display name, panels is the panel list.
-// The dashboard is written to dataDir/dashboards/{project}/{slug}.json.
-// If overwrite is true, existing dashboards are replaced.
+// DashboardOptions tunes optional dashboard spec fields. Empty fields
+// fall back to the buildDashboard defaults ("30m" / "30s") — those
+// values match other dashboards in the project and keep auto-refresh
+// on, so a freshly-opened dashboard renders live data instead of
+// looking frozen at an arbitrary historic instant.
+type DashboardOptions struct {
+	Duration        string // e.g. "1h"; "" → "30m"
+	RefreshInterval string // e.g. "15s"; "" → "30s"
+}
+
+// CreateDashboard is a back-compat shim that uses the default
+// DashboardOptions (30m / 30s).
 func CreateDashboard(dataDir, project, name string, panels []simplifiedPanel, overwrite bool) error {
+	return CreateDashboardWithOptions(dataDir, project, name, panels, overwrite, DashboardOptions{})
+}
+
+// CreateDashboardWithOptions creates a dashboard with explicit
+// duration + refreshInterval overrides. The dashboard JSON is written
+// to dataDir/dashboards/{project}/{slug}.json.
+func CreateDashboardWithOptions(dataDir, project, name string, panels []simplifiedPanel, overwrite bool, opts DashboardOptions) error {
 	now := time.Now().UTC()
 
 	// Ensure project exists.
@@ -302,6 +317,14 @@ func CreateDashboard(dataDir, project, name string, panels []simplifiedPanel, ov
 
 	d := simplifiedDashboard{Name: name, Panels: panels}
 	db := buildDashboard(project, d, now)
+	if spec, ok := db["spec"].(map[string]any); ok {
+		if opts.Duration != "" {
+			spec["duration"] = opts.Duration
+		}
+		if opts.RefreshInterval != "" {
+			spec["refreshInterval"] = opts.RefreshInterval
+		}
+	}
 	dbSlug := slugify(name)
 	dbPath := filepath.Join(dbDir, dbSlug+".json")
 
