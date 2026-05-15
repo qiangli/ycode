@@ -66,7 +66,11 @@ func (p *PTYManager) RunTTY(ctx context.Context, argv, env []string, cwd string)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Env = env
 	cmd.Dir = cwd
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Do NOT set SysProcAttr.Setpgid here. creack/pty.StartWithSize adds
+	// Setsid: true + Setctty: true unconditionally; on macOS the kernel
+	// rejects fork/exec with EPERM when both Setpgid and Setsid are set.
+	// Signals to the child still flow through the controlling terminal.
+	// See internal/runtime/wrap/tty.go for the matching note in the wrap path.
 
 	rows, cols := terminalSize(stdout)
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
