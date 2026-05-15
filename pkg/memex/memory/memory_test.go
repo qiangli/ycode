@@ -1119,7 +1119,10 @@ func TestDreamer_RemovesStaleMemories(t *testing.T) {
 	dir := t.TempDir()
 	mgr, _ := NewManager(dir)
 
-	// Save a stale project memory (>30 days old).
+	// Save a stale project memory (>30 days old). Save now persists
+	// CreatedAt/UpdatedAt to frontmatter, so we rewrite the file
+	// in-place to back-date both fields. (Pre-Phase-2 this test used
+	// os.Chtimes, which relied on Load falling back to file mtime.)
 	staleMem := &Memory{
 		Name:        "stale-project",
 		Description: "old project info",
@@ -1127,9 +1130,15 @@ func TestDreamer_RemovesStaleMemories(t *testing.T) {
 		Content:     "outdated",
 	}
 	mgr.Save(staleMem)
-
-	// Manually set the file modification time to 60 days ago.
-	os.Chtimes(staleMem.FilePath, time.Now().Add(-60*24*time.Hour), time.Now().Add(-60*24*time.Hour))
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	staleMem.CreatedAt = old
+	staleMem.UpdatedAt = old
+	mgr.Save(staleMem)
+	// Patch the on-disk UpdatedAt back to the back-dated value (Save
+	// would otherwise stamp it with time.Now()).
+	if err := os.WriteFile(staleMem.FilePath, backdateFrontmatter(staleMem.FilePath, old), 0o644); err != nil {
+		t.Fatalf("backdate frontmatter: %v", err)
+	}
 
 	// Save a fresh memory.
 	freshMem := &Memory{
@@ -1400,4 +1409,28 @@ func TestManager_ConcurrentSaveAndRecall(t *testing.T) {
 	if len(all) == 0 {
 		t.Error("expected some memories after concurrent save+recall")
 	}
+}
+
+// backdateFrontmatter reads the memory at path and rewrites its
+// frontmatter so created_at/updated_at reflect `t`. Used by tests that
+// need to simulate an aged memory.
+func backdateFrontmatter(path string, t time.Time) []byte {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	stamp := t.Format(time.RFC3339)
+	lines := []string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "created_at:") {
+			lines = append(lines, "created_at: "+stamp)
+			continue
+		}
+		if strings.HasPrefix(line, "updated_at:") {
+			lines = append(lines, "updated_at: "+stamp)
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return []byte(strings.Join(lines, "\n"))
 }

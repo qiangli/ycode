@@ -36,6 +36,14 @@ func (s *Store) Save(mem *Memory) error {
 		mem.ValidUntil = &expiry
 	}
 
+	// Set timestamps before rendering so they go into the frontmatter
+	// and survive Load() — the time-bucket index and recency scoring
+	// both rely on CreatedAt being persistent.
+	mem.UpdatedAt = time.Now()
+	if mem.CreatedAt.IsZero() {
+		mem.CreatedAt = mem.UpdatedAt
+	}
+
 	var b strings.Builder
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "name: %s\n", mem.Name)
@@ -91,13 +99,13 @@ func (s *Store) Save(mem *Memory) error {
 	if !mem.LastVerifiedAt.IsZero() {
 		fmt.Fprintf(&b, "last_verified_at: %s\n", mem.LastVerifiedAt.Format(time.RFC3339))
 	}
+	fmt.Fprintf(&b, "created_at: %s\n", mem.CreatedAt.Format(time.RFC3339))
+	fmt.Fprintf(&b, "updated_at: %s\n", mem.UpdatedAt.Format(time.RFC3339))
+	if !mem.LastAccessedAt.IsZero() {
+		fmt.Fprintf(&b, "last_accessed_at: %s\n", mem.LastAccessedAt.Format(time.RFC3339))
+	}
 	b.WriteString("---\n\n")
 	b.WriteString(mem.Content)
-
-	mem.UpdatedAt = time.Now()
-	if mem.CreatedAt.IsZero() {
-		mem.CreatedAt = mem.UpdatedAt
-	}
 
 	return fileatomic.AtomicWriteFile(mem.FilePath, []byte(b.String()), 0o644)
 }
@@ -112,9 +120,16 @@ func (s *Store) Load(path string) (*Memory, error) {
 	mem := parseFrontmatter(string(data))
 	mem.FilePath = path
 
+	// Fall back to file mtime when frontmatter did not carry a timestamp
+	// (legacy files written before Phase 2 wired CreatedAt/UpdatedAt).
 	info, err := os.Stat(path)
 	if err == nil {
-		mem.UpdatedAt = info.ModTime()
+		if mem.UpdatedAt.IsZero() {
+			mem.UpdatedAt = info.ModTime()
+		}
+		if mem.CreatedAt.IsZero() {
+			mem.CreatedAt = info.ModTime()
+		}
 	}
 
 	return mem, nil
@@ -231,6 +246,18 @@ func parseFrontmatter(data string) *Memory {
 		case "last_verified_at":
 			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(value)); err == nil {
 				mem.LastVerifiedAt = t
+			}
+		case "created_at":
+			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(value)); err == nil {
+				mem.CreatedAt = t
+			}
+		case "updated_at":
+			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(value)); err == nil {
+				mem.UpdatedAt = t
+			}
+		case "last_accessed_at":
+			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(value)); err == nil {
+				mem.LastAccessedAt = t
 			}
 		}
 	}

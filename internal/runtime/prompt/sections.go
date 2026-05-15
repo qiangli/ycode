@@ -402,6 +402,11 @@ func DiagnosticsSection(diag *DiagnosticsInfo) string {
 		parts = append(parts, fmt.Sprintf("- Prior session context: %s", diag.PriorSessionSummary))
 	}
 
+	// Recent cached answer for a similar question — agent may reuse or refine.
+	if diag.RecentAnswer != "" {
+		parts = append(parts, diag.RecentAnswer)
+	}
+
 	if len(parts) == 0 {
 		return ""
 	}

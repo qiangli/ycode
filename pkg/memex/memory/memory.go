@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -37,6 +38,8 @@ type Manager struct {
 	entityIndex    *EntityIndex    // optional entity extraction and linking
 	provider       MemoryProvider  // optional pluggable provider (supplements stores)
 	stamper        Stamper         // optional provenance stamper invoked on Save
+	timeBucket     *TimeBucket     // day-grained index over CreatedAt/LastAccessedAt
+	timeBucketInit sync.Once       // lazy first-use rebuild of the bucket
 }
 
 // NewManager creates a new memory manager with a project-scoped store.
@@ -48,6 +51,7 @@ func NewManager(dir string) (*Manager, error) {
 	return &Manager{
 		projectStore: store,
 		index:        NewIndex(dir),
+		timeBucket:   NewTimeBucket(),
 	}, nil
 }
 
@@ -71,6 +75,7 @@ func NewManagerWithGlobal(globalDir, projectDir string) (*Manager, error) {
 		projectStore: projectStore,
 		globalStore:  globalStore,
 		index:        NewIndex(projectDir),
+		timeBucket:   NewTimeBucket(),
 	}, nil
 }
 
@@ -167,6 +172,12 @@ func (m *Manager) Save(mem *Memory) error {
 		}
 	}
 
+	// Update the time-bucket index so date-shaped queries find this
+	// memory without a full rebuild.
+	if m.timeBucket != nil {
+		m.timeBucket.Add(mem)
+	}
+
 	return nil
 }
 
@@ -240,6 +251,43 @@ func (m *Manager) Recall(query string, maxResults int) ([]SearchResult, error) {
 		resultSets["keyword"] = keywordResults
 	}
 
+	// Time-window fast path: if the query has temporal intent, build an
+	// in-window membership set so we can both contribute a result set
+	// to RRF (gives the bucket its own ranking dimension) AND apply a
+	// post-fusion boost to in-window memories. The boost matters because
+	// RRF normalizes by rank — without it, in-window hits get diluted
+	// when other backends also rank the out-of-window memory.
+	var timeWindowSet map[string]struct{}
+	if window := DetectTimeWindow(query); window != nil {
+		m.ensureTimeBucket(memories)
+		names := m.timeBucket.Range(window.Start, window.End)
+		slog.Debug("memory.recall.time_window",
+			"label", window.Label,
+			"start", window.Start,
+			"end", window.End,
+			"bucket_hits", len(names),
+		)
+		if len(names) > 0 {
+			timeWindowSet = make(map[string]struct{}, len(names))
+			timeResults := make([]SearchResult, 0, len(names))
+			for _, name := range names {
+				mem, ok := memByName[name]
+				if !ok {
+					continue
+				}
+				timeWindowSet[name] = struct{}{}
+				timeResults = append(timeResults, SearchResult{
+					Memory: mem,
+					Score:  1.0,
+					Source: "time",
+				})
+			}
+			if len(timeResults) > 0 {
+				resultSets["time"] = timeResults
+			}
+		}
+	}
+
 	// Fuse results with RRF.
 	fusionWeights := DefaultFusionWeights()
 	results := ReciprocalRankFusion(resultSets, fusionWeights.RRFk)
@@ -262,6 +310,18 @@ func (m *Manager) Recall(query string, maxResults int) ([]SearchResult, error) {
 			results[i].Score *= 0.9
 		case ScopeGlobal:
 			results[i].Score *= 0.85
+		}
+		// Time-window boost: when the query has temporal intent, lift
+		// in-window memories above same-relevance out-of-window ones.
+		// Strong multiplier because the user's question is literally
+		// "what is in this window" — out-of-window matches are noise.
+		if timeWindowSet != nil {
+			if _, in := timeWindowSet[results[i].Memory.Name]; in {
+				results[i].Score *= 3.0
+				if results[i].Source != "time" {
+					results[i].Source = "time"
+				}
+			}
 		}
 		// Memories past their validity window get a penalty (Phase 6).
 		if results[i].Memory.ValidUntil != nil && time.Now().After(*results[i].Memory.ValidUntil) {
@@ -308,6 +368,9 @@ func (m *Manager) Forget(name string) error {
 			}
 			if m.entityIndex != nil {
 				m.entityIndex.Unlink(name)
+			}
+			if m.timeBucket != nil {
+				m.timeBucket.Remove(name)
 			}
 			return m.index.RemoveEntry(filename)
 		}
@@ -370,6 +433,34 @@ func (m *Manager) All() ([]*Memory, error) {
 // ReadIndex returns the MEMORY.md contents.
 func (m *Manager) ReadIndex() (string, error) {
 	return m.index.Read()
+}
+
+// ensureTimeBucket performs a one-shot rebuild of the time-bucket index
+// from the given memory list. Subsequent calls are no-ops because
+// Save/Forget maintain the bucket incrementally. The sync.Once guards
+// against duplicate work when Recall is invoked concurrently.
+func (m *Manager) ensureTimeBucket(memories []*Memory) {
+	if m.timeBucket == nil {
+		return
+	}
+	m.timeBucketInit.Do(func() {
+		m.timeBucket.Rebuild(memories)
+	})
+}
+
+// RebuildTimeBucket forces a fresh build of the time-bucket index from
+// all current memories. Intended for use by the Dreamer at consolidation
+// time to repair any drift from incremental updates.
+func (m *Manager) RebuildTimeBucket() error {
+	if m.timeBucket == nil {
+		return nil
+	}
+	memories, err := m.All()
+	if err != nil {
+		return fmt.Errorf("rebuild time bucket: %w", err)
+	}
+	m.timeBucket.Rebuild(memories)
+	return nil
 }
 
 // FormatProvenance returns a short suffix like "[macbook · ycode]" when

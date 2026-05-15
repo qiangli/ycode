@@ -23,6 +23,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/tools"
 	"github.com/qiangli/ycode/pkg/memex/memory"
+	"github.com/qiangli/ycode/pkg/memex/qacache"
 )
 
 // MaxOutputTokenCap is the safety cap for output tokens per response.
@@ -63,6 +64,16 @@ type Runtime struct {
 	// Completion cache — short-TTL cache that skips the LLM entirely
 	// for identical requests (retries, error recovery).
 	completionCache *api.CompletionCache
+
+	// Q→A injector — populates Diagnostics.RecentAnswer pre-LLM and
+	// records the assistant's answer post-LLM. Nil-safe: when unset,
+	// the runtime never touches the cache.
+	qaInjector *qacache.Injector
+
+	// Memory manager — when set, compaction intent-summaries are
+	// promoted to TypeEpisodic memories so post-session recall finds
+	// them via the time-bucket index. Nil-safe.
+	memoryManager *memory.Manager
 
 	// Cache warmer — background pings to keep prompt cache alive.
 	cacheWarmer *api.CacheWarmer
@@ -220,6 +231,21 @@ func (r *Runtime) SetCoOccurrence(co *tools.CoOccurrence) {
 // SetPersona sets the resolved persona for tailored responses.
 // When set, persona signals are collected per-turn and the persona
 // context is injected into the system prompt.
+// SetQAInjector attaches a Q→A cache injector. Lookup runs pre-LLM and
+// surfaces a hit through Diagnostics.RecentAnswer; Record runs post-LLM
+// to store the assistant's response. Nil disables the path.
+func (r *Runtime) SetQAInjector(i *qacache.Injector) {
+	r.qaInjector = i
+}
+
+// SetMemoryManager wires the memex memory manager. When set, compaction
+// intent-summaries are promoted to TypeEpisodic memories so post-
+// session queries like "what did we do this week" can hit the memex
+// time-bucket index without re-deriving from raw sources.
+func (r *Runtime) SetMemoryManager(mgr *memory.Manager) {
+	r.memoryManager = mgr
+}
+
 func (r *Runtime) SetPersona(p *memory.Persona) {
 	r.currentPersona = p
 	if r.promptCtx != nil {
@@ -385,6 +411,20 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 	// Clear prior session summary after the first turn — it's a one-time warm-start signal.
 	if r.turnCount > 1 && r.promptCtx.Diagnostics != nil {
 		r.promptCtx.Diagnostics.PriorSessionSummary = ""
+	}
+
+	// Q→A cache lookup: if the current user message matches a recent
+	// question, surface the cached answer as a one-shot diagnostics
+	// block. The LLM still runs and decides whether to reuse or refine.
+	if r.qaInjector != nil {
+		if userMsg := lastUserText(messages); userMsg != "" {
+			if block := r.qaInjector.Lookup(userMsg, time.Now()); block != "" {
+				if r.promptCtx.Diagnostics == nil {
+					r.promptCtx.Diagnostics = &prompt.DiagnosticsInfo{}
+				}
+				r.promptCtx.Diagnostics.RecentAnswer = block
+			}
+		}
 	}
 
 	// Build system prompt. Wrapped in a span so the assembly phase
@@ -593,6 +633,21 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 	if r.cacheWarmer != nil {
 		r.cacheWarmer.UpdateContext(req.Model, req.System, req.Tools)
 		r.cacheWarmer.Start() // no-op if already running
+	}
+
+	// Q→A cache record: store the assistant's text answer so a repeat
+	// of this question hits the cache. Skipped when the response is
+	// tool-call-only (no user-facing text) or when there's no question.
+	if r.qaInjector != nil && result.TextContent != "" {
+		if userMsg := lastUserText(messages); userMsg != "" {
+			r.qaInjector.Record(userMsg, result.TextContent, nil, nil, time.Now())
+		}
+	}
+
+	// Clear the one-shot recent-answer hint so it doesn't leak into the
+	// next turn (where lookup will recompute it from the new question).
+	if r.promptCtx.Diagnostics != nil {
+		r.promptCtx.Diagnostics.RecentAnswer = ""
 	}
 
 	return result, nil
@@ -1067,6 +1122,12 @@ func (r *Runtime) proactiveCompactCtx(ctx context.Context, sessionMsgs []session
 	// Update session summary.
 	r.session.Summary = compactResult.Summary
 
+	// Promote the intent summary into the memex as an episodic memory so
+	// post-session "what did we do this week" queries hit the time
+	// bucket without re-deriving from raw sources. Best-effort; a save
+	// failure logs and continues — compaction itself must not fail.
+	r.promoteCompactionToMemex(compactResult)
+
 	// Save ghost snapshot with active topic before compaction completes.
 	if r.session != nil && r.topicTracker != nil {
 		snap := &session.GhostSnapshot{
@@ -1103,6 +1164,91 @@ func (r *Runtime) proactiveCompactCtx(ctx context.Context, sessionMsgs []session
 
 // emergencyFlush is Layer 3: when compaction isn't enough, create a minimal
 // continuation with just the summary + last user message.
+// promoteCompactionToMemex saves the intent summary from a compaction
+// pass as a TypeEpisodic memory with a 14-day TTL and a session-window
+// validity. The memory's name is keyed by session ID so repeated
+// compactions in the same session overwrite rather than duplicate.
+//
+// Best-effort: failures are logged but never block compaction. When no
+// memory manager is wired, returns without doing work.
+func (r *Runtime) promoteCompactionToMemex(result *session.CompactionResult) {
+	if r.memoryManager == nil || result == nil || result.Summary == "" {
+		return
+	}
+	now := time.Now().UTC()
+	validUntil := now.AddDate(0, 0, 14)
+	sessionID := ""
+	if r.session != nil {
+		sessionID = r.session.ID
+	}
+	desc := compactionDescription(result)
+	content := result.Summary
+	// Bake the project's recent-commit list into the episodic content so
+	// "what did we do this week" returns commits, not just a summary.
+	// promptCtx.RecentCommits is pre-rendered as a list of subject lines.
+	if r.promptCtx != nil && len(r.promptCtx.RecentCommits) > 0 {
+		content = appendGitActivity(content, r.promptCtx.RecentCommits)
+	}
+	mem := &memory.Memory{
+		Name:        compactionMemoryName(sessionID, now),
+		Description: desc,
+		Type:        memory.TypeEpisodic,
+		Scope:       memory.ScopeProject,
+		Content:     content,
+		Importance:  0.6,
+		TTLMinutes:  14 * 24 * 60,
+		ValidUntil:  &validUntil,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := r.memoryManager.Save(mem); err != nil {
+		r.logger.Warn("compaction promote: save failed", "name", mem.Name, "error", err)
+	}
+}
+
+// compactionMemoryName returns a stable name per session+compaction. The
+// minute-granular suffix keeps repeated compactions within the same
+// minute on the same session from churning; subsequent compactions an
+// hour later produce a distinct memory.
+func compactionMemoryName(sessionID string, t time.Time) string {
+	if sessionID == "" {
+		sessionID = "anon"
+	}
+	return fmt.Sprintf("compaction-%s-%s", sessionID, t.Format("20060102T1504"))
+}
+
+// compactionDescription returns a short label for the index entry. The
+// counts and length are stable across runs and make it easy to scan a
+// list of compactions in /memex list.
+func compactionDescription(result *session.CompactionResult) string {
+	return fmt.Sprintf("Session compaction: %d msgs → %d-char summary",
+		result.CompactedCount, len(result.Summary))
+}
+
+// appendGitActivity appends a "Git activity" section listing the
+// commit subjects active during this session. Each line is rendered as
+// a markdown bullet. Empty commit lists yield the original content
+// unchanged.
+func appendGitActivity(content string, commits []string) string {
+	if len(commits) == 0 {
+		return content
+	}
+	var b strings.Builder
+	b.WriteString(content)
+	if !strings.HasSuffix(content, "\n") {
+		b.WriteString("\n")
+	}
+	b.WriteString("\n## Git activity\n")
+	for _, c := range commits {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "- %s\n", c)
+	}
+	return b.String()
+}
+
 func (r *Runtime) emergencyFlush(ctx context.Context, messages []api.Message, originalErr error) (*TurnResult, *RecoveryResult, error) {
 	r.logger.Warn("layer 3: emergency flush — creating minimal continuation")
 

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -40,6 +41,7 @@ import (
 	"github.com/qiangli/ycode/internal/tools"
 	memexgraph "github.com/qiangli/ycode/pkg/memex/graph"
 	"github.com/qiangli/ycode/pkg/memex/memory"
+	"github.com/qiangli/ycode/pkg/memex/qacache"
 	"github.com/qiangli/ycode/pkg/memex/store"
 )
 
@@ -93,6 +95,12 @@ type App struct {
 
 	// Memory manager for episodic memory recording in subagents.
 	memoryManager *memory.Manager
+
+	// Q→A cache injector and one-shot construction guard. The injector
+	// is shared across every runtime spawned by this App so all turns
+	// hit the same on-disk cache and one background promoter.
+	qaInjector     *qacache.Injector
+	qaInjectorOnce sync.Once
 
 	// Persona resolver for tailored user experience (lazily initialized).
 	personaResolver *memory.PersonaResolver
@@ -367,6 +375,18 @@ func (a *App) SetPrintMode(enabled bool) {
 func (a *App) conversationRuntime() *conversation.Runtime {
 	rt := conversation.NewRuntime(a.config, a.provider, a.session, a.toolRegistry, a.promptCtx)
 	rt.SetPlanMode(a.InPlanMode())
+	// Q→A cache injector: instant-recall layer in front of the LLM.
+	// Construction is idempotent on App so the background promotion
+	// goroutine and the on-disk cache outlive any individual runtime.
+	if inj := a.ensureQAInjector(); inj != nil {
+		rt.SetQAInjector(inj)
+	}
+	// Memory manager: lets the runtime promote compaction intent-
+	// summaries into TypeEpisodic memories so "what did we do this week"
+	// queries hit the time-bucket index post-session.
+	if a.memoryManager != nil {
+		rt.SetMemoryManager(a.memoryManager)
+	}
 	if a.config.LLMSummarizationEnabled {
 		if a.config.WeakModel != "" {
 			// Fallback chain: try weak (cheap) model first, then main model.

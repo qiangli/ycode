@@ -24,6 +24,10 @@ type DiagnosticsInfo struct {
 	// PriorSessionSummary is a compact summary from the previous session's
 	// ghost snapshot, injected on the first turn of a resumed session.
 	PriorSessionSummary string `json:"prior_session_summary,omitempty"`
+	// RecentAnswer is a pre-formatted <recent-answer> block from the
+	// Q→A cache when the current user message matches a prior question.
+	// One-shot per turn; the runtime clears it after each Turn.
+	RecentAnswer string `json:"recent_answer,omitempty"`
 }
 
 // ProjectContext holds metadata about the current project.
