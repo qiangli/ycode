@@ -55,6 +55,7 @@ PACKAGES=$(go list ./... | grep -v '/priorart/')
 - No `log.Printf` or `fmt.Println` — use structured logger from `RuntimeContext`
 - Layered build system: logic in Go, orchestration in `scripts/`, dependency graph in `Makefile`
 - No test logic in bash scripts — Go tests only
+- If you edit `internal/features/registry.yaml`, run `make readme-features` — the README features block is generated from it
 
 **Commits:**
 - Stage files by name (never `git add -A` or `git add .`)
@@ -110,8 +111,12 @@ Run `make ci` before push when touching CGO-adjacent code (podman/storage, sqlit
 
 ## References
 
+- `docs/strategy.md` — wedge positioning, feature-tier policy, graduation criteria (read first for planning)
+- `docs/roadmap.md` — tactical feature-gap inventory (P0/P1/P2)
+- `docs/usage.md` — CLI modes, configuration, tools, and workflows
 - `docs/instructions.md` — conventions, skill system, build/test rules
 - `docs/architecture.md` — full architecture, design decisions
+- `docs/backlog.md` — Boss → Foreman → Worker protocol
 - `docs/memory.md` — five-layer memory system
 - `docs/swarm.md` — agent orchestration
 - `docs/lighthouse.md` — MCP federation for foreign agents
