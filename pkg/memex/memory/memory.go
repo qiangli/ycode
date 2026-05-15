@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -13,16 +14,29 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Manager coordinates memory operations across global and project scopes.
+// Stamper populates provenance fields on a Memory before it is persisted.
+// Implementations live outside this package (typically in RuntimeContext)
+// and have access to the current persona, project, session, and host.
+// Set on Manager via SetStamper; when nil, no stamping occurs and Origin
+// is left untouched.
+type Stamper interface {
+	Stamp(mem *Memory)
+}
+
+// Manager coordinates memory operations across global, user, team, and
+// project scopes.
 type Manager struct {
 	projectStore *Store
 	globalStore  *Store // may be nil if no global dir configured
+	userStore    *Store // may be nil if no user dir configured
+	teamStore    *Store // may be nil if no team dir configured
 	index        *Index // project-level index
 
 	bleveSearcher  *BleveSearcher  // optional Bleve full-text search
 	vectorSearcher *VectorSearcher // optional vector semantic search
 	entityIndex    *EntityIndex    // optional entity extraction and linking
 	provider       MemoryProvider  // optional pluggable provider (supplements stores)
+	stamper        Stamper         // optional provenance stamper invoked on Save
 }
 
 // NewManager creates a new memory manager with a project-scoped store.
@@ -77,8 +91,39 @@ func (m *Manager) SetProvider(p MemoryProvider) {
 	m.provider = p
 }
 
+// SetStamper attaches a provenance stamper invoked on every Save before
+// persistence. Used to populate Memory.Origin from the surrounding runtime
+// (persona, project, session, host). Nil is allowed (default: no stamping).
+func (m *Manager) SetStamper(s Stamper) {
+	m.stamper = s
+}
+
+// SetUserStore attaches a user-scope store, typically rooted at
+// ~/.agents/ycode/users/<personaID>/memory/. Nil-safe: when unset,
+// ScopeUser memories fall back to the project store.
+func (m *Manager) SetUserStore(s *Store) {
+	m.userStore = s
+}
+
+// SetTeamStore attaches a team-scope store, typically rooted at
+// ~/.agents/ycode/teams/<teamID>/memory/. Nil-safe: when unset,
+// ScopeTeam memories fall back to the project store.
+func (m *Manager) SetTeamStore(s *Store) {
+	m.teamStore = s
+}
+
+// UserStore returns the user-scope store (may be nil).
+func (m *Manager) UserStore() *Store { return m.userStore }
+
+// TeamStore returns the team-scope store (may be nil).
+func (m *Manager) TeamStore() *Store { return m.teamStore }
+
 // Save persists a memory to the appropriate store based on scope.
 func (m *Manager) Save(mem *Memory) error {
+	if m.stamper != nil {
+		m.stamper.Stamp(mem)
+	}
+
 	ctx := context.Background()
 	tracer := otel.Tracer("ycode.memory")
 	_, span := tracer.Start(ctx, "ycode.memory.save",
@@ -208,9 +253,15 @@ func (m *Manager) Recall(query string, maxResults int) ([]SearchResult, error) {
 			results[i].Memory.EffectiveValue(), // dynamic value (Phase 2)
 			weights,
 		)
-		// Project-scoped memories get a slight boost.
-		if results[i].Memory.EffectiveScope() == ScopeProject {
+		// Scope cascade weights — project boosted, other scopes attenuated
+		// so cross-repo memories surface only when intrinsically relevant.
+		switch results[i].Memory.EffectiveScope() {
+		case ScopeProject:
 			results[i].Score *= 1.1
+		case ScopeUser, ScopeTeam:
+			results[i].Score *= 0.9
+		case ScopeGlobal:
+			results[i].Score *= 0.85
 		}
 		// Memories past their validity window get a penalty (Phase 6).
 		if results[i].Memory.ValidUntil != nil && time.Now().After(*results[i].Memory.ValidUntil) {
@@ -265,40 +316,86 @@ func (m *Manager) Forget(name string) error {
 	return fmt.Errorf("memory %q not found", name)
 }
 
-// All returns all stored memories from all scopes.
+// All returns all stored memories from all scopes (project + global +
+// user + team, when configured).
 func (m *Manager) All() ([]*Memory, error) {
 	projectMems, err := m.projectStore.List()
 	if err != nil {
 		return nil, fmt.Errorf("list project memories: %w", err)
 	}
-
-	// Tag project memories with scope if missing.
 	for _, mem := range projectMems {
 		if mem.Scope == "" {
 			mem.Scope = ScopeProject
 		}
 	}
 
-	if m.globalStore == nil {
-		return projectMems, nil
+	out := projectMems
+
+	if m.globalStore != nil {
+		globalMems, err := m.globalStore.List()
+		if err != nil {
+			return nil, fmt.Errorf("list global memories: %w", err)
+		}
+		for _, mem := range globalMems {
+			mem.Scope = ScopeGlobal
+		}
+		out = append(globalMems, out...)
 	}
 
-	globalMems, err := m.globalStore.List()
-	if err != nil {
-		return nil, fmt.Errorf("list global memories: %w", err)
+	if m.userStore != nil {
+		userMems, err := m.userStore.List()
+		if err != nil {
+			return nil, fmt.Errorf("list user memories: %w", err)
+		}
+		for _, mem := range userMems {
+			mem.Scope = ScopeUser
+		}
+		out = append(out, userMems...)
 	}
 
-	// Tag global memories.
-	for _, mem := range globalMems {
-		mem.Scope = ScopeGlobal
+	if m.teamStore != nil {
+		teamMems, err := m.teamStore.List()
+		if err != nil {
+			return nil, fmt.Errorf("list team memories: %w", err)
+		}
+		for _, mem := range teamMems {
+			mem.Scope = ScopeTeam
+		}
+		out = append(out, teamMems...)
 	}
 
-	return append(globalMems, projectMems...), nil
+	return out, nil
 }
 
 // ReadIndex returns the MEMORY.md contents.
 func (m *Manager) ReadIndex() (string, error) {
 	return m.index.Read()
+}
+
+// FormatProvenance returns a short suffix like "[macbook · ycode]" when
+// the memory was captured on a different host or in a different project
+// than the current execution context. Returns the empty string when there
+// is no Origin or when host and project both match (no useful provenance
+// to surface).
+//
+// currentHost and currentProjectID should be the values from the caller's
+// runtime (typically os.Hostname() and the resolved origin.ProjectID). If
+// either is empty, the comparison is skipped for that dimension.
+func FormatProvenance(mem *Memory, currentHost, currentProjectID string) string {
+	if mem == nil || mem.Origin == nil {
+		return ""
+	}
+	var parts []string
+	if mem.Origin.Host != "" && currentHost != "" && mem.Origin.Host != currentHost {
+		parts = append(parts, mem.Origin.Host)
+	}
+	if mem.Origin.ProjectID != "" && currentProjectID != "" && mem.Origin.ProjectID != currentProjectID {
+		parts = append(parts, mem.Origin.ProjectID)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "[" + strings.Join(parts, " · ") + "]"
 }
 
 // Store returns the project store (for backward compatibility).
@@ -311,10 +408,23 @@ func (m *Manager) GlobalStore() *Store {
 	return m.globalStore
 }
 
-// storeForScope returns the appropriate store for a given scope.
+// storeForScope returns the appropriate store for a given scope. Falls
+// back to the project store when the requested scope has no backing dir
+// configured (keeps memex usable in minimal setups).
 func (m *Manager) storeForScope(scope Scope) *Store {
-	if scope == ScopeGlobal && m.globalStore != nil {
-		return m.globalStore
+	switch scope {
+	case ScopeGlobal:
+		if m.globalStore != nil {
+			return m.globalStore
+		}
+	case ScopeUser:
+		if m.userStore != nil {
+			return m.userStore
+		}
+	case ScopeTeam:
+		if m.teamStore != nil {
+			return m.teamStore
+		}
 	}
 	return m.projectStore
 }

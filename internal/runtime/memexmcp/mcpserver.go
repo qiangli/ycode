@@ -51,12 +51,16 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 			Description: "Search ycode's persistent agent memory for entries relevant to a query. " +
 				"Uses Reciprocal Rank Fusion across name/description/content (plus Bleve and vector " +
 				"backends when wired). Returns a JSON array of {name, description, type, scope, " +
-				"importance, score, source} records, sorted best-first.",
+				"importance, score, source, host, project_id} records, sorted best-first. The " +
+				"optional `scope` argument restricts results to a single scope band — useful for " +
+				"cross-repo queries like \"recall something I worked on in another repo\" via " +
+				"scope=\"user\".",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
 					"query":       {"type": "string", "description": "Free-text query. Names, themes, and concepts all hit."},
-					"max_results": {"type": "integer", "description": "Cap on returned records. Default 10, max 50."}
+					"max_results": {"type": "integer", "description": "Cap on returned records. Default 10, max 50."},
+					"scope":       {"type": "string", "description": "Optional filter: project | user | global | team | all. Defaults to all (cross-scope cascade with project boosted, user/team attenuated, global most attenuated)."}
 				},
 				"required": ["query"]
 			}`),
@@ -163,7 +167,9 @@ func (h *MCPHandler) ReadResource(_ context.Context, uri string) (string, error)
 
 // recallView is the projection memex_recall returns. It deliberately
 // omits FilePath and other on-disk metadata so the foreign agent
-// can't leak host paths through its own logs/UI.
+// can't leak host paths through its own logs/UI. Host and ProjectID
+// from Origin are included so cross-host/cross-repo provenance is
+// observable to the agent (they're identifiers, not paths).
 type recallView struct {
 	Name        string  `json:"name"`
 	Description string  `json:"description"`
@@ -172,6 +178,8 @@ type recallView struct {
 	Importance  float64 `json:"importance"`
 	Score       float64 `json:"score"`
 	Source      string  `json:"source,omitempty"`
+	Host        string  `json:"host,omitempty"`
+	ProjectID   string  `json:"project_id,omitempty"`
 	Content     string  `json:"content"`
 }
 
@@ -184,6 +192,7 @@ func (h *MCPHandler) handleRecall(_ context.Context, input json.RawMessage) (str
 	var args struct {
 		Query      string `json:"query"`
 		MaxResults int    `json:"max_results"`
+		Scope      string `json:"scope"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
 		return "", fmt.Errorf("parse input: %w", err)
@@ -198,7 +207,22 @@ func (h *MCPHandler) handleRecall(_ context.Context, input json.RawMessage) (str
 		args.MaxResults = maxRecallResults
 	}
 
-	results, err := h.mgr.Recall(args.Query, args.MaxResults)
+	scopeFilter, err := parseScopeFilter(args.Scope)
+	if err != nil {
+		return "", err
+	}
+
+	// When the caller asks for a single scope, widen the underlying recall
+	// so the post-filter still leaves enough hits to satisfy MaxResults.
+	internalCap := args.MaxResults
+	if scopeFilter != "" {
+		internalCap = args.MaxResults * 4
+		if internalCap > maxRecallResults*4 {
+			internalCap = maxRecallResults * 4
+		}
+	}
+
+	results, err := h.mgr.Recall(args.Query, internalCap)
 	if err != nil {
 		return "", fmt.Errorf("recall: %w", err)
 	}
@@ -208,7 +232,10 @@ func (h *MCPHandler) handleRecall(_ context.Context, input json.RawMessage) (str
 		if r.Memory == nil {
 			continue
 		}
-		views = append(views, recallView{
+		if scopeFilter != "" && r.Memory.EffectiveScope() != scopeFilter {
+			continue
+		}
+		v := recallView{
 			Name:        r.Memory.Name,
 			Description: r.Memory.Description,
 			Type:        string(r.Memory.Type),
@@ -217,13 +244,41 @@ func (h *MCPHandler) handleRecall(_ context.Context, input json.RawMessage) (str
 			Score:       r.Score,
 			Source:      r.Source,
 			Content:     r.Memory.Content,
-		})
+		}
+		if r.Memory.Origin != nil {
+			v.Host = r.Memory.Origin.Host
+			v.ProjectID = r.Memory.Origin.ProjectID
+		}
+		views = append(views, v)
+		if len(views) >= args.MaxResults {
+			break
+		}
 	}
 	out, err := json.Marshal(views)
 	if err != nil {
 		return "", fmt.Errorf("marshal results: %w", err)
 	}
 	return string(out), nil
+}
+
+// parseScopeFilter turns a raw scope argument into a memory.Scope value
+// suitable for direct comparison against Memory.EffectiveScope(). Empty
+// input and "all" both mean "no filter" (the empty Scope sentinel).
+func parseScopeFilter(raw string) (memory.Scope, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "all":
+		return "", nil
+	case string(memory.ScopeProject):
+		return memory.ScopeProject, nil
+	case string(memory.ScopeUser):
+		return memory.ScopeUser, nil
+	case string(memory.ScopeGlobal):
+		return memory.ScopeGlobal, nil
+	case string(memory.ScopeTeam):
+		return memory.ScopeTeam, nil
+	default:
+		return "", fmt.Errorf("unknown scope %q (allowed: project, user, global, team, all)", raw)
+	}
 }
 
 func (h *MCPHandler) handleSave(_ context.Context, input json.RawMessage) (string, error) {

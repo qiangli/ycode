@@ -69,6 +69,12 @@ func (d *Dreamer) consolidate() error {
 
 	d.logger.Info("dream: consolidating memories", "count", len(memories))
 
+	// Phase 0: Back-fill Origin on memories that predate the Stamper. Only
+	// fills the sticky identity dimensions (persona, host, project); leaves
+	// SessionID and AgentTool empty since their historical values are not
+	// recoverable. Idempotent — memories with non-nil Origin are skipped.
+	backfilled := d.backfillOrigin(memories)
+
 	// Phase 1: Remove stale memories.
 	removed := 0
 	var surviving []*Memory
@@ -102,9 +108,58 @@ func (d *Dreamer) consolidate() error {
 
 	d.logger.Info("dream: consolidation complete",
 		"removed_stale", removed,
-		"merged", merged)
+		"merged", merged,
+		"backfilled_origin", backfilled)
 
 	return nil
+}
+
+// backfillOrigin populates Memory.Origin on memories that predate the
+// Stamper. Pulls identity values from the manager's attached Stamper
+// (when present) — that way the policy of "what counts as 'this user on
+// this host in this repo'" lives in one place. Skips memories with
+// non-nil Origin, so re-runs are no-ops.
+//
+// SessionID and AgentTool are deliberately left empty on back-filled
+// records: those values are session-local and not recoverable from
+// historical state. Future saves of the same memory will fill them in.
+func (d *Dreamer) backfillOrigin(memories []*Memory) int {
+	if d.manager.stamper == nil {
+		return 0
+	}
+	// Probe the stamper to get current identity values. Keep only the
+	// sticky dimensions (persona/host/project) — Session and AgentTool
+	// are session-local and don't make sense on retrofitted records.
+	probe := &Memory{}
+	d.manager.stamper.Stamp(probe)
+	if probe.Origin == nil {
+		return 0
+	}
+	personaID := probe.Origin.PersonaID
+	host := probe.Origin.Host
+	projectID := probe.Origin.ProjectID
+	if personaID == "" && host == "" && projectID == "" {
+		return 0
+	}
+
+	count := 0
+	for _, mem := range memories {
+		if mem.Origin != nil {
+			continue
+		}
+		mem.Origin = &Origin{
+			PersonaID: personaID,
+			Host:      host,
+			ProjectID: projectID,
+		}
+		if err := d.manager.storeForScope(mem.EffectiveScope()).Save(mem); err != nil {
+			d.logger.Warn("dream: failed to back-fill origin", "name", mem.Name, "error", err)
+			mem.Origin = nil
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 // consolidatePersona prunes and merges persona observations,

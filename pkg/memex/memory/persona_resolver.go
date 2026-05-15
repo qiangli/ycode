@@ -117,13 +117,14 @@ func matchScore(stored, current *EnvironmentSignals) float64 {
 	return score
 }
 
-// envHash produces a stable ID from environment signals.
+// envHash produces a stable, host-independent ID from environment signals.
+// Only git user name and email contribute to the identity so the same user
+// resolves to the same PersonaID across machines. Host is carried separately
+// on Memory.Origin.Host for provenance.
 func envHash(env *EnvironmentSignals) string {
-	// Use the strongest identity signals.
 	parts := []string{
 		env.GitUserName,
 		env.GitEmail,
-		env.HomeDir,
 	}
 	data := strings.Join(parts, "|")
 	h := sha256.Sum256([]byte(data))

@@ -300,3 +300,26 @@ func TestEnvHash_DifferentForDifferentUsers(t *testing.T) {
 		t.Error("envHash should differ for different users")
 	}
 }
+
+// TestEnvHash_HostIndependent asserts that PersonaID does not vary with
+// HomeDir or Hostname — same git identity on two machines maps to the same
+// persona. Host is carried separately on Origin.
+func TestEnvHash_HostIndependent(t *testing.T) {
+	macbook := &EnvironmentSignals{
+		GitUserName: "alice",
+		GitEmail:    "alice@example.com",
+		HomeDir:     "/Users/alice",
+		Hostname:    "macbook",
+	}
+	server := &EnvironmentSignals{
+		GitUserName: "alice",
+		GitEmail:    "alice@example.com",
+		HomeDir:     "/home/alice",
+		Hostname:    "ec2-dev",
+	}
+
+	if envHash(macbook) != envHash(server) {
+		t.Errorf("envHash should be host-independent: macbook=%q server=%q",
+			envHash(macbook), envHash(server))
+	}
+}

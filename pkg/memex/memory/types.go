@@ -62,8 +62,34 @@ type Memory struct {
 	// store TTL pattern for automatic memory cleanup.
 	TTLMinutes int `json:"ttl_minutes,omitempty"`
 
+	// Origin records who/where this memory was captured. Populated by the
+	// Stamper on Save when one is attached to Manager. Enables cross-repo
+	// and cross-host provenance.
+	Origin *Origin `json:"origin,omitempty"`
+
+	// SourceQ is the normalized question that produced this memory when it
+	// was promoted from the Q→A cache. Empty for memories not derived from
+	// a question.
+	SourceQ string `json:"source_q,omitempty"`
+
+	// LastVerifiedAt is distinct from UpdatedAt: it tracks the most recent
+	// time the memory was confirmed accurate (manually or by re-verification).
+	LastVerifiedAt time.Time `json:"last_verified_at,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Origin captures provenance of a memory: which user, host, project, and
+// session produced it. PersonaID is host-independent (computed from git
+// user + email only); Host carries the machine name separately so the
+// "same user across hosts" gap is observable in recall results.
+type Origin struct {
+	PersonaID string `json:"persona_id,omitempty" yaml:"persona_id,omitempty"`
+	Host      string `json:"host,omitempty"       yaml:"host,omitempty"`
+	ProjectID string `json:"project_id,omitempty" yaml:"project_id,omitempty"`
+	SessionID string `json:"session_id,omitempty" yaml:"session_id,omitempty"`
+	AgentTool string `json:"agent_tool,omitempty" yaml:"agent_tool,omitempty"`
 }
 
 // EffectiveScope returns the memory's scope, defaulting to ScopeProject.

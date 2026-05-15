@@ -428,6 +428,7 @@ func (a *App) resolvePersona() {
 		return
 	}
 	a.currentPersona = p
+	a.attachOriginPlumbing()
 }
 
 // collectEnvironmentSignals gathers environment hints for persona matching.

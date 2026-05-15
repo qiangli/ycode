@@ -68,6 +68,29 @@ func (s *Store) Save(mem *Memory) error {
 	if mem.SupersededBy != "" {
 		fmt.Fprintf(&b, "superseded_by: %s\n", mem.SupersededBy)
 	}
+	if mem.Origin != nil {
+		if mem.Origin.PersonaID != "" {
+			fmt.Fprintf(&b, "origin_persona_id: %s\n", mem.Origin.PersonaID)
+		}
+		if mem.Origin.Host != "" {
+			fmt.Fprintf(&b, "origin_host: %s\n", mem.Origin.Host)
+		}
+		if mem.Origin.ProjectID != "" {
+			fmt.Fprintf(&b, "origin_project_id: %s\n", mem.Origin.ProjectID)
+		}
+		if mem.Origin.SessionID != "" {
+			fmt.Fprintf(&b, "origin_session_id: %s\n", mem.Origin.SessionID)
+		}
+		if mem.Origin.AgentTool != "" {
+			fmt.Fprintf(&b, "origin_agent_tool: %s\n", mem.Origin.AgentTool)
+		}
+	}
+	if mem.SourceQ != "" {
+		fmt.Fprintf(&b, "source_q: %s\n", mem.SourceQ)
+	}
+	if !mem.LastVerifiedAt.IsZero() {
+		fmt.Fprintf(&b, "last_verified_at: %s\n", mem.LastVerifiedAt.Format(time.RFC3339))
+	}
 	b.WriteString("---\n\n")
 	b.WriteString(mem.Content)
 
@@ -193,10 +216,33 @@ func parseFrontmatter(data string) *Memory {
 			}
 		case "superseded_by":
 			mem.SupersededBy = strings.TrimSpace(value)
+		case "origin_persona_id":
+			ensureOrigin(mem).PersonaID = strings.TrimSpace(value)
+		case "origin_host":
+			ensureOrigin(mem).Host = strings.TrimSpace(value)
+		case "origin_project_id":
+			ensureOrigin(mem).ProjectID = strings.TrimSpace(value)
+		case "origin_session_id":
+			ensureOrigin(mem).SessionID = strings.TrimSpace(value)
+		case "origin_agent_tool":
+			ensureOrigin(mem).AgentTool = strings.TrimSpace(value)
+		case "source_q":
+			mem.SourceQ = strings.TrimSpace(value)
+		case "last_verified_at":
+			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(value)); err == nil {
+				mem.LastVerifiedAt = t
+			}
 		}
 	}
 
 	return mem
+}
+
+func ensureOrigin(mem *Memory) *Origin {
+	if mem.Origin == nil {
+		mem.Origin = &Origin{}
+	}
+	return mem.Origin
 }
 
 // BatchOp represents a single operation in a batch.
