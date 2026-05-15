@@ -34,13 +34,13 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/repomap"
 	"github.com/qiangli/ycode/internal/runtime/skills"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
-	memorypkg "github.com/qiangli/ycode/pkg/memex/memory"
 	"github.com/qiangli/ycode/internal/runtime/widget"
 	"github.com/qiangli/ycode/internal/shell"
 	_ "github.com/qiangli/ycode/internal/shell/agentmode"
 	_ "github.com/qiangli/ycode/internal/shell/builtins"
 	"github.com/qiangli/ycode/internal/tools"
 	loompkg "github.com/qiangli/ycode/pkg/loom"
+	memorypkg "github.com/qiangli/ycode/pkg/memex/memory"
 )
 
 var (

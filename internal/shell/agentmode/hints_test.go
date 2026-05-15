@@ -199,3 +199,52 @@ func TestSuggestNoFalseFire(t *testing.T) {
 		})
 	}
 }
+
+// TestSuggestSkipsRemoteSSH pins that ssh-as-remote-exec suppresses all
+// catalog hints — the body runs on another host, so suggestions like
+// `yc symbols` against the local tree would be misleading.
+func TestSuggestSkipsRemoteSSH(t *testing.T) {
+	remotes := []string{
+		`ssh user@host 'echo foo | grep bar'`,
+		`/usr/bin/env ssh -o ConnectTimeout=10 -o BatchMode=yes noviadmin@novicortex.local 'echo "== mem ==" && grep -r MemTotal /proc/meminfo'`,
+		`env LANG=C ssh host 'tree -L 2'`,
+		`nohup ssh host 'curl https://example.com'`,
+		`PATH=/usr/bin ssh host 'wget https://example.com'`,
+	}
+	for _, cmd := range remotes {
+		t.Run(cmd, func(t *testing.T) {
+			ResetSeen()
+			hints := Suggest(nil, cmd)
+			if len(hints) != 0 {
+				t.Fatalf("ssh remote-exec command unexpectedly fired hints: %+v", hints)
+			}
+		})
+	}
+}
+
+// TestIsRemoteExec covers the wrapper-stripping logic so regressions in
+// argument parsing surface independently of the catalog.
+func TestIsRemoteExec(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want bool
+	}{
+		{"ssh host echo hi", true},
+		{"ssh user@host 'echo hi'", true},
+		{"/usr/bin/env ssh -o BatchMode=yes user@host date", true},
+		{"env FOO=bar ssh host date", true},
+		{"FOO=bar BAZ=qux ssh host date", true},
+		{"nohup ssh host date", true},
+		{"time ssh host date", true},
+		{"ssh-keygen -t ed25519", false},
+		{"ssh-add -l", false},
+		{"echo ssh user@host", false},
+		{"git log", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := isRemoteExec(tc.cmd); got != tc.want {
+			t.Errorf("isRemoteExec(%q) = %v, want %v", tc.cmd, got, tc.want)
+		}
+	}
+}

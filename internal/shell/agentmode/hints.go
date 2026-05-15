@@ -199,6 +199,12 @@ func Suggest(_ *shell.ShellRuntime, command string) []shell.Hint {
 	seen := suggestSeen()
 	defer suggestRelease(seen)
 
+	if isRemoteExec(command) {
+		RecordPre(command, nil)
+		end(nil, "fired_count", "0", "skip", "remote_exec")
+		return nil
+	}
+
 	var firedIDs []string
 	for _, h := range Catalog {
 		loc := h.Pattern.FindStringSubmatchIndex(command)
@@ -243,6 +249,55 @@ func SuggestPost(_ *shell.ShellRuntime, exitCode int, stderr string) []shell.Hin
 	RecordPost(exitCode, firedIDs)
 	end(nil, "fired_count", itoa(len(firedIDs)), "exit_code", itoa(exitCode))
 	return hints
+}
+
+// isEnvKey reports whether s is a syntactically valid shell env-var
+// name: leading letter or underscore, then letters/digits/underscores.
+func isEnvKey(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r == '_':
+		case r >= 'A' && r <= 'Z':
+		case r >= 'a' && r <= 'z':
+		case i > 0 && r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// isRemoteExec reports whether the command's effective first token is
+// `ssh`, after skipping NAME=VALUE assignments and common wrappers
+// (`env`, `/usr/bin/env`, `nohup`, `time`). When ssh runs a body on a
+// remote host the local hint engine has no useful suggestions — the
+// remote filesystem isn't reachable by `yc symbols`, `yc repomap`, etc.
+func isRemoteExec(command string) bool {
+	s := strings.TrimSpace(command)
+	for s != "" {
+		first, rest, _ := strings.Cut(s, " ")
+		first = strings.TrimSpace(first)
+		if first == "" {
+			s = strings.TrimSpace(rest)
+			continue
+		}
+		// NAME=VALUE env assignment prefix — only the key side is constrained
+		// (must be a shell-identifier); the value may contain slashes etc.
+		if eq := strings.IndexByte(first, '='); eq > 0 && isEnvKey(first[:eq]) {
+			s = strings.TrimSpace(rest)
+			continue
+		}
+		switch first {
+		case "env", "/usr/bin/env", "/bin/env", "nohup", "time", "exec":
+			s = strings.TrimSpace(rest)
+			continue
+		}
+		return first == "ssh"
+	}
+	return false
 }
 
 // process-wide dedup of hint IDs. -c invocations get a fresh map per
