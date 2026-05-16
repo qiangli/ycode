@@ -28,6 +28,12 @@ type ComponentConfig struct {
 	AppName  string `json:"appName,omitempty"`
 	HTTPOnly bool   `json:"httpOnly,omitempty"`
 	Token    string `json:"token,omitempty"`
+	// PublicRootURL is the externally-visible URL where the proxy serves
+	// Gitea (e.g. "http://127.0.0.1:58080/git/"). When set, it becomes
+	// Gitea's ROOT_URL — Gitea then emits asset/static/link URLs with the
+	// sub-path prefix so the proxy's StripPrefix mount still finds them.
+	// Leave empty for direct-port access without a fronting proxy.
+	PublicRootURL string `json:"publicRootURL,omitempty"`
 }
 
 // gitOTELState holds OTEL instruments for the git server.
@@ -55,10 +61,11 @@ func (g *GitServerComponent) Start(ctx context.Context) error {
 	slog.Info("gitserver: starting component")
 
 	server, err := NewServer(&ServerConfig{
-		DataDir:  g.dataDir,
-		AppName:  g.cfg.AppName,
-		HTTPOnly: g.cfg.HTTPOnly,
-		Token:    g.cfg.Token,
+		DataDir:       g.dataDir,
+		AppName:       g.cfg.AppName,
+		HTTPOnly:      g.cfg.HTTPOnly,
+		Token:         g.cfg.Token,
+		PublicRootURL: g.cfg.PublicRootURL,
 	})
 	if err != nil {
 		return fmt.Errorf("gitserver: init: %w", err)

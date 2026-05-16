@@ -910,11 +910,12 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 	var gitComp *gitserver.GitServerComponent
 	if gitServerCfg.IsEnabled() {
 		gitComp = gitserver.NewGitServerComponent(&gitserver.ComponentConfig{
-			Enabled:  true,
-			DataDir:  gitServerCfg.DataDir,
-			AppName:  gitServerCfg.AppName,
-			HTTPOnly: gitServerCfg.HTTPOnly,
-			Token:    gitServerCfg.Token,
+			Enabled:       true,
+			DataDir:       gitServerCfg.DataDir,
+			AppName:       gitServerCfg.AppName,
+			HTTPOnly:      gitServerCfg.HTTPOnly,
+			Token:         gitServerCfg.Token,
+			PublicRootURL: fmt.Sprintf("http://127.0.0.1:%d/git/", proxyPort),
 		}, filepath.Join(dataDir, "gitea"))
 		mgr.AddComponent(gitComp)
 	}

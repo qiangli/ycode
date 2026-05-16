@@ -34,6 +34,12 @@ type ServerConfig struct {
 	AppName  string // display name (default: "ycode Git")
 	HTTPOnly bool   // disable SSH access (default: true)
 	Token    string // admin API token
+	// PublicRootURL is the externally-visible URL Gitea should advertise
+	// in generated links and asset prefixes (e.g.
+	// "http://127.0.0.1:58080/git/"). When set, it is written as
+	// ROOT_URL in app.ini, and Gitea derives AppSubURL from its path.
+	// Empty disables the override; Gitea falls back to its own default.
+	PublicRootURL string
 }
 
 // NewServer creates a git server instance.
@@ -167,13 +173,25 @@ func (s *Server) writeConfig(port int) error {
 
 	localURL := fmt.Sprintf("http://127.0.0.1:%d/", port)
 
+	// ROOT_URL controls Gitea's link & asset URL generation. When ycode
+	// runs Gitea behind the observability proxy at /git/, set ROOT_URL
+	// to the proxy-fronted URL so emitted asset paths carry the sub-path
+	// the browser is actually requesting from (e.g. /git/assets/*). With
+	// USE_SUB_URL_PATH left at its default (false), Gitea still expects
+	// requests *without* the prefix — which matches the proxy's
+	// StripPrefix mount.
+	rootURLLine := ""
+	if s.cfg.PublicRootURL != "" {
+		rootURLLine = fmt.Sprintf("ROOT_URL       = %s\n", s.cfg.PublicRootURL)
+	}
+
 	ini := fmt.Sprintf(`[server]
 HTTP_ADDR      = 127.0.0.1
 HTTP_PORT      = %d
 DOMAIN         = localhost
 APP_NAME       = %s
 OFFLINE_MODE   = true
-LOCAL_ROOT_URL = %s
+%sLOCAL_ROOT_URL = %s
 
 [database]
 DB_TYPE = sqlite3
@@ -207,7 +225,7 @@ DISABLE = %t
 
 [api]
 ENABLE_SWAGGER = false
-`, port, s.cfg.AppName, localURL, dbPath, repoRoot, internalToken,
+`, port, s.cfg.AppName, rootURLLine, localURL, dbPath, repoRoot, internalToken,
 		filepath.Join(s.dataDir, "log"),
 		s.cfg.HTTPOnly,
 	)
