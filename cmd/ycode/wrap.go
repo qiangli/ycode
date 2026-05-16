@@ -33,6 +33,8 @@ func newWrapCmd() *cobra.Command {
 		runtimeHooks string
 		otelExport   string
 		ptyMode      string
+		logLevel     string
+		quiet        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "wrap [flags] -- <agent-cmd> [args...]",
@@ -58,6 +60,18 @@ func newWrapCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			origin.SetAgentTool(origin.ToolWrap)
 			ctx := cmd.Context()
+
+			// --quiet / --log-level set YCODE_LOG_LEVEL so the wrap
+			// parent's slog handler and all shim children pick up the
+			// same level. The env var is the existing knob; the flags
+			// are just nicer ergonomics for one-off invocations.
+			// Order: explicit env wins over flag, --quiet wins over
+			// --log-level when both are set.
+			if quiet {
+				_ = os.Setenv("YCODE_LOG_LEVEL", "warn")
+			} else if logLevel != "" && os.Getenv("YCODE_LOG_LEVEL") == "" {
+				_ = os.Setenv("YCODE_LOG_LEVEL", logLevel)
+			}
 
 			hooks, err := parseRuntimeHooks(runtimeHooks)
 			if err != nil {
@@ -100,6 +114,10 @@ func newWrapCmd() *cobra.Command {
 		"OTel exporter mode: file (default — ~/.agents/ycode/otel/instances/wrap-<pid>/) | console (file plus stderr JSON) | off (no provider). YCODE_WRAP_OTEL_EXPORT env wins when set.")
 	cmd.Flags().StringVar(&ptyMode, "pty", "auto",
 		"PTY allocation: auto (default — when stdin & stdout are terminals) | always (force PTY) | never (inherit stdio). Interactive TUIs (claude, opencode) need a PTY to render correctly.")
+	cmd.Flags().StringVar(&logLevel, "log-level", "",
+		"slog level for ycode's own diagnostics: debug | info (default) | warn | error. Equivalent to setting YCODE_LOG_LEVEL. Does not affect the wrapped tool's own output.")
+	cmd.Flags().BoolVar(&quiet, "quiet", false,
+		"Suppress ycode's INFO-level diagnostics (shorthand for --log-level=warn). Wrapped tool's stdout/stderr/exit code are passed through unchanged.")
 	return cmd
 }
 

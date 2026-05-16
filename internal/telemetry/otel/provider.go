@@ -89,6 +89,12 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 		cfg.SampleRate = 1.0
 	}
 
+	// Route OTel SDK errors through slog so the periodic
+	// "collector unreachable" chatter doesn't corrupt the TUI of a
+	// wrapped tool (claude, codex, ...) when ycode serve is offline.
+	// Idempotent — safe to call from every entrypoint.
+	InstallQuietErrorHandler()
+
 	attrs := []attribute.KeyValue{
 		semconv.ServiceName(cfg.ServiceName),
 		semconv.ServiceVersion(cfg.ServiceVersion),
