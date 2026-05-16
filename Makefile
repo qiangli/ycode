@@ -36,6 +36,7 @@ init: ## Initialize submodules, fetch plugins, and prepare embedded assets
 	@git submodule update --recursive 2>&1 | grep -v '^From \|^Submodule path\| \* branch' || true
 	@./scripts/fetch-perses-plugins.sh
 	@./scripts/gzip-embeds.sh
+	@./scripts/build-gitea-frontend.sh
 	@echo "Generating Gitea bindata..."
 	@cd external/gitea && go run build/generate-bindata.go options modules/options/bindata.dat 2>&1
 	@cd external/gitea && go run build/generate-bindata.go templates modules/templates/bindata.dat 2>&1
