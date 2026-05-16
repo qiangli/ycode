@@ -303,7 +303,7 @@ func (s *Service) Status(ctx context.Context, req StatusRequest) ([]LeaseStatus,
 	}
 	prStateByBranch := map[string]BackendPRState{}
 	for slug := range bySlug {
-		states, err := s.backend.ListPRStates(ctx, slug, "agent/agent-"+SubAgentIDPrefix+":")
+		states, err := s.backend.ListPRStates(ctx, slug, "agent/agent-"+SubAgentIDPrefix+"-")
 		if err != nil {
 			s.log.Warn("loom: list PR states", "slug", slug, "err", err)
 			continue
@@ -427,7 +427,13 @@ func (s *Service) reapOnce(ctx context.Context) {
 
 // newAgentID returns a stable, label-prefixed identifier suitable for
 // branch names and git author trailers. Format:
-// "agent-loom:<sanitized-label>-<8 hex>".
+// "agent-loom-<sanitized-label>-<8 hex>". The "agent-loom-" prefix
+// is the filter token used to separate foreign-driven work from
+// ycode's own collab work in git log and OTel.
+//
+// The separator MUST stay ref-safe (git check-ref-format rejects ':',
+// '?', '^', '~', '\', '*', and whitespace). Earlier versions used ':'
+// which broke `git checkout -b` and `RefSpec` parsing in go-git.
 func newAgentID(label string) string {
 	clean := sanitizeLabel(label)
 	if clean == "" {
@@ -435,7 +441,7 @@ func newAgentID(label string) string {
 	}
 	var b [4]byte
 	_, _ = rand.Read(b[:])
-	return fmt.Sprintf("agent-%s:%s-%s", SubAgentIDPrefix, clean, hex.EncodeToString(b[:]))
+	return fmt.Sprintf("agent-%s-%s-%s", SubAgentIDPrefix, clean, hex.EncodeToString(b[:]))
 }
 
 // newBranchName returns "agent/<id>/free-<rand>" — the same shape ycode's

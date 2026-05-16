@@ -60,11 +60,11 @@ route was retired):
     "mcp": "http://127.0.0.1:PORT/mcp/",
     "leaseTTLDefaultSeconds": 3600,
     "leaseTTLMaxSeconds": 28800,
-    "subAgentIdentityConvention": "loom:<label>",
+    "subAgentIdentityConvention": "agent-loom-<label>",
     "cloneURLTemplate": "http://127.0.0.1:PORT/git/admin/{slug}.git",
     "tokenFile": "~/.agents/ycode/gitea/admin.token",
     "sandboxRoot": "~/.agents/ycode/gitea/loom/sandboxes",
-    "branchNamePattern": "agent/agent-loom:<label>-<id8>/free-<rand>"
+    "branchNamePattern": "agent/agent-loom-<label>-<id8>/free-<rand>"
   },
   "mcp": {
     "http": {
@@ -87,12 +87,15 @@ where the prompting gate can authorize writes.
 Single admin Gitea user, single admin token at
 `~/.agents/ycode/gitea/admin.token`. Per-sub-agent identity rides in:
 
-- branch name: `agent/agent-loom:<label>-<id8>/free-<rand>`
-- git author trailer: `agent-loom:<label>-<id8> <agent-loom:<label>-<id8>@ycode.local>`
+- branch name: `agent/agent-loom-<label>-<id8>/free-<rand>`
+- git author trailer: `agent-loom-<label>-<id8> <agent-loom-<label>-<id8>@ycode.local>`
 
-The `loom:` prefix in branches and author names makes it trivial to
-filter foreign-driven work in OTel logs and `git log` from ycode's own
-internal collab work, without provisioning per-sub-agent Gitea users.
+The `agent-loom-` prefix in branches and author names makes it trivial
+to filter foreign-driven work in OTel logs and `git log` from ycode's
+own internal collab work, without provisioning per-sub-agent Gitea
+users. The separator MUST stay ref-safe: `git check-ref-format` rejects
+`:` (along with `?`, `^`, `~`, `\`, `*`, and whitespace) in branch
+names, which is why we use `-` rather than `:`.
 
 ## Lifecycle
 

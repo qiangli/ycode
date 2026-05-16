@@ -318,8 +318,8 @@ func (b *GiteaBackend) findCloneURL(ctx context.Context, slug string) (string, e
 	return "", fmt.Errorf("loom: clone URL not found for slug %q", slug)
 }
 
-// agentIDFromBranch extracts the "agent-loom:label-hex" identifier from
-// a branch of the form "agent/agent-loom:label-hex/free-rand".
+// agentIDFromBranch extracts the "agent-loom-label-hex" identifier from
+// a branch of the form "agent/agent-loom-label-hex/free-rand".
 func agentIDFromBranch(branch string) string {
 	if !strings.HasPrefix(branch, "agent/") {
 		return branch

@@ -187,8 +187,15 @@ func TestService_Lease_BasicHappyPath(t *testing.T) {
 	if lease.Slug != "p-project" {
 		t.Errorf("Slug=%q want p-project", lease.Slug)
 	}
-	if !strings.HasPrefix(lease.Branch, "agent/agent-loom:extract-types-") {
+	if !strings.HasPrefix(lease.Branch, "agent/agent-loom-extract-types-") {
 		t.Errorf("Branch=%q does not match expected pattern", lease.Branch)
+	}
+	// Branch must be git-ref-valid: check-ref-format rejects ':' along
+	// with '?', '^', '~', '\', '*', whitespace, and ".." sequences.
+	for _, bad := range []string{":", "?", "^", "~", "\\", "*", " ", ".."} {
+		if strings.Contains(lease.Branch, bad) {
+			t.Errorf("Branch=%q contains ref-unsafe %q", lease.Branch, bad)
+		}
 	}
 	if lease.Path == "" {
 		t.Error("Path should be set")

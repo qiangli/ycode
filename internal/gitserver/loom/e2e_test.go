@@ -144,7 +144,7 @@ func TestE2E_Loom_FullFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lease: %v", err)
 	}
-	if !strings.HasPrefix(lease.Branch, "agent/agent-loom:single-") {
+	if !strings.HasPrefix(lease.Branch, "agent/agent-loom-single-") {
 		t.Errorf("unexpected branch: %s", lease.Branch)
 	}
 	if _, err := os.Stat(lease.Path); err != nil {
@@ -205,7 +205,7 @@ func TestE2E_Loom_FullFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("git log: %v\n%s", err, logOut)
 	}
-	if !strings.Contains(logOut, "agent-loom:single-") {
+	if !strings.Contains(logOut, "agent-loom-single-") {
 		t.Errorf("expected loom-prefixed author in main log, got:\n%s", logOut)
 	}
 

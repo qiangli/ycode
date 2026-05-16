@@ -92,11 +92,11 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 			"mcp":                        proxy + "/mcp/",
 			"leaseTTLDefaultSeconds":     3600,
 			"leaseTTLMaxSeconds":         28800,
-			"subAgentIdentityConvention": "loom:<label>",
+			"subAgentIdentityConvention": "agent-loom-<label>",
 			"cloneURLTemplate":           proxy + "/git/admin/{slug}.git",
 			"tokenFile":                  filepath.Join(home, ".agents", "ycode", "gitea", "admin.token"),
 			"sandboxRoot":                filepath.Join(home, ".agents", "ycode", "gitea", "loom", "sandboxes"),
-			"branchNamePattern":          "agent/agent-loom:<label>-<id8>/free-<rand>",
+			"branchNamePattern":          "agent/agent-loom-<label>-<id8>/free-<rand>",
 		}
 	}
 
