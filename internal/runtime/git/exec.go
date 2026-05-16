@@ -59,15 +59,27 @@ func (g *GitExec) RunOutput(ctx context.Context, dir string, args ...string) (st
 }
 
 // directExec is the legacy fallback when no executor is configured.
+//
+// A non-zero exit is ALWAYS an error, regardless of whether git produced
+// output. Earlier versions swallowed the error when len(out) > 0, which
+// hid real failures: e.g. `git checkout -b 'bad:name'` exits 128 with a
+// "fatal: ... is not a valid branch name" message — the message is
+// output, and the caller saw nil error and proceeded with HEAD on the
+// wrong branch.
 func (g *GitExec) directExec(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
-	if err != nil && len(out) == 0 {
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		verb := ""
 		if len(args) > 0 {
-			return "", fmt.Errorf("git %s: %w", args[0], err)
+			verb = " " + args[0]
 		}
-		return "", fmt.Errorf("git: %w", err)
+		if msg != "" {
+			return "", fmt.Errorf("git%s: %w: %s", verb, err, msg)
+		}
+		return "", fmt.Errorf("git%s: %w", verb, err)
 	}
 	return string(out), nil
 }
