@@ -191,6 +191,7 @@ HTTP_PORT      = %d
 DOMAIN         = localhost
 APP_NAME       = %s
 OFFLINE_MODE   = true
+LANDING_PAGE   = explore
 %sLOCAL_ROOT_URL = %s
 
 [database]
@@ -201,9 +202,15 @@ PATH    = %s
 ROOT = %s
 
 [service]
-DISABLE_REGISTRATION   = true
-REQUIRE_SIGNIN_CONFIRM = false
-ENABLE_NOTIFY_MAIL     = false
+DISABLE_REGISTRATION     = true
+REQUIRE_SIGNIN_CONFIRM   = false
+ENABLE_NOTIFY_MAIL       = false
+SHOW_REGISTRATION_BUTTON = false
+
+[other]
+SHOW_FOOTER_VERSION            = false
+SHOW_FOOTER_TEMPLATE_LOAD_TIME = false
+SHOW_FOOTER_POWERED_BY         = false
 
 [security]
 INSTALL_LOCK   = true
