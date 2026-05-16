@@ -237,6 +237,9 @@ func TestE2E_PushOriginRespected(t *testing.T) {
 			}
 			return nil
 		},
+		FetchMainSHAFn: func(ctx context.Context, prNumber int64) (string, error) {
+			return gitea.postMergeSHA, nil
+		},
 	})
 	if err := m.Tick(ctx); err != nil {
 		t.Fatalf("Tick: %v", err)

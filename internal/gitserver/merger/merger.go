@@ -59,6 +59,11 @@ type Config struct {
 	// Wired by the autopilot collab CLI; nil in tests.
 	OriginPushFn func(ctx context.Context, sha string) error
 
+	// FetchMainSHAFn, if non-nil, overrides the default git-based fetch
+	// of the post-merge main SHA. Used by tests that don't have a real
+	// git remote to clone from; nil in production.
+	FetchMainSHAFn func(ctx context.Context, prNumber int64) (string, error)
+
 	// Logger is required.
 	Logger *slog.Logger
 }
@@ -306,6 +311,9 @@ func (m *Merger) checkoutMerge(ctx context.Context, pr gitserver.PullRequest) (s
 
 // fetchMainSHA reads main's tip SHA from the prospective-merge worktree.
 func (m *Merger) fetchMainSHA(ctx context.Context, prNumber int64) (string, error) {
+	if m.cfg.FetchMainSHAFn != nil {
+		return m.cfg.FetchMainSHAFn(ctx, prNumber)
+	}
 	prDir := filepath.Join(m.cfg.WorkDir, fmt.Sprintf("pr-%d-sha", prNumber))
 	_ = os.RemoveAll(prDir)
 	if err := os.MkdirAll(prDir, 0o755); err != nil {
