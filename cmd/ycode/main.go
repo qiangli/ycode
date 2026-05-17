@@ -1330,6 +1330,9 @@ func init() {
 	healCmd.AddCommand(healStatusCmd, healTestCmd)
 	rootCmd.AddCommand(healCmd)
 
+	// Selfheal (Phase 5 outcome CLI for the tool-failure autoloop)
+	rootCmd.AddCommand(newSelfHealCmd())
+
 	// Model management commands
 	rootCmd.AddCommand(newModelCmd())
 	rootCmd.AddCommand(newConfigCmd())

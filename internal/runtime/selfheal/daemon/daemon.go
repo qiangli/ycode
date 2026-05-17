@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/qiangli/ycode/internal/gitserver/backlog"
+	"github.com/qiangli/ycode/internal/runtime/selfheal/outcome"
 	"github.com/qiangli/ycode/internal/runtime/selfheal/worker"
 	"github.com/qiangli/ycode/internal/runtime/selfheal/workspace"
 )
@@ -197,15 +198,35 @@ func (d *Daemon) runWorker(ctx context.Context, signature string) {
 		"diff_lines", out.DiffLines,
 		"worktree", out.WorktreePath)
 	if out.Mode == "success" {
-		// Mark the backlog entry as in_progress so the Foreman view
-		// reflects worker hand-off. Phase 5 will flip to done after
-		// PR creation (or local-only-recorded). Today: in_progress
-		// is the most honest state — code is fixed, not yet shared.
-		if err := backlog.MarkState(d.cfg.BacklogDir, slugFromSignature(d.cfg.BacklogDir, signature), backlog.StateInProgress); err != nil {
+		// Phase 5: publish. Tries PR first if creds present; falls
+		// back to local-only-with-patch-file otherwise. Either way
+		// outcome.json gets the PublishMode / PRURL / PatchPath
+		// fields so the operator's `ycode selfheal list` view shows
+		// where the fix landed.
+		pub := outcome.NewPublisher(d.cfg.BaseDir)
+		res, err := pub.Publish(ctx, out, d.cfg.RepoURL)
+		if err != nil {
+			d.logger.Warn("selfheal-daemon: publish failed", "signature", signature, "err", err, "mode", res.PublishMode)
+		} else {
+			d.logger.Info("selfheal-daemon: published",
+				"signature", signature,
+				"mode", res.PublishMode,
+				"pr_url", res.PRURL,
+				"patch", res.PatchPath)
+		}
+		// Mark the backlog entry: done when a PR was opened (the
+		// fix is shared), in_progress when local-only (operator
+		// still needs to export it manually).
+		state := backlog.StateInProgress
+		if res.PublishMode == outcome.ModePR {
+			state = backlog.StateDone
+		}
+		if err := backlog.MarkState(d.cfg.BacklogDir, slugFromSignature(d.cfg.BacklogDir, signature), state); err != nil {
 			d.logger.Warn("selfheal-daemon: mark state", "signature", signature, "err", err)
 		}
-		// Persist a side-by-side outcome.json copy for operators
-		// chasing the result via filesystem.
+	} else {
+		// Persist non-success outcomes too so the cooldown stat-mtime
+		// path has something to look at.
 		_ = persistDaemonOutcome(d.cfg.BaseDir, signature, out)
 	}
 }

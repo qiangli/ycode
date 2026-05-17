@@ -33,6 +33,11 @@ func NewClientWithHTTPClient(httpClient *http.Client) *ghlib.Client {
 	return ghlib.NewClient(httpClient)
 }
 
+// ResolveToken returns the GitHub token using the same precedence as
+// NewClient — exported so callers that need the raw token (e.g. for
+// `git push` Authorization headers) don't need to re-walk it.
+func ResolveToken() string { return resolveToken() }
+
 // resolveToken tries multiple auth sources in priority order.
 func resolveToken() string {
 	// 1. GITHUB_TOKEN env var (highest priority).

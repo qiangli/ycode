@@ -385,6 +385,9 @@ func startSelfHealDaemon(ctx context.Context) (*daemon.Daemon, error) {
 	})
 	dmn.Start(ctx)
 	slog.Info("selfheal: daemon started", "base", baseDir, "repo", repoURL)
+	if n, msg := localOnlyCount(ctx); n > 0 {
+		fmt.Fprintln(os.Stderr, msg)
+	}
 	return dmn, nil
 }
 
