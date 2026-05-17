@@ -1,10 +1,13 @@
 package otel
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os/exec"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -127,4 +130,43 @@ func TestRecordExec_PlainCall(t *testing.T) {
 	// scope strings or nil/non-nil err.
 	RecordExec(context.Background(), ExecScopeContainer, "/usr/bin/podman", 5*time.Millisecond, 0, nil)
 	RecordExec(context.Background(), ExecScopeContainer, "/usr/bin/podman", 5*time.Millisecond, 1, errors.New("boom"))
+}
+
+// TestLogExec_LevelMapping pins the slog level mapping per exit class.
+// A successful spawn whose carried program returned non-zero (lsof
+// no-match, grep no-match, test, build failure, …) MUST NOT escalate
+// to WARN — that line lands on stderr and corrupts wrapped TUIs like
+// `ycode wrap -- claude`. WARN is reserved for genuine exec-layer
+// failures: signaled, timeout, not-found.
+func TestLogExec_LevelMapping(t *testing.T) {
+	cases := []struct {
+		name      string
+		class     string
+		err       error
+		wantLevel string
+		wantMsg   string
+	}{
+		{"zero", ExitClassZero, nil, "DEBUG", "exec"},
+		{"non-zero exit stays debug", ExitClassError, errors.New("exit status 1"), "DEBUG", "exec"},
+		{"signaled escalates to warn", ExitClassSignaled, errors.New("killed"), "WARN", "exec failed"},
+		{"timeout escalates to warn", ExitClassTimeout, context.Canceled, "WARN", "exec failed"},
+		{"not-found escalates to warn", ExitClassNotFound, errors.New("not found"), "WARN", "exec failed"},
+	}
+	prev := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			logExec("bash", "/bin/bash", tc.class, 1, 2*time.Millisecond, tc.err)
+			out := buf.String()
+			if !strings.Contains(out, "level="+tc.wantLevel) {
+				t.Fatalf("class=%q got %q; want level=%s", tc.class, out, tc.wantLevel)
+			}
+			if !strings.Contains(out, `msg="`+tc.wantMsg+`"`) && !strings.Contains(out, "msg="+tc.wantMsg) {
+				t.Fatalf("class=%q got %q; want msg=%s", tc.class, out, tc.wantMsg)
+			}
+		})
+	}
 }

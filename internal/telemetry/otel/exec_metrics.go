@@ -232,21 +232,38 @@ func RecordShellBuiltin(ctx context.Context, verb string, dur time.Duration, exi
 
 func logExec(scope, binary, class string, code int, dur time.Duration, err error) {
 	base := filepath.Base(binary)
-	if class == ExitClassZero {
+	switch class {
+	case ExitClassZero:
 		slog.Debug("exec",
 			"scope", scope,
 			"binary", base,
 			"exit_code", code,
 			"dur_ms", dur.Milliseconds(),
 		)
-		return
+	case ExitClassError:
+		// Successful spawn, non-zero exit from the carried program
+		// (grep no-match, lsof no-result, test/[, build failure, …) is
+		// normal program behavior — not an exec-layer failure. Logging
+		// at WARN sends the line to stderr, where it corrupts wrapped
+		// TUIs (e.g. `ycode wrap -- claude`). Operators who want it
+		// can raise the level via YCODE_LOG_LEVEL=debug; the span and
+		// the ycode.exec.* metric still record the non-zero exit.
+		slog.Debug("exec",
+			"scope", scope,
+			"binary", base,
+			"exit_class", class,
+			"exit_code", code,
+			"dur_ms", dur.Milliseconds(),
+		)
+	default:
+		// Signaled / timeout / not-found — real exec-layer failures.
+		slog.Warn("exec failed",
+			"scope", scope,
+			"binary", base,
+			"exit_class", class,
+			"exit_code", code,
+			"dur_ms", dur.Milliseconds(),
+			"error", err,
+		)
 	}
-	slog.Warn("exec failed",
-		"scope", scope,
-		"binary", base,
-		"exit_class", class,
-		"exit_code", code,
-		"dur_ms", dur.Milliseconds(),
-		"error", err,
-	)
 }
