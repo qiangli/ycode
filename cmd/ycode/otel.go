@@ -14,6 +14,8 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/origin"
+	"github.com/qiangli/ycode/internal/runtime/projectid"
+	"github.com/qiangli/ycode/internal/runtime/selfheal/backlogsink"
 	"github.com/qiangli/ycode/internal/runtime/selfheal/detector"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
@@ -328,10 +330,20 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 	}
 }
 
-// startSelfHealObserver builds the Phase 1 observer, registers its
+// startSelfHealObserver builds the observer, registers its
 // SpanProcessor on the given provider's TracerProvider, and starts
 // the consumer goroutine. Returns the observer so the caller owns
 // the shutdown order.
+//
+// Sinks composed in order:
+//
+//  1. JSONLineSink — always-on raw observation log at
+//     ~/.agents/ycode/selfheal/observations.jsonl (Phase 1)
+//  2. BacklogSink — synthesizes a docs/backlog/selfheal-<sig>-<slug>.md
+//     entry for each first-seen signature (Phase 2). Skipped silently
+//     when the per-project backlog dir can't be resolved (e.g. running
+//     outside any project root) — the JSONL log still records the
+//     observation so nothing is lost.
 func startSelfHealObserver(ctx context.Context, cfg *config.SelfHealConfig, provider *yotel.Provider) (*detector.Observer, error) {
 	sinkPath := ""
 	if cfg != nil {
@@ -344,14 +356,34 @@ func startSelfHealObserver(ctx context.Context, cfg *config.SelfHealConfig, prov
 		}
 		sinkPath = filepath.Join(home, ".agents", "ycode", "selfheal", "observations.jsonl")
 	}
-	obs, err := detector.NewObserver(detector.Config{SinkPath: sinkPath})
+	jsonlSink, err := detector.NewJSONLineSink(sinkPath)
 	if err != nil {
 		return nil, err
 	}
+	sinks := []detector.Sink{jsonlSink}
+	if backlogDir, err := resolveBacklogDir(ctx); err == nil {
+		sinks = append(sinks, backlogsink.NewBacklogSink(backlogDir))
+		slog.Info("selfheal: backlog sink wired", "dir", backlogDir)
+	} else {
+		slog.Debug("selfheal: backlog sink skipped (no project id)", "err", err)
+	}
+	obs := detector.NewObserverWithSink(detector.Config{SinkPath: sinkPath}, detector.NewMultiSink(sinks...))
 	provider.TracerProvider.RegisterSpanProcessor(obs.Processor())
 	obs.Start(ctx)
-	slog.Info("selfheal: observer started", "sink", sinkPath)
+	slog.Info("selfheal: observer started", "jsonl", sinkPath, "sinks", len(sinks))
 	return obs, nil
+}
+
+// resolveBacklogDir returns the per-project backlog dir using the
+// same chain as cmd/ycode/backlog.go:backlogDir. Returns an error
+// when no project id can be resolved — selfheal still runs without
+// the backlog sink in that case.
+func resolveBacklogDir(ctx context.Context) (string, error) {
+	dir, err := projectStateDir(ctx)
+	if err != nil {
+		return "", err
+	}
+	return projectid.BacklogDir(dir), nil
 }
 
 // teeLogHandler forwards log records to two handlers.

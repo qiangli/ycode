@@ -45,18 +45,27 @@ type Config struct {
 	DedupeTTL time.Duration
 }
 
-// NewObserver assembles the pipeline. The Observer is not yet
-// running — call Start.
+// NewObserver assembles the pipeline with the default JSONL-only
+// sink at cfg.SinkPath. Use NewObserverWithSink to compose extra
+// sinks (e.g. Phase 2 BacklogSink).
 func NewObserver(cfg Config) (*Observer, error) {
+	sink, err := NewJSONLineSink(cfg.SinkPath)
+	if err != nil {
+		return nil, err
+	}
+	return NewObserverWithSink(cfg, sink), nil
+}
+
+// NewObserverWithSink lets the caller supply any Sink (including a
+// MultiSink composing JSONL + BacklogSink + future variants). The
+// caller owns the sink's lifecycle in the sense that Observer.Stop
+// will call its Close.
+func NewObserverWithSink(cfg Config, sink Sink) *Observer {
 	if cfg.BufferSize == 0 {
 		cfg.BufferSize = 256
 	}
 	if cfg.DedupeTTL == 0 {
 		cfg.DedupeTTL = 24 * time.Hour
-	}
-	sink, err := NewJSONLineSink(cfg.SinkPath)
-	if err != nil {
-		return nil, err
 	}
 	ch := make(chan rawSpan, cfg.BufferSize)
 	return &Observer{
@@ -67,7 +76,7 @@ func NewObserver(cfg Config) (*Observer, error) {
 		sink:       sink,
 		ch:         ch,
 		stopCh:     make(chan struct{}),
-	}, nil
+	}
 }
 
 // Processor exposes the SpanProcessor for registration on the

@@ -2,11 +2,26 @@ package detector
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 )
+
+// joinErrors collapses a slice into a single error, omitting nils.
+// Returns nil when every entry is nil. Wraps stdlib errors.Join with
+// a slice-len shortcut so the common one-error case avoids the
+// joining allocation.
+func joinErrors(errs []error) error {
+	if len(errs) == 0 {
+		return nil
+	}
+	if len(errs) == 1 {
+		return errs[0]
+	}
+	return errors.Join(errs...)
+}
 
 // Sink writes FailureSignals somewhere persistent. Phase 1 ships
 // JSONLineSink (append-only file at
@@ -63,4 +78,39 @@ func (s *JSONLineSink) Close() error {
 	err := s.f.Close()
 	s.f = nil
 	return err
+}
+
+// MultiSink fans Record out to every wrapped sink. A failure in one
+// sink does not prevent the others from running — each sink's error
+// is returned as a joined error (errors.Join) so the caller can log
+// the partial failure while still knowing every writer was attempted.
+type MultiSink struct {
+	sinks []Sink
+}
+
+// NewMultiSink wraps the given sinks. Order matters for Close (called
+// in reverse so the most-recently-opened resource releases first) but
+// not for Record.
+func NewMultiSink(sinks ...Sink) *MultiSink {
+	return &MultiSink{sinks: sinks}
+}
+
+func (m *MultiSink) Record(sig FailureSignal) error {
+	var errs []error
+	for _, s := range m.sinks {
+		if err := s.Record(sig); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return joinErrors(errs)
+}
+
+func (m *MultiSink) Close() error {
+	var errs []error
+	for i := len(m.sinks) - 1; i >= 0; i-- {
+		if err := m.sinks[i].Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return joinErrors(errs)
 }
