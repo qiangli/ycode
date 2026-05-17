@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -16,7 +17,9 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/origin"
 	"github.com/qiangli/ycode/internal/runtime/projectid"
 	"github.com/qiangli/ycode/internal/runtime/selfheal/backlogsink"
+	"github.com/qiangli/ycode/internal/runtime/selfheal/daemon"
 	"github.com/qiangli/ycode/internal/runtime/selfheal/detector"
+	"github.com/qiangli/ycode/internal/runtime/selfheal/workspace"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 	"github.com/qiangli/ycode/internal/tools"
@@ -237,15 +240,20 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 	// must never break OTel itself, so we log and continue on error.
 	selfHealShutdown := func() {}
 	if cfg.SelfHeal.IsEnabled() {
-		obs, err := startSelfHealObserver(ctx, cfg.SelfHeal, otelProvider)
+		obs, dmn, err := startSelfHeal(ctx, cfg.SelfHeal, otelProvider)
 		if err != nil {
-			slog.Warn("selfheal: observer init failed; continuing without it", "err", err)
+			slog.Warn("selfheal: init failed; continuing without it", "err", err)
 		} else {
 			selfHealShutdown = func() {
-				stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
+				// Stop daemon first (waits for in-flight workers) so
+				// any final span goes through the still-live observer.
+				if dmn != nil {
+					dmn.Stop(stopCtx)
+				}
 				if err := obs.Stop(stopCtx); err != nil {
-					slog.Warn("selfheal: shutdown error", "err", err)
+					slog.Warn("selfheal: observer shutdown error", "err", err)
 				}
 			}
 		}
@@ -328,6 +336,56 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 		},
 		convOTEL: convCfg,
 	}
+}
+
+// startSelfHeal builds the observer + (when the per-project backlog
+// dir is resolvable) the worker daemon. Returns both so the caller
+// can drive shutdown order: daemon first so its workers drain into
+// the still-live observer.
+func startSelfHeal(ctx context.Context, cfg *config.SelfHealConfig, provider *yotel.Provider) (*detector.Observer, *daemon.Daemon, error) {
+	obs, err := startSelfHealObserver(ctx, cfg, provider)
+	if err != nil {
+		return nil, nil, err
+	}
+	dmn, err := startSelfHealDaemon(ctx)
+	if err != nil {
+		// Observer is already running; surface but keep going.
+		slog.Warn("selfheal: daemon init skipped", "err", err)
+		return obs, nil, nil
+	}
+	return obs, dmn, nil
+}
+
+// startSelfHealDaemon resolves the per-project backlog dir + repo
+// URL, then spawns the worker daemon. Returns an error if the
+// backlog dir can't be resolved — without it the daemon has nothing
+// to scan.
+func startSelfHealDaemon(ctx context.Context) (*daemon.Daemon, error) {
+	backlogDir, err := resolveBacklogDir(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("backlog dir: %w", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	baseDir := filepath.Join(home, ".agents", "ycode", "selfheal")
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir base: %w", err)
+	}
+	cwd, _ := os.Getwd()
+	repoURL, err := workspace.New().DiscoverFork(ctx, cwd)
+	if err != nil {
+		return nil, fmt.Errorf("discover fork: %w", err)
+	}
+	dmn := daemon.New(daemon.Config{
+		BaseDir:    baseDir,
+		BacklogDir: backlogDir,
+		RepoURL:    repoURL,
+	})
+	dmn.Start(ctx)
+	slog.Info("selfheal: daemon started", "base", baseDir, "repo", repoURL)
+	return dmn, nil
 }
 
 // startSelfHealObserver builds the observer, registers its

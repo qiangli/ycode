@@ -120,10 +120,10 @@ func TestBacklogSink_SlugSanitization(t *testing.T) {
 	dir := t.TempDir()
 	sink := NewBacklogSink(dir)
 	sig := detector.FailureSignal{
-		Timestamp: time.Now(),
-		Signature: "ffffffffffff",
-		Category:  detector.CategoryBroken,
-		ToolName:  "weird/tool name with spaces!",
+		Timestamp:  time.Now(),
+		Signature:  "ffffffffffff",
+		Category:   detector.CategoryBroken,
+		ToolName:   "weird/tool name with spaces!",
 		Normalized: "panic",
 	}
 	if err := sink.Record(sig); err != nil {

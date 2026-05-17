@@ -34,8 +34,8 @@ import (
 // lives in a fenced YAML block in the body so the Phase 3 worker can
 // parse it back without schema changes.
 type BacklogSink struct {
-	dir      string                   // resolved per-project backlog dir
-	priority string                   // default p2 — auto-discovered fixes never claim p1
+	dir      string                    // resolved per-project backlog dir
+	priority string                    // default p2 — auto-discovered fixes never claim p1
 	writer   func(backlog.Issue) error // injectable for tests
 }
 

@@ -25,6 +25,7 @@ func newAutopilotCmd() *cobra.Command {
 		Short: "Foreman/Worker autopilot subcommands",
 	}
 	cmd.AddCommand(newAutopilotWorkerCmd())
+	cmd.AddCommand(newAutopilotSelfHealWorkerCmd())
 	return cmd
 }
 

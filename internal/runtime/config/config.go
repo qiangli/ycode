@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Config holds all runtime configuration.
@@ -172,8 +173,15 @@ type SelfHealConfig struct {
 	SinkPath string `json:"sinkPath,omitempty"` // override the default ~/.agents/ycode/selfheal/observations.jsonl
 }
 
-// IsEnabled — nil receiver and nil Enabled both return true.
+// IsEnabled — nil receiver and nil Enabled both return true. The
+// YCODE_SELFHEAL_DISABLE=1 env var is a hard override that wins
+// over the config: selfheal workers spawn child ycode processes
+// with this set so the child's selfheal observer doesn't try to
+// "fix" failures the parent worker itself caused.
 func (c *SelfHealConfig) IsEnabled() bool {
+	if v := strings.TrimSpace(os.Getenv("YCODE_SELFHEAL_DISABLE")); v == "1" || strings.EqualFold(v, "true") {
+		return false
+	}
 	if c == nil || c.Enabled == nil {
 		return true
 	}
