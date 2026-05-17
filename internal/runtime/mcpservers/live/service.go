@@ -271,6 +271,8 @@ func actionToParams(a mcpservers.BrowserAction) (string, map[string]any, error) 
 		return "back", map[string]any{}, nil
 	case mcpservers.ActionTabs:
 		return "tabs", map[string]any{"action": a.TabAction, "tab_id": a.TabID}, nil
+	case mcpservers.ActionEvaluate:
+		return "evaluate", map[string]any{"script": a.Script}, nil
 	}
 	return "", nil, fmt.Errorf("live: action %q not supported", a.Type)
 }

@@ -61,6 +61,25 @@ func (c *CompositeHandler) HandleToolCall(ctx context.Context, name string, inpu
 	return h.HandleToolCall(ctx, name, input)
 }
 
+// HandleToolCallRich routes to the sub-handler's rich path when it
+// implements RichHandler, so structured content blocks (e.g.
+// browser_screenshot's image) survive the composite hop. Otherwise
+// wraps the legacy string output in a single text block.
+func (c *CompositeHandler) HandleToolCallRich(ctx context.Context, name string, input json.RawMessage) ([]Content, error) {
+	h, ok := c.toolHandlers[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown tool: %s", name)
+	}
+	if rich, ok := h.(RichHandler); ok {
+		return rich.HandleToolCallRich(ctx, name, input)
+	}
+	out, err := h.HandleToolCall(ctx, name, input)
+	if err != nil {
+		return nil, err
+	}
+	return []Content{ContentText(out)}, nil
+}
+
 func (c *CompositeHandler) ReadResource(ctx context.Context, uri string) (string, error) {
 	h, ok := c.resourceOwner[uri]
 	if !ok {

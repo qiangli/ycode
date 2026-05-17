@@ -83,7 +83,7 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 		},
 		{
 			Name:        "browser_screenshot",
-			Description: "Capture a screenshot of the current page. Returns base64-encoded PNG in the `image` field.",
+			Description: "Capture a screenshot of the current page. Returns the PNG as an MCP image content block (rendered inline by clients that support it) plus a text block with title/URL metadata.",
 			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
 		},
 		{
@@ -112,7 +112,7 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 		},
 		{
 			Name:        "browser_eval",
-			Description: "Evaluate a JavaScript expression in the current page context and return its value. Supported by probe and solo modes; live mode returns an unsupported error.",
+			Description: "Evaluate a JavaScript expression in the current page context and return its value. Supported by live, probe, and solo modes (live runs in the page's MAIN world via chrome.scripting). Accepts either an expression (`document.title`) or a statement block (`{ return computeX(); }`); the return value is returned in the `data` field, JSON-stringified for non-string types.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {"script": {"type": "string"}},
@@ -206,31 +206,100 @@ var toolToAction = map[string]string{
 }
 
 func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json.RawMessage) (string, error) {
+	result, err := h.execute(ctx, name, input)
+	if err != nil || result == nil {
+		return resultErrToString(err), err
+	}
+	out, marshalErr := json.MarshalIndent(result, "", "  ")
+	if marshalErr != nil {
+		return "", fmt.Errorf("browsermcp: marshal result: %w", marshalErr)
+	}
+	return string(out), nil
+}
+
+// HandleToolCallRich returns structured MCP content blocks so binary
+// payloads survive the wire as their native type. Today only
+// browser_screenshot benefits: its PNG ships as an image block (which
+// foreign agents render inline) plus a text block carrying title/URL
+// metadata. Every other tool falls back to a single text block —
+// identical to the legacy HandleToolCall path.
+func (h *MCPHandler) HandleToolCallRich(ctx context.Context, name string, input json.RawMessage) ([]mcp.Content, error) {
+	// "browser.mode not configured" sentinel: still a text block, but
+	// surface it through the same path so the message stays uniform.
+	if h.client == nil {
+		return []mcp.Content{mcp.ContentText(unconfiguredMessage)}, nil
+	}
+	result, err := h.execute(ctx, name, input)
+	if err != nil {
+		return nil, err
+	}
+	if name == "browser_screenshot" && result != nil && result.Image != "" {
+		// MIME is fixed at the live extension and the probe/solo
+		// drivers: chrome.tabs.captureVisibleTab and chromedp's
+		// CaptureScreenshot both produce PNG by default.
+		blocks := []mcp.Content{mcp.ContentImage(result.Image, "image/png")}
+		if meta := screenshotMetadata(result); meta != "" {
+			blocks = append(blocks, mcp.ContentText(meta))
+		}
+		return blocks, nil
+	}
+	out, marshalErr := json.MarshalIndent(result, "", "  ")
+	if marshalErr != nil {
+		return nil, fmt.Errorf("browsermcp: marshal result: %w", marshalErr)
+	}
+	return []mcp.Content{mcp.ContentText(string(out))}, nil
+}
+
+// execute is the shared dispatch path used by both HandleToolCall and
+// HandleToolCallRich. It returns a *wire.Result on success (or nil
+// when the client isn't configured) and never auto-marshals — callers
+// decide on the output shape.
+func (h *MCPHandler) execute(ctx context.Context, name string, input json.RawMessage) (*wire.Result, error) {
 	actionType, ok := toolToAction[name]
 	if !ok {
-		return "", fmt.Errorf("browsermcp: unknown tool %q", name)
+		return nil, fmt.Errorf("browsermcp: unknown tool %q", name)
 	}
 	if h.client == nil {
-		return "Browser tools are not available: no `browser.mode` configured. " +
-			"Set `browser.mode` to live, probe, or solo in settings.json " +
-			"(see `ycode browser doctor` for readiness).", nil
+		return nil, nil
 	}
-
 	var action wire.Action
 	if len(input) > 0 {
 		if err := json.Unmarshal(input, &action); err != nil {
-			return "", fmt.Errorf("browsermcp: parse input: %w", err)
+			return nil, fmt.Errorf("browsermcp: parse input: %w", err)
 		}
 	}
 	action.Type = actionType
-
 	result, err := h.client.Execute(ctx, action)
 	if err != nil {
-		return "", fmt.Errorf("browsermcp: %s: %w", name, err)
+		return nil, fmt.Errorf("browsermcp: %s: %w", name, err)
 	}
-	out, err := json.MarshalIndent(result, "", "  ")
+	return result, nil
+}
+
+const unconfiguredMessage = "Browser tools are not available: no `browser.mode` configured. " +
+	"Set `browser.mode` to live, probe, or solo in settings.json " +
+	"(see `ycode browser doctor` for readiness)."
+
+// resultErrToString preserves the legacy "client nil → friendly text,
+// no error" contract used by HandleToolCall.
+func resultErrToString(err error) string {
 	if err != nil {
-		return "", fmt.Errorf("browsermcp: marshal result: %w", err)
+		return ""
 	}
-	return string(out), nil
+	return unconfiguredMessage
+}
+
+// screenshotMetadata is a compact one-liner that travels alongside the
+// PNG so the agent still sees the page title and URL it captured.
+// Empty when the backend supplied neither.
+func screenshotMetadata(r *wire.Result) string {
+	switch {
+	case r.Title != "" && r.URL != "":
+		return fmt.Sprintf("screenshot: %s (%s)", r.Title, r.URL)
+	case r.URL != "":
+		return "screenshot: " + r.URL
+	case r.Title != "":
+		return "screenshot: " + r.Title
+	}
+	return ""
 }

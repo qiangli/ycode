@@ -16,6 +16,46 @@ type ServerHandler interface {
 	ReadResource(ctx context.Context, uri string) (string, error)
 }
 
+// Content is one MCP tool-result content block (text, image, or
+// resource). The MCP spec lets a single tools/call response carry an
+// ordered array of these so a handler can mix narration with binary
+// payloads — e.g. screenshot → [image block + text metadata].
+//
+// Field set is the union of the spec's TextContent and ImageContent
+// shapes; unused fields drop out via omitempty. Use ContentText /
+// ContentImage helpers rather than building literals so the type
+// discriminator stays correct.
+type Content struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	Data     string `json:"data,omitempty"`     // base64 for image/audio
+	MimeType string `json:"mimeType,omitempty"` // required for image/audio
+}
+
+// ContentText returns a text content block.
+func ContentText(text string) Content { return Content{Type: "text", Text: text} }
+
+// ContentImage returns an image content block. `data` must already be
+// base64-encoded; `mimeType` is the IANA type ("image/png",
+// "image/jpeg", …).
+func ContentImage(data, mimeType string) Content {
+	return Content{Type: "image", Data: data, MimeType: mimeType}
+}
+
+// RichHandler is an optional interface a ServerHandler can implement to
+// return structured tool-result content blocks instead of a single
+// stringified payload. Handlers that don't implement it stay on the
+// text-only path — the server auto-wraps their string in one text
+// block — so every existing handler keeps working unchanged.
+//
+// The motivating case is browser_screenshot: returning the PNG via an
+// image content block lets foreign agents (Claude Code, Cursor, …)
+// render it inline without the consumer side base64-decoding a JSON
+// envelope by hand.
+type RichHandler interface {
+	HandleToolCallRich(ctx context.Context, name string, input json.RawMessage) ([]Content, error)
+}
+
 // Server implements the MCP server protocol for ycode.
 type Server struct {
 	handler ServerHandler
@@ -131,15 +171,11 @@ func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) (*JSONR
 		// context so the tool middleware can attach it as a span /
 		// metric attribute.
 		ctx = WithAgentClient(ctx, s.ClientName())
-		output, err := s.handler.HandleToolCall(ctx, params.Name, params.Arguments)
+		content, err := dispatchToolCall(ctx, s.handler, params.Name, params.Arguments)
 		if err != nil {
 			resp.Error = &JSONRPCError{Code: -32000, Message: err.Error()}
 		} else {
-			result := map[string]any{
-				"content": []map[string]string{
-					{"type": "text", "text": output},
-				},
-			}
+			result := map[string]any{"content": content}
 			data, _ := json.Marshal(result)
 			resp.Result = data
 		}
@@ -184,4 +220,21 @@ func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) (*JSONR
 	}
 
 	return resp, nil
+}
+
+// dispatchToolCall routes a tools/call through the rich content path
+// when the handler supports it, falling back to the legacy
+// HandleToolCall (string) path otherwise. Both CompositeHandler and
+// GatedHandler implement RichHandler conditionally, so a screenshot
+// going through composite → gated → browsermcp still surfaces an
+// image content block on the wire.
+func dispatchToolCall(ctx context.Context, h ServerHandler, name string, args json.RawMessage) ([]Content, error) {
+	if rich, ok := h.(RichHandler); ok {
+		return rich.HandleToolCallRich(ctx, name, args)
+	}
+	out, err := h.HandleToolCall(ctx, name, args)
+	if err != nil {
+		return nil, err
+	}
+	return []Content{ContentText(out)}, nil
 }

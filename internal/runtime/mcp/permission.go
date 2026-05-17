@@ -80,6 +80,30 @@ func (g *GatedHandler) ListTools() []Tool         { return g.Inner.ListTools() }
 func (g *GatedHandler) ListResources() []Resource { return g.Inner.ListResources() }
 
 func (g *GatedHandler) HandleToolCall(ctx context.Context, name string, input json.RawMessage) (string, error) {
+	if err := g.check(ctx, name, input); err != nil {
+		return "", err
+	}
+	return g.Inner.HandleToolCall(ctx, name, input)
+}
+
+// HandleToolCallRich forwards to the inner handler's rich path when
+// it implements RichHandler, so a screenshot reaching the gate keeps
+// its image content block. Falls back to the text path otherwise.
+func (g *GatedHandler) HandleToolCallRich(ctx context.Context, name string, input json.RawMessage) ([]Content, error) {
+	if err := g.check(ctx, name, input); err != nil {
+		return nil, err
+	}
+	if rich, ok := g.Inner.(RichHandler); ok {
+		return rich.HandleToolCallRich(ctx, name, input)
+	}
+	out, err := g.Inner.HandleToolCall(ctx, name, input)
+	if err != nil {
+		return nil, err
+	}
+	return []Content{ContentText(out)}, nil
+}
+
+func (g *GatedHandler) check(ctx context.Context, name string, input json.RawMessage) error {
 	mode := ModeReadOnly
 	if pa, ok := g.Inner.(PermissionAware); ok {
 		mode = pa.RequiredMode(name)
@@ -87,13 +111,13 @@ func (g *GatedHandler) HandleToolCall(ctx context.Context, name string, input js
 	if g.Gate != nil {
 		allowed, err := g.Gate.Allow(ctx, name, mode, input)
 		if err != nil {
-			return "", fmt.Errorf("permission gate: %w", err)
+			return fmt.Errorf("permission gate: %w", err)
 		}
 		if !allowed {
-			return "", fmt.Errorf("permission denied for tool %q (required: %s)", name, mode)
+			return fmt.Errorf("permission denied for tool %q (required: %s)", name, mode)
 		}
 	}
-	return g.Inner.HandleToolCall(ctx, name, input)
+	return nil
 }
 
 func (g *GatedHandler) ReadResource(ctx context.Context, uri string) (string, error) {

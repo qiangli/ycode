@@ -48,8 +48,10 @@ const (
 	ActionBack       = "back"
 	ActionTabs       = "tabs"
 
-	// DevTools-flavored (probe + solo support; live returns
-	// unsupported).
+	// DevTools-flavored. Evaluate is supported in all three modes
+	// (live uses chrome.scripting.executeScript with world:"MAIN");
+	// the perf/network/console/lighthouse actions require CDP and
+	// stay probe+solo-only.
 	ActionEvaluate    = "evaluate"
 	ActionPerfStart   = "perf_start"
 	ActionPerfStop    = "perf_stop"

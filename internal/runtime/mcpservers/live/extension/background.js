@@ -137,6 +137,8 @@ async function dispatch(method, params) {
       return runInTab(tabId, "scroll", params);
     case "tabs":
       return handleTabs(params);
+    case "evaluate":
+      return evaluateInTab(tabId, params.script);
   }
   throw new Error(`unknown method: ${method}`);
 }
@@ -252,6 +254,47 @@ async function runInTab(tabId, kind, params) {
     throw new Error(result.error);
   }
   return result || {};
+}
+
+async function evaluateInTab(tabId, script) {
+  if (!script) throw new Error("evaluate: script required");
+  // Run in the MAIN world so the script sees the page's globals
+  // (matches chromedp.Evaluate semantics on probe/solo). The injected
+  // wrapper Function-wraps the source as an expression first, then
+  // falls back to a statement form so callers can pass either
+  // "document.title" or "{ return 1 + 2 }" style scripts.
+  const [{ result } = {}] = await chrome.scripting.executeScript({
+    target: { tabId },
+    args: [script],
+    world: "MAIN",
+    func: (src) => {
+      const stringify = (v) => {
+        if (v === undefined) return "";
+        if (typeof v === "string") return v;
+        try { return JSON.stringify(v); } catch (_) { return String(v); }
+      };
+      let value;
+      try {
+        value = (new Function("return (" + src + ")"))();
+      } catch (e1) {
+        // Not a valid expression — try statement form: "return X;".
+        try {
+          value = (new Function(src))();
+        } catch (e2) {
+          return { error: String(e1 && e1.message || e1) };
+        }
+      }
+      if (value && typeof value.then === "function") {
+        return value.then(
+          (r) => ({ value: stringify(r) }),
+          (e) => ({ error: String(e && e.message || e) })
+        );
+      }
+      return { value: stringify(value) };
+    },
+  });
+  if (result && result.error) throw new Error(result.error);
+  return { data: result ? result.value : "" };
 }
 
 async function handleTabs(params) {
