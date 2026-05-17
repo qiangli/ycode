@@ -84,6 +84,13 @@ type Config struct {
 	// Browser automation backend selection (see internal/runtime/mcpservers).
 	Browser *BrowserConfig `json:"browser,omitempty"`
 
+	// Self-heal observer (see internal/runtime/selfheal). Phase 1
+	// of the autonomous fix loop: watch tool-call spans for
+	// ycode-bug-shaped failures and write them to a JSONL log. On
+	// by default per the "intrinsic feature, opt-out" convention;
+	// explicit false disables.
+	SelfHeal *SelfHealConfig `json:"selfHeal,omitempty"`
+
 	// Project identity for OTEL attribution. Empty fields fall back
 	// to auto-detection (git remote, cwd basename). See
 	// internal/runtime/origin.
@@ -149,6 +156,24 @@ type NATSConfig struct {
 
 // IsEnabled — nil receiver and nil Enabled both return true (default on).
 func (c *NATSConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// SelfHealConfig controls the Phase 1 selfheal observer (and, in
+// later phases, the full autoloop fix pipeline). On by default per
+// the user's confirmed scope (opt-out via `selfHeal.enabled: false`).
+// Phase 1 only writes JSONL observations; later phases will read
+// other fields to drive the worker pool / PR creation.
+type SelfHealConfig struct {
+	Enabled  *bool  `json:"enabled,omitempty"`
+	SinkPath string `json:"sinkPath,omitempty"` // override the default ~/.agents/ycode/selfheal/observations.jsonl
+}
+
+// IsEnabled — nil receiver and nil Enabled both return true.
+func (c *SelfHealConfig) IsEnabled() bool {
 	if c == nil || c.Enabled == nil {
 		return true
 	}

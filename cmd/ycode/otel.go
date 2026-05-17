@@ -14,6 +14,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/origin"
+	"github.com/qiangli/ycode/internal/runtime/selfheal/detector"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 	"github.com/qiangli/ycode/internal/tools"
@@ -227,6 +228,27 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 	// Create OTELSink and wire it into existing telemetry pipelines.
 	_ = yotel.NewOTELSink(otelProvider)
 
+	// Phase 1 selfheal observer: register a SpanProcessor that watches
+	// every emitted span for ycode-bug-shaped failures and appends them
+	// to a JSONL log. Pure observation — no backlog synth, no worker,
+	// no git. Opt-out via `selfHeal.enabled: false`. Failures here
+	// must never break OTel itself, so we log and continue on error.
+	selfHealShutdown := func() {}
+	if cfg.SelfHeal.IsEnabled() {
+		obs, err := startSelfHealObserver(ctx, cfg.SelfHeal, otelProvider)
+		if err != nil {
+			slog.Warn("selfheal: observer init failed; continuing without it", "err", err)
+		} else {
+			selfHealShutdown = func() {
+				stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				if err := obs.Stop(stopCtx); err != nil {
+					slog.Warn("selfheal: shutdown error", "err", err)
+				}
+			}
+		}
+	}
+
 	// Apply OTEL tool middleware (captures full input/output for self-healing).
 	tracer := otelProvider.Tracer("ycode.tools")
 	mw := yotel.ToolMiddleware(tracer, otelProvider.Instruments)
@@ -289,6 +311,11 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 
 	return &otelResult{
 		shutdown: func() {
+			// Stop the selfheal observer FIRST so its consumer drains
+			// pending spans through the still-live BSP. Then shut down
+			// OTel (which itself stops the SpanProcessors including
+			// ours).
+			selfHealShutdown()
 			// Short timeout: file exports are fast; if gRPC can't flush in 2s
 			// (e.g. collector unreachable), waiting longer won't help.
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -299,6 +326,32 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 		},
 		convOTEL: convCfg,
 	}
+}
+
+// startSelfHealObserver builds the Phase 1 observer, registers its
+// SpanProcessor on the given provider's TracerProvider, and starts
+// the consumer goroutine. Returns the observer so the caller owns
+// the shutdown order.
+func startSelfHealObserver(ctx context.Context, cfg *config.SelfHealConfig, provider *yotel.Provider) (*detector.Observer, error) {
+	sinkPath := ""
+	if cfg != nil {
+		sinkPath = cfg.SinkPath
+	}
+	if sinkPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		sinkPath = filepath.Join(home, ".agents", "ycode", "selfheal", "observations.jsonl")
+	}
+	obs, err := detector.NewObserver(detector.Config{SinkPath: sinkPath})
+	if err != nil {
+		return nil, err
+	}
+	provider.TracerProvider.RegisterSpanProcessor(obs.Processor())
+	obs.Start(ctx)
+	slog.Info("selfheal: observer started", "sink", sinkPath)
+	return obs, nil
 }
 
 // teeLogHandler forwards log records to two handlers.
