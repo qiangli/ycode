@@ -25,6 +25,22 @@ type SkillSpec struct {
 	TriggerPatterns []string `json:"trigger_patterns,omitempty" yaml:"trigger_patterns,omitempty"`
 	TriggerKeywords []string `json:"trigger_keywords,omitempty" yaml:"trigger_keywords,omitempty"`
 
+	// TelemetryTriggers are regex patterns matched against the
+	// normalized error string of an observed tool failure. Used by
+	// the selfheal Phase 6 loop: when a worker successfully fixes
+	// a signature, the Learn callback captures a skill with the
+	// signature's normalized error as a telemetry trigger so future
+	// occurrences (on this or any other operator's machine running
+	// the same skill registry) get matched and the prior fix
+	// context is fed into the autoloop.
+	//
+	// Distinct from TriggerPatterns because user-text patterns and
+	// telemetry-error patterns have completely different match
+	// semantics (one is freeform prose; the other is structured,
+	// normalized error output). Keeping them separate avoids
+	// FindBestMatch confusion.
+	TelemetryTriggers []string `json:"telemetry_triggers,omitempty" yaml:"telemetry_triggers,omitempty"`
+
 	// Tool constraints (if set, only these tools are available)
 	AllowedTools []string `json:"allowed_tools,omitempty" yaml:"allowed_tools,omitempty"`
 
@@ -43,7 +59,37 @@ type SkillSpec struct {
 	Stats SkillStats `json:"stats" yaml:"stats"`
 
 	// Compiled trigger patterns (not serialized)
-	compiledPatterns []*regexp.Regexp
+	compiledPatterns  []*regexp.Regexp
+	compiledTelemetry []*regexp.Regexp
+}
+
+// MatchesTelemetry reports whether any TelemetryTriggers regex matches
+// the given normalized error string. Returns false for skills with no
+// telemetry triggers — they can still be selected via the user-text
+// path (MatchScore).
+func (s *SkillSpec) MatchesTelemetry(normalized string) bool {
+	if len(s.TelemetryTriggers) == 0 || normalized == "" {
+		return false
+	}
+	s.compileTelemetry()
+	for _, re := range s.compiledTelemetry {
+		if re.MatchString(normalized) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *SkillSpec) compileTelemetry() {
+	if len(s.compiledTelemetry) == len(s.TelemetryTriggers) {
+		return
+	}
+	s.compiledTelemetry = make([]*regexp.Regexp, 0, len(s.TelemetryTriggers))
+	for _, p := range s.TelemetryTriggers {
+		if re, err := regexp.Compile(p); err == nil {
+			s.compiledTelemetry = append(s.compiledTelemetry, re)
+		}
+	}
 }
 
 // SkillStats tracks skill performance over time.

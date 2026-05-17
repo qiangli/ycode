@@ -29,6 +29,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/autoloop"
 	"github.com/qiangli/ycode/internal/runtime/git"
 	"github.com/qiangli/ycode/internal/runtime/selfheal/workspace"
+	"github.com/qiangli/ycode/internal/runtime/skillengine"
 )
 
 // Outcome is the persisted summary written to <root>/outcome.json
@@ -90,6 +91,10 @@ type Config struct {
 	// YcodeBin is the path to the ycode binary used for the Build
 	// subprocess. Defaults to os.Executable().
 	YcodeBin string
+	// SkillRegistryDir is where the worker reads + writes
+	// telemetry-trigger skills (Phase 6). Empty disables the recall
+	// + capture hooks entirely — useful for hermetic tests.
+	SkillRegistryDir string
 	// Stdout / Stderr for live progress. nil → os.Stdout / os.Stderr.
 	Stdout io.Writer
 	Stderr io.Writer
@@ -130,6 +135,8 @@ type Worker struct {
 	branch  string
 	wtPath  string
 	started time.Time
+	skills  *skillengine.Registry    // nil when SkillRegistryDir is empty
+	recalls []*skillengine.SkillSpec // populated at Run-time from a Recall lookup
 }
 
 // New returns a worker for the given signature. The signature must
@@ -150,14 +157,21 @@ func New(cfg Config, signature string) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Worker{
+	w := &Worker{
 		cfg:    cfg,
 		mgr:    workspace.New(),
 		exec:   git.NewGitExec(nil),
 		brief:  brief,
 		layout: workspace.PathsFor(cfg.BaseDir, signature),
 		branch: fmt.Sprintf("selfheal/%s-%s", signature, time.Now().UTC().Format("20060102t150405")),
-	}, nil
+	}
+	if cfg.SkillRegistryDir != "" {
+		reg := skillengine.NewRegistry(cfg.SkillRegistryDir)
+		if err := reg.LoadFromDir(); err == nil {
+			w.skills = reg
+		}
+	}
+	return w, nil
 }
 
 // Run executes the full RESEARCH→PLAN→BUILD→EVALUATE→LEARN cycle and
@@ -182,6 +196,14 @@ func (w *Worker) Run(ctx context.Context) (Outcome, error) {
 		return out, err
 	}
 	out.WorktreePath = w.wtPath
+
+	// Phase 6 recall: query the skill registry for prior fixes
+	// whose TelemetryTriggers match this normalized error. Hits
+	// are folded into the goal prompt so the autoloop's Build
+	// step starts with the prior fix template in context.
+	if w.skills != nil {
+		w.recalls = w.skills.RecallByTelemetry(w.brief.Normalized)
+	}
 
 	cb := w.buildCallbacks()
 	loop := autoloop.New(&autoloop.Config{
@@ -246,13 +268,30 @@ func (w *Worker) setupWorkspace(ctx context.Context) error {
 // goalSentence builds the high-level instruction autoloop hands to
 // the Build subprocess on every iteration. Designed to be readable
 // by a generic ycode prompt session — no selfheal-specific jargon
-// the runtime doesn't already understand.
+// the runtime doesn't already understand. When Phase 6 recall hits,
+// the prior fix names are appended as a hint block so the LLM has
+// the template in context without us re-deriving it.
 func (w *Worker) goalSentence() string {
-	return fmt.Sprintf("Fix the failure recorded in this signature.\n\n"+
+	base := fmt.Sprintf("Fix the failure recorded in this signature.\n\n"+
 		"Category: %s\nTool: %s\nScope: %s\nNormalized error: %s\n\n"+
 		"Reproduce the failure with a regression test first, then apply a minimal fix in ycode source. "+
 		"Run `make ci-fast` to verify. Do not modify priorart/. Keep the diff small.",
 		w.brief.Category, w.brief.Tool, w.brief.Scope, w.brief.Normalized)
+	if len(w.recalls) > 0 {
+		var b strings.Builder
+		b.WriteString(base)
+		b.WriteString("\n\nPrior fixes for similar failures (skillengine recall):\n")
+		for i, s := range w.recalls {
+			if i >= 3 {
+				break
+			}
+			fmt.Fprintf(&b, "  - %s (success_rate=%.2f, uses=%d): %s\n",
+				s.Name, s.Stats.SuccessRate, s.Stats.Uses, s.Description)
+		}
+		b.WriteString("\nConsider whether the same approach applies before deriving a new fix.")
+		return b.String()
+	}
+	return base
 }
 
 // diffLines counts the lines changed in the worktree relative to its

@@ -114,6 +114,29 @@ func (r *Registry) FindBestMatch(text string) *SkillSpec {
 	return best
 }
 
+// RecallByTelemetry returns skills whose TelemetryTriggers match the
+// given normalized error string. Sorted by DecayedScore descending
+// so the most reliable prior fix is first. Returns nil when nothing
+// matches — that's the empty-registry path AND the genuine
+// "we've never seen this before" path; callers handle both the same.
+func (r *Registry) RecallByTelemetry(normalized string) []*SkillSpec {
+	if normalized == "" {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var hits []*SkillSpec
+	for _, s := range r.skills {
+		if s.MatchesTelemetry(normalized) {
+			hits = append(hits, s)
+		}
+	}
+	sort.Slice(hits, func(i, j int) bool {
+		return hits[i].Stats.DecayedScore > hits[j].Stats.DecayedScore
+	})
+	return hits
+}
+
 // RecordOutcome updates a skill's performance statistics.
 func (r *Registry) RecordOutcome(name string, success bool, durationMs float64) {
 	r.mu.Lock()

@@ -28,13 +28,14 @@ import (
 
 // Config bounds the daemon. Empty values pick safe defaults.
 type Config struct {
-	BaseDir        string        // ~/.agents/ycode/selfheal — per-signature workspaces live here
-	BacklogDir     string        // ~/.agents/ycode/projects/<id>/backlog — scanned for selfheal-*.md
-	RepoURL        string        // resolved via workspace.DiscoverFork; injected here so the daemon doesn't reach back into git config
-	MaxConcurrent  int           // cap on in-flight workers; default 5
-	PollInterval   time.Duration // default 5s
-	CooldownPerSig time.Duration // per-signature retry interval after a give-up/rejected outcome; default 24h
-	WorkerConfig   worker.Config // template; the daemon fills in Signature-dependent fields per dispatch
+	BaseDir          string        // ~/.agents/ycode/selfheal — per-signature workspaces live here
+	BacklogDir       string        // ~/.agents/ycode/projects/<id>/backlog — scanned for selfheal-*.md
+	RepoURL          string        // resolved via workspace.DiscoverFork; injected here so the daemon doesn't reach back into git config
+	SkillRegistryDir string        // skillengine on-disk dir (Phase 6 recall + capture); empty disables
+	MaxConcurrent    int           // cap on in-flight workers; default 5
+	PollInterval     time.Duration // default 5s
+	CooldownPerSig   time.Duration // per-signature retry interval after a give-up/rejected outcome; default 24h
+	WorkerConfig     worker.Config // template; the daemon fills in Signature-dependent fields per dispatch
 }
 
 func (c *Config) applyDefaults() {
@@ -181,6 +182,7 @@ func (d *Daemon) runWorker(ctx context.Context, signature string) {
 	cfg.BaseDir = d.cfg.BaseDir
 	cfg.BacklogDir = d.cfg.BacklogDir
 	cfg.RepoURL = d.cfg.RepoURL
+	cfg.SkillRegistryDir = d.cfg.SkillRegistryDir
 	w, err := worker.New(cfg, signature)
 	if err != nil {
 		d.logger.Warn("selfheal-daemon: worker init", "signature", signature, "err", err)

@@ -378,10 +378,12 @@ func startSelfHealDaemon(ctx context.Context) (*daemon.Daemon, error) {
 	if err != nil {
 		return nil, fmt.Errorf("discover fork: %w", err)
 	}
+	skillsDir := filepath.Join(home, ".agents", "ycode", "skills")
 	dmn := daemon.New(daemon.Config{
-		BaseDir:    baseDir,
-		BacklogDir: backlogDir,
-		RepoURL:    repoURL,
+		BaseDir:          baseDir,
+		BacklogDir:       backlogDir,
+		RepoURL:          repoURL,
+		SkillRegistryDir: skillsDir,
 	})
 	dmn.Start(ctx)
 	slog.Info("selfheal: daemon started", "base", baseDir, "repo", repoURL)

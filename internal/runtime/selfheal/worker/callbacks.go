@@ -7,11 +7,44 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/qiangli/ycode/internal/runtime/autoloop"
+	"github.com/qiangli/ycode/internal/runtime/skillengine"
 )
+
+// captureSkill registers a CAPTURED skillengine entry on autoloop
+// success. The TelemetryTrigger is a quoted-meta regex around the
+// brief's normalized error so future occurrences of the same
+// signature get a recall hit without false-positive matching on
+// random other errors. Idempotent: if a skill with the same name
+// already exists, the registry overwrites it with the new stats
+// (latest fix wins).
+func (w *Worker) captureSkill() error {
+	if w.skills == nil {
+		return nil
+	}
+	name := fmt.Sprintf("selfheal-%s", w.brief.Signature)
+	spec := &skillengine.SkillSpec{
+		Name:              name,
+		Version:           1,
+		Description:       fmt.Sprintf("Selfheal fix for %s in %s: %s", w.brief.Category, w.brief.Tool, truncate(w.brief.Normalized, 80)),
+		Instruction:       fmt.Sprintf("When you see the failure shape recorded in signature %s, the prior fix landed on branch %s in workspace %s. Apply the same approach if applicable.", w.brief.Signature, w.branch, w.layout.Root),
+		TelemetryTriggers: []string{regexp.QuoteMeta(w.brief.Normalized)},
+		TriggerKeywords:   []string{w.brief.Tool},
+		EvolutionMode:     skillengine.EvolutionCaptured,
+		Stats: skillengine.SkillStats{
+			Uses:         1,
+			Successes:    1,
+			SuccessRate:  1.0,
+			DecayedScore: 1.0,
+			LastUsed:     time.Now(),
+		},
+	}
+	return w.skills.Register(spec)
+}
 
 // buildCallbacks returns the autoloop callbacks specialized for the
 // selfheal use-case. Keeping each callback small and explicit so it's
@@ -98,8 +131,11 @@ func (w *Worker) evaluate(ctx context.Context) (float64, error) {
 }
 
 // learn appends one JSONL row per iteration to <root>/iterations/
-// learnings.jsonl. Phase 6 reads these to seed skillengine telemetry
-// triggers.
+// learnings.jsonl AND, on success (score >= 1.0), registers a
+// CAPTURED skill keyed on the brief's normalized error as a
+// TelemetryTrigger pattern. Phase 6: future occurrences of the
+// same signature will Recall this skill and feed the fix template
+// into the goal prompt.
 func (w *Worker) learn(_ context.Context, iteration int, score float64) error {
 	if err := os.MkdirAll(w.layout.IterPath, 0o755); err != nil {
 		return err
@@ -110,9 +146,19 @@ func (w *Worker) learn(_ context.Context, iteration int, score float64) error {
 		return err
 	}
 	defer f.Close()
-	_, err = fmt.Fprintf(f, `{"ts":%q,"signature":%q,"iteration":%d,"score":%g,"branch":%q}`+"\n",
-		time.Now().UTC().Format(time.RFC3339), w.brief.Signature, iteration, score, w.branch)
-	return err
+	if _, err := fmt.Fprintf(f, `{"ts":%q,"signature":%q,"iteration":%d,"score":%g,"branch":%q}`+"\n",
+		time.Now().UTC().Format(time.RFC3339), w.brief.Signature, iteration, score, w.branch); err != nil {
+		return err
+	}
+	// Capture a telemetry-trigger skill on success.
+	if score >= 1.0 && w.skills != nil {
+		if err := w.captureSkill(); err != nil {
+			// Non-fatal: a registry write failure shouldn't fail the
+			// autoloop iteration. Surface via slog.
+			fmt.Fprintf(os.Stderr, "selfheal worker: capture skill failed: %v\n", err)
+		}
+	}
+	return nil
 }
 
 // bestSearchTerm picks the most distinctive substring of the
