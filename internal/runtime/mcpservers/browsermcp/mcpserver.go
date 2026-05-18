@@ -3,7 +3,7 @@
 // codex, gemini-cli, …) over the composite /mcp/ endpoint.
 //
 // The internal LLM tool registry at internal/tools/browser.go ships
-// the same 14 tools to ycode's own runtime. This package wraps the
+// the same tools to ycode's own runtime. This package wraps the
 // same dispatch surface for the public MCP boundary so that everything
 // downstream — live/probe/solo backends, the reliability layer — is
 // reachable identically through both paths.
@@ -48,18 +48,20 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 		},
 		{
 			Name:        "browser_click",
-			Description: "Click an element by CSS selector.",
+			Description: "Click an element. Provide one of: a CSS `selector`, an `element_id` from a prior browser_extract result, or a `match_text` substring (case-insensitive, falls back to the first matching button/link). The Ralph reliability layer retries with trimmed/unquoted selector and JS-evaluate variants before giving up; when match_text is set it also tries an extract-by-text + click path.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
 					"element_id": {"type": "integer"},
-					"selector":   {"type": "string"}
+					"selector":   {"type": "string"},
+					"match_text": {"type": "string"},
+					"scope":      {"type": "string"}
 				}
 			}`),
 		},
 		{
 			Name:        "browser_type",
-			Description: "Type text into an input element matched by CSS selector.",
+			Description: "Type text into an input element matched by CSS selector or element_id.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -83,15 +85,27 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 		},
 		{
 			Name:        "browser_screenshot",
-			Description: "Capture a screenshot of the current page. Returns the PNG as an MCP image content block (rendered inline by clients that support it) plus a text block with title/URL metadata.",
-			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+			Description: "Capture a screenshot of the current page. Returns the PNG as an MCP image content block plus a text block with title/URL metadata. Foreign agents working under tight token budgets should pass `max_bytes` (≈200000 is safe) — if the inline base64 PNG exceeds the cap the backend re-encodes as JPEG at decreasing qualities and, if still over, spills to a file at `~/.agents/ycode/browser/screenshots/...` returning the absolute path in the `path` field instead of inline image data. Set `save_path` to force file output regardless of size (path may be absolute or relative to the screenshots dir).",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"max_bytes": {"type": "integer"},
+					"save_path": {"type": "string"}
+				}
+			}`),
 		},
 		{
 			Name:        "browser_extract",
-			Description: "Extract visible text + accessibility info from the current page. Optional `goal` field focuses the extraction (best-effort).",
+			Description: "Extract visible text + accessibility info from the current page. Pass `scope` (CSS selector) to constrain the query root and skip side nav; pass `match_text` or `goal` to filter elements by visible text / placeholder / aria-label (case-insensitive substring). `limit` (default 50) and `offset` paginate. Result includes `total` and `truncated` so the caller knows whether to ask for more.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
-				"properties": {"goal": {"type": "string"}}
+				"properties": {
+					"scope":      {"type": "string"},
+					"match_text": {"type": "string"},
+					"goal":       {"type": "string"},
+					"limit":      {"type": "integer"},
+					"offset":     {"type": "integer"}
+				}
 			}`),
 		},
 		{
@@ -141,7 +155,74 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 		},
 		{
 			Name:        "browser_lighthouse",
-			Description: "Return Core Web Vitals + navigation timing from the current page (LCP, CLS, FID, FCP, TTFB, DCL, load, transfer size, resource count). Scope-honest: not full Lighthouse — that needs Node + controlled lab-mode workloads. Navigate first, then call this.",
+			Description: "Return Core Web Vitals + navigation timing from the current page. Scope-honest: not full Lighthouse — that needs Node + controlled lab-mode workloads. Navigate first, then call this.",
+			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+		},
+		{
+			Name:        "browser_wait_for_selector",
+			Description: "Wait for an element to reach a given lifecycle state. `state` is one of `visible` (default), `attached`, `detached`. `timeout_ms` defaults to 5000. Returns success when the state is reached or an error message describing the timeout. Cheap polling — prefer this over arbitrary sleeps after a click.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"selector":   {"type": "string"},
+					"state":      {"type": "string", "enum": ["visible", "attached", "detached"]},
+					"timeout_ms": {"type": "integer"}
+				},
+				"required": ["selector"]
+			}`),
+		},
+		{
+			Name:        "browser_keyboard_press",
+			Description: "Dispatch a keyboard event. `key` is a DOM event key name (Enter, Tab, Escape, ArrowDown, a, etc.). `modifiers` is an optional subset of {Shift, Control, Alt, Meta}. Pass `selector` to focus first. Live mode dispatches a synthetic KeyboardEvent (some sites ignore non-trusted events); probe/solo dispatch real CDP key events.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"key":       {"type": "string"},
+					"modifiers": {"type": "array", "items": {"type": "string"}},
+					"selector":  {"type": "string"}
+				},
+				"required": ["key"]
+			}`),
+		},
+		{
+			Name:        "browser_clipboard_read",
+			Description: "Read the system clipboard via the focused tab. Requires the live extension's clipboardRead permission (manifest 0.3.0). Returns the clipboard text in the `data` field. Foreign callers should prefer this over pbpaste + bash chaining.",
+			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+		},
+		{
+			Name:        "browser_clipboard_write",
+			Description: "Write text to the system clipboard via the focused tab. Requires clipboardWrite permission.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {"text": {"type": "string"}},
+				"required": ["text"]
+			}`),
+		},
+		{
+			Name:        "browser_cookies_get",
+			Description: "Return cookies for the current page (or filtered by `name` / `domain`). Live mode uses chrome.cookies.getAll so HttpOnly cookies are visible; probe/solo read document.cookie. **Sensitive** — calling this can pull session/auth tokens from a logged-in tab.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"name":   {"type": "string"},
+					"domain": {"type": "string"}
+				}
+			}`),
+		},
+		{
+			Name:        "browser_storage_get",
+			Description: "Read localStorage or sessionStorage from the current page. `storage` is `local` (default) or `session`. Pass `storage_key` to fetch a single entry; omit it to return the full key/value dump as JSON in `data`.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"storage":     {"type": "string", "enum": ["local", "session"]},
+					"storage_key": {"type": "string"}
+				}
+			}`),
+		},
+		{
+			Name:        "browser_capabilities",
+			Description: "Probe the connected backend for its supported method list, version, and (live mode) the extension's chrome.* permissions. Foreign agents should call this once per session before relying on actions that may be missing in older extensions (the most common drift case is a stale chrome extension after a ycode upgrade).",
 			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
 		},
 	}
@@ -153,15 +234,13 @@ func (h *MCPHandler) ReadResource(_ context.Context, uri string) (string, error)
 	return "", fmt.Errorf("browsermcp: no resources: %s", uri)
 }
 
-// RequiredMode rates every browser tool at DangerFullAccess. The
-// posture matches the shell family: browser_eval runs arbitrary JS in
-// the page, browser_type can complete logins or submit forms, and
-// browser_navigate can reach any URL. Callers that want a stricter
-// cap pass `_meta.permission: "ReadOnly"` on the request and the gate
-// reduces it; observation-only callers see only browser_screenshot,
-// browser_extract, browser_network_list, browser_console_get,
-// browser_lighthouse, browser_tabs(list), browser_perf_* — the rest
-// reject under that ceiling.
+// RequiredMode rates every browser tool at DangerFullAccess by
+// default. The posture matches the shell family: browser_eval runs
+// arbitrary JS in the page, browser_type can complete logins or
+// submit forms, and browser_navigate can reach any URL. Callers that
+// want a stricter cap pass `_meta.permission: "ReadOnly"` on the
+// request and the gate reduces it; observation-only callers see only
+// the read tools below — the rest reject under that ceiling.
 func (h *MCPHandler) RequiredMode(name string) mcp.PermissionMode {
 	switch name {
 	case "browser_screenshot",
@@ -170,39 +249,48 @@ func (h *MCPHandler) RequiredMode(name string) mcp.PermissionMode {
 		"browser_console_get",
 		"browser_lighthouse",
 		"browser_perf_start",
-		"browser_perf_stop":
+		"browser_perf_stop",
+		"browser_wait_for_selector",
+		"browser_storage_get",
+		"browser_capabilities":
 		return mcp.ModeReadOnly
 	case "browser_back",
 		"browser_scroll",
-		"browser_tabs":
+		"browser_tabs",
+		"browser_clipboard_read":
 		return mcp.ModeWorkspaceWrite
 	default:
-		// navigate, click, type, eval — any of these can cause writes
-		// the user did not anticipate. Match the shell family's ceiling.
+		// navigate, click, type, eval, keyboard_press, clipboard_write,
+		// cookies_get — any of these can cause writes or pull sensitive
+		// state the user did not anticipate. Match the shell family's
+		// ceiling.
 		return mcp.ModeDangerFullAccess
 	}
 }
 
 // toolToAction maps MCP tool names to the wire.Action discriminator.
-// Identity for the eight basic actions; the four DevTools tools are
-// renamed with a browser_ prefix so they don't collide with their
-// shorter wire names (perf_start, network_list, console_get,
-// lighthouse) that the in-process registry uses.
 var toolToAction = map[string]string{
-	"browser_navigate":     wire.ActionNavigate,
-	"browser_click":        wire.ActionClick,
-	"browser_type":         wire.ActionType,
-	"browser_scroll":       wire.ActionScroll,
-	"browser_screenshot":   wire.ActionScreenshot,
-	"browser_extract":      wire.ActionExtract,
-	"browser_back":         wire.ActionBack,
-	"browser_tabs":         wire.ActionTabs,
-	"browser_eval":         wire.ActionEvaluate,
-	"browser_perf_start":   wire.ActionPerfStart,
-	"browser_perf_stop":    wire.ActionPerfStop,
-	"browser_network_list": wire.ActionNetworkList,
-	"browser_console_get":  wire.ActionConsoleGet,
-	"browser_lighthouse":   wire.ActionLighthouse,
+	"browser_navigate":          wire.ActionNavigate,
+	"browser_click":             wire.ActionClick,
+	"browser_type":              wire.ActionType,
+	"browser_scroll":            wire.ActionScroll,
+	"browser_screenshot":        wire.ActionScreenshot,
+	"browser_extract":           wire.ActionExtract,
+	"browser_back":              wire.ActionBack,
+	"browser_tabs":              wire.ActionTabs,
+	"browser_eval":              wire.ActionEvaluate,
+	"browser_perf_start":        wire.ActionPerfStart,
+	"browser_perf_stop":         wire.ActionPerfStop,
+	"browser_network_list":      wire.ActionNetworkList,
+	"browser_console_get":       wire.ActionConsoleGet,
+	"browser_lighthouse":        wire.ActionLighthouse,
+	"browser_wait_for_selector": wire.ActionWaitForSelector,
+	"browser_keyboard_press":    wire.ActionKeyboardPress,
+	"browser_clipboard_read":    wire.ActionClipboardRead,
+	"browser_clipboard_write":   wire.ActionClipboardWrite,
+	"browser_cookies_get":       wire.ActionCookiesGet,
+	"browser_storage_get":       wire.ActionStorageGet,
+	"browser_capabilities":      wire.ActionCapabilities,
 }
 
 func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json.RawMessage) (string, error) {
@@ -221,11 +309,11 @@ func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json
 // payloads survive the wire as their native type. Today only
 // browser_screenshot benefits: its PNG ships as an image block (which
 // foreign agents render inline) plus a text block carrying title/URL
-// metadata. Every other tool falls back to a single text block —
-// identical to the legacy HandleToolCall path.
+// metadata. When the screenshot was spilled to disk (Path set), the
+// image block is replaced with a text block citing the path. Every
+// other tool falls back to a single text block — identical to the
+// legacy HandleToolCall path.
 func (h *MCPHandler) HandleToolCallRich(ctx context.Context, name string, input json.RawMessage) ([]mcp.Content, error) {
-	// "browser.mode not configured" sentinel: still a text block, but
-	// surface it through the same path so the message stays uniform.
 	if h.client == nil {
 		return []mcp.Content{mcp.ContentText(unconfiguredMessage)}, nil
 	}
@@ -233,15 +321,21 @@ func (h *MCPHandler) HandleToolCallRich(ctx context.Context, name string, input 
 	if err != nil {
 		return nil, err
 	}
-	if name == "browser_screenshot" && result != nil && result.Image != "" {
-		// MIME is fixed at the live extension and the probe/solo
-		// drivers: chrome.tabs.captureVisibleTab and chromedp's
-		// CaptureScreenshot both produce PNG by default.
-		blocks := []mcp.Content{mcp.ContentImage(result.Image, "image/png")}
-		if meta := screenshotMetadata(result); meta != "" {
-			blocks = append(blocks, mcp.ContentText(meta))
+	if name == "browser_screenshot" && result != nil {
+		if result.Path != "" {
+			meta := fmt.Sprintf("screenshot saved to %s", result.Path)
+			if extra := screenshotMetadata(result); extra != "" {
+				meta = extra + " — " + meta
+			}
+			return []mcp.Content{mcp.ContentText(meta)}, nil
 		}
-		return blocks, nil
+		if result.Image != "" {
+			blocks := []mcp.Content{mcp.ContentImage(result.Image, "image/png")}
+			if meta := screenshotMetadata(result); meta != "" {
+				blocks = append(blocks, mcp.ContentText(meta))
+			}
+			return blocks, nil
+		}
 	}
 	out, marshalErr := json.MarshalIndent(result, "", "  ")
 	if marshalErr != nil {

@@ -60,6 +60,8 @@ var qualifyRules = []rule{
 	{rx: regexp.MustCompile(`(?i)\bnot supported\b`), category: CategoryMissing},
 	{rx: regexp.MustCompile(`(?i)\breturns? an unsupported\b`), category: CategoryMissing},
 	{rx: regexp.MustCompile(`(?i)\brequires\b.*\bmode\b`), category: CategoryMissing}, // "requires browser.mode" style hints
+	{rx: regexp.MustCompile(`(?i)extension stale`), category: CategoryMissing},        // ycode browser MCP — Chrome ext < min version
+	{rx: regexp.MustCompile(`(?i)ralph: all \d+ click strategies failed`), category: CategoryMissing},
 }
 
 // Classifier turns raw error messages into a qualification verdict and

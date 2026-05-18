@@ -1,10 +1,17 @@
 # Browser modes
 
 ycode ships a pure-Go browser automation stack with three operating
-modes. All three modes feed the same `browser_*` tool surface
-(navigate, click, type, scroll, screenshot, extract, back, tabs) and
+modes. All three modes feed the same `browser_*` tool surface and
 share a common reliability layer ported from
 [openchrome](https://github.com/shaun0927/openchrome) (MIT).
+
+**Tool surface (21 tools)** — core navigation/interaction:
+`navigate, click, type, scroll, screenshot, extract, back, tabs, eval`.
+Polled primitives: `wait_for_selector, keyboard_press`.
+Live-mode chrome.* reads: `clipboard_read, clipboard_write,
+cookies_get, storage_get`. DevTools (probe/solo only):
+`perf_start, perf_stop, network_list, console_get, lighthouse`.
+Diagnostic: `capabilities`.
 
 The modes live behind the **`experimental` build tag**, which is
 **enabled by default** in `make compile` / `make build` while ycode is
@@ -78,6 +85,77 @@ ycode browser launch              # starts host Chrome with --remote-debugging-p
 ycode browser doctor              # diagnose readiness of each mode
 ycode browser install <mode>      # no-op today (kept for symmetry)
 ```
+
+## Robustness recipes
+
+### Avoid token-cap blow-ups from screenshots
+
+Inline base64 PNGs commonly exceed 200 KB and can overflow an MCP
+tool-result token budget. Always pass `max_bytes` for foreign agents:
+
+```jsonc
+{ "tool": "browser_screenshot", "input": { "max_bytes": 200000 } }
+```
+
+Behaviour:
+1. If the PNG fits inline, return it as before.
+2. Else re-encode as JPEG q=70 → q=50 → q=30; return the first that fits.
+3. Else spill to `~/.agents/ycode/browser/screenshots/screenshot-<ts>.png`
+   and return the absolute path in `path` (the inline `image` field is
+   left empty). Set `save_path` to force file output regardless of size.
+
+### Click without a perfect selector
+
+The retrospective surfaced React buttons (DO dashboard's "Copy" /
+"show") that don't have ARIA labels. Pass `match_text` and the Ralph
+reliability layer tries:
+
+1. `selector` as-given / trimmed / unquoted (when a selector is set).
+2. `js-click` via `document.querySelector(selector).click()`.
+3. `js-text-click` — walk visible text + click first match.
+4. `extract-click-by-text` — run an extract scoped by text, then
+   click `element_id=1`. Works in every mode, including live.
+
+```jsonc
+{ "tool": "browser_click", "input": { "match_text": "Copy", "scope": "main" } }
+```
+
+### Sidebar-biased extracts
+
+`browser_extract` skips `<nav>`/`<aside>`/`[role=navigation]` /
+`[role=complementary]` by default. Pass `scope: "main"` (or any CSS
+selector) to constrain the query root. `match_text` filters by
+visible text / placeholder / aria-label. `limit`/`offset` paginate.
+
+```jsonc
+{ "tool": "browser_extract",
+  "input": { "scope": "main", "match_text": "connection string", "limit": 10 } }
+```
+
+### Stale extension drift
+
+Whenever a server-side fix lands behind the WebSocket boundary (eg.
+`a8a74f3` adding live `evaluate`), older extensions silently fall
+back to "method not supported". The extension now sends a `_hello`
+frame on connect with `{version, methods, permissions}`; the hub
+compares against `LiveExtensionMinVersion` and prepends a hint to
+every result:
+
+```
+"hints": ["live: extension stale (v0.1.0 < required v0.3.0); reload at chrome://extensions"]
+```
+
+Reload the extension after any `ycode browser setup live` to clear.
+
+### Probe what's available before relying on it
+
+```jsonc
+{ "tool": "browser_capabilities", "input": {} }
+```
+
+Returns `{mode, version, methods, permissions}`. Foreign agents
+should call this once per session — particularly before using the
+chrome.*-permission tools (`clipboard_*`, `cookies_get`, `storage_get`).
 
 ## Reliability layer
 
