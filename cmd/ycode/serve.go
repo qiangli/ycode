@@ -60,22 +60,32 @@ var serveCmd = &cobra.Command{
 HTTP/WebSocket API server (for web UI and remote clients), and embedded NATS server.
 
 Use --no-api or --no-nats to disable specific services.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		origin.SetAgentTool(origin.ToolServe)
-		fullCfg, obsCfg, dataDir, err := loadFullServeConfig()
-		if err != nil {
-			return err
-		}
-		if servePort > 0 {
-			obsCfg.ProxyPort = servePort
-		}
+	RunE: runServe,
+}
 
-		if serveDetach {
-			return detachServer(obsCfg, dataDir)
-		}
+// runServe is shared by `ycode serve` and `ycode serve start` so the
+// subcommand is a true alias of the bare command.
+func runServe(cmd *cobra.Command, args []string) error {
+	origin.SetAgentTool(origin.ToolServe)
+	fullCfg, obsCfg, dataDir, err := loadFullServeConfig()
+	if err != nil {
+		return err
+	}
+	if servePort > 0 {
+		obsCfg.ProxyPort = servePort
+	}
 
-		return runAllServices(cmd.Context(), fullCfg, obsCfg, dataDir)
-	},
+	if serveDetach {
+		return detachServer(obsCfg, dataDir)
+	}
+
+	return runAllServices(cmd.Context(), fullCfg, obsCfg, dataDir)
+}
+
+var serveStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start ycode services (same as `ycode serve` with no subcommand)",
+	RunE:  runServe,
 }
 
 var serveStopCmd = &cobra.Command{
@@ -714,7 +724,10 @@ func readServePID(home string) int {
 
 // detachServer forks the current process as a background server.
 func detachServer(cfg *config.ObservabilityConfig, dataDir string) error {
-	args := []string{"serve"}
+	// --detach=false is mandatory in the child: with the default
+	// flipped to true, omitting it would cause the forked process
+	// to re-fork another server and exit, leaving a zombie chain.
+	args := []string{"serve", "--detach=false"}
 	if servePort > 0 {
 		args = append(args, "--port", strconv.Itoa(servePort))
 	}
@@ -1120,7 +1133,7 @@ func openMemexForServe() (*memorypkg.Manager, error) {
 
 func init() {
 	serveCmd.PersistentFlags().IntVar(&servePort, "port", 58080, "Port for the observability server")
-	serveCmd.Flags().BoolVar(&serveDetach, "detach", false, "Run server in background")
+	serveCmd.Flags().BoolVar(&serveDetach, "detach", true, "Run server in background (pass --detach=false to stay attached)")
 	serveCmd.Flags().BoolVar(&serveAuto, "auto", false, "Auto-started by TUI (enables idle shutdown)")
 	serveCmd.Flags().BoolVar(&serveNoAPI, "no-api", false, "Disable the API/WebSocket server")
 	serveCmd.Flags().BoolVar(&serveNoNATS, "no-nats", false, "Disable the embedded NATS server")
@@ -1132,9 +1145,14 @@ func init() {
 	_ = serveCmd.Flags().MarkHidden("auto")
 	serveCmd.Flags().IntVar(&apiNATSPort, "nats-port", 4222, "Port for the embedded NATS server")
 
+	// `ycode serve start` is an alias for the bare `ycode serve`. Share the
+	// exact same flag set so flag parsing routes to the same package-level
+	// variables and behavior stays in lockstep without duplication.
+	serveStartCmd.Flags().AddFlagSet(serveCmd.Flags())
+
 	serveAuditCmd.Flags().Int("last", 10, "Number of records to show")
 
-	serveCmd.AddCommand(serveStopCmd, serveStatusCmd, serveDashboardCmd, serveResetCmd, serveAuditCmd)
+	serveCmd.AddCommand(serveStartCmd, serveStopCmd, serveStatusCmd, serveDashboardCmd, serveResetCmd, serveAuditCmd)
 	rootCmd.AddCommand(serveCmd)
 
 	// Pulse manages a detached 'ycode serve' process.

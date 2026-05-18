@@ -170,7 +170,10 @@ func startAutoServer(port int) error {
 		return fmt.Errorf("open log file: %w", err)
 	}
 
-	args := []string{filepath.Base(exe), "serve", "--auto", "--port", strconv.Itoa(port)}
+	// --detach=false: the bare `ycode serve` default is now to fork into
+	// the background. We're already forking here, so the child must stay
+	// attached or it will fork again and exit, leaving no live server.
+	args := []string{filepath.Base(exe), "serve", "--detach=false", "--auto", "--port", strconv.Itoa(port)}
 
 	attr := &os.ProcAttr{
 		Dir:   ".",
