@@ -469,10 +469,33 @@ async function waitForSelector(tabId, params) {
 
 async function keyboardPress(tabId, params) {
   if (!params.key) throw new Error("keyboard_press: key required");
+  // Prefer chrome.debugger + Input.dispatchKeyEvent for trusted
+  // keystrokes (manifest 0.4.0). Falls back to the synthetic
+  // KeyboardEvent path if the debugger attach fails — for example
+  // if DevTools is open on the same tab.
+  if (params.selector) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        args: [params.selector],
+        func: (sel) => {
+          const el = document.querySelector(sel);
+          if (el && el.focus) el.focus();
+        },
+      });
+    } catch (_) { /* ignore focus failures; keystrokes still go to body */ }
+  }
+  try {
+    await dispatchTrustedKey(tabId, params.key, params.modifiers || []);
+    return { data: "pressed=" + params.key + " (trusted)" };
+  } catch (e) {
+    // Fall back to synthetic events.
+    console.warn("ycode-live: trusted key dispatch failed, falling back", e);
+  }
   const [{ result } = {}] = await chrome.scripting.executeScript({
     target: { tabId },
-    args: [params.key, params.modifiers || [], params.selector || ""],
-    func: (key, modifiers, selector) => {
+    args: [params.key, params.modifiers || []],
+    func: (key, modifiers) => {
       const mods = new Set(modifiers.map((m) => String(m).toLowerCase()));
       const opts = {
         key: key,
@@ -484,12 +507,9 @@ async function keyboardPress(tabId, params) {
         altKey: mods.has("alt"),
         metaKey: mods.has("meta") || mods.has("cmd") || mods.has("command"),
       };
-      const target = selector ? document.querySelector(selector) : (document.activeElement || document.body);
-      if (selector && !target) return { error: "keyboard_press: selector " + selector + " not found" };
-      if (target.focus) target.focus();
+      const target = document.activeElement || document.body;
       target.dispatchEvent(new KeyboardEvent("keydown", opts));
       target.dispatchEvent(new KeyboardEvent("keypress", opts));
-      // Synthetic input for Enter on form fields (common SPA case).
       if (key === "Enter" && target.form) {
         try { target.form.requestSubmit ? target.form.requestSubmit() : target.form.submit(); } catch (_) { /* ignore */ }
       }
@@ -498,7 +518,53 @@ async function keyboardPress(tabId, params) {
     },
   });
   if (result && result.error) throw new Error(result.error);
-  return { data: "pressed=" + params.key };
+  return { data: "pressed=" + params.key + " (synthetic)" };
+}
+
+// dispatchTrustedKey attaches chrome.debugger to the target tab,
+// dispatches a real Input.dispatchKeyEvent pair (keyDown + keyUp),
+// then detaches. Modifiers map to the CDP bitfield. Throws on any
+// failure — the caller falls back to a synthetic KeyboardEvent.
+const KEY_TO_CODE = {
+  Enter: { code: "Enter", windowsVirtualKeyCode: 13 },
+  Tab: { code: "Tab", windowsVirtualKeyCode: 9 },
+  Escape: { code: "Escape", windowsVirtualKeyCode: 27 },
+  Backspace: { code: "Backspace", windowsVirtualKeyCode: 8 },
+  Delete: { code: "Delete", windowsVirtualKeyCode: 46 },
+  ArrowUp: { code: "ArrowUp", windowsVirtualKeyCode: 38 },
+  ArrowDown: { code: "ArrowDown", windowsVirtualKeyCode: 40 },
+  ArrowLeft: { code: "ArrowLeft", windowsVirtualKeyCode: 37 },
+  ArrowRight: { code: "ArrowRight", windowsVirtualKeyCode: 39 },
+  Home: { code: "Home", windowsVirtualKeyCode: 36 },
+  End: { code: "End", windowsVirtualKeyCode: 35 },
+  PageUp: { code: "PageUp", windowsVirtualKeyCode: 33 },
+  PageDown: { code: "PageDown", windowsVirtualKeyCode: 34 },
+};
+
+async function dispatchTrustedKey(tabId, key, modifiers) {
+  const target = { tabId: tabId };
+  const mods = new Set(modifiers.map((m) => String(m).toLowerCase()));
+  // CDP modifier bitfield: 1=Alt, 2=Ctrl, 4=Meta, 8=Shift.
+  let modBits = 0;
+  if (mods.has("alt")) modBits |= 1;
+  if (mods.has("control") || mods.has("ctrl")) modBits |= 2;
+  if (mods.has("meta") || mods.has("cmd") || mods.has("command")) modBits |= 4;
+  if (mods.has("shift")) modBits |= 8;
+
+  await chrome.debugger.attach(target, "1.3");
+  try {
+    const named = KEY_TO_CODE[key];
+    const isPrintable = key.length === 1;
+    const base = named
+      ? { key: key, code: named.code, windowsVirtualKeyCode: named.windowsVirtualKeyCode, modifiers: modBits }
+      : { key: key, code: isPrintable ? "Key" + key.toUpperCase() : key, modifiers: modBits };
+    const keyDown = Object.assign({ type: isPrintable ? "keyDown" : "rawKeyDown" }, base);
+    if (isPrintable) keyDown.text = key;
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", keyDown);
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", Object.assign({ type: "keyUp" }, base));
+  } finally {
+    try { await chrome.debugger.detach(target); } catch (_) { /* ignore */ }
+  }
 }
 
 async function clipboardRead(tabId) {

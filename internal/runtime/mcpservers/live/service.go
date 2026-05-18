@@ -42,7 +42,8 @@ const DefaultPort = 58082
 // basic action set; the hub prepends a "stale extension" hint so the
 // caller (and the user) know to reload at chrome://extensions. The
 // version is reported by the extension's `_hello` frame on connect.
-const LiveExtensionMinVersion = "0.3.0"
+// 0.4.0 added the chrome.debugger permission for trusted keystrokes.
+const LiveExtensionMinVersion = "0.4.0"
 
 // roleKind selects how a Service routes BrowserActions. A single
 // Service either owns the hub locally (roleHub) or forwards every
