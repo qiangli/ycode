@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -90,6 +91,21 @@ func setupOTel(ctx context.Context, mode ExportMode, agentName, profileName stri
 	dataDir := filepath.Join(home, ".agents", "ycode", "otel")
 	instanceDir := filepath.Join(dataDir, "instances", instanceID)
 
+	// Probe the serve manifest *before* NewProvider so a reachable
+	// collector address can be passed into ProviderConfig. That's the
+	// only path that wires the gRPC log exporter — sdklog has no
+	// AddProcessor API, so the post-hoc TryConnectCollector path
+	// explicitly skips log upgrades when LoggerProvider already
+	// exists (see internal/telemetry/otel/provider.go:393-399). The
+	// 2s TCP probe avoids attaching gRPC exporters to a stale
+	// manifest pointing at a dead serve — without it the SDK would
+	// retry indefinitely in the background, filling wrap.log with
+	// "addrConn.createTransport failed" warnings.
+	collectorAddr := ""
+	if addr, ok := ReadServeManifest(); ok && probeCollector(ctx, addr, 2*time.Second) {
+		collectorAddr = addr
+	}
+
 	provider, err := yotel.NewProvider(ctx, yotel.ProviderConfig{
 		ServiceName:    "ycode.wrap",
 		ServiceVersion: wrapVersion(),
@@ -98,6 +114,7 @@ func setupOTel(ctx context.Context, mode ExportMode, agentName, profileName stri
 		SampleRate:     1.0,
 		DataDir:        dataDir,
 		InstanceDir:    instanceDir,
+		CollectorAddr:  collectorAddr,
 		PersistTraces:  true,
 		// StartExecSpan records ycode.exec.total / ycode.exec.duration
 		// through the global meter, but enabling local PersistMetrics
@@ -110,10 +127,13 @@ func setupOTel(ctx context.Context, mode ExportMode, agentName, profileName stri
 		// ships exec metrics via gRPC only — fine for the canonical
 		// "serve is up" path, dropped silently otherwise.
 		PersistMetrics: false,
-		// Wrap itself emits no OTel log records (its diagnostics go to
-		// slog/stderr). Leave false until something in the wrap path
-		// starts producing structured logs.
-		PersistLogs: false,
+		// Wrap's slog handler is bridged into the OTel log pipeline by
+		// installOTelLogBridge below, so every diagnostic line wrap
+		// emits flows through this LoggerProvider — into the file
+		// exporter always, and into VictoriaLogs once a collector is
+		// connected. Without PersistLogs the LoggerProvider is nil and
+		// the bridge becomes a silent no-op.
+		PersistLogs: true,
 		AgentTool:   "wrap",
 	})
 	if err != nil {
@@ -133,22 +153,13 @@ func setupOTel(ctx context.Context, mode ExportMode, agentName, profileName stri
 		}
 	}
 
-	// Dual-export upgrade: when a running `ycode serve` advertises an
-	// OTLP endpoint in ~/.agents/ycode/manifest.json, push to it as
-	// well. Failure is non-fatal — we stay in file-only mode and
-	// surface the fallback at INFO so operators can tell which path
-	// is active without enabling debug logging.
-	dualExport := false
-	collectorAddr := ""
-	if addr, ok := ReadServeManifest(); ok {
-		collectorAddr = addr
-		// 2s budget keeps wrap startup snappy when serve is down or
-		// hung; the SDK's per-exporter dial timeout is bounded by
-		// this parent context.
-		connectCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		dualExport = provider.TryConnectCollector(connectCtx, addr)
-		cancel()
-	}
+	// Tee slog.Default() into the OTel log pipeline. Guarded by the
+	// loggerInitialized flag in logger.go so tests that call setupOTel
+	// directly (without initLoggerFromEnv) don't get a teeLogHandler
+	// wrapping slog's package defaultHandler — that handler routes
+	// through the standard log package which loops back to slog, and
+	// the tee would infinitely recurse on the first log line.
+	installOTelLogBridge()
 
 	slog.Info("wrap: OTel exporter installed",
 		"mode", mode,
@@ -156,7 +167,7 @@ func setupOTel(ctx context.Context, mode ExportMode, agentName, profileName stri
 		"agent", agentName,
 		"profile", profileName,
 		"collector", collectorAddr,
-		"dual_export", dualExport,
+		"dual_export", collectorAddr != "",
 	)
 
 	return func() {
@@ -188,4 +199,25 @@ func wrapVersion() string {
 // modes — used by the cobra flag's usage string in cmd/ycode/wrap.go.
 func formatExportModes() string {
 	return fmt.Sprintf("%s | %s | %s", ExportFile, ExportConsole, ExportOff)
+}
+
+// probeCollector performs a quick TCP dial to addr to verify a serve
+// is actually listening. Returns false on any error within the
+// budget. The parent ctx's cancellation still takes precedence so
+// wrap startup can't hang past the caller's timeout.
+//
+// Used to gate ProviderConfig.CollectorAddr — attaching gRPC
+// exporters to a stale manifest (e.g. left over from a crashed
+// `ycode serve`) would otherwise have the SDK retry indefinitely in
+// the background and fill wrap.log with reconnect noise.
+func probeCollector(ctx context.Context, addr string, budget time.Duration) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	var d net.Dialer
+	conn, err := d.DialContext(probeCtx, "tcp", addr)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }

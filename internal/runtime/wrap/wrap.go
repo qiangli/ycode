@@ -163,7 +163,7 @@ type Options struct {
 // scaffold is in place (Loom field) but today the foreign agent
 // runs in WorkDir as-is.
 func Run(ctx context.Context, opts Options) (int, error) {
-	initLoggerFromEnv()
+	defer initLoggerFromEnv()()
 	if len(opts.AgentArgs) == 0 {
 		return 1, errors.New("wrap.Run: AgentArgs is required")
 	}
@@ -373,7 +373,7 @@ func IsShimInvocation() bool {
 //  5. Open an ExecScopeWrappedAgent span and exec the real binary
 //     with stdin/out/err inherited.
 func ShimMain() int {
-	initLoggerFromEnv()
+	defer initLoggerFromEnv()()
 	base := filepath.Base(os.Args[0])
 	depth := 0
 	if v := os.Getenv(envDepth); v != "" {
