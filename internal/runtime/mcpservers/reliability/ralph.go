@@ -131,7 +131,20 @@ func ralphStrategies(inner mcpservers.Service, orig mcpservers.BrowserAction) []
 		jsAct := mcpservers.BrowserAction{Type: mcpservers.ActionEvaluate, Script: js}
 		out = append(out, ralphStrategy{
 			name: "js-click",
-			run:  func(ctx context.Context) (*mcpservers.BrowserResult, error) { return inner.Execute(ctx, jsAct) },
+			run: func(ctx context.Context) (*mcpservers.BrowserResult, error) {
+				res, err := inner.Execute(ctx, jsAct)
+				// `data` is the stringified return value: "true"
+				// when the element was found and clicked, "false"
+				// otherwise. Without this check ralph would
+				// short-circuit on a no-op evaluate.
+				if err == nil && res != nil && res.Error == "" {
+					if !strings.Contains(strings.ToLower(res.Data), "true") {
+						res.Success = false
+						res.Error = "js-click: selector returned null"
+					}
+				}
+				return res, err
+			},
 		})
 	}
 
