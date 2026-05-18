@@ -24,7 +24,12 @@ make compile         # quick compile (experimental features ON by default)
 make compile-stable  # explicit opt-out: without experimental tag
 make test            # unit tests only (-short -race)
 make ci-fast         # quick CI check: verify-features + unit tests (skip Docker matrix)
+make tidy            # standalone lint: mod tidy + fmt + vet (also runs inside `make build`)
+make vet             # static analysis only
 ```
+
+**Generated artifacts** — regenerate after editing the source-of-truth:
+- `internal/features/registry.yaml` → `make readme-features` (updates README Features block; `make build` will fail with drift)
 
 **Build tags** (see `Makefile`):
 - Default: `sqlite,sqlite_unlock_notify,bindata,experimental`
@@ -55,7 +60,6 @@ PACKAGES=$(go list ./... | grep -v '/priorart/')
 - No `log.Printf` or `fmt.Println` — use structured logger from `RuntimeContext`
 - Layered build system: logic in Go, orchestration in `scripts/`, dependency graph in `Makefile`
 - No test logic in bash scripts — Go tests only
-- If you edit `internal/features/registry.yaml`, run `make readme-features` — the README features block is generated from it
 
 **Commits:**
 - Stage files by name (never `git add -A` or `git add .`)
@@ -79,6 +83,8 @@ Key components:
 **You are the Foreman.** Full privileges: source tree, backlog at `~/.agents/ycode/projects/<id>/backlog/`, all MCP tools.
 
 **Workers** are sandboxed subprocesses spawned via `/foreman` — they receive one Gitea issue and one Loom workspace.
+
+> **Wrap-session boundary:** When a worker (or any agent) runs under `ycode wrap -- <other-agent>` against a *different* repo, the Foreman/Worker protocol and these conventions do **not** apply — that's an independent context (see the Scope note at the top of this file).
 
 **Planning:** Write backlog entries:
 ```bash
@@ -120,6 +126,8 @@ Run `make ci` before push when touching CGO-adjacent code (podman/storage, sqlit
 - `docs/memory.md` — five-layer memory system
 - `docs/swarm.md` — agent orchestration
 - `docs/lighthouse.md` — MCP federation for foreign agents
+- `docs/observability.md` / `docs/otel.md` — observability stack (Jaeger/Perses/VictoriaLogs forks — kept intentionally; never propose de-forking)
+- `internal/selfheal/README.md` — self-heal subsystem (telemetry-trigger skills, FailureSignal → backlog, autoloop)
 
 <!-- BEGIN YCODE -->
 ## ycode
