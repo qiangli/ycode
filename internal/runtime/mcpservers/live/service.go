@@ -17,6 +17,7 @@ package live
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +36,13 @@ import (
 // DefaultPort is the well-known loopback port the live extension
 // connects to. Override via settings.json `browser.livePort`.
 const DefaultPort = 58082
+
+// LiveExtensionMinVersion is the minimum acceptable extension version
+// for full feature coverage. Older extensions still work for the
+// basic action set; the hub prepends a "stale extension" hint so the
+// caller (and the user) know to reload at chrome://extensions. The
+// version is reported by the extension's `_hello` frame on connect.
+const LiveExtensionMinVersion = "0.3.0"
 
 // roleKind selects how a Service routes BrowserActions. A single
 // Service either owns the hub locally (roleHub) or forwards every
@@ -176,16 +186,67 @@ func (s *Service) Execute(ctx context.Context, action mcpservers.BrowserAction) 
 		return &mcpservers.BrowserResult{Error: err.Error()}, nil
 	}
 
-	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// Wait-for-selector callers pass timeout_ms; respect it as the
+	// outer deadline (plus a small buffer) so the call doesn't time
+	// out before the extension's internal poll.
+	timeout := 30 * time.Second
+	if action.TimeoutMs > 0 {
+		t := time.Duration(action.TimeoutMs)*time.Millisecond + 5*time.Second
+		if t > timeout {
+			timeout = t
+		}
+	}
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	var res *mcpservers.BrowserResult
 	switch role {
 	case roleHub:
-		return s.executeHub(callCtx, hub, method, params)
+		res, err = s.executeHub(callCtx, hub, method, params)
 	case roleClient:
-		return s.executeClient(callCtx, client, method, params)
+		res, err = s.executeClient(callCtx, client, method, params)
+	default:
+		return nil, errors.New("live: not ready (call EnsureReady first)")
 	}
-	return nil, errors.New("live: not ready (call EnsureReady first)")
+	if res != nil {
+		// Post-process: screenshot save-to-file (cap + spill), record
+		// last tab URL, prepend stale-extension hint.
+		s.postprocess(action, res, hub)
+	}
+	return res, err
+}
+
+// postprocess applies cross-cutting transforms to a fresh result:
+//   - screenshot MaxBytes/SavePath enforcement,
+//   - last-tab URL recording (for the "not connected" error),
+//   - stale-extension hint prepended to the first error (or hint)
+//     when the extension's reported version < LiveExtensionMinVersion.
+//
+// hub may be nil in client role; the stale check is hub-local so we
+// just skip it there (the client role pulls the hint from the
+// hub-owning process via /dispatch's result).
+func (s *Service) postprocess(action mcpservers.BrowserAction, res *mcpservers.BrowserResult, h *hub) {
+	if action.Type == mcpservers.ActionScreenshot && res.Image != "" {
+		if action.MaxBytes > 0 || action.SavePath != "" {
+			raw, err := decodeB64(res.Image)
+			if err == nil {
+				img, path, err := mcpservers.PostprocessScreenshot(raw, action)
+				if err == nil {
+					res.Image = img
+					res.Path = path
+				}
+			}
+		}
+	}
+	if h != nil {
+		if res.URL != "" {
+			h.RecordLastTab(res.URL)
+		}
+		if v := h.ExtVersion(); v != "" && versionLess(v, LiveExtensionMinVersion) {
+			msg := fmt.Sprintf("live: extension stale (v%s < required v%s); reload at chrome://extensions", v, LiveExtensionMinVersion)
+			res.Hints = append([]string{msg}, res.Hints...)
+		}
+	}
 }
 
 func (s *Service) executeHub(ctx context.Context, h *hub, method string, params map[string]any) (*mcpservers.BrowserResult, error) {
@@ -240,14 +301,51 @@ func unmarshalExt(raw json.RawMessage) (*mcpservers.BrowserResult, error) {
 		}
 	}
 	return &mcpservers.BrowserResult{
-		Success:  true,
-		Title:    inner.Title,
-		URL:      inner.URL,
-		Content:  inner.Content,
-		Elements: inner.Elements,
-		Data:     inner.Data,
-		Image:    inner.Image,
+		Success:   true,
+		Title:     inner.Title,
+		URL:       inner.URL,
+		Content:   inner.Content,
+		Elements:  inner.Elements,
+		Data:      inner.Data,
+		Image:     inner.Image,
+		Path:      inner.Path,
+		Total:     inner.Total,
+		Truncated: inner.Truncated,
 	}, nil
+}
+
+// decodeB64 strips the data-URL prefix the extension may emit and
+// returns raw bytes. Live's takeScreenshot strips the prefix already
+// but this is defence-in-depth for older builds.
+func decodeB64(s string) ([]byte, error) {
+	if idx := strings.Index(s, ","); idx >= 0 && strings.HasPrefix(s, "data:") {
+		s = s[idx+1:]
+	}
+	return base64.StdEncoding.DecodeString(s)
+}
+
+// versionLess returns true when a < b using a simple
+// dotted-numeric comparison. Any non-numeric segment is treated as 0.
+// Sufficient for our manifest versions (X.Y.Z).
+func versionLess(a, b string) bool {
+	as := strings.Split(a, ".")
+	bs := strings.Split(b, ".")
+	for i := 0; i < len(as) || i < len(bs); i++ {
+		var an, bn int
+		if i < len(as) {
+			an, _ = strconv.Atoi(as[i])
+		}
+		if i < len(bs) {
+			bn, _ = strconv.Atoi(bs[i])
+		}
+		if an < bn {
+			return true
+		}
+		if an > bn {
+			return false
+		}
+	}
+	return false
 }
 
 // actionToParams translates a BrowserAction into a {method, params}
@@ -258,7 +356,12 @@ func actionToParams(a mcpservers.BrowserAction) (string, map[string]any, error) 
 	case mcpservers.ActionNavigate:
 		return "navigate", map[string]any{"url": a.URL}, nil
 	case mcpservers.ActionClick:
-		return "click", map[string]any{"selector": a.Selector, "element_id": a.ElementID}, nil
+		return "click", map[string]any{
+			"selector":   a.Selector,
+			"element_id": a.ElementID,
+			"match_text": a.MatchText,
+			"scope":      a.Scope,
+		}, nil
 	case mcpservers.ActionType:
 		return "type", map[string]any{"selector": a.Selector, "element_id": a.ElementID, "text": a.Text}, nil
 	case mcpservers.ActionScroll:
@@ -266,13 +369,41 @@ func actionToParams(a mcpservers.BrowserAction) (string, map[string]any, error) 
 	case mcpservers.ActionScreenshot:
 		return "screenshot", map[string]any{}, nil
 	case mcpservers.ActionExtract:
-		return "extract", map[string]any{"goal": a.Goal}, nil
+		return "extract", map[string]any{
+			"goal":       a.Goal,
+			"match_text": a.MatchText,
+			"scope":      a.Scope,
+			"limit":      a.Limit,
+			"offset":     a.Offset,
+		}, nil
 	case mcpservers.ActionBack:
 		return "back", map[string]any{}, nil
 	case mcpservers.ActionTabs:
 		return "tabs", map[string]any{"action": a.TabAction, "tab_id": a.TabID}, nil
 	case mcpservers.ActionEvaluate:
 		return "evaluate", map[string]any{"script": a.Script}, nil
+	case mcpservers.ActionWaitForSelector:
+		return "wait_for_selector", map[string]any{
+			"selector":   a.Selector,
+			"timeout_ms": a.TimeoutMs,
+			"state":      a.State,
+		}, nil
+	case mcpservers.ActionKeyboardPress:
+		return "keyboard_press", map[string]any{
+			"key":       a.Key,
+			"modifiers": a.Modifiers,
+			"selector":  a.Selector,
+		}, nil
+	case mcpservers.ActionClipboardRead:
+		return "clipboard_read", map[string]any{}, nil
+	case mcpservers.ActionClipboardWrite:
+		return "clipboard_write", map[string]any{"text": a.Text}, nil
+	case mcpservers.ActionCookiesGet:
+		return "cookies_get", map[string]any{"name": a.Name, "domain": a.Domain}, nil
+	case mcpservers.ActionStorageGet:
+		return "storage_get", map[string]any{"storage": a.Storage, "key": a.StorageKey}, nil
+	case mcpservers.ActionCapabilities:
+		return "capabilities", map[string]any{}, nil
 	}
 	return "", nil, fmt.Errorf("live: action %q not supported", a.Type)
 }

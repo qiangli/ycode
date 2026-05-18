@@ -42,4 +42,14 @@ const (
 	ActionNetworkList = wire.ActionNetworkList
 	ActionConsoleGet  = wire.ActionConsoleGet
 	ActionLighthouse  = wire.ActionLighthouse
+
+	// Robustness additions (Phase 1–5). See pkg/browser/wire/wire.go
+	// for the per-action field shape.
+	ActionWaitForSelector = wire.ActionWaitForSelector
+	ActionKeyboardPress   = wire.ActionKeyboardPress
+	ActionClipboardRead   = wire.ActionClipboardRead
+	ActionClipboardWrite  = wire.ActionClipboardWrite
+	ActionCookiesGet      = wire.ActionCookiesGet
+	ActionStorageGet      = wire.ActionStorageGet
+	ActionCapabilities    = wire.ActionCapabilities
 )

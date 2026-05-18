@@ -61,6 +61,23 @@ function openWS() {
   ws.onopen = () => {
     reconnectMs = RECONNECT_BASE_MS;
     chrome.alarms.create("ycode-live-keepalive", { periodInMinutes: KEEPALIVE_PERIOD_MIN });
+    // _hello envelope — id == 0, method == "_hello", result carries
+    // {version, methods, permissions}. The hub uses this to detect
+    // version drift without a separate round-trip.
+    try {
+      const manifest = chrome.runtime.getManifest();
+      ws.send(JSON.stringify({
+        id: 0,
+        method: "_hello",
+        result: {
+          version: manifest.version,
+          methods: SUPPORTED_METHODS,
+          permissions: manifest.permissions || [],
+        },
+      }));
+    } catch (e) {
+      console.warn("ycode-live: _hello send failed", e);
+    }
   };
   ws.onmessage = onMessage;
   ws.onerror = (e) => console.warn("ycode-live: socket error", e);
@@ -84,6 +101,14 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 // --- request dispatch ---
+
+const SUPPORTED_METHODS = [
+  "navigate", "back", "screenshot", "extract",
+  "click", "type", "scroll", "tabs", "evaluate",
+  "wait_for_selector", "keyboard_press",
+  "clipboard_read", "clipboard_write",
+  "cookies_get", "storage_get", "capabilities",
+];
 
 async function onMessage(ev) {
   let req;
@@ -119,16 +144,20 @@ async function targetTabId() {
 }
 
 async function dispatch(method, params) {
+  // Capabilities does not need a tab (it's a pure metadata read).
+  if (method === "capabilities") return capabilities();
+  if (method === "cookies_get") return cookiesGet(params);
+
   const tabId = await targetTabId();
   switch (method) {
     case "navigate":
       return navigate(tabId, params.url);
     case "back":
-      return chrome.tabs.goBack(tabId).then(() => extractInTab(tabId));
+      return chrome.tabs.goBack(tabId).then(() => extractInTab(tabId, {}));
     case "screenshot":
       return takeScreenshot(tabId);
     case "extract":
-      return extractInTab(tabId);
+      return extractInTab(tabId, params);
     case "click":
       return runInTab(tabId, "click", params);
     case "type":
@@ -139,15 +168,66 @@ async function dispatch(method, params) {
       return handleTabs(params);
     case "evaluate":
       return evaluateInTab(tabId, params.script);
+    case "wait_for_selector":
+      return waitForSelector(tabId, params);
+    case "keyboard_press":
+      return keyboardPress(tabId, params);
+    case "clipboard_read":
+      return clipboardRead(tabId);
+    case "clipboard_write":
+      return clipboardWrite(tabId, params);
+    case "storage_get":
+      return storageGet(tabId, params);
   }
   throw new Error(`unknown method: ${method}`);
+}
+
+function capabilities() {
+  const m = chrome.runtime.getManifest();
+  return {
+    data: JSON.stringify({
+      mode: "live",
+      version: m.version,
+      methods: SUPPORTED_METHODS,
+      permissions: m.permissions || [],
+    }),
+  };
+}
+
+async function cookiesGet(params) {
+  // Use the chrome.cookies API rather than document.cookie so HttpOnly
+  // cookies are visible. Filters: name + domain (both optional).
+  const tabId = await targetTabId();
+  const tab = await chrome.tabs.get(tabId);
+  let domain = params.domain || "";
+  try {
+    if (!domain && tab.url) domain = new URL(tab.url).hostname;
+  } catch (_) { /* about:blank etc */ }
+  const all = await chrome.cookies.getAll({});
+  const want = (params.name || "").trim();
+  const out = [];
+  for (const c of all) {
+    if (want && c.name !== want) continue;
+    if (domain) {
+      // chrome cookies store .example.com — match by suffix.
+      const cd = (c.domain || "").replace(/^\./, "");
+      if (cd !== domain && !domain.endsWith("." + cd) && !cd.endsWith("." + domain)) continue;
+    }
+    out.push({
+      name: c.name, value: c.value, domain: c.domain, path: c.path,
+      secure: c.secure, httpOnly: c.httpOnly,
+      session: c.session, sameSite: c.sameSite,
+      expirationDate: c.expirationDate,
+    });
+  }
+  return { data: JSON.stringify(out) };
 }
 
 async function navigate(tabId, url) {
   if (!url) throw new Error("navigate: url required");
   await chrome.tabs.update(tabId, { url });
   await waitForLoad(tabId);
-  return extractInTab(tabId);
+  return extractInTab(tabId, {});
 }
 
 function waitForLoad(tabId) {
@@ -171,34 +251,66 @@ async function takeScreenshot(tabId) {
   const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
   // strip the data:image/png;base64, prefix
   const idx = dataUrl.indexOf(",");
+  // Caller (Go side) is responsible for MaxBytes / SavePath
+  // post-processing; the extension always emits a raw base64 PNG so
+  // the JPEG re-encode path lives in one place.
   return { image: idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl };
 }
 
-async function extractInTab(tabId) {
+async function extractInTab(tabId, params) {
   const [{ result } = {}] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => {
-      const elements = [];
-      const interactive = document.querySelectorAll(
+    args: [params || {}],
+    func: (params) => {
+      const SCOPE_SEL = (params.scope || "").trim();
+      const MATCH = (params.match_text || params.goal || "").trim();
+      const LIMIT = params.limit && params.limit > 0 ? params.limit : 50;
+      const OFFSET = params.offset && params.offset > 0 ? params.offset : 0;
+      const root = SCOPE_SEL ? document.querySelector(SCOPE_SEL) : document;
+      if (!root) {
+        return { title: document.title, url: location.href, content: "", elements: "", error: "extract: scope " + SCOPE_SEL + " not found" };
+      }
+      const navFilter = !SCOPE_SEL;
+      const all = root.querySelectorAll(
         "a, button, input, select, textarea, [role='button'], [role='link']"
       );
-      for (let i = 0; i < Math.min(interactive.length, 50); i++) {
-        const el = interactive[i];
-        const tag = el.tagName.toLowerCase();
-        const text = (el.innerText || "").trim().slice(0, 80);
-        const attrs = [];
-        for (const a of ["type", "placeholder", "href", "name", "value", "role"]) {
-          const v = el.getAttribute(a);
-          if (v) attrs.push(`${a}="${v.slice(0, 60)}"`);
+      const matches = [];
+      const want = MATCH.toLowerCase();
+      for (let i = 0; i < all.length; i++) {
+        const el = all[i];
+        if (navFilter && el.closest && el.closest("nav, aside, [role='navigation'], [role='complementary']")) continue;
+        const visible = ((el.innerText) || el.value || el.getAttribute("aria-label") || "").trim();
+        if (want) {
+          const ph = el.getAttribute("placeholder") || "";
+          const ar = el.getAttribute("aria-label") || "";
+          if (visible.toLowerCase().indexOf(want) < 0 &&
+              ph.toLowerCase().indexOf(want) < 0 &&
+              ar.toLowerCase().indexOf(want) < 0) continue;
         }
-        elements.push(`[${i + 1}] <${tag} ${attrs.join(" ")}>${text}</${tag}>`);
+        matches.push(el);
+      }
+      const total = matches.length;
+      const slice = matches.slice(OFFSET, OFFSET + LIMIT);
+      const lines = [];
+      for (let j = 0; j < slice.length; j++) {
+        const el = slice[j];
+        const tag = el.tagName.toLowerCase();
+        const text = ((el.innerText) || el.value || el.getAttribute("aria-label") || "").trim().slice(0, 80);
+        const attrs = [];
+        for (const a of ["type", "placeholder", "href", "name", "value", "role", "aria-label"]) {
+          const v = el.getAttribute(a);
+          if (v) attrs.push(`${a}="${String(v).slice(0, 60)}"`);
+        }
+        lines.push(`[${OFFSET + j + 1}] <${tag} ${attrs.join(" ")}>${text}</${tag}>`);
       }
       const body = (document.body && document.body.innerText) || "";
       return {
         title: document.title,
         url: location.href,
         content: body.length > 16000 ? body.slice(0, 16000) + "\n... (truncated)" : body,
-        elements: elements.join("\n"),
+        elements: lines.join("\n"),
+        total: total,
+        truncated: total > (OFFSET + LIMIT),
       };
     },
   });
@@ -210,13 +322,36 @@ async function runInTab(tabId, kind, params) {
     target: { tabId },
     args: [kind, params],
     func: (kind, params) => {
+      const matchText = params.match_text || "";
+      function elemsInScope() {
+        const scope = params.scope ? document.querySelector(params.scope) : document;
+        return (scope || document).querySelectorAll(
+          "a, button, input, select, textarea, [role='button'], [role='link']"
+        );
+      }
       function resolveTarget() {
-        if (params.selector) return document.querySelector(params.selector);
+        if (params.selector) {
+          const sc = params.scope ? document.querySelector(params.scope) : document;
+          return (sc || document).querySelector(params.selector);
+        }
         if (params.element_id && params.element_id > 0) {
-          const list = document.querySelectorAll(
-            "a, button, input, select, textarea, [role='button'], [role='link']"
-          );
-          return list[params.element_id - 1] || null;
+          const list = elemsInScope();
+          // For typed lookup, mirror the extract enumeration: skip
+          // nav landmarks unless caller passed an explicit scope.
+          const navFilter = !params.scope;
+          const flat = [];
+          for (const el of list) {
+            if (navFilter && el.closest && el.closest("nav, aside, [role='navigation'], [role='complementary']")) continue;
+            flat.push(el);
+          }
+          return flat[params.element_id - 1] || null;
+        }
+        if (matchText) {
+          const want = matchText.toLowerCase();
+          for (const el of elemsInScope()) {
+            const v = ((el.innerText) || el.value || el.getAttribute("aria-label") || "").trim().toLowerCase();
+            if (v.indexOf(want) >= 0) return el;
+          }
         }
         return null;
       }
@@ -259,10 +394,7 @@ async function runInTab(tabId, kind, params) {
 async function evaluateInTab(tabId, script) {
   if (!script) throw new Error("evaluate: script required");
   // Run in the MAIN world so the script sees the page's globals
-  // (matches chromedp.Evaluate semantics on probe/solo). The injected
-  // wrapper Function-wraps the source as an expression first, then
-  // falls back to a statement form so callers can pass either
-  // "document.title" or "{ return 1 + 2 }" style scripts.
+  // (matches chromedp.Evaluate semantics on probe/solo).
   const [{ result } = {}] = await chrome.scripting.executeScript({
     target: { tabId },
     args: [script],
@@ -277,7 +409,6 @@ async function evaluateInTab(tabId, script) {
       try {
         value = (new Function("return (" + src + ")"))();
       } catch (e1) {
-        // Not a valid expression — try statement form: "return X;".
         try {
           value = (new Function(src))();
         } catch (e2) {
@@ -295,6 +426,143 @@ async function evaluateInTab(tabId, script) {
   });
   if (result && result.error) throw new Error(result.error);
   return { data: result ? result.value : "" };
+}
+
+async function waitForSelector(tabId, params) {
+  const sel = params.selector;
+  if (!sel) throw new Error("wait_for_selector: selector required");
+  const timeoutMs = params.timeout_ms && params.timeout_ms > 0 ? params.timeout_ms : 5000;
+  const state = params.state || "visible";
+  // Poll inside the page in 100 ms ticks. Cheaper than IPC because
+  // chrome.scripting.executeScript per tick would burn quota.
+  const [{ result } = {}] = await chrome.scripting.executeScript({
+    target: { tabId },
+    args: [sel, timeoutMs, state],
+    func: async (sel, timeoutMs, state) => {
+      const deadline = Date.now() + timeoutMs;
+      function visible(el) {
+        if (!el) return false;
+        const cs = getComputedStyle(el);
+        if (cs.visibility === "hidden" || cs.display === "none") return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      }
+      while (Date.now() < deadline) {
+        const el = document.querySelector(sel);
+        if (state === "detached") {
+          if (!el) return { ok: true };
+        } else if (state === "attached") {
+          if (el) return { ok: true };
+        } else {
+          if (visible(el)) return { ok: true };
+        }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return { ok: false };
+    },
+  });
+  if (!result || !result.ok) {
+    throw new Error(`wait_for_selector: timeout after ${timeoutMs}ms (state=${state})`);
+  }
+  return { data: `state=${state}` };
+}
+
+async function keyboardPress(tabId, params) {
+  if (!params.key) throw new Error("keyboard_press: key required");
+  const [{ result } = {}] = await chrome.scripting.executeScript({
+    target: { tabId },
+    args: [params.key, params.modifiers || [], params.selector || ""],
+    func: (key, modifiers, selector) => {
+      const mods = new Set(modifiers.map((m) => String(m).toLowerCase()));
+      const opts = {
+        key: key,
+        code: key.length === 1 ? "Key" + key.toUpperCase() : key,
+        bubbles: true,
+        cancelable: true,
+        shiftKey: mods.has("shift"),
+        ctrlKey: mods.has("control") || mods.has("ctrl"),
+        altKey: mods.has("alt"),
+        metaKey: mods.has("meta") || mods.has("cmd") || mods.has("command"),
+      };
+      const target = selector ? document.querySelector(selector) : (document.activeElement || document.body);
+      if (selector && !target) return { error: "keyboard_press: selector " + selector + " not found" };
+      if (target.focus) target.focus();
+      target.dispatchEvent(new KeyboardEvent("keydown", opts));
+      target.dispatchEvent(new KeyboardEvent("keypress", opts));
+      // Synthetic input for Enter on form fields (common SPA case).
+      if (key === "Enter" && target.form) {
+        try { target.form.requestSubmit ? target.form.requestSubmit() : target.form.submit(); } catch (_) { /* ignore */ }
+      }
+      target.dispatchEvent(new KeyboardEvent("keyup", opts));
+      return { ok: true };
+    },
+  });
+  if (result && result.error) throw new Error(result.error);
+  return { data: "pressed=" + params.key };
+}
+
+async function clipboardRead(tabId) {
+  // navigator.clipboard requires a focused, secure-context page. We
+  // run in the page's MAIN world; the extension's clipboardRead
+  // permission grants the underlying access. Many sites strip the
+  // permission with a page-level CSP, so callers should expect this
+  // to fail on locked-down pages.
+  const [{ result } = {}] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: async () => {
+      try {
+        const v = await navigator.clipboard.readText();
+        return { value: v };
+      } catch (e) {
+        return { error: String(e && e.message || e) };
+      }
+    },
+  });
+  if (result && result.error) throw new Error("clipboard_read: " + result.error);
+  return { data: (result && result.value) || "" };
+}
+
+async function clipboardWrite(tabId, params) {
+  const text = params.text || "";
+  const [{ result } = {}] = await chrome.scripting.executeScript({
+    target: { tabId },
+    args: [text],
+    world: "MAIN",
+    func: async (text) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        return { ok: true };
+      } catch (e) {
+        return { error: String(e && e.message || e) };
+      }
+    },
+  });
+  if (result && result.error) throw new Error("clipboard_write: " + result.error);
+  return { content: "wrote " + text.length + " chars" };
+}
+
+async function storageGet(tabId, params) {
+  const kind = (params.storage || "local").toLowerCase();
+  if (kind !== "local" && kind !== "session") {
+    throw new Error(`storage_get: unknown storage "${params.storage}" (local|session)`);
+  }
+  const [{ result } = {}] = await chrome.scripting.executeScript({
+    target: { tabId },
+    args: [kind, params.key || ""],
+    world: "MAIN",
+    func: (kind, key) => {
+      const s = kind === "session" ? sessionStorage : localStorage;
+      if (key) return { value: JSON.stringify({ key: key, value: s.getItem(key) }) };
+      const out = {};
+      for (let i = 0; i < s.length; i++) {
+        const k = s.key(i);
+        out[k] = s.getItem(k);
+      }
+      return { value: JSON.stringify(out) };
+    },
+  });
+  return { data: (result && result.value) || "{}" };
 }
 
 async function handleTabs(params) {

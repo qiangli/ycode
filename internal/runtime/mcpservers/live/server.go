@@ -28,6 +28,17 @@ type hub struct {
 	conn    *websocket.Conn // nil when no extension connected
 	pending map[int64]chan wsResponse
 
+	// Populated by the extension's `_hello` frame on connect. Used by
+	// version-drift detection and by /health / /connected reporters.
+	extVersion     string
+	extMethods     []string
+	extPermissions []string
+
+	// lastTab is the URL the extension last reported (via navigate /
+	// extract result). Surfaced in the "extension not connected"
+	// error so a fresh agent can re-attach to the right tab.
+	lastTabURL string
+
 	nextID atomic.Int64
 }
 
@@ -138,6 +149,12 @@ func (h *hub) readLoop(conn *websocket.Conn) {
 			slog.Warn("live: bad response from extension", "raw", string(raw), "error", err)
 			continue
 		}
+		// Unsolicited frames (id == 0) carry a `method` field: today
+		// only `_hello` for the version handshake.
+		if resp.ID == 0 && resp.Method != "" {
+			h.handleUnsolicited(resp)
+			continue
+		}
 		h.mu.Lock()
 		ch, ok := h.pending[resp.ID]
 		if ok {
@@ -150,14 +167,87 @@ func (h *hub) readLoop(conn *websocket.Conn) {
 	}
 }
 
+// handleUnsolicited processes frames the extension pushes without a
+// matching request. Today: `_hello` (version handshake).
+func (h *hub) handleUnsolicited(resp wsResponse) {
+	if resp.Method != "_hello" {
+		return
+	}
+	var hi extHello
+	if err := json.Unmarshal(resp.Result, &hi); err != nil {
+		slog.Warn("live: bad _hello payload", "error", err)
+		return
+	}
+	h.mu.Lock()
+	h.extVersion = hi.Version
+	h.extMethods = hi.Methods
+	h.extPermissions = hi.Permissions
+	h.mu.Unlock()
+	slog.Info("live: extension hello", "version", hi.Version, "methods", len(hi.Methods))
+}
+
+// ExtVersion returns the version reported by the extension's _hello
+// frame, or "" if no _hello has been received (older extension).
+func (h *hub) ExtVersion() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.extVersion
+}
+
+// ExtMethods returns the dispatch table reported by the extension's
+// _hello frame; empty for older extensions.
+func (h *hub) ExtMethods() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.extMethods == nil {
+		return nil
+	}
+	out := make([]string, len(h.extMethods))
+	copy(out, h.extMethods)
+	return out
+}
+
+// ExtPermissions returns the chrome.* permissions reported by the
+// extension's _hello frame.
+func (h *hub) ExtPermissions() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.extPermissions == nil {
+		return nil
+	}
+	out := make([]string, len(h.extPermissions))
+	copy(out, h.extPermissions)
+	return out
+}
+
+// LastTabURL returns the most recent URL the extension reported.
+func (h *hub) LastTabURL() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.lastTabURL
+}
+
+// RecordLastTab updates the last-known tab URL. Called when an action
+// result includes a URL, so the "not connected" error can show the
+// tab the agent was last working with.
+func (h *hub) RecordLastTab(url string) {
+	if url == "" {
+		return
+	}
+	h.mu.Lock()
+	h.lastTabURL = url
+	h.mu.Unlock()
+}
+
 // call sends a request and waits for the matching response or ctx
 // cancellation.
 func (h *hub) call(ctx context.Context, method string, params map[string]any) (wsResponse, error) {
 	h.mu.Lock()
 	conn := h.conn
+	lastTab := h.lastTabURL
 	h.mu.Unlock()
 	if conn == nil {
-		return wsResponse{}, errors.New("live: extension not connected — open the popup and click Connect on the target tab")
+		return wsResponse{}, errors.New(notConnectedError(lastTab))
 	}
 
 	id := h.nextID.Add(1)
@@ -195,6 +285,21 @@ func (h *hub) connected() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.conn != nil
+}
+
+// notConnectedError builds the user-facing "extension not connected"
+// message with as much actionable context as we have. Includes the
+// last-known tab URL when the extension previously connected, so a
+// reattach lands on the right tab; otherwise lists the setup paths.
+func notConnectedError(lastTab string) string {
+	base := "live: extension not connected. " +
+		"(a) reload at chrome://extensions if recently updated; " +
+		"(b) open the popup on your target tab and click Connect; " +
+		"(c) first-time setup: ycode browser setup live"
+	if lastTab != "" {
+		base += " — last tab: " + lastTab
+	}
+	return base
 }
 
 // handleDispatch is the cross-process forwarder. Body:

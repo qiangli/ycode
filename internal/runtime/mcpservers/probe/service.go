@@ -7,14 +7,17 @@ package probe
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 
 	"github.com/qiangli/ycode/internal/runtime/mcpservers"
 )
@@ -143,9 +146,9 @@ func (s *Service) Execute(ctx context.Context, action mcpservers.BrowserAction) 
 	case mcpservers.ActionScroll:
 		return s.doScroll(callCtx, action)
 	case mcpservers.ActionScreenshot:
-		return s.doScreenshot(callCtx)
+		return s.doScreenshot(callCtx, action)
 	case mcpservers.ActionExtract:
-		return s.doExtract(callCtx)
+		return s.doExtract(callCtx, action)
 	case mcpservers.ActionBack:
 		return s.doBack(callCtx)
 	case mcpservers.ActionTabs:
@@ -162,6 +165,20 @@ func (s *Service) Execute(ctx context.Context, action mcpservers.BrowserAction) 
 		return s.doConsoleGet()
 	case mcpservers.ActionLighthouse:
 		return s.doLighthouse(callCtx)
+	case mcpservers.ActionWaitForSelector:
+		return s.doWaitForSelector(callCtx, action)
+	case mcpservers.ActionKeyboardPress:
+		return s.doKeyboardPress(callCtx, action)
+	case mcpservers.ActionClipboardRead:
+		return s.doClipboardRead(callCtx)
+	case mcpservers.ActionClipboardWrite:
+		return s.doClipboardWrite(callCtx, action)
+	case mcpservers.ActionCookiesGet:
+		return s.doCookiesGet(callCtx, action)
+	case mcpservers.ActionStorageGet:
+		return s.doStorageGet(callCtx, action)
+	case mcpservers.ActionCapabilities:
+		return s.doCapabilities()
 	}
 	return &mcpservers.BrowserResult{
 		Error: fmt.Sprintf("probe: action %q not supported", action.Type),
@@ -230,10 +247,17 @@ func (s *Service) doScroll(ctx context.Context, a mcpservers.BrowserAction) (*mc
 	return &mcpservers.BrowserResult{Success: true, Data: fmt.Sprintf("scrollY=%g", y)}, nil
 }
 
-func (s *Service) doScreenshot(ctx context.Context) (*mcpservers.BrowserResult, error) {
+func (s *Service) doScreenshot(ctx context.Context, a mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
 	var buf []byte
 	if err := chromedp.Run(ctx, chromedp.CaptureScreenshot(&buf)); err != nil {
 		return &mcpservers.BrowserResult{Error: err.Error()}, nil
+	}
+	if a.MaxBytes > 0 || a.SavePath != "" {
+		img, path, err := mcpservers.PostprocessScreenshot(buf, a)
+		if err != nil {
+			return &mcpservers.BrowserResult{Error: err.Error()}, nil
+		}
+		return &mcpservers.BrowserResult{Success: true, Image: img, Path: path}, nil
 	}
 	return &mcpservers.BrowserResult{
 		Success: true,
@@ -241,22 +265,111 @@ func (s *Service) doScreenshot(ctx context.Context) (*mcpservers.BrowserResult, 
 	}, nil
 }
 
-func (s *Service) doExtract(ctx context.Context) (*mcpservers.BrowserResult, error) {
-	var title, url, body string
-	err := chromedp.Run(ctx,
-		chromedp.Title(&title),
-		chromedp.Location(&url),
-		chromedp.Text("body", &body, chromedp.NodeVisible),
-	)
-	if err != nil {
+func (s *Service) doExtract(ctx context.Context, a mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
+	var title, url string
+	if err := chromedp.Run(ctx, chromedp.Title(&title), chromedp.Location(&url)); err != nil {
 		return &mcpservers.BrowserResult{Error: err.Error()}, nil
 	}
+	// Run a JS snippet that does scope-aware + nav-filtered element
+	// enumeration so probe/solo and live share semantics. Matches the
+	// extension's runInTab extract path.
+	js := extractScript(a)
+	var raw string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &raw)); err != nil {
+		return &mcpservers.BrowserResult{Error: err.Error()}, nil
+	}
+	out := parseExtractPayload(raw)
+	out.Title = title
+	out.URL = url
+	return out, nil
+}
+
+// extractScript builds the JS one-liner the extract action runs to
+// enumerate interactive elements. The same source is used by live's
+// background.js (extractInTab) — kept here as a string so probe/solo
+// can run it via chromedp.Evaluate and stay byte-compatible. Returns
+// a JSON string the Go side decodes via parseExtractPayload.
+func extractScript(a mcpservers.BrowserAction) string {
+	scope := jsString(a.Scope)
+	match := jsString(a.MatchText)
+	if match == "" {
+		match = jsString(a.Goal)
+	}
+	limit := a.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	offset := a.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	return `(function(){
+  var SCOPE_SEL=` + scope + `, MATCH=` + match + `, LIMIT=` + fmt.Sprintf("%d", limit) + `, OFFSET=` + fmt.Sprintf("%d", offset) + `;
+  var root = SCOPE_SEL ? document.querySelector(SCOPE_SEL) : document;
+  if (!root) return JSON.stringify({error:"extract: scope "+SCOPE_SEL+" not found"});
+  var navFilter = !SCOPE_SEL;
+  var all = root.querySelectorAll("a, button, input, select, textarea, [role='button'], [role='link']");
+  var matches = [];
+  for (var i=0; i<all.length; i++) {
+    var el = all[i];
+    if (navFilter && el.closest && el.closest("nav, aside, [role='navigation'], [role='complementary']")) continue;
+    var text = (el.innerText || el.value || el.getAttribute("aria-label") || "").trim();
+    if (MATCH && text.toLowerCase().indexOf(MATCH.toLowerCase()) < 0) {
+      var ph = el.getAttribute && el.getAttribute("placeholder");
+      var ar = el.getAttribute && el.getAttribute("aria-label");
+      if (!(ph && ph.toLowerCase().indexOf(MATCH.toLowerCase())>=0) && !(ar && ar.toLowerCase().indexOf(MATCH.toLowerCase())>=0)) continue;
+    }
+    matches.push(el);
+  }
+  var total = matches.length;
+  var slice = matches.slice(OFFSET, OFFSET+LIMIT);
+  var lines = [];
+  for (var j=0; j<slice.length; j++) {
+    var el = slice[j];
+    var tag = el.tagName.toLowerCase();
+    var text = (el.innerText || el.value || el.getAttribute("aria-label") || "").trim().slice(0,80);
+    var attrs = [];
+    var keys = ["type","placeholder","href","name","value","role","aria-label"];
+    for (var k=0; k<keys.length; k++) {
+      var v = el.getAttribute(keys[k]);
+      if (v) attrs.push(keys[k]+"=\""+String(v).slice(0,60)+"\"");
+    }
+    lines.push("["+(OFFSET+j+1)+"] <"+tag+" "+attrs.join(" ")+">"+text+"</"+tag+">");
+  }
+  var body = (document.body && document.body.innerText) || "";
+  return JSON.stringify({
+    content: body.length>16000 ? body.slice(0,16000)+"\n... (truncated)" : body,
+    elements: lines.join("\n"),
+    total: total,
+    truncated: total > (OFFSET+LIMIT),
+  });
+})()`
+}
+
+func jsString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+func parseExtractPayload(raw string) *mcpservers.BrowserResult {
+	var inner struct {
+		Content   string `json:"content"`
+		Elements  string `json:"elements"`
+		Total     int    `json:"total"`
+		Truncated bool   `json:"truncated"`
+		Error     string `json:"error"`
+	}
+	_ = json.Unmarshal([]byte(raw), &inner)
+	if inner.Error != "" {
+		return &mcpservers.BrowserResult{Error: inner.Error}
+	}
 	return &mcpservers.BrowserResult{
-		Success: true,
-		Title:   title,
-		URL:     url,
-		Content: truncate(body, 32000),
-	}, nil
+		Success:   true,
+		Content:   inner.Content,
+		Elements:  inner.Elements,
+		Total:     inner.Total,
+		Truncated: inner.Truncated,
+	}
 }
 
 func (s *Service) doBack(ctx context.Context) (*mcpservers.BrowserResult, error) {
@@ -302,4 +415,185 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "\n... (truncated)"
+}
+
+// --- Phase 3–5 actions ---
+
+func (s *Service) doWaitForSelector(ctx context.Context, a mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
+	sel := a.Selector
+	if sel == "" {
+		return &mcpservers.BrowserResult{Error: "wait_for_selector: selector required"}, nil
+	}
+	timeout := time.Duration(a.TimeoutMs) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	wctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	state := strings.ToLower(a.State)
+	var err error
+	switch state {
+	case "", "visible":
+		err = chromedp.Run(wctx, chromedp.WaitVisible(sel, chromedp.ByQuery))
+	case "attached":
+		err = chromedp.Run(wctx, chromedp.WaitReady(sel, chromedp.ByQuery))
+	case "detached":
+		err = chromedp.Run(wctx, chromedp.WaitNotPresent(sel, chromedp.ByQuery))
+	default:
+		return &mcpservers.BrowserResult{Error: fmt.Sprintf("wait_for_selector: unknown state %q (visible|attached|detached)", a.State)}, nil
+	}
+	if err != nil {
+		return &mcpservers.BrowserResult{Error: err.Error()}, nil
+	}
+	return &mcpservers.BrowserResult{Success: true, Data: fmt.Sprintf("state=%s", state)}, nil
+}
+
+func (s *Service) doKeyboardPress(ctx context.Context, a mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
+	if a.Key == "" {
+		return &mcpservers.BrowserResult{Error: "keyboard_press: key required"}, nil
+	}
+	actions := []chromedp.Action{}
+	if a.Selector != "" {
+		actions = append(actions, chromedp.Focus(a.Selector, chromedp.ByQuery))
+	}
+	actions = append(actions, chromedp.KeyEvent(keyFor(a.Key)))
+	if err := chromedp.Run(ctx, actions...); err != nil {
+		return &mcpservers.BrowserResult{Error: err.Error()}, nil
+	}
+	return &mcpservers.BrowserResult{Success: true, Data: "pressed=" + a.Key}, nil
+}
+
+// keyFor maps a public DOM-event key name to chromedp/kb's string
+// constant. Unknown keys are passed through verbatim so callers can
+// use letter/digit keys directly.
+func keyFor(k string) string {
+	switch strings.ToLower(k) {
+	case "enter", "return":
+		return kb.Enter
+	case "tab":
+		return kb.Tab
+	case "escape", "esc":
+		return kb.Escape
+	case "backspace":
+		return kb.Backspace
+	case "delete":
+		return kb.Delete
+	case "arrowup", "up":
+		return kb.ArrowUp
+	case "arrowdown", "down":
+		return kb.ArrowDown
+	case "arrowleft", "left":
+		return kb.ArrowLeft
+	case "arrowright", "right":
+		return kb.ArrowRight
+	case "home":
+		return kb.Home
+	case "end":
+		return kb.End
+	case "pageup":
+		return kb.PageUp
+	case "pagedown":
+		return kb.PageDown
+	}
+	return k
+}
+
+func (s *Service) doClipboardRead(ctx context.Context) (*mcpservers.BrowserResult, error) {
+	var v string
+	err := chromedp.Run(ctx, chromedp.Evaluate("navigator.clipboard.readText()", &v))
+	if err != nil {
+		return &mcpservers.BrowserResult{Error: err.Error()}, nil
+	}
+	return &mcpservers.BrowserResult{Success: true, Data: v}, nil
+}
+
+func (s *Service) doClipboardWrite(ctx context.Context, a mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
+	script := fmt.Sprintf("navigator.clipboard.writeText(%s)", jsString(a.Text))
+	if err := chromedp.Run(ctx, chromedp.Evaluate(script, nil)); err != nil {
+		return &mcpservers.BrowserResult{Error: err.Error()}, nil
+	}
+	return &mcpservers.BrowserResult{Success: true}, nil
+}
+
+func (s *Service) doCookiesGet(ctx context.Context, a mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
+	// Use document.cookie for the current page, filtered by name. The
+	// CDP Network.getCookies route would expose HttpOnly cookies too
+	// but requires the network domain enabled; pull it in if needed.
+	js := `(function(){
+  var raw = document.cookie || "";
+  var name = ` + jsString(a.Name) + `;
+  var out = [];
+  raw.split(/;\s*/).forEach(function(kv){
+    if (!kv) return;
+    var i = kv.indexOf("=");
+    var k = i>=0 ? kv.slice(0,i) : kv;
+    var v = i>=0 ? kv.slice(i+1) : "";
+    if (!name || k===name) out.push({name:k,value:v});
+  });
+  return JSON.stringify(out);
+})()`
+	var raw string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &raw)); err != nil {
+		return &mcpservers.BrowserResult{Error: err.Error()}, nil
+	}
+	return &mcpservers.BrowserResult{Success: true, Data: raw}, nil
+}
+
+func (s *Service) doStorageGet(ctx context.Context, a mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
+	kind := strings.ToLower(a.Storage)
+	if kind == "" {
+		kind = "local"
+	}
+	if kind != "local" && kind != "session" {
+		return &mcpservers.BrowserResult{Error: fmt.Sprintf("storage_get: unknown storage %q (local|session)", a.Storage)}, nil
+	}
+	js := `(function(){
+  var s = ` + kind + `Storage;
+  var key = ` + jsString(a.StorageKey) + `;
+  if (key) return JSON.stringify({key:key, value:s.getItem(key)});
+  var out = {};
+  for (var i=0; i<s.length; i++) { var k = s.key(i); out[k] = s.getItem(k); }
+  return JSON.stringify(out);
+})()`
+	var raw string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &raw)); err != nil {
+		return &mcpservers.BrowserResult{Error: err.Error()}, nil
+	}
+	return &mcpservers.BrowserResult{Success: true, Data: raw}, nil
+}
+
+func (s *Service) doCapabilities() (*mcpservers.BrowserResult, error) {
+	caps := map[string]any{
+		"mode":    mcpservers.ModeProbe,
+		"methods": probeMethods,
+	}
+	raw, _ := json.Marshal(caps)
+	return &mcpservers.BrowserResult{Success: true, Data: string(raw)}, nil
+}
+
+// probeMethods is the static dispatch table this backend supports.
+// Exposed via doCapabilities so foreign agents can probe before
+// using an action that isn't wired.
+var probeMethods = []string{
+	mcpservers.ActionNavigate,
+	mcpservers.ActionClick,
+	mcpservers.ActionType,
+	mcpservers.ActionScroll,
+	mcpservers.ActionScreenshot,
+	mcpservers.ActionExtract,
+	mcpservers.ActionBack,
+	mcpservers.ActionTabs,
+	mcpservers.ActionEvaluate,
+	mcpservers.ActionPerfStart,
+	mcpservers.ActionPerfStop,
+	mcpservers.ActionNetworkList,
+	mcpservers.ActionConsoleGet,
+	mcpservers.ActionLighthouse,
+	mcpservers.ActionWaitForSelector,
+	mcpservers.ActionKeyboardPress,
+	mcpservers.ActionClipboardRead,
+	mcpservers.ActionClipboardWrite,
+	mcpservers.ActionCookiesGet,
+	mcpservers.ActionStorageGet,
+	mcpservers.ActionCapabilities,
 }
