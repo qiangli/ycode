@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 
@@ -210,14 +211,36 @@ func (s *Service) doNavigate(ctx context.Context, url string) (*mcpservers.Brows
 }
 
 func (s *Service) doClick(ctx context.Context, a mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
-	sel := a.Selector
-	if sel == "" {
-		return &mcpservers.BrowserResult{Error: "click: selector required"}, nil
+	if a.Selector != "" {
+		if err := chromedp.Run(ctx, chromedp.Click(a.Selector, chromedp.ByQuery)); err != nil {
+			return &mcpservers.BrowserResult{Error: err.Error()}, nil
+		}
+		return &mcpservers.BrowserResult{Success: true}, nil
 	}
-	if err := chromedp.Run(ctx, chromedp.Click(sel, chromedp.ByQuery)); err != nil {
-		return &mcpservers.BrowserResult{Error: err.Error()}, nil
+	if a.MatchText != "" {
+		js := `(function(){
+  var want = ` + jsString(a.MatchText) + `.toLowerCase();
+  var scope = ` + jsString(a.Scope) + `;
+  var root = scope ? document.querySelector(scope) : document;
+  if (!root) return false;
+  var nodes = root.querySelectorAll("a, button, input[type=button], input[type=submit], [role='button'], [role='link']");
+  for (var i=0; i<nodes.length; i++) {
+    var n = nodes[i];
+    var v = ((n.innerText) || n.value || n.getAttribute("aria-label") || "").trim().toLowerCase();
+    if (v.indexOf(want) >= 0) { n.click(); return true; }
+  }
+  return false;
+})()`
+		var out any
+		if err := chromedp.Run(ctx, chromedp.Evaluate(js, &out)); err != nil {
+			return &mcpservers.BrowserResult{Error: err.Error()}, nil
+		}
+		if b, ok := out.(bool); ok && b {
+			return &mcpservers.BrowserResult{Success: true}, nil
+		}
+		return &mcpservers.BrowserResult{Error: "click: no element matched match_text"}, nil
 	}
-	return &mcpservers.BrowserResult{Success: true}, nil
+	return &mcpservers.BrowserResult{Error: "click: selector or match_text required"}, nil
 }
 
 func (s *Service) doType(ctx context.Context, a mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
@@ -516,27 +539,60 @@ func (s *Service) doClipboardWrite(ctx context.Context, a mcpservers.BrowserActi
 }
 
 func (s *Service) doCookiesGet(ctx context.Context, a mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
-	// Use document.cookie for the current page, filtered by name. The
-	// CDP Network.getCookies route would expose HttpOnly cookies too
-	// but requires the network domain enabled; pull it in if needed.
-	js := `(function(){
-  var raw = document.cookie || "";
-  var name = ` + jsString(a.Name) + `;
-  var out = [];
-  raw.split(/;\s*/).forEach(function(kv){
-    if (!kv) return;
-    var i = kv.indexOf("=");
-    var k = i>=0 ? kv.slice(0,i) : kv;
-    var v = i>=0 ? kv.slice(i+1) : "";
-    if (!name || k===name) out.push({name:k,value:v});
-  });
-  return JSON.stringify(out);
-})()`
-	var raw string
-	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &raw)); err != nil {
+	// Use CDP Network.getCookies so HttpOnly cookies are visible too.
+	// devtools.installListeners already calls network.Enable on
+	// EnsureReady; if the listener install failed, NetworkEnable here
+	// is a safe no-op retry.
+	var cookies []*network.Cookie
+	err := chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
+		_ = network.Enable().Do(c) // idempotent
+		var inner error
+		cookies, inner = network.GetCookies().Do(c)
+		return inner
+	}))
+	if err != nil {
 		return &mcpservers.BrowserResult{Error: err.Error()}, nil
 	}
-	return &mcpservers.BrowserResult{Success: true, Data: raw}, nil
+	out := filterCookies(cookies, a.Name, a.Domain)
+	raw, _ := json.Marshal(out)
+	return &mcpservers.BrowserResult{Success: true, Data: string(raw)}, nil
+}
+
+// filterCookies applies the name+domain filters identically to live's
+// chrome.cookies.getAll path so all three modes return the same
+// shape and selection.
+type cookieView struct {
+	Name           string  `json:"name"`
+	Value          string  `json:"value"`
+	Domain         string  `json:"domain"`
+	Path           string  `json:"path"`
+	Secure         bool    `json:"secure"`
+	HTTPOnly       bool    `json:"httpOnly"`
+	Session        bool    `json:"session"`
+	SameSite       string  `json:"sameSite,omitempty"`
+	ExpirationDate float64 `json:"expirationDate,omitempty"`
+}
+
+func filterCookies(cookies []*network.Cookie, wantName, wantDomain string) []cookieView {
+	out := make([]cookieView, 0, len(cookies))
+	for _, c := range cookies {
+		if wantName != "" && c.Name != wantName {
+			continue
+		}
+		if wantDomain != "" {
+			cd := strings.TrimPrefix(c.Domain, ".")
+			if cd != wantDomain && !strings.HasSuffix(wantDomain, "."+cd) && !strings.HasSuffix(cd, "."+wantDomain) {
+				continue
+			}
+		}
+		out = append(out, cookieView{
+			Name: c.Name, Value: c.Value, Domain: c.Domain, Path: c.Path,
+			Secure: c.Secure, HTTPOnly: c.HTTPOnly, Session: c.Session,
+			SameSite:       string(c.SameSite),
+			ExpirationDate: c.Expires,
+		})
+	}
+	return out
 }
 
 func (s *Service) doStorageGet(ctx context.Context, a mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
