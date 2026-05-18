@@ -91,9 +91,27 @@ func RecordBrowserBreakerTrip(ctx context.Context, mode, level string) {
 	}
 }
 
+// RecordBrowserRalphExhausted fires once when every Ralph strategy
+// has failed. attemptCount is the number of strategies tried (1..N).
+// Useful for monitoring whether ralph is doing its job (the ratio
+// of exhausted runs vs. RecordBrowserRalphAttempt(_, _, _, true) =
+// how often the fallback layer is meaningfully changing outcomes).
+func RecordBrowserRalphExhausted(ctx context.Context, mode string, attemptCount int) {
+	counter, err := browserMeter().Int64Counter(
+		"ycode.browser.ralph.exhausted.total",
+		metric.WithDescription("Ralph fallback runs where every strategy failed"),
+	)
+	if err == nil {
+		counter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("mode", mode),
+			attribute.Int("attempts", attemptCount),
+		))
+	}
+}
+
 // RecordBrowserRalphAttempt records one strategy attempt in the Ralph
 // click fallback. strategy: "as-given" | "trimmed" | "unquoted" |
-// "js-click".
+// "js-click" | "js-text-click" | "extract-click-by-text".
 func RecordBrowserRalphAttempt(ctx context.Context, mode, strategy string, succeeded bool) {
 	counter, err := browserMeter().Int64Counter(
 		"ycode.browser.ralph.attempts.total",
