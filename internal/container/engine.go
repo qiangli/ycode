@@ -139,6 +139,14 @@ func (e *Engine) HostGateway() string {
 	return "host.containers.internal"
 }
 
+// SocketPath returns the unix socket path the engine is connected to.
+// Empty when the engine is in a transitional state or could not connect.
+// Used by the gateway package to mount its embedded-mode proxy on the
+// engine's actual libpod socket.
+func (e *Engine) SocketPath() string {
+	return e.socketPath
+}
+
 // defaultBinCacheDir returns the cache directory for extracted companion binaries.
 func defaultBinCacheDir() string {
 	if dir, err := os.UserCacheDir(); err == nil {

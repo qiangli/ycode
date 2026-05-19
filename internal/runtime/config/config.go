@@ -257,6 +257,21 @@ type InferenceConfig struct {
 	ModelsDir    string `json:"modelsDir,omitempty"`    // model storage directory
 	GPULayers    int    `json:"gpuLayers,omitempty"`    // GPU offload layers (-1 = auto)
 	MaxVRAMMB    int    `json:"maxVramMB,omitempty"`    // limit GPU memory usage
+
+	// Gateway controls the per-process localhost gateway that fronts
+	// ollama. When Mode is "remote", outbound calls are proxied through
+	// cloudbox to a remote ollama running on another machine; agents and
+	// tools that read OLLAMA_HOST see the same local URL either way.
+	// Omit / leave Mode empty to default to "embedded".
+	Gateway InferenceGatewayConfig `json:"gateway,omitempty"`
+}
+
+// InferenceGatewayConfig is the per-process localhost gateway settings
+// for ollama. URL + TokenFile are only consulted when Mode == "remote".
+type InferenceGatewayConfig struct {
+	Mode      string `json:"mode,omitempty"`      // "embedded" (default) | "remote"
+	URL       string `json:"url,omitempty"`       // https://cloudbox/h/<host>/app/ollama/
+	TokenFile string `json:"tokenFile,omitempty"` // path to file containing the cloudbox Bearer token
 }
 
 // IsEnabled — nil receiver and nil Enabled both return true (default on).
@@ -283,6 +298,22 @@ type ContainerConfig struct {
 	PoolSize     int    `json:"poolSize,omitempty"`     // warm pool size (0 = no pool)
 	CPUs         string `json:"cpus,omitempty"`         // per-container CPU limit (e.g., "2.0")
 	Memory       string `json:"memory,omitempty"`       // per-container memory limit (e.g., "4g")
+
+	// Gateway controls the per-process localhost gateway that fronts the
+	// container engine. When Mode is "remote", podman/docker requests are
+	// proxied through cloudbox to a remote engine on another machine;
+	// agents and tools that read DOCKER_HOST/CONTAINER_HOST see the same
+	// local socket either way. Omit / leave Mode empty to default to
+	// "embedded".
+	Gateway ContainerGatewayConfig `json:"gateway,omitempty"`
+}
+
+// ContainerGatewayConfig is the per-process localhost gateway settings
+// for podman. URL + TokenFile are only consulted when Mode == "remote".
+type ContainerGatewayConfig struct {
+	Mode      string `json:"mode,omitempty"`      // "embedded" (default) | "remote"
+	URL       string `json:"url,omitempty"`       // https://cloudbox/h/<host>/app/podman/
+	TokenFile string `json:"tokenFile,omitempty"` // path to file containing the cloudbox Bearer token
 }
 
 // IsEnabled — nil receiver and nil Enabled both return true (default on).

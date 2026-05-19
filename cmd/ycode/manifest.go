@@ -87,6 +87,16 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 			"collectorAddr": filepath.Join(dir, "collector.addr"),
 		},
 	}
+	// Gateway block — the localhost endpoints that front ollama + the
+	// podman socket. Paired clients and `yc` shell builtins read this
+	// to find DOCKER_HOST/CONTAINER_HOST/OLLAMA_HOST values, and to
+	// know whether they're talking to an in-process daemon (mode=
+	// "embedded") or a cloudbox-proxied remote (mode="remote").
+	// Only advertised when at least one backend is up.
+	if gw := gatewayManifest(stack.gw); gw != nil {
+		manifest["gateway"] = gw
+	}
+
 	if stack.loom != nil && stack.loom.Healthy() {
 		manifest["loom"] = map[string]any{
 			"mcp":                        proxy + "/mcp/",

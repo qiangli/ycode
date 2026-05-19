@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/container"
+	"github.com/qiangli/ycode/internal/gateway"
 	"github.com/qiangli/ycode/internal/gitserver"
 	"github.com/qiangli/ycode/internal/gitserver/backlog"
 	"github.com/qiangli/ycode/internal/gitserver/projects"
@@ -310,6 +311,13 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	}
 	fmt.Printf("Observability at http://127.0.0.1:%d/\n", port)
 
+	// Localhost gateway — single boundary that fronts ollama + the
+	// podman socket. Embedded mode proxies to the in-process engine /
+	// runner; remote mode proxies through cloudbox to a different
+	// machine. Either way, tools and subprocesses see localhost.
+	stack.gw = startServeGateway(ctx, stack, fullCfg)
+	defer stopGateway(stack.gw)
+
 	// Collected MCP sub-handlers fanned out by the composite /mcp/ endpoint
 	// (G6). Each capability family (gitea, loom, pulse, future memex/repomap/
 	// inference) appends its mcp.ServerHandler here. The composite is built
@@ -522,12 +530,15 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		slog.Warn("memexmcp disabled (memory manager unavailable)", "error", err)
 	}
 
-	// Family D: Ollama proxy. Thread the managed runner's URL when it's
-	// healthy so foreign agents reach the same instance ycode's own
-	// skills do; otherwise pass empty and let the env-then-default chain
-	// resolve to whatever Ollama install the operator has running.
+	// Family D: Ollama proxy. Thread the gateway URL when the local
+	// gateway is up — foreign agents reach the same ollama (embedded or
+	// remote) the rest of ycode does, with one consistent endpoint. Fall
+	// back to the managed runner's URL when the gateway didn't start, or
+	// finally to the env-then-default chain (legacy compatibility).
 	ollamaBase := ""
-	if stack.ollama != nil && stack.ollama.Healthy() {
+	if stack.gw != nil && stack.gw.Endpoints().OllamaURL != "" {
+		ollamaBase = stack.gw.Endpoints().OllamaURL
+	} else if stack.ollama != nil && stack.ollama.Healthy() {
 		ollamaBase = stack.ollama.BaseURL()
 	}
 	compositeMCP = append(compositeMCP, inference.NewMCPHandler(ollamaBase))
@@ -783,6 +794,11 @@ type stackComponents struct {
 	loom          *loomComponent // workspace substrate; nil if gitserver disabled
 	loomSvc       *loompkg.Service
 	collectorAddr string // actual gRPC address of the embedded collector (e.g. "127.0.0.1:54321")
+
+	// gw is the per-process localhost gateway that fronts ollama + the
+	// podman socket. Started after mgr.Start so it can reach the live
+	// engine sockets; closed in the deferred shutdown path.
+	gw *gateway.Gateway
 }
 
 // buildStackManager creates and configures a StackManager with all embedded components.
