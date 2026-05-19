@@ -16,10 +16,15 @@ type SuggestFunc func(rt *ShellRuntime, command string) []Hint
 // Hint is the public hint shape used by both --suggest and --agent
 // output augmentation. Mirrors the agentmode internal Hint with only
 // the fields callers care about.
+//
+// Why is a one-line rationale (e.g. "AST-aware; skips comments/strings")
+// that gives the agent reading the hint a reason to switch rather than
+// stick with muscle-memory. Empty when the catalog entry doesn't supply one.
 type Hint struct {
 	ID       string `json:"id"`
 	Category string `json:"category"`
 	Message  string `json:"message"`
+	Why      string `json:"why,omitempty"`
 }
 
 var suggestFn SuggestFunc
@@ -39,6 +44,11 @@ func WriteSuggestions(rt *ShellRuntime, command string, w io.Writer) error {
 	for _, h := range hints {
 		if _, err := fmt.Fprintf(w, "# ycode hint [%s]: %s\n", h.Category, h.Message); err != nil {
 			return err
+		}
+		if h.Why != "" {
+			if _, err := fmt.Fprintf(w, "#   why: %s\n", h.Why); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

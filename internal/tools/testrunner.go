@@ -93,6 +93,20 @@ func RegisterTestRunnerHandler(r *Registry, workDir string) {
 	}
 }
 
+// DetectFramework auto-detects the test framework rooted at dir. Walks
+// up to 10 levels looking for go.mod / Cargo.toml / pyproject.toml /
+// jest.config.* / vitest.config.* / package.json with jest|vitest in deps.
+// Returns "" when no framework is recognized.
+func DetectFramework(dir string) string { return detectFramework(dir) }
+
+// RunTests executes the given framework's test runner in dir, optionally
+// filtering by pattern, and returns a structured TestResult. The framework
+// must be one of: go, pytest, jest, vitest, cargo. Pass "" for pattern to
+// run the full suite.
+func RunTests(ctx context.Context, framework, dir, pattern string) *TestResult {
+	return runTests(ctx, framework, dir, pattern)
+}
+
 // detectFramework identifies the test framework from project files.
 func detectFramework(dir string) string {
 	checks := []struct {

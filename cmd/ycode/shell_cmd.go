@@ -373,9 +373,15 @@ func runShellOneShot(rt *shell.ShellRuntime, f *shellFlags) error {
 	if f.agent {
 		for _, h := range preHints {
 			fmt.Fprintf(os.Stderr, "# ycode hint [%s]: %s\n", h.Category, h.Message)
+			if h.Why != "" {
+				fmt.Fprintf(os.Stderr, "#   why: %s\n", h.Why)
+			}
 		}
 		for _, h := range agentmode.SuggestPost(rt, res.ExitCode, "") {
 			fmt.Fprintf(os.Stderr, "# ycode hint [%s]: %s\n", h.Category, h.Message)
+			if h.Why != "" {
+				fmt.Fprintf(os.Stderr, "#   why: %s\n", h.Why)
+			}
 		}
 	}
 
@@ -405,9 +411,15 @@ func emitHints(rt *shell.ShellRuntime, command string, res *shell.Result) {
 	}
 	for _, h := range agentmode.Suggest(rt, command) {
 		fmt.Fprintf(os.Stderr, "# ycode hint [%s]: %s\n", h.Category, h.Message)
+		if h.Why != "" {
+			fmt.Fprintf(os.Stderr, "#   why: %s\n", h.Why)
+		}
 	}
 	for _, h := range agentmode.SuggestPost(rt, res.ExitCode, "") {
 		fmt.Fprintf(os.Stderr, "# ycode hint [%s]: %s\n", h.Category, h.Message)
+		if h.Why != "" {
+			fmt.Fprintf(os.Stderr, "#   why: %s\n", h.Why)
+		}
 	}
 }
 

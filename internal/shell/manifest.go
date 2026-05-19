@@ -50,6 +50,7 @@ type ManifestHint struct {
 	Pattern  string `json:"pattern"`
 	Suggest  string `json:"suggest"`
 	Category string `json:"category"`
+	Why      string `json:"why,omitempty"`
 }
 
 // BuildManifest assembles a Manifest from the runtime's registries.

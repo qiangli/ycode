@@ -222,6 +222,64 @@ func TestSuggestSkipsRemoteSSH(t *testing.T) {
 	}
 }
 
+// TestSuggestEmitsWhy confirms every hint that fires carries a non-empty
+// Why rationale — the field exists to overcome muscle memory, so a hint
+// without one is a regression.
+func TestSuggestEmitsWhy(t *testing.T) {
+	ResetSeen()
+	hints := Suggest(nil, "grep -rn FuncName .")
+	if len(hints) == 0 {
+		t.Fatalf("expected at least one hint for `grep -rn FuncName .`")
+	}
+	for _, h := range hints {
+		if h.Why == "" {
+			t.Errorf("hint %q has empty Why; every catalog entry must supply one", h.ID)
+		}
+	}
+}
+
+// TestSessionDedupAcrossProcesses pins that the file-backed dedup keeps
+// state across two ResetSeen calls when $YCODE_SESSION_ID is set — the
+// proxy for the multi-process case where each `ycode shell -c` is fresh
+// but the session ID is shared.
+func TestSessionDedupAcrossProcesses(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", tmp)
+	t.Setenv("YCODE_SESSION_ID", "test-session-"+t.Name())
+
+	ResetSeen()
+	first := Suggest(nil, "grep -rn foo .")
+	if len(first) == 0 {
+		t.Fatalf("first pass produced no hints")
+	}
+
+	// Simulate a fresh process: clear the in-memory map but keep the
+	// session env vars + file. The lazy loader should repopulate from disk.
+	ResetSeen()
+	second := Suggest(nil, "grep -rn foo .")
+	if len(second) != 0 {
+		t.Fatalf("session-level dedup failed: second pass re-fired %d hints (%+v)", len(second), second)
+	}
+}
+
+// TestSessionDedupOptOut confirms that without $YCODE_SESSION_ID we
+// fall back to process-local behavior — ResetSeen wipes state, and the
+// next call re-fires.
+func TestSessionDedupOptOut(t *testing.T) {
+	t.Setenv("YCODE_SESSION_ID", "")
+
+	ResetSeen()
+	first := Suggest(nil, "grep -rn foo .")
+	if len(first) == 0 {
+		t.Fatalf("first pass produced no hints")
+	}
+	ResetSeen()
+	second := Suggest(nil, "grep -rn foo .")
+	if len(second) == 0 {
+		t.Fatalf("without YCODE_SESSION_ID, dedup must reset with the in-memory map")
+	}
+}
+
 // TestIsRemoteExec covers the wrapper-stripping logic so regressions in
 // argument parsing surface independently of the catalog.
 func TestIsRemoteExec(t *testing.T) {

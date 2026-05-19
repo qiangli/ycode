@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -94,7 +95,11 @@ func (rememberVerb) Run(_ context.Context, args []string, stdio Stdio, _ string)
 		fmt.Fprintf(stdio.Stderr, "yc remember: save: %v\n", err)
 		return 1, nil
 	}
-	fmt.Fprintf(stdio.Stdout, "saved %s (scope=%s type=%s)\n", mem.Name, mem.EffectiveScope(), mem.Type)
+	bridged := ""
+	if path, err := writeThroughClaudeMemory(mem); err == nil && path != "" {
+		bridged = " bridged=" + path
+	}
+	fmt.Fprintf(stdio.Stdout, "saved %s (scope=%s type=%s)%s\n", mem.Name, mem.EffectiveScope(), mem.Type, bridged)
 	return 0, nil
 }
 
@@ -149,6 +154,31 @@ func (recallVerb) Run(_ context.Context, args []string, stdio Stdio, _ string) (
 	if err != nil {
 		fmt.Fprintf(stdio.Stderr, "yc recall: %v\n", err)
 		return 1, nil
+	}
+	// Merge in Claude memory hits (substring match) — keeps the two
+	// systems navigable from one query even if `yc remember` wasn't used
+	// to write the entry. Dedup by name so write-through entries don't
+	// surface twice when memex also indexed them.
+	if extra := scanClaudeMemory(query, limit); len(extra) > 0 {
+		seen := make(map[string]struct{}, len(results))
+		for _, r := range results {
+			if r.Memory != nil {
+				seen[r.Memory.Name] = struct{}{}
+			}
+		}
+		for _, r := range extra {
+			if r.Memory == nil {
+				continue
+			}
+			if _, dup := seen[r.Memory.Name]; dup {
+				continue
+			}
+			results = append(results, r)
+		}
+		sort.SliceStable(results, func(i, j int) bool { return results[i].Score > results[j].Score })
+		if len(results) > limit {
+			results = results[:limit]
+		}
 	}
 	if asJSON {
 		enc := json.NewEncoder(stdio.Stdout)

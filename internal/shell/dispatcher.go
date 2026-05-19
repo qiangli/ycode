@@ -96,12 +96,33 @@ func (d *Dispatcher) dispatchBash(ctx context.Context, in Intent, sink Sink) (Re
 	var hist bytes.Buffer
 	teedStdout := &cappedTee{w: sink.Stdout(), buf: &hist, cap: agentHistoryCap}
 
-	exit, err := d.rt.session.RunString(ctx, in.Raw, bash.Stdio{
+	cmd := in.Raw
+	if autoSandboxFn != nil {
+		if rewritten, reason := autoSandboxFn(cmd); rewritten != "" {
+			fmt.Fprintf(sink.Stderr(),
+				"# ycode auto-sandbox: %s; pass --no-sandbox to override\n", reason)
+			cmd = rewritten
+		}
+	}
+
+	exit, err := d.rt.session.RunString(ctx, cmd, bash.Stdio{
 		Stdout: teedStdout,
 		Stderr: sink.Stderr(),
 	})
 	d.rt.RecordHistory(strings.TrimSpace(in.Raw), hist.String())
 	return Result{ExitCode: exit}, err
+}
+
+// autoSandboxFn is wired from internal/shell/agentmode/init via
+// SetAutoSandboxFunc. When set, dispatchBash consults it for every bash
+// command and rewrites to `yc sandbox -- ...` when both
+// $YCODE_AUTO_SANDBOX is truthy and a danger pattern matches.
+var autoSandboxFn func(command string) (rewritten, reason string)
+
+// SetAutoSandboxFunc is called by internal/shell/agentmode/init() to
+// wire the auto-sandbox rewriter. Passing nil disables auto-sandboxing.
+func SetAutoSandboxFunc(fn func(command string) (rewritten, reason string)) {
+	autoSandboxFn = fn
 }
 
 // agentHistoryCap is how many bytes of stdout are remembered for the
