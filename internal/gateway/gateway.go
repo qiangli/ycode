@@ -5,7 +5,8 @@
 //
 // Tools and agents that ycode spawns get DOCKER_HOST / CONTAINER_HOST /
 // OLLAMA_HOST pointing at the gateway, so they don't need to know
-// anything about cloudbox, FRP, MCP, or how the daemon is reached.
+// anything about cloudbox, the matrix tunnel, MCP, or how the daemon
+// is reached.
 package gateway
 
 import (
