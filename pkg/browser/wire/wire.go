@@ -4,6 +4,12 @@
 // no hand-copy.
 package wire
 
+import (
+	"encoding/json"
+	"strings"
+	"unicode"
+)
+
 // Action is the unified browser action. Each backend translates it
 // into the right native primitive (CDP command for probe/solo,
 // WebSocket message for live).
@@ -61,13 +67,25 @@ type Action struct {
 }
 
 // Result is the unified browser result.
+//
+// Data carries a tool-specific payload. Plain-text tools (clipboard
+// text, "pressed=Enter", "tracing started", evaluate scalars) store
+// human-readable strings here. Structured tools (cookies_get,
+// capabilities, network_list, console_get, storage_get, lighthouse,
+// perf_stop) store a pre-marshaled JSON object/array.
+//
+// The custom MarshalJSON below detects the structured case and emits
+// it as a decoded JSON object/array in the agent-facing envelope —
+// so agents read `data` as native JSON instead of a stringified
+// string-of-JSON. Plain-text payloads serialize as JSON strings
+// (unchanged from the legacy shape).
 type Result struct {
 	Success      bool     `json:"success"`
 	Title        string   `json:"title,omitempty"`
 	URL          string   `json:"url,omitempty"`
 	Content      string   `json:"content,omitempty"`
 	Elements     string   `json:"elements,omitempty"`
-	Data         string   `json:"data,omitempty"`
+	Data         string   `json:"-"`
 	Image        string   `json:"image,omitempty"`
 	Error        string   `json:"error,omitempty"`
 	Hints        []string `json:"hints,omitempty"`
@@ -83,6 +101,47 @@ type Result struct {
 	// returned set is a prefix.
 	Total     int  `json:"total,omitempty"`
 	Truncated bool `json:"truncated,omitempty"`
+}
+
+// MarshalJSON serializes Result with `data` rendered as decoded JSON
+// when Data holds a JSON object or array, and as a JSON string
+// otherwise. Empty Data is omitted. See the Result doc comment for
+// the rationale.
+func (r Result) MarshalJSON() ([]byte, error) {
+	type alias Result
+	base := (*alias)(&r)
+	if r.Data == "" {
+		return json.Marshal(struct{ *alias }{base})
+	}
+	var dataField json.RawMessage
+	if looksLikeStructuredJSON(r.Data) {
+		dataField = json.RawMessage(r.Data)
+	} else {
+		b, err := json.Marshal(r.Data)
+		if err != nil {
+			return nil, err
+		}
+		dataField = b
+	}
+	return json.Marshal(struct {
+		*alias
+		Data json.RawMessage `json:"data,omitempty"`
+	}{base, dataField})
+}
+
+// looksLikeStructuredJSON returns true when s parses as a JSON object
+// or array. Bare JSON scalars (numbers, "quoted", true/false/null)
+// are intentionally excluded — plain text like "tracing started" must
+// continue to round-trip as a JSON string.
+func looksLikeStructuredJSON(s string) bool {
+	trimmed := strings.TrimLeftFunc(s, unicode.IsSpace)
+	if trimmed == "" {
+		return false
+	}
+	if trimmed[0] != '{' && trimmed[0] != '[' {
+		return false
+	}
+	return json.Valid([]byte(s))
 }
 
 // Action types recognized across modes. Backends that do not
