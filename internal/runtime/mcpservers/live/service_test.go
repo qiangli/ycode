@@ -1,6 +1,7 @@
 package live
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -61,6 +62,11 @@ func TestActionToParamsCoversAllActions(t *testing.T) {
 		{"cookies-get", mcpservers.BrowserAction{Type: mcpservers.ActionCookiesGet, Name: "sid"}, "cookies_get"},
 		{"storage-get", mcpservers.BrowserAction{Type: mcpservers.ActionStorageGet, Storage: "local"}, "storage_get"},
 		{"capabilities", mcpservers.BrowserAction{Type: mcpservers.ActionCapabilities}, "capabilities"},
+		{"network-list", mcpservers.BrowserAction{Type: mcpservers.ActionNetworkList}, "network_list"},
+		{"console-get", mcpservers.BrowserAction{Type: mcpservers.ActionConsoleGet}, "console_get"},
+		{"perf-start", mcpservers.BrowserAction{Type: mcpservers.ActionPerfStart}, "perf_start"},
+		{"perf-stop", mcpservers.BrowserAction{Type: mcpservers.ActionPerfStop}, "perf_stop"},
+		{"lighthouse", mcpservers.BrowserAction{Type: mcpservers.ActionLighthouse}, "lighthouse"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -148,5 +154,104 @@ func TestNotConnectedErrorWithoutLastTab(t *testing.T) {
 	msg := notConnectedError("")
 	if strings.Contains(msg, "last tab:") {
 		t.Fatalf("orphan 'last tab:' present when no tab known: %q", msg)
+	}
+}
+
+// stubServiceWithHub returns a Service in roleHub with a hand-rolled
+// hub that has the given hello state. Used to drive the staleness /
+// per-method gates without needing a real WS round-trip.
+func stubServiceWithHub(version string, methods []string) *Service {
+	s := New(0)
+	s.role = roleHub
+	s.hub = &hub{
+		extVersion: version,
+		extMethods: methods,
+	}
+	return s
+}
+
+// TestLive_StaleExtensionError — Execute must short-circuit with the
+// actionable "extension stale" error before attempting any dispatch
+// when the extension's _hello reports a version below the floor. This
+// is the cure for the prod-e2e incident where an old extension returned
+// cryptic "unknown method: X" on every call.
+func TestLive_StaleExtensionError(t *testing.T) {
+	s := stubServiceWithHub("0.4.0", nil) // below 0.5.0 floor
+	res, err := s.Execute(context.Background(), mcpservers.BrowserAction{
+		Type:   mcpservers.ActionEvaluate,
+		Script: "1+1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if res.Error == "" {
+		t.Fatalf("expected non-empty error from stale gate")
+	}
+	if !strings.Contains(res.Error, "extension stale") {
+		t.Fatalf("expected 'extension stale' in error, got: %q", res.Error)
+	}
+	if !strings.Contains(res.Error, "0.4.0") || !strings.Contains(res.Error, "0.5.0") {
+		t.Fatalf("expected both versions in error, got: %q", res.Error)
+	}
+	if !strings.Contains(res.Error, "chrome://extensions") {
+		t.Fatalf("expected chrome://extensions remediation hint, got: %q", res.Error)
+	}
+}
+
+// TestLive_PerMethodGate — when the extension is at the right version
+// but its _hello methods list omits the requested method, Execute must
+// short-circuit with a method-not-advertised error. This catches users
+// whose extension is technically at the floor but is missing a method
+// the binary now expects.
+func TestLive_PerMethodGate(t *testing.T) {
+	s := stubServiceWithHub("0.5.0", []string{"navigate", "extract"})
+	res, err := s.Execute(context.Background(), mcpservers.BrowserAction{
+		Type:   mcpservers.ActionEvaluate,
+		Script: "1+1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if res.Error == "" {
+		t.Fatalf("expected non-empty error from per-method gate")
+	}
+	if !strings.Contains(res.Error, "evaluate") {
+		t.Fatalf("expected method name in error, got: %q", res.Error)
+	}
+	if !strings.Contains(res.Error, "not advertised") {
+		t.Fatalf("expected 'not advertised' phrasing, got: %q", res.Error)
+	}
+}
+
+// TestLive_CapabilitiesBypassesStaleGate — `capabilities` is the one
+// action that must reach a stale extension so `ycode browser doctor`
+// can introspect it. The gate must not short-circuit it, even when the
+// reported version is below the floor.
+func TestLive_CapabilitiesBypassesStaleGate(t *testing.T) {
+	s := stubServiceWithHub("0.1.0", nil)
+	res, _ := s.Execute(context.Background(), mcpservers.BrowserAction{
+		Type: mcpservers.ActionCapabilities,
+	})
+	// Either the call reaches the (nil) socket and errors at the WS
+	// layer, or it returns some default. The key invariant: the gate
+	// must NOT have short-circuited it with the stale-extension error.
+	if strings.Contains(res.Error, "extension stale") {
+		t.Fatalf("capabilities should bypass the stale gate, but got: %q", res.Error)
+	}
+}
+
+// TestLive_PerMethodGate_EmptyMethodsListSkipped — pre-0.4 extensions
+// don't send methods in their _hello (legacy). The per-method gate
+// must skip the check rather than block every call. (The version gate
+// will catch the staleness first anyway, but defence in depth.)
+func TestLive_PerMethodGate_EmptyMethodsListSkipped(t *testing.T) {
+	// At the floor version with no methods list — gate should NOT block.
+	s := stubServiceWithHub("0.5.0", nil)
+	res, _ := s.Execute(context.Background(), mcpservers.BrowserAction{
+		Type:   mcpservers.ActionEvaluate,
+		Script: "1+1",
+	})
+	if strings.Contains(res.Error, "not advertised") {
+		t.Fatalf("empty methods list should skip per-method gate, got: %q", res.Error)
 	}
 }

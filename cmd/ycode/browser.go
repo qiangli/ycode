@@ -26,17 +26,19 @@ Modes:
   solo   chromedp launches a fresh isolated Chrome
 
 Subcommands:
-  setup    One-time setup per mode (e.g. extract the live extension)
-  launch   Start Chrome with the right debug flags for probe
-  doctor   Diagnose readiness of each mode
-  install  Pre-fetch any per-mode prerequisites (currently a no-op)
-  login    Open Chrome interactively to complete logins (probe/live)`,
+  setup              One-time setup per mode (e.g. extract the live extension)
+  launch             Start Chrome with the right debug flags for probe
+  doctor             Diagnose readiness of each mode
+  install            Pre-fetch any per-mode prerequisites (currently a no-op)
+  install-extension  Re-extract the bundled live extension (for upgrades)
+  login              Open Chrome interactively to complete logins (probe/live)`,
 	}
 	cmd.AddCommand(
 		newBrowserSetupCmd(),
 		newBrowserLaunchCmd(),
 		newBrowserDoctorCmd(),
 		newBrowserInstallCmd(),
+		newBrowserInstallExtensionCmd(),
 		newBrowserLoginCmd(),
 	)
 	return cmd
@@ -140,11 +142,36 @@ func newBrowserDoctorCmd() *cobra.Command {
 				c.Body.Close()
 			}
 			extConnected := false
+			extVersion := ""
+			extStale := false
+			extMethods := 0
+			minVersion := ""
 			if hubUp {
-				extConnected = liveExtensionConnected(lv.Port())
+				if info, ok := liveExtensionInfo(lv.Port()); ok {
+					extConnected = info.Connected
+					extVersion = info.Version
+					extStale = info.Stale
+					extMethods = info.MethodsCount
+					minVersion = info.MinVersion
+				} else {
+					// Fall back to the legacy /dispatch probe.
+					extConnected = liveExtensionConnected(lv.Port())
+				}
 			}
 			fmt.Printf("  live   port=%d   hub-running=%v   extension-connected=%v   ext-dir=%s\n",
 				lv.Port(), hubUp, extConnected, live.DefaultExtractDir())
+			if extConnected {
+				verStr := extVersion
+				if verStr == "" {
+					verStr = "<pre-handshake>"
+				}
+				fmt.Printf("         extension=v%s   stale=%v   methods=%d   min=v%s\n",
+					verStr, extStale, extMethods, minVersion)
+				if extStale {
+					fmt.Println("         WARNING: extension is stale — run: ycode browser install-extension")
+					fmt.Println("                  then reload at chrome://extensions")
+				}
+			}
 
 			pr := probe.New("")
 			fmt.Printf("  probe  available=%v   target=%s   profile=%s\n",
@@ -178,6 +205,54 @@ func newBrowserInstallCmd() *cobra.Command {
 			return fmt.Errorf("unknown mode %q", args[0])
 		},
 	}
+}
+
+// newBrowserInstallExtensionCmd is the refresh path for users who
+// already loaded ycode-live in Chrome and need to update its source
+// after a ycode upgrade. Reuses DefaultExtractDir so the user doesn't
+// have to re-pick the "Load unpacked" target — they just click the
+// reload icon on the existing chrome://extensions entry.
+func newBrowserInstallExtensionCmd() *cobra.Command {
+	var dest string
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "install-extension",
+		Short: "Re-extract the bundled ycode-live extension (use after a ycode upgrade)",
+		Long: `Re-extract the ycode-live Chrome extension shipped with this binary.
+
+After running this, open chrome://extensions and click the circular reload
+icon on the ycode-live card — Chrome does NOT auto-reload unpacked
+extensions when their source files change.
+
+If you have never loaded the extension, run "ycode browser setup live"
+instead; this command assumes the extension is already known to Chrome.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dst := dest
+			if dst == "" {
+				dst = live.DefaultExtractDir()
+			}
+			if force {
+				if err := os.RemoveAll(dst); err != nil {
+					return fmt.Errorf("--force rm: %w", err)
+				}
+			}
+			abs, err := live.ExtractExtension(dst)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Re-extracted ycode-live extension to:\n  %s\n\n", abs)
+			fmt.Println("Next steps:")
+			fmt.Println("  1. Open chrome://extensions")
+			fmt.Println("  2. Find the 'ycode-live' card")
+			fmt.Println("  3. Click the circular reload icon")
+			fmt.Println("     (Chrome does NOT auto-reload unpacked extensions on file change.)")
+			fmt.Println("  4. Open the popup on your target tab and click Connect")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&dest, "dest", "", "Extract path (default: ~/Downloads/ycode-chrome-ext, same as `setup live`)")
+	cmd.Flags().BoolVar(&force, "force", false, "Remove the destination directory before extracting (clears stale files from renamed/removed sources)")
+	return cmd
 }
 
 func newBrowserLoginCmd() *cobra.Command {

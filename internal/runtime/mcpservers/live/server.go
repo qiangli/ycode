@@ -34,6 +34,14 @@ type hub struct {
 	extMethods     []string
 	extPermissions []string
 
+	// helloReceived is closed when the current connection's `_hello`
+	// frame has been parsed. Re-created on every handleWS, so each
+	// reconnect starts a fresh handshake. awaitHello blocks on this
+	// to gate every dispatched call — pre-0.4 extensions that never
+	// send _hello hit the LiveHandshakeTimeout and surface a clear
+	// stale-extension error instead of timing out the inner call.
+	helloReceived chan struct{}
+
 	// lastTab is the URL the extension last reported (via navigate /
 	// extract result). Surfaced in the "extension not connected"
 	// error so a fresh agent can re-attach to the right tab.
@@ -65,10 +73,22 @@ func (h *hub) start(ctx context.Context) error {
 	})
 	// /connected reports whether the extension's websocket is up
 	// without poking the extension itself. Used by `ycode browser
-	// doctor` to surface real-time connection state.
+	// doctor` to surface real-time connection state plus the version
+	// and method-list reported by the extension's _hello handshake —
+	// so users can self-diagnose stale-extension drift before they
+	// hit it inside a session.
 	mux.HandleFunc("/connected", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]bool{"connected": h.connected()})
+		ver := h.ExtVersion()
+		methods := h.ExtMethods()
+		stale := ver != "" && versionLess(ver, LiveExtensionMinVersion)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"connected":     h.connected(),
+			"version":       ver,
+			"methods_count": len(methods),
+			"min_version":   LiveExtensionMinVersion,
+			"stale":         stale,
+		})
 	})
 	// /dispatch is the cross-process bridge: a ycode prompt running
 	// in a separate process can POST a {method, params} JSON here
@@ -115,6 +135,12 @@ func (h *hub) handleWS(w http.ResponseWriter, r *http.Request) {
 		_ = h.conn.Close()
 	}
 	h.conn = conn
+	// Reset hello state for the new connection; the extension will
+	// resend _hello as its first frame.
+	h.extVersion = ""
+	h.extMethods = nil
+	h.extPermissions = nil
+	h.helloReceived = make(chan struct{})
 	h.mu.Unlock()
 	telotel.RecordBrowserHubConnect(r.Context())
 	slog.Info("live: extension connected", "remote", r.RemoteAddr)
@@ -179,10 +205,15 @@ func (h *hub) handleUnsolicited(resp wsResponse) {
 		return
 	}
 	h.mu.Lock()
+	firstHello := h.extVersion == ""
 	h.extVersion = hi.Version
 	h.extMethods = hi.Methods
 	h.extPermissions = hi.Permissions
+	hr := h.helloReceived
 	h.mu.Unlock()
+	if firstHello && hr != nil {
+		close(hr)
+	}
 	slog.Info("live: extension hello", "version", hi.Version, "methods", len(hi.Methods))
 }
 
@@ -239,8 +270,38 @@ func (h *hub) RecordLastTab(url string) {
 	h.mu.Unlock()
 }
 
+// awaitHello blocks until the extension's `_hello` frame is parsed
+// for the current connection, the ctx deadline expires, or
+// LiveHandshakeTimeout elapses. A pre-0.4.0 extension never sends
+// _hello, so it surfaces here as a stale-extension error instead of
+// silently failing a downstream call with "unknown method: X".
+func (h *hub) awaitHello(ctx context.Context) error {
+	h.mu.Lock()
+	ver := h.extVersion
+	ch := h.helloReceived
+	h.mu.Unlock()
+	if ver != "" {
+		return nil
+	}
+	if ch == nil {
+		return errors.New("live: extension connection missing handshake channel")
+	}
+	timer := time.NewTimer(LiveHandshakeTimeout)
+	defer timer.Stop()
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return errors.New("live: extension did not send _hello within 3s — likely an older extension (pre-0.4.0). " +
+			"Reload it at chrome://extensions, or run: ycode browser install-extension")
+	}
+}
+
 // call sends a request and waits for the matching response or ctx
-// cancellation.
+// cancellation. Gated by awaitHello so we never dispatch against a
+// pre-handshake extension.
 func (h *hub) call(ctx context.Context, method string, params map[string]any) (wsResponse, error) {
 	h.mu.Lock()
 	conn := h.conn
@@ -248,6 +309,9 @@ func (h *hub) call(ctx context.Context, method string, params map[string]any) (w
 	h.mu.Unlock()
 	if conn == nil {
 		return wsResponse{}, errors.New(notConnectedError(lastTab))
+	}
+	if err := h.awaitHello(ctx); err != nil {
+		return wsResponse{}, err
 	}
 
 	id := h.nextID.Add(1)

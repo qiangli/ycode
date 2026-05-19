@@ -15,6 +15,35 @@ func newQuickHTTPClient() *http.Client {
 	return &http.Client{Timeout: 500 * time.Millisecond}
 }
 
+// liveExtensionInfo fetches the hub's /connected endpoint and returns
+// the structured state (connected, version, methods_count, stale).
+// Returns ok=false when the hub itself is unreachable.
+type liveInfo struct {
+	Connected    bool   `json:"connected"`
+	Version      string `json:"version"`
+	MethodsCount int    `json:"methods_count"`
+	MinVersion   string `json:"min_version"`
+	Stale        bool   `json:"stale"`
+}
+
+func liveExtensionInfo(port int) (liveInfo, bool) {
+	url := fmt.Sprintf("http://127.0.0.1:%d/connected", port)
+	c := newQuickHTTPClient()
+	resp, err := c.Get(url)
+	if err != nil {
+		return liveInfo{}, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return liveInfo{}, false
+	}
+	var info liveInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return liveInfo{}, false
+	}
+	return info, true
+}
+
 // liveExtensionConnected pokes the running hub's /dispatch with a
 // no-op method (_ping). The hub returns a 503 when no extension is
 // attached, or a 200 with an "extension disconnected"-style error.

@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,12 +39,18 @@ import (
 const DefaultPort = 58082
 
 // LiveExtensionMinVersion is the minimum acceptable extension version
-// for full feature coverage. Older extensions still work for the
-// basic action set; the hub prepends a "stale extension" hint so the
-// caller (and the user) know to reload at chrome://extensions. The
-// version is reported by the extension's `_hello` frame on connect.
-// 0.4.0 added the chrome.debugger permission for trusted keystrokes.
-const LiveExtensionMinVersion = "0.4.0"
+// for full feature coverage. The hub refuses to dispatch to any older
+// version with an actionable "extension stale, reload at
+// chrome://extensions" error. The version is reported by the
+// extension's `_hello` frame on connect. 0.4.0 added the
+// chrome.debugger permission for trusted keystrokes; 0.5.0 added
+// network_list / console_get / perf_start / perf_stop / lighthouse.
+const LiveExtensionMinVersion = "0.5.0"
+
+// LiveHandshakeTimeout caps how long hub.call waits for the
+// extension to send its _hello frame before treating the connection
+// as too old (pre-0.4.0 extensions don't send _hello).
+const LiveHandshakeTimeout = 3 * time.Second
 
 // roleKind selects how a Service routes BrowserActions. A single
 // Service either owns the hub locally (roleHub) or forwards every
@@ -187,6 +194,21 @@ func (s *Service) Execute(ctx context.Context, action mcpservers.BrowserAction) 
 		return &mcpservers.BrowserResult{Error: err.Error()}, nil
 	}
 
+	// Hard staleness + per-method gate. Only meaningful in roleHub —
+	// in roleClient the hub-owning process will run the same checks
+	// when it receives the /dispatch POST. Allow `capabilities` through
+	// so `ycode browser doctor` can still introspect a stale extension.
+	if role == roleHub && hub != nil && action.Type != mcpservers.ActionCapabilities {
+		if ver := hub.ExtVersion(); ver == "" {
+			// Conn is up but no _hello yet. awaitHello inside hub.call
+			// will surface the timeout error; nothing to do here.
+		} else if versionLess(ver, LiveExtensionMinVersion) {
+			return &mcpservers.BrowserResult{Error: staleExtensionError(ver)}, nil
+		} else if methods := hub.ExtMethods(); len(methods) > 0 && !slices.Contains(methods, method) {
+			return &mcpservers.BrowserResult{Error: methodNotAdvertisedError(method, ver)}, nil
+		}
+	}
+
 	// Wait-for-selector callers pass timeout_ms; respect it as the
 	// outer deadline (plus a small buffer) so the call doesn't time
 	// out before the extension's internal poll.
@@ -219,13 +241,10 @@ func (s *Service) Execute(ctx context.Context, action mcpservers.BrowserAction) 
 
 // postprocess applies cross-cutting transforms to a fresh result:
 //   - screenshot MaxBytes/SavePath enforcement,
-//   - last-tab URL recording (for the "not connected" error),
-//   - stale-extension hint prepended to the first error (or hint)
-//     when the extension's reported version < LiveExtensionMinVersion.
+//   - last-tab URL recording (for the "not connected" error).
 //
-// hub may be nil in client role; the stale check is hub-local so we
-// just skip it there (the client role pulls the hint from the
-// hub-owning process via /dispatch's result).
+// Staleness/per-method enforcement happens upstream in Execute as a
+// hard short-circuit, so we no longer surface a hint here.
 func (s *Service) postprocess(action mcpservers.BrowserAction, res *mcpservers.BrowserResult, h *hub) {
 	if action.Type == mcpservers.ActionScreenshot && res.Image != "" {
 		if action.MaxBytes > 0 || action.SavePath != "" {
@@ -239,15 +258,27 @@ func (s *Service) postprocess(action mcpservers.BrowserAction, res *mcpservers.B
 			}
 		}
 	}
-	if h != nil {
-		if res.URL != "" {
-			h.RecordLastTab(res.URL)
-		}
-		if v := h.ExtVersion(); v != "" && versionLess(v, LiveExtensionMinVersion) {
-			msg := fmt.Sprintf("live: extension stale (v%s < required v%s); reload at chrome://extensions", v, LiveExtensionMinVersion)
-			res.Hints = append([]string{msg}, res.Hints...)
-		}
+	if h != nil && res.URL != "" {
+		h.RecordLastTab(res.URL)
 	}
+}
+
+// staleExtensionError builds the actionable message for an extension
+// that's connected but reports a version below LiveExtensionMinVersion.
+func staleExtensionError(ver string) string {
+	return fmt.Sprintf("live: extension stale (v%s < required v%s). "+
+		"Reload it at chrome://extensions, or run: ycode browser install-extension",
+		ver, LiveExtensionMinVersion)
+}
+
+// methodNotAdvertisedError fires when the extension's _hello methods
+// list omits the method we want to dispatch. This is the direct cure
+// for the original incident: an old extension at the required version
+// floor that doesn't actually implement a new method.
+func methodNotAdvertisedError(method, ver string) string {
+	return fmt.Sprintf("live: method %q not advertised by extension v%s. "+
+		"Reload it at chrome://extensions, or run: ycode browser install-extension",
+		method, ver)
 }
 
 func (s *Service) executeHub(ctx context.Context, h *hub, method string, params map[string]any) (*mcpservers.BrowserResult, error) {
@@ -405,6 +436,16 @@ func actionToParams(a mcpservers.BrowserAction) (string, map[string]any, error) 
 		return "storage_get", map[string]any{"storage": a.Storage, "key": a.StorageKey}, nil
 	case mcpservers.ActionCapabilities:
 		return "capabilities", map[string]any{}, nil
+	case mcpservers.ActionNetworkList:
+		return "network_list", map[string]any{}, nil
+	case mcpservers.ActionConsoleGet:
+		return "console_get", map[string]any{}, nil
+	case mcpservers.ActionPerfStart:
+		return "perf_start", map[string]any{}, nil
+	case mcpservers.ActionPerfStop:
+		return "perf_stop", map[string]any{}, nil
+	case mcpservers.ActionLighthouse:
+		return "lighthouse", map[string]any{}, nil
 	}
 	return "", nil, fmt.Errorf("live: action %q not supported", a.Type)
 }

@@ -108,7 +108,110 @@ const SUPPORTED_METHODS = [
   "wait_for_selector", "keyboard_press",
   "clipboard_read", "clipboard_write",
   "cookies_get", "storage_get", "capabilities",
+  // DevTools-flavored — gated on a long-lived chrome.debugger attach
+  // managed by debuggerAttach below.
+  "network_list", "console_get", "perf_start", "perf_stop", "lighthouse",
 ];
+
+// --- chrome.debugger attach manager + devtools event buffers --------
+//
+// chrome.debugger.attach is exclusive per-target, so multiple consumers
+// (trusted keystrokes; long-lived Network/Runtime/Tracing listeners)
+// share one attach via reference counting. Each acquire(tabId, domain)
+// must pair with release; the attach is dropped when refCount hits 0.
+// onDetach (page close, user-dismissed banner, etc.) wipes the entry
+// so a subsequent acquire reattaches cleanly.
+//
+// Ring buffers (network responses, console messages) live module-level
+// and start capturing on first acquire — matches probe semantics
+// ("capture begins when the agent asks").
+
+const NET_RING_MAX = 200;
+const CONSOLE_RING_MAX = 200;
+
+let netRing = [];
+let consoleRing = [];
+let traceState = { active: false, startedAt: 0, eventCount: 0 };
+
+function pushBounded(ring, entry, max) {
+  ring.push(entry);
+  if (ring.length > max) ring.splice(0, ring.length - max);
+}
+
+const debuggerAttach = {
+  // tabId -> { refCount, domains: Set<string> }
+  byTab: new Map(),
+
+  async acquire(tabId, domain) {
+    let state = this.byTab.get(tabId);
+    if (!state) {
+      state = { refCount: 0, domains: new Set() };
+      this.byTab.set(tabId, state);
+      await chrome.debugger.attach({ tabId }, "1.3");
+    }
+    state.refCount++;
+    if (domain && !state.domains.has(domain)) {
+      await chrome.debugger.sendCommand({ tabId }, `${domain}.enable`);
+      state.domains.add(domain);
+    }
+  },
+
+  async release(tabId) {
+    const state = this.byTab.get(tabId);
+    if (!state) return;
+    state.refCount--;
+    if (state.refCount <= 0) {
+      this.byTab.delete(tabId);
+      try { await chrome.debugger.detach({ tabId }); } catch (_) { /* already gone */ }
+    }
+  },
+};
+
+chrome.debugger.onDetach.addListener((source, reason) => {
+  if (source && source.tabId) {
+    debuggerAttach.byTab.delete(source.tabId);
+  }
+  // Trace state belongs to whichever tab was being recorded; just
+  // mark it inactive on any detach so a fresh perf_start works.
+  if (traceState.active) traceState.active = false;
+});
+
+chrome.debugger.onEvent.addListener((_source, method, params) => {
+  try {
+    if (method === "Network.responseReceived" && params && params.response) {
+      pushBounded(netRing, {
+        url: params.response.url,
+        status: params.response.status,
+        mime_type: params.response.mimeType,
+        resource_type: params.type,
+        when: new Date().toISOString(),
+      }, NET_RING_MAX);
+    } else if (method === "Runtime.consoleAPICalled" && params) {
+      const text = (params.args || []).map((a) => {
+        if (a.value !== undefined) return String(a.value);
+        if (a.description) return a.description;
+        return "";
+      }).join(" ");
+      pushBounded(consoleRing, {
+        level: params.type,
+        text: text,
+        when: new Date().toISOString(),
+      }, CONSOLE_RING_MAX);
+    } else if (method === "Runtime.exceptionThrown" && params && params.exceptionDetails) {
+      const det = params.exceptionDetails;
+      const text = (det.exception && det.exception.description) || det.text || "";
+      pushBounded(consoleRing, {
+        level: "exception",
+        text: text,
+        when: new Date().toISOString(),
+      }, CONSOLE_RING_MAX);
+    } else if (method === "Tracing.dataCollected" && traceState.active && params && params.value) {
+      traceState.eventCount += params.value.length;
+    }
+  } catch (e) {
+    console.warn("ycode-live: debugger event handler failed", e);
+  }
+});
 
 async function onMessage(ev) {
   let req;
@@ -178,6 +281,16 @@ async function dispatch(method, params) {
       return clipboardWrite(tabId, params);
     case "storage_get":
       return storageGet(tabId, params);
+    case "network_list":
+      return networkList(tabId);
+    case "console_get":
+      return consoleGet(tabId);
+    case "perf_start":
+      return perfStart(tabId);
+    case "perf_stop":
+      return perfStop(tabId);
+    case "lighthouse":
+      return lighthouse(tabId);
   }
   throw new Error(`unknown method: ${method}`);
 }
@@ -551,7 +664,9 @@ async function dispatchTrustedKey(tabId, key, modifiers) {
   if (mods.has("meta") || mods.has("cmd") || mods.has("command")) modBits |= 4;
   if (mods.has("shift")) modBits |= 8;
 
-  await chrome.debugger.attach(target, "1.3");
+  // Input.* commands don't need a domain enable; pass null so the
+  // manager only handles attach refcount.
+  await debuggerAttach.acquire(tabId, null);
   try {
     const named = KEY_TO_CODE[key];
     const isPrintable = key.length === 1;
@@ -563,7 +678,7 @@ async function dispatchTrustedKey(tabId, key, modifiers) {
     await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", keyDown);
     await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", Object.assign({ type: "keyUp" }, base));
   } finally {
-    try { await chrome.debugger.detach(target); } catch (_) { /* ignore */ }
+    await debuggerAttach.release(tabId);
   }
 }
 
@@ -658,4 +773,131 @@ async function handleTabs(params) {
     return { content: `closed tab ${tid}` };
   }
   throw new Error(`unknown tab action: ${action}`);
+}
+
+// --- DevTools-flavored actions (network_list / console_get / perf_* /
+//     lighthouse). Match probe response shapes so the agent sees
+//     identical JSON across modes. ----------------------------------
+
+async function networkList(tabId) {
+  // Sticky acquire — Network keeps recording after the read so a
+  // follow-up call sees more entries. Caller pays no extra detach cost
+  // on each read.
+  await debuggerAttach.acquire(tabId, "Network");
+  return { data: JSON.stringify({ count: netRing.length, entries: netRing }) };
+}
+
+async function consoleGet(tabId) {
+  await debuggerAttach.acquire(tabId, "Runtime");
+  return { data: JSON.stringify({ count: consoleRing.length, entries: consoleRing }) };
+}
+
+async function perfStart(tabId) {
+  if (traceState.active) {
+    throw new Error("perf_start: trace already active — call perf_stop first");
+  }
+  // Tracing.start enables the domain itself; no <Domain>.enable needed.
+  await debuggerAttach.acquire(tabId, null);
+  try {
+    await chrome.debugger.sendCommand({ tabId }, "Tracing.start", {
+      transferMode: "ReportEvents",
+    });
+  } catch (e) {
+    await debuggerAttach.release(tabId);
+    throw e;
+  }
+  traceState.active = true;
+  traceState.startedAt = Date.now();
+  traceState.eventCount = 0;
+  return { data: "tracing started" };
+}
+
+async function perfStop(tabId) {
+  if (!traceState.active) {
+    throw new Error("perf_stop: no active trace");
+  }
+  const startedAt = traceState.startedAt;
+  try {
+    await chrome.debugger.sendCommand({ tabId }, "Tracing.end");
+  } catch (e) {
+    // Best-effort cleanup; surface the error.
+    traceState.active = false;
+    await debuggerAttach.release(tabId);
+    throw e;
+  }
+  // Drain the final dataCollected events; CDP buffers them after End().
+  // 250ms matches probe.doPerfStop.
+  await new Promise((r) => setTimeout(r, 250));
+  const count = traceState.eventCount;
+  traceState.active = false;
+  await debuggerAttach.release(tabId);
+  return {
+    data: JSON.stringify({
+      duration_ms: Date.now() - startedAt,
+      event_count: count,
+      note: "raw trace events are dropped after counting — perf_stop returns aggregate only",
+    }),
+  };
+}
+
+async function lighthouse(tabId) {
+  // Mirrors probe's lighthouseScript verbatim so agents get identical
+  // JSON across modes. Not full Lighthouse — Core Web Vitals + Navigation
+  // Timing only. No chrome.debugger needed; runs as a MAIN-world script.
+  const [{ result } = {}] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: () => {
+      const out = {
+        mode: "core-web-vitals",
+        paint: {},
+        navigation: {},
+        largest_contentful_paint_ms: null,
+        cumulative_layout_shift: null,
+        first_input_delay_ms: null,
+        resource_count: 0,
+        notes: [],
+      };
+      try {
+        for (const p of performance.getEntriesByType("paint")) {
+          out.paint[p.name.replace(/-/g, "_")] = Math.round(p.startTime);
+        }
+        const nav = performance.getEntriesByType("navigation")[0];
+        if (nav) {
+          out.navigation = {
+            ttfb_ms: Math.round(nav.responseStart - nav.requestStart),
+            dom_content_loaded_ms: Math.round(nav.domContentLoadedEventEnd),
+            load_event_ms: Math.round(nav.loadEventEnd),
+            transfer_size: nav.transferSize,
+            encoded_body_size: nav.encodedBodySize,
+            type: nav.type,
+          };
+        }
+        const lcps = performance.getEntriesByType("largest-contentful-paint");
+        if (lcps && lcps.length) {
+          out.largest_contentful_paint_ms = Math.round(lcps[lcps.length - 1].startTime);
+        }
+        let cls = 0;
+        for (const ls of performance.getEntriesByType("layout-shift")) {
+          if (!ls.hadRecentInput) cls += ls.value;
+        }
+        out.cumulative_layout_shift = Number(cls.toFixed(4));
+        const fids = performance.getEntriesByType("first-input");
+        if (fids && fids.length) {
+          out.first_input_delay_ms = Math.round(fids[0].processingStart - fids[0].startTime);
+        }
+        out.resource_count = performance.getEntriesByType("resource").length;
+        if (out.largest_contentful_paint_ms === null) {
+          out.notes.push("LCP not yet observed — observer needs to have run since page load. Navigate and wait a beat.");
+        }
+        if (out.first_input_delay_ms === null) {
+          out.notes.push("FID not observed — fires only on the first user interaction.");
+        }
+      } catch (e) {
+        out.error = String(e);
+      }
+      return JSON.stringify(out);
+    },
+  });
+  return { data: result || "{}" };
 }
