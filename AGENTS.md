@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Instructions for AI coding assistants working in this repository.
+Instructions for AI coding assistants working in this repository. `CLAUDE.md` is a symlink to this file — edit `AGENTS.md`, not the symlink.
 
 > **Scope:** These rules apply when an agent is operating *inside the ycode repo*. Sessions running under `ycode wrap -- <other-agent>` (e.g. `ycode wrap -- claude` against an unrelated project) are independent contexts — do not carry this repo's conventions into wrapped third-party sessions.
 
@@ -23,7 +23,6 @@ make build           # full gate: tidy → fmt → vet → compile → test → 
 make compile         # quick compile (experimental features ON by default)
 make compile-stable  # explicit opt-out: without experimental tag
 make test            # unit tests only (-short -race)
-make ci-fast         # quick CI check: verify-features + unit tests (skip Docker matrix)
 make tidy            # standalone lint: mod tidy + fmt + vet (also runs inside `make build`)
 make vet             # static analysis only
 ```
@@ -40,6 +39,9 @@ make vet             # static analysis only
 ```bash
 # Single package / test (fast iteration)
 go test -short -race -run TestName ./internal/path/to/package/
+
+# Single benchmark
+go test -bench BenchmarkName -benchmem -run ^$ ./internal/path/to/package/
 
 # Integration tests (needs container/network)
 go test -tags integration -v -count=1 ./internal/integration/...
@@ -99,6 +101,7 @@ Boss control: `ycode foreman pause/resume/stop/skip/prio/tell/status`
 ## Running
 
 ```bash
+bin/ycode doctor                       # health check (provider keys, dependencies)
 bin/ycode                              # interactive REPL (auto-spawns server)
 bin/ycode prompt "explain the runtime" # one-shot; add --print for plain text
 bin/ycode serve                        # explicit server (Gitea, Ollama, SearXNG, NATS)
