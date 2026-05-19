@@ -195,6 +195,15 @@ func TestBrowserRobust_ScopedExtract(t *testing.T) {
 	if r.Total < 3 {
 		t.Fatalf("expected total>=3 nav entries; got %d", r.Total)
 	}
+	// Regression guard: scope must constrain Content as well as
+	// Elements. Pre-fix, Content dumped the full <body> innerText so
+	// "Cluster status" (inside <main>) leaked through scope="nav".
+	if strings.Contains(r.Content, "Cluster status") {
+		t.Fatalf("scope=nav must not leak <main> content; got %q", r.Content)
+	}
+	if !strings.Contains(r.Content, "Home") {
+		t.Fatalf("scope=nav Content should still include nav text; got %q", r.Content)
+	}
 }
 
 func TestBrowserRobust_ScreenshotCapTriggersJPEGOrSpill(t *testing.T) {

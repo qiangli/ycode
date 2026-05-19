@@ -416,7 +416,7 @@ async function extractInTab(tabId, params) {
         }
         lines.push(`[${OFFSET + j + 1}] <${tag} ${attrs.join(" ")}>${text}</${tag}>`);
       }
-      const body = (document.body && document.body.innerText) || "";
+      const body = (root === document ? (document.body && document.body.innerText) : root.innerText) || "";
       return {
         title: document.title,
         url: location.href,

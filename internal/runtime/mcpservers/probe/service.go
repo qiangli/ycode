@@ -359,7 +359,7 @@ func extractScript(a mcpservers.BrowserAction) string {
     }
     lines.push("["+(OFFSET+j+1)+"] <"+tag+" "+attrs.join(" ")+">"+text+"</"+tag+">");
   }
-  var body = (document.body && document.body.innerText) || "";
+  var body = (root === document ? (document.body && document.body.innerText) : root.innerText) || "";
   return JSON.stringify({
     content: body.length>16000 ? body.slice(0,16000)+"\n... (truncated)" : body,
     elements: lines.join("\n"),
