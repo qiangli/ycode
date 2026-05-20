@@ -15,6 +15,15 @@ const statusEl = document.getElementById("status");
 const debugListEl = document.getElementById("debug-list");
 const mirrorEl = document.getElementById("mirror");
 const clearEl = document.getElementById("clear");
+const popoutEl = document.getElementById("popout");
+
+// When loaded with ?windowed=1 we're in the detached resizable window —
+// the body fills the viewport and the pop-out button hides itself.
+const isWindowed = new URLSearchParams(location.search).has("windowed");
+if (isWindowed) {
+  document.body.classList.add("windowed");
+  popoutEl.style.display = "none";
+}
 
 chrome.storage.local.get(["port"], ({ port }) => {
   if (typeof port === "number" && port > 0) portEl.value = port;
@@ -133,4 +142,14 @@ mirrorEl.addEventListener("change", () => {
 
 clearEl.addEventListener("click", () => {
   logPort.postMessage({ type: "clear" });
+});
+
+popoutEl.addEventListener("click", async () => {
+  await chrome.windows.create({
+    url: chrome.runtime.getURL("popup.html?windowed=1"),
+    type: "popup",
+    width: 560,
+    height: 720,
+  });
+  window.close();
 });

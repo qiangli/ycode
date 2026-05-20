@@ -4,7 +4,10 @@
   <meta charset="utf-8" />
   <title>ycode live</title>
   <style>
-    body { font: 13px -apple-system, system-ui, sans-serif; width: 320px; margin: 0; padding: 12px; }
+    body { font: 13px -apple-system, system-ui, sans-serif; width: 420px; margin: 0; padding: 12px; box-sizing: border-box; }
+    body.windowed { width: 100%; min-width: 360px; height: 100vh; display: flex; flex-direction: column; }
+    body.windowed #debug { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    body.windowed #debug-list { max-height: none; flex: 1; }
     h1 { font-size: 14px; margin: 0 0 8px 0; }
     label { display: block; margin: 8px 0 4px 0; color: #555; }
     input[type=number] { width: 80px; padding: 4px; }
@@ -20,7 +23,7 @@
     #debug-header .title { flex: 1; font-weight: 600; color: #333; }
     #debug-header label { display: inline-flex; align-items: center; gap: 3px; margin: 0; cursor: pointer; }
     #debug-header button { padding: 2px 6px; font-size: 11px; }
-    #debug-list { margin-top: 6px; max-height: 220px; overflow-y: auto; font: 11px ui-monospace, Menlo, Consolas, monospace; border: 1px solid #eee; border-radius: 3px; background: #fafafa; }
+    #debug-list { margin-top: 6px; max-height: 320px; overflow-y: auto; font: 11px ui-monospace, Menlo, Consolas, monospace; border: 1px solid #eee; border-radius: 3px; background: #fafafa; }
     #debug-list:empty::after { content: "no tool calls yet"; display: block; padding: 8px; color: #999; font-family: -apple-system, system-ui, sans-serif; text-align: center; }
     .row { padding: 3px 6px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
     .row:last-child { border-bottom: none; }
@@ -49,6 +52,7 @@
     <div id="debug-header">
       <span class="title">Recent tool calls</span>
       <label><input type="checkbox" id="mirror" /> console</label>
+      <button id="popout" title="Open in resizable window">Pop out</button>
       <button id="clear">Clear</button>
     </div>
     <div id="debug-list"></div>
