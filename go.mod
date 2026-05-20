@@ -41,6 +41,7 @@ require (
 	code.gitea.io/gitea v1.26.1
 	codeberg.org/readeck/go-readability/v2 v2.1.1
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.0
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/blevesearch/bleve/v2 v2.5.7
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/bwmarrin/discordgo v0.29.0
@@ -139,7 +140,6 @@ require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0 // indirect
 	github.com/IBM/sarama v1.47.0 // indirect
 	github.com/JohannesKaufmann/dom v0.2.0 // indirect
-	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
 	github.com/PaesslerAG/gval v1.2.4 // indirect
 	github.com/PaesslerAG/jsonpath v0.1.2-0.20240726212847-3a740cf7976f // indirect

@@ -145,9 +145,11 @@ func TestGateway_RestartReclaimsStaleSocket(t *testing.T) {
 		t.Fatalf("upstream listen: %v", err)
 	}
 	t.Cleanup(func() { _ = upstreamLn.Close() })
-	go func() { _ = http.Serve(upstreamLn, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, "ok")
-	})) }()
+	go func() {
+		_ = http.Serve(upstreamLn, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, "ok")
+		}))
+	}()
 
 	gwSock := filepath.Join(dir, "gw.sock")
 	// Plant a stale inode at the gateway socket path.
