@@ -62,6 +62,8 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - uses: ./.github/actions/checkout-nadir
+
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod

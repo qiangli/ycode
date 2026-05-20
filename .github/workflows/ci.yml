@@ -36,6 +36,8 @@ jobs:
           submodules: recursive
           # Default fetch-depth (1) is enough — go build does not need history.
 
+      - uses: ./.github/actions/checkout-nadir
+
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod

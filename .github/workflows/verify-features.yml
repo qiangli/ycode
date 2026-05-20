@@ -28,6 +28,8 @@ jobs:
         with:
           submodules: recursive
 
+      - uses: ./.github/actions/checkout-nadir
+
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod

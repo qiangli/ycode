@@ -1,0 +1,26 @@
+name: Checkout nadir sibling
+description: >
+  Clone qiangli/nadir at the commit pinned in go.mod into ../nadir, so
+  the local `replace github.com/qiangli/nadir => ../nadir` directive in
+  go.mod resolves on the GitHub Actions runner.
+
+runs:
+  using: composite
+  steps:
+    - name: Clone nadir at pinned commit
+      shell: bash
+      run: |
+        set -euo pipefail
+        ver=$(awk '$1=="github.com/qiangli/nadir" && $2 ~ /^v/ {print $2; exit}' go.mod)
+        if [ -z "$ver" ]; then
+          echo "checkout-nadir: could not find github.com/qiangli/nadir version in go.mod" >&2
+          exit 1
+        fi
+        # Pseudo-version format: vX.Y.Z-yyyymmddhhmmss-<12-char-sha>.
+        # GitHub's git server rejects short SHAs for `fetch <ref>`, so we
+        # do a plain clone (nadir is ~1 MB) and check out the prefix.
+        ref=${ver##*-}
+        rm -rf ../nadir
+        git clone --quiet https://github.com/qiangli/nadir.git ../nadir
+        git -C ../nadir checkout --quiet "$ref"
+        echo "checkout-nadir: $ver -> $(git -C ../nadir rev-parse --short HEAD)"
