@@ -213,6 +213,85 @@ chrome.debugger.onEvent.addListener((_source, method, params) => {
   }
 });
 
+// --- tool-call debug log ---------------------------------------------
+//
+// Bounded ring buffer of recent tool calls, surfaced in the popup UI
+// below the connection status and optionally mirrored to console.debug
+// for power users. In-memory only; service-worker eviction wipes it.
+
+const TOOL_LOG_MAX = 50;
+const PREVIEW_MAX = 240;
+let toolLog = [];
+let debugMirror = false;
+const logPorts = new Set();
+
+chrome.storage.local.get(["ycodeDebugMirror"], ({ ycodeDebugMirror }) => {
+  debugMirror = ycodeDebugMirror === true;
+});
+
+function previewValue(v) {
+  if (v === null || v === undefined) return "";
+  let s;
+  try {
+    s = typeof v === "string" ? v : JSON.stringify(v);
+  } catch (_) {
+    s = String(v);
+  }
+  if (s.length > PREVIEW_MAX) return s.slice(0, PREVIEW_MAX) + "…";
+  return s;
+}
+
+function broadcastLog(msg) {
+  for (const p of logPorts) {
+    try { p.postMessage(msg); } catch (_) { /* port closed */ }
+  }
+}
+
+function recordToolCall(call) {
+  const entry = {
+    id: call.id,
+    method: call.method,
+    paramsPreview: previewValue(call.params),
+    resultPreview: call.error ? "" : previewValue(call.result),
+    error: call.error || "",
+    ok: !call.error,
+    durationMs: call.durationMs,
+    startedAt: call.startedAt,
+  };
+  toolLog.push(entry);
+  if (toolLog.length > TOOL_LOG_MAX) {
+    toolLog.splice(0, toolLog.length - TOOL_LOG_MAX);
+  }
+  if (debugMirror) {
+    const tag = entry.ok ? "ok" : "err";
+    console.debug(
+      `ycode-live[${tag}] ${entry.method} ${entry.durationMs}ms`,
+      { params: call.params, result: call.result, error: entry.error },
+    );
+  }
+  broadcastLog({ kind: "entry", entry });
+}
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "ycode-live:log-stream") return;
+  logPorts.add(port);
+  try {
+    port.postMessage({ kind: "snapshot", entries: toolLog, mirror: debugMirror });
+  } catch (_) { /* popup already closed */ }
+  port.onMessage.addListener((msg) => {
+    if (!msg) return;
+    if (msg.type === "clear") {
+      toolLog = [];
+      broadcastLog({ kind: "snapshot", entries: toolLog, mirror: debugMirror });
+    } else if (msg.type === "mirror") {
+      debugMirror = !!msg.value;
+      chrome.storage.local.set({ ycodeDebugMirror: debugMirror });
+      broadcastLog({ kind: "mirror", mirror: debugMirror });
+    }
+  });
+  port.onDisconnect.addListener(() => logPorts.delete(port));
+});
+
 async function onMessage(ev) {
   let req;
   try {
@@ -223,12 +302,25 @@ async function onMessage(ev) {
   if (!req || typeof req.id !== "number") return;
   if (req.method === "_pong" || req.method === "_ping") return;
 
+  const startedAt = Date.now();
+  let result;
+  let error = "";
   try {
-    const result = await dispatch(req.method, req.params || {});
+    result = await dispatch(req.method, req.params || {});
     ws.send(JSON.stringify({ id: req.id, result }));
   } catch (err) {
-    ws.send(JSON.stringify({ id: req.id, error: String(err.message || err) }));
+    error = String(err.message || err);
+    ws.send(JSON.stringify({ id: req.id, error }));
   }
+  recordToolCall({
+    id: req.id,
+    method: req.method,
+    params: req.params || {},
+    result,
+    error,
+    durationMs: Date.now() - startedAt,
+    startedAt,
+  });
 }
 
 async function targetTabId() {
