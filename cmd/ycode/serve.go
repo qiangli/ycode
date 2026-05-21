@@ -152,12 +152,28 @@ var serveStatusCmd = &cobra.Command{
 			port = 58080
 		}
 
+		home, _ := os.UserHomeDir()
 		if !alreadyRunning(port) {
-			fmt.Printf("ycode serve not running on http://127.0.0.1:%d/\n", port)
+			// Manifest endpoint isn't responding — but check for orphans
+			// before declaring "not running." A live pidfile or a still-
+			// bound port means a previous serve is stuck or partially
+			// torn down. Surface that explicitly so the user knows to
+			// stop/kill it rather than retry-and-fail on port collisions.
+			pid := readServePID(home)
+			alive := processAlive(pid)
+			bound := !observability.IsPortAvailable(port)
+			switch {
+			case alive:
+				fmt.Printf("ycode serve PID %d is running but its manifest endpoint isn't responding on http://127.0.0.1:%d/\n", pid, port)
+				fmt.Println("Likely stuck mid-startup or partially torn down. Run `ycode serve stop` (graceful) or `kill " + strconv.Itoa(pid) + "` (force).")
+			case bound:
+				fmt.Printf("Port %d is bound by another process (not ycode by PID file). Run `lsof -nP -iTCP:%d -sTCP:LISTEN` to identify it.\n", port, port)
+			default:
+				fmt.Printf("ycode serve not running on http://127.0.0.1:%d/\n", port)
+			}
 			return nil
 		}
 
-		home, _ := os.UserHomeDir()
 		fmt.Printf("ycode serve running at http://127.0.0.1:%d/\n", port)
 		if pid := readServePID(home); pid > 0 {
 			fmt.Printf("PID: %d\n", pid)
@@ -296,7 +312,15 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		}
 		return nil
 	}
-	// Nothing is listening — drop any stale PID file from a prior crash
+	// Manifest probe found nothing, but a *live* PID file is a stronger
+	// signal — the previous server may be stuck mid-startup or partially
+	// torn down (handlers gone, ports still bound). Wiping that PID file
+	// would orphan the process from `ycode serve stop`. Refuse instead
+	// and let the user resolve it explicitly.
+	if pid := readServePID(home); pid > 0 && processAlive(pid) {
+		return fmt.Errorf("a ycode serve process (PID %d) is recorded as running but its manifest endpoint isn't responding on port %d. Run `ycode serve stop` (graceful) or `kill %d` (force), then retry", pid, port, pid)
+	}
+	// Nothing live found — drop any stale PID file from a prior crash
 	// before we proceed to bind ports below.
 	_ = os.Remove(filepath.Join(home, ".agents", "ycode", "serve.pid"))
 
@@ -731,6 +755,23 @@ func readServePID(home string) int {
 	}
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
 	return pid
+}
+
+// processAlive reports whether the given PID points to a live process.
+// Uses signal 0 — kernel does the access/existence check without
+// actually delivering a signal. ESRCH means the process is gone.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		return false
+	}
+	return true
 }
 
 // detachServer forks the current process as a background server.

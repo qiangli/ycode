@@ -81,6 +81,14 @@ func WrapMainWithOptions(mainFn MainFunc, opts *WrapMainOptions) int {
 	fmt.Fprintf(os.Stderr, "\nError encountered: %v\n", err)
 
 	if !healer.CanHeal(err) {
+		if ClassifyError(err) == FailureTypePortInUse {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintln(os.Stderr, "\nA port required by ycode is already in use. Options:")
+			fmt.Fprintln(os.Stderr, "  - `ycode serve stop` (graceful — needs the pidfile)")
+			fmt.Fprintln(os.Stderr, "  - `lsof -nP -iTCP:<port> -sTCP:LISTEN` to find the PID, then kill it")
+			fmt.Fprintln(os.Stderr, "  - reconfigure the port in settings.json or set it negative to allocate ephemerally")
+			return 1
+		}
 		fmt.Fprintf(os.Stderr, "This error cannot be automatically healed.\n")
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1

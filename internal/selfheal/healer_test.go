@@ -59,6 +59,18 @@ func TestClassifyError(t *testing.T) {
 			err:      nil,
 			expected: FailureTypeUnknown,
 		},
+		{
+			// Regression: "build stack: ... port N already in use" used to
+			// mis-match the "build" substring and route to fixBuildError.
+			name:     "port collision wrapped by build stack prefix",
+			err:      errors.New("build stack: OTLP gRPC port 4317 already in use; configure observability.otlpGRPC/HTTPPort to override or set negative to allocate ephemerally"),
+			expected: FailureTypePortInUse,
+		},
+		{
+			name:     "port collision - posix bind error",
+			err:      errors.New("listen tcp 127.0.0.1:11434: bind: address already in use"),
+			expected: FailureTypePortInUse,
+		},
 	}
 
 	for _, tt := range tests {

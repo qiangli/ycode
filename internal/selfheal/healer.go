@@ -37,6 +37,11 @@ const (
 	FailureTypeTool FailureType = "tool"
 	// FailureTypeInference indicates a local inference engine error.
 	FailureTypeInference FailureType = "inference"
+	// FailureTypePortInUse indicates a TCP port collision at startup.
+	// User-actionable (kill the holder or reconfigure the port) — no
+	// AI-mediated healing can do anything useful, so CanHeal returns
+	// false and the wrapper prints a direct hint instead.
+	FailureTypePortInUse FailureType = "port-in-use"
 	// FailureTypeUnknown indicates an uncategorized error.
 	FailureTypeUnknown FailureType = "unknown"
 )
@@ -214,6 +219,10 @@ func (h *Healer) CanHeal(err error) bool {
 	case FailureTypeAPI, FailureTypeTool:
 		// These might be transient, healing might help
 		return true
+	case FailureTypePortInUse:
+		// User-actionable; the wrapper prints a direct hint instead
+		// of running an unhelpful healing attempt.
+		return false
 	default:
 		return false
 	}
@@ -226,6 +235,16 @@ func ClassifyError(err error) FailureType {
 	}
 
 	errStr := strings.ToLower(err.Error())
+
+	// Port collisions — checked BEFORE the "build" substring branch
+	// because messages like "build stack: ... port 4317 already in use"
+	// would otherwise mis-route to fixBuildError and emit a misleading
+	// "needs AI integration" message for what is a trivial user fix.
+	if strings.Contains(errStr, "address already in use") ||
+		strings.Contains(errStr, "already in use") && strings.Contains(errStr, "port") ||
+		strings.Contains(errStr, "bind: address") {
+		return FailureTypePortInUse
+	}
 
 	// Build errors
 	if strings.Contains(errStr, "build") ||
