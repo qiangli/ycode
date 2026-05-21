@@ -2,10 +2,20 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
+# Used by the wildcard expansion in TAG_LIST below — Make's $(,) is
+# not portable.
+comma := ,
+
 # Build tag layers (see docs/strategy.md#feature-tiers):
 #   sqlite + sqlite_unlock_notify  embedded Gitea / SQLite
 #   bindata                        Gitea bundled assets
-TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata
+#   embed_runner (auto)            llama.cpp inference runner — added
+#                                  automatically when the gz exists.
+#                                  Run `make runner-build-thin` to
+#                                  produce it; without it `ycode serve`
+#                                  hard-stops at startup because no
+#                                  inference can be served.
+TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata$(if $(wildcard internal/inference/runner_embed/ycode-runner.gz),$(comma)embed_runner)
 TAGS := -tags "$(TAG_LIST)"
 PACKAGES := $(shell go list ./... | grep -v '/priorart/')
 

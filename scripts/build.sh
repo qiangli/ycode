@@ -3,7 +3,7 @@
 # Env: VERSION, COMMIT, PACKAGES, TAG_LIST (set by Makefile)
 set -euo pipefail
 
-TAG_LIST="${TAG_LIST:-sqlite,sqlite_unlock_notify,bindata,experimental}"
+TAG_LIST="${TAG_LIST:-sqlite,sqlite_unlock_notify,bindata}"
 
 echo "=== Step 1: Dependency hygiene ==="
 go mod tidy
