@@ -27,9 +27,6 @@ make tidy            # standalone lint: mod tidy + fmt + vet (also runs inside `
 make vet             # static analysis only
 ```
 
-**Generated artifacts** — regenerate after editing the source-of-truth:
-- `internal/features/registry.yaml` → `make readme-features` (updates README Features block; `make build` will fail with drift)
-
 **Build tags** (see `Makefile`):
 - Default: `sqlite,sqlite_unlock_notify,bindata,experimental`
 - Features are **ON by default** and opt-out — full opt-out policy and graduation criteria in [`docs/strategy.md`](./docs/strategy.md) (also linked at the top of this file)

@@ -11,9 +11,8 @@
 # Graduation: a feature moves wip → experimental → stable via PR. CI fails if
 # tier=stable without graduation criteria satisfied.
 #
-# The README "Features" section is auto-generated from this file
-# (filtered to tier: stable) — keep `description` short and user-facing.
-# Run `make readme-features` after editing to refresh the README.
+# Surfaced to users via `ycode features list` / `ycode features readme`
+# — keep `description` short and user-facing.
 
 features:
   # ─── core agent loop ──────────────────────────────────────────────────────

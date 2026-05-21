@@ -577,7 +577,7 @@ This is the **strategic** roadmap. For the tactical feature-gap inventory (P0/P1
 - [x] Wire `verify-features` CI workflow
 - [x] Resolve TUI permission TODO (`internal/cli/tui.go`) — confirmYes/No now call RespondPermission via the agentClient; regression test in `internal/cli/permission_test.go`
 - [x] Audit and re-classify all 50+ tools — registry now covers 27 stable user-facing capability areas (was 10) with `description` field for each.
-- [x] Auto-generate the README tool catalog section from the registry — `ycode features readme --write README.md` renders into `<!-- BEGIN FEATURES -->` / `<!-- END FEATURES -->` sentinels. `make verify-features` fails CI on drift.
+- [x] Expose the feature registry via `ycode features list / readme / verify` — README points at the CLI rather than embedding a stale copy. `make verify-features` validates registry structure (paths exist, no malformed entries).
 - [x] Commit `docs/strategy.md` (this document) + reference it from `AGENTS.md` and `README.md`
 
 **Exit gate:** Default `make build` produces a binary where every advertised feature passes graduation criteria. Running `ycode doctor` on three fresh OSes reports zero TODO/stub conditions.

@@ -66,12 +66,8 @@ compile-wip: ## Compile with experimental + wip features enabled
 	go build -trimpath -tags "$(TAG_LIST),wip" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 	@echo "Built bin/ycode (tags: $(TAG_LIST),wip)"
 
-verify-features: ## Verify the feature registry vs. the working tree (and README drift)
+verify-features: ## Verify the feature registry structure (paths exist, no malformed entries)
 	go test -count=1 ./internal/features/...
-	@./scripts/verify-readme-features.sh
-
-readme-features: ## Regenerate the README Features section from internal/features/registry.yaml
-	go run $(TAGS) ./cmd/ycode/ features readme --write README.md
 
 compile-full: ## Compile with embedded podman + runner (single binary, all-in-one)
 	go build -trimpath -tags "$(TAG_LIST),embed_podman,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
