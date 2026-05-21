@@ -27,44 +27,23 @@ func TestNewOllamaComponent(t *testing.T) {
 	if comp.HTTPHandler() != nil {
 		t.Error("HTTPHandler() should be nil before start")
 	}
-	if comp.Runner() != nil {
-		t.Error("Runner() should be nil before start")
-	}
 }
 
-func TestOllamaComponent_Start_NoRunner(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &Config{
-		RunnerPath: "/nonexistent/ollama",
-	}
-	comp := NewOllamaComponent(cfg, dir)
+// Note: tests below exercise prepare() rather than Start(). The embedded
+// ollama server registers handlers on http.DefaultServeMux and can only
+// be started once per process (see serveOnce in ollama.go) — actually
+// driving Start under `go test` would either monopolise port 11434 for
+// the test binary or panic with "pattern / already registered" on the
+// second test. prepare() covers the side-effects (data dir creation,
+// $OLLAMA_MODELS) which is what these tests need to verify.
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	err := comp.Start(ctx)
-	if err == nil {
-		t.Fatal("expected error when runner not found")
-	}
-
-	if comp.Healthy() {
-		t.Error("should not be healthy after failed start")
-	}
-}
-
-func TestOllamaComponent_Start_CreatesDataDir(t *testing.T) {
+func TestOllamaComponent_Prepare_CreatesDataDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "inference")
-	cfg := &Config{
-		RunnerPath: "/nonexistent/ollama",
+	comp := NewOllamaComponent(&Config{}, dir)
+
+	if err := comp.prepare(); err != nil {
+		t.Fatalf("prepare: %v", err)
 	}
-	comp := NewOllamaComponent(cfg, dir)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	// Start will fail because runner doesn't exist, but data dir should be created.
-	_ = comp.Start(ctx)
-
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		t.Error("data directory was not created")
 	}
@@ -82,21 +61,18 @@ func TestOllamaComponent_Stop_BeforeStart(t *testing.T) {
 	}
 }
 
-func TestOllamaComponent_ModelsDir_EnvVar(t *testing.T) {
+func TestOllamaComponent_Prepare_ModelsDir_EnvVar(t *testing.T) {
 	dir := t.TempDir()
 	modelsDir := filepath.Join(dir, "models")
-	cfg := &Config{
-		ModelsDir:  modelsDir,
-		RunnerPath: "/nonexistent/ollama",
-	}
+	// Reset OLLAMA_MODELS so a leaked value from another test doesn't
+	// mask a real bug in prepare's env handling.
+	t.Setenv("OLLAMA_MODELS", "")
+	cfg := &Config{ModelsDir: modelsDir}
 	comp := NewOllamaComponent(cfg, dir)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	// Start will fail, but OLLAMA_MODELS should be set.
-	_ = comp.Start(ctx)
-
+	if err := comp.prepare(); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
 	if got := os.Getenv("OLLAMA_MODELS"); got != modelsDir {
 		t.Errorf("OLLAMA_MODELS = %q, want %q", got, modelsDir)
 	}

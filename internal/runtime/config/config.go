@@ -251,8 +251,6 @@ func (c *ObservabilityConfig) IsEnabled() bool {
 // degrade. Opt-out: set `inference.enabled: false` in settings.json.
 type InferenceConfig struct {
 	Enabled      *bool  `json:"enabled,omitempty"`
-	RunnerPath   string `json:"runnerPath,omitempty"`   // explicit path to ollama binary
-	AutoDownload bool   `json:"autoDownload"`           // download runner on first use
 	DefaultModel string `json:"defaultModel,omitempty"` // pre-load model on startup
 	ModelsDir    string `json:"modelsDir,omitempty"`    // model storage directory
 	GPULayers    int    `json:"gpuLayers,omitempty"`    // GPU offload layers (-1 = auto)
@@ -464,10 +462,8 @@ func DefaultConfig() *Config {
 		// Every default-on sub-config needs a non-nil pointer at this
 		// stage. Without it, IsEnabled() returns true (nil-safe default)
 		// but consumers that read fields off the sub-config (SocketPath,
-		// RunnerPath, etc.) panic on nil deref. Mirrors the Observability
-		// + GitServer treatment above. Mid-2026: this is what the
-		// "default-on, real opt-out" policy commit (6d563ea) implicitly
-		// requires — callers must trust the sub-config exists.
+		// ModelsDir, etc.) panic on nil deref. Mirrors the Observability
+		// + GitServer treatment above.
 		Inference: &InferenceConfig{},
 		Container: &ContainerConfig{},
 		NATS:      &NATSConfig{},
@@ -690,12 +686,6 @@ func mergeFromFile(cfg *Config, path string) error {
 		in := overlay.Inference
 		if in.Enabled != nil {
 			cfg.Inference.Enabled = in.Enabled
-		}
-		if in.RunnerPath != "" {
-			cfg.Inference.RunnerPath = in.RunnerPath
-		}
-		if in.AutoDownload {
-			cfg.Inference.AutoDownload = true
 		}
 		if in.DefaultModel != "" {
 			cfg.Inference.DefaultModel = in.DefaultModel

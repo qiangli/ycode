@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"sync/atomic"
 
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
@@ -20,14 +19,19 @@ type OTELConfig struct {
 }
 
 // otelState holds runtime OTEL state for the inference component.
+//
+// Per-runner crash/restart counters were dropped along with the
+// external-binary RunnerManager — ollama's in-process scheduler owns
+// runner lifecycle and doesn't expose a stable per-runner identity
+// (runners are ephemeral, one per model load). The two gauges that
+// remain (overall component health, API port) are observable from
+// the outside.
 type otelState struct {
-	cfg            *OTELConfig
-	runnerHealthy  metric.Int64ObservableGauge
-	runnerRestarts metric.Int64ObservableGauge
-	runnerPort     metric.Int64ObservableGauge
-	healthyVal     atomic.Int64
-	restartsVal    atomic.Int64
-	portVal        atomic.Int64
+	cfg           *OTELConfig
+	runnerHealthy metric.Int64ObservableGauge
+	runnerPort    metric.Int64ObservableGauge
+	healthyVal    atomic.Int64
+	portVal       atomic.Int64
 }
 
 // SetOTEL configures OTEL instrumentation on the component.
@@ -54,15 +58,6 @@ func (o *OllamaComponent) SetOTEL(cfg *OTELConfig) {
 		}),
 	)
 
-	state.runnerRestarts, _ = meter.Int64ObservableGauge(
-		"ycode.inference.runner.restart_count",
-		metric.WithDescription("Cumulative runner restart count"),
-		metric.WithInt64Callback(func(_ context.Context, obs metric.Int64Observer) error {
-			obs.Observe(state.restartsVal.Load())
-			return nil
-		}),
-	)
-
 	state.runnerPort, _ = meter.Int64ObservableGauge(
 		"ycode.inference.runner.port",
 		metric.WithDescription("Port the inference runner is listening on"),
@@ -76,25 +71,25 @@ func (o *OllamaComponent) SetOTEL(cfg *OTELConfig) {
 }
 
 // updateOTELGauges syncs the component's runtime state into OTEL gauges.
-// Called after runner state changes.
+// Runner-specific gauges (restarts, runner port) are no longer
+// meaningful — ollama's scheduler owns runner lifecycle internally and
+// uses ephemeral ports per request. We export the component's overall
+// health and the ollama API port (default 11434).
 func (o *OllamaComponent) updateOTELGauges() {
 	if o.otel == nil {
 		return
 	}
-	if o.runner != nil {
-		if o.runner.Healthy() {
-			o.otel.healthyVal.Store(1)
-		} else {
-			o.otel.healthyVal.Store(0)
-		}
-		o.otel.restartsVal.Store(int64(o.runner.Restarts()))
-		o.otel.portVal.Store(int64(o.runner.Port()))
+	if o.healthy.Load() {
+		o.otel.healthyVal.Store(1)
 	} else {
 		o.otel.healthyVal.Store(0)
 	}
+	o.otel.portVal.Store(int64(o.Port()))
 }
 
-// traceRunnerStart records a span for a runner start event.
+// traceRunnerStart records a span for component start. Kept under the
+// "runner.start" name for dashboard backward-compat; the actual runner
+// subprocess is spawned later by ollama's scheduler on first inference.
 func (o *OllamaComponent) traceRunnerStart(ctx context.Context) {
 	if o.otel == nil || o.otel.cfg.Tracer == nil {
 		return
@@ -103,7 +98,7 @@ func (o *OllamaComponent) traceRunnerStart(ctx context.Context) {
 	_, span := o.otel.cfg.Tracer.Start(ctx, "ycode.inference.runner.start",
 		trace.WithAttributes(
 			yotel.AttrInferenceProvider.String("ollama"),
-			yotel.AttrInferencePort.Int(o.runner.Port()),
+			yotel.AttrInferencePort.Int(o.Port()),
 		),
 	)
 	span.End()
@@ -111,44 +106,5 @@ func (o *OllamaComponent) traceRunnerStart(ctx context.Context) {
 	if o.otel.cfg.Inst != nil {
 		o.otel.cfg.Inst.InferenceRunnerStarts.Add(ctx, 1)
 	}
-	slog.Info("otel: inference runner start recorded", "port", o.runner.Port())
-}
-
-// traceRunnerCrash records a span and metric for a runner crash event.
-func (o *OllamaComponent) traceRunnerCrash(ctx context.Context, err error) {
-	if o.otel == nil || o.otel.cfg.Tracer == nil {
-		return
-	}
-
-	_, span := o.otel.cfg.Tracer.Start(ctx, "ycode.inference.runner.crash",
-		trace.WithAttributes(
-			yotel.AttrInferenceProvider.String("ollama"),
-			yotel.AttrInferenceRestarts.Int(int(o.runner.Restarts())),
-		),
-	)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-	}
-	span.End()
-
-	if o.otel.cfg.Inst != nil {
-		o.otel.cfg.Inst.InferenceRunnerCrashes.Add(ctx, 1)
-	}
-}
-
-// traceRunnerHealthCheck records a span for a health check cycle.
-func (o *OllamaComponent) traceRunnerHealthCheck(ctx context.Context, healthy bool) {
-	if o.otel == nil || o.otel.cfg.Tracer == nil {
-		return
-	}
-
-	_, span := o.otel.cfg.Tracer.Start(ctx, "ycode.inference.runner.health_check",
-		trace.WithAttributes(
-			yotel.AttrInferenceProvider.String("ollama"),
-			yotel.AttrInferenceHealthy.Bool(healthy),
-			yotel.AttrInferencePort.Int(o.runner.Port()),
-		),
-	)
-	span.End()
+	slog.Info("otel: inference component start recorded", "port", o.Port())
 }

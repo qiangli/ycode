@@ -1340,6 +1340,10 @@ func init() {
 	// Container management commands (podman/docker)
 	rootCmd.AddCommand(newPodmanCmd())
 
+	// Embedded inference runner — internal protocol with ollama's scheduler.
+	// Hidden from help; exec-replaces into the extracted ycode-runner.
+	rootCmd.AddCommand(newRunnerCmd())
+
 	// Batch processing
 	rootCmd.AddCommand(newBatchCmd())
 
