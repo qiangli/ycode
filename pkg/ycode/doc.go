@@ -14,8 +14,7 @@
 //
 // # Embedding ycode in a third-party app
 //
-// The experimental build tag unlocks the surface designed for that case.
-// Build with -tags experimental and use:
+// The third-party embedding surface ships unconditionally; use:
 //
 //   - WithoutBuiltinTools / WithBuiltinAllowlist — opt out of the dangerous
 //     defaults (bash, write_file, edit_file, Agent) and register only the
@@ -41,8 +40,6 @@
 //
 // # The actor seam
 //
-// The pkg/ycode/actor sub-package defines the User context contract. It
-// ships without a build tag — third-party code that targets stable ycode
-// builds can still depend on the contract even when not using the rest of
-// the experimental surface. See actor for details.
+// The pkg/ycode/actor sub-package defines the User context contract.
+// See actor for details.
 package ycode

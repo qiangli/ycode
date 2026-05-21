@@ -1,24 +1,24 @@
-// Package features implements the feature-tier registry that gates which
-// capabilities ship in default builds vs. behind experimental/wip Go build
-// tags. The registry is the single source of truth for "what is ready to
-// ship." See docs/strategy.md#feature-tiers for the policy.
+// Package features implements the feature-tier registry. Tier is a
+// release-readiness label, not a build-time switch — all features
+// compile unconditionally. The tiering may be revisited if/when ycode
+// has enough users to warrant gating new features behind opt-in tags.
 package features
 
 // Tier classifies a feature's release readiness.
 type Tier string
 
 const (
-	// TierStable: integration-tested, dogfooded, documented. In default builds,
-	// README, benchmarks. Always compiled in.
+	// TierStable: integration-tested, dogfooded, documented.
 	TierStable Tier = "stable"
 
-	// TierExperimental: compiles, has tests, but new or rough. Opt-in via
-	// `-tags experimental`. Emits a stderr warning on first invocation.
-	// Excluded from README, benchmarks, default release artifacts.
+	// TierExperimental: compiles unconditionally, but new or rough.
+	// Surfaced in `ycode features list` so users know what's not yet
+	// hardened. Excluded from README marketing material.
 	TierExperimental Tier = "experimental"
 
-	// TierWIP: active development; may not work end-to-end. Opt-in via
-	// `-tags wip`. Excluded from CI-default and from any user-facing surface.
+	// TierWIP: active development; may not work end-to-end. Surfaced in
+	// `ycode features list` for transparency; excluded from user-facing
+	// docs.
 	TierWIP Tier = "wip"
 )
 

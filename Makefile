@@ -5,12 +5,7 @@ LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 # Build tag layers (see docs/strategy.md#feature-tiers):
 #   sqlite + sqlite_unlock_notify  embedded Gitea / SQLite
 #   bindata                        Gitea bundled assets
-#   experimental                   features that haven't graduated yet
-#
-# `experimental` is part of the default build while ycode is
-# pre-release. For a stable-only build, override TAG_LIST:
-#   make compile TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
-TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata,experimental
+TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata
 TAGS := -tags "$(TAG_LIST)"
 PACKAGES := $(shell go list ./... | grep -v '/priorart/')
 
@@ -22,7 +17,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL TAG_LIST
 
-.PHONY: help init sync priorart-list priorart-sync compile compile-stable compile-wip compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all chrome-extension cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
+.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-release-smoke test-all vet tidy clean all chrome-extension cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
 
 .DEFAULT_GOAL := help
 
@@ -54,17 +49,9 @@ priorart-sync: ## Pull latest changes for all priorart repos
 
 # ─── Build ──────────────────────────────────────────────────────────────────
 
-compile: ## Compile the ycode binary to bin/ (no checks; includes experimental)
+compile: ## Compile the ycode binary to bin/ (no checks)
 	go build -trimpath $(TAGS) $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 	@echo "Built bin/ycode (tags: $(TAG_LIST))"
-
-compile-stable: ## Compile without the experimental tag (explicit opt-out)
-	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
-	@echo "Built bin/ycode (stable-only; experimental features compiled out)"
-
-compile-wip: ## Compile with experimental + wip features enabled
-	go build -trimpath -tags "$(TAG_LIST),wip" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
-	@echo "Built bin/ycode (tags: $(TAG_LIST),wip)"
 
 verify-features: ## Verify the feature registry structure (paths exist, no malformed entries)
 	go test -count=1 ./internal/features/...
@@ -89,6 +76,11 @@ test-integration: ## Run Go integration tests (requires running server)
 
 test-container: ## Run container integration tests (requires podman)
 	go test -tags integration -race -count=1 -timeout 180s -v ./internal/container/...
+
+test-release-smoke: ## Fast e2e: ollama pull/run + podman build/pull/run (gates releases)
+	@echo "Release smoke — pulls a tiny model and a tiny image to verify both substrates work end-to-end."
+	@echo "Skips legs cleanly if podman/ollama prerequisites are missing."
+	go test -tags "$(TAG_LIST),release_smoke,embed_runner" -count=1 -timeout 600s -v ./internal/integration/ -run 'TestReleaseSmoke_'
 
 test-oci: ## Run OCI self-build integration test (requires podman)
 	go test -tags integration -race -count=1 -timeout 600s -v ./internal/container/... -run TestOCIBuildSelf

@@ -1,5 +1,3 @@
-//go:build experimental
-
 package ycode
 
 import "github.com/qiangli/ycode/internal/tools"

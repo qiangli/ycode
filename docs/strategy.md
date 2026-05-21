@@ -123,6 +123,8 @@ Once the half-baked is gated, ycode's positioning sharpens further: "**fewer fea
 
 ### Mechanism to enforce the floor: feature tiers via Go build tags
 
+> **Status (2026-05-21):** the build-tag implementation described below has been phased out — the `experimental` tag is no longer wired into any source file or Makefile target. The tier *labels* (`stable` / `experimental` / `wip`) remain in `internal/features/registry.yaml` as metadata surfaced via `ycode features list`, but they no longer gate compilation. The original design is retained here as future reference; we may reintroduce build-tag gating when ycode has a user base large enough that compile-time opt-out matters.
+
 We do not "cut" half-baked code by deleting it — we **demote it behind a Go build tag** so the default release binary excludes it, while development builds still have access. This makes the credibility floor mechanically enforced rather than a matter of discipline.
 
 #### Three tiers, three build tags

@@ -20,17 +20,16 @@ make install-hooks                     # recommended: pre-push hook runs `make c
 
 ```bash
 make build           # full gate: tidy → fmt → vet → compile → test → verify
-make compile         # quick compile (experimental features ON by default)
-make compile-stable  # explicit opt-out: without experimental tag
+make compile         # quick compile
 make test            # unit tests only (-short -race)
 make tidy            # standalone lint: mod tidy + fmt + vet (also runs inside `make build`)
 make vet             # static analysis only
 ```
 
 **Build tags** (see `Makefile`):
-- Default: `sqlite,sqlite_unlock_notify,bindata,experimental`
-- Features are **ON by default** and opt-out — full opt-out policy and graduation criteria in [`docs/strategy.md`](./docs/strategy.md) (also linked at the top of this file)
-- Manual: `go build -tags "sqlite,sqlite_unlock_notify,bindata,experimental" -o bin/ycode ./cmd/ycode/`
+- Default: `sqlite,sqlite_unlock_notify,bindata`
+- All features compile unconditionally; the `tier` field in `internal/features/registry.yaml` is metadata only (surfaced via `ycode features list`).
+- Manual: `go build -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/`
 
 **Test patterns**:
 ```bash
