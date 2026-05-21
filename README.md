@@ -76,7 +76,7 @@ The list below is auto-generated from `internal/features/registry.yaml` (filtere
 - **serve-mode** — `ycode serve` exposes HTTP/WebSocket + NATS endpoints with embedded observability (Prometheus, Jaeger, VictoriaLogs, Perses)
 - **observability** — OTEL traces + metrics + logs out of the box; agent-facing query tools (query_metrics, query_traces, query_logs)
 - **agent-delegation** — recursive child agent spawning with depth limits; team, parallel, handoff, cron primitives
-- **skills-system** — hierarchical /-prefixed skills (audit, autopilot, build, deploy, eval, …) plus embedded /init, /commit, /review, /pr
+- **skills-system** — lifecycle-organised skill catalog: external (github.com/dhnt/dhnt/catalog) + internal (.agents/ycode/skills/) lanes; loader honours frontmatter executor (markdown / builtin / cnl)
 - **plugin-system** — manifest-based plugins with hook lifecycle (PreToolUse, PostToolUse)
 - **memory-system** — five-layer memory (working, episodic, compaction, procedural, persistent) with RRF-fused vector + Bleve + keyword + entity retrieval
 - **session-management** — JSONL persistence, auto-compaction at 100K tokens, semantic summaries
