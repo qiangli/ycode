@@ -217,3 +217,43 @@ func TestIntegrationContainerList(t *testing.T) {
 	}
 	t.Logf("found %d containers", len(containers))
 }
+
+func TestIntegrationRunOneShot(t *testing.T) {
+	skipIfNoPodman(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	engine, err := NewEngine(ctx, &EngineConfig{})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer engine.Close(ctx)
+
+	// Happy path: alpine echoes to stdout, exit 0, separate streams captured.
+	res, err := engine.RunOneShot(ctx, &ContainerConfig{
+		Image:   "alpine:3.21",
+		Network: "none",
+		Command: []string{"sh", "-c", "echo out; echo err 1>&2; exit 7"},
+	})
+	if err != nil {
+		t.Fatalf("RunOneShot: %v", err)
+	}
+	if res.ExitCode != 7 {
+		t.Errorf("exit code = %d, want 7", res.ExitCode)
+	}
+	if !strings.Contains(res.Stdout, "out") {
+		t.Errorf("stdout = %q, want to contain 'out'", res.Stdout)
+	}
+	if !strings.Contains(res.Stderr, "err") {
+		t.Errorf("stderr = %q, want to contain 'err'", res.Stderr)
+	}
+	// Cross-stream leakage check: stdout must not contain stderr content
+	// (the demux is the whole point of returning separate strings).
+	if strings.Contains(res.Stdout, "err") {
+		t.Errorf("stdout leaked stderr content: %q", res.Stdout)
+	}
+	if strings.Contains(res.Stderr, "out") {
+		t.Errorf("stderr leaked stdout content: %q", res.Stderr)
+	}
+}

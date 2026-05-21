@@ -26,8 +26,14 @@ echo "Requirements: Go, CMake, C/C++ compiler"
 cd "${OLLAMA_SRC}"
 
 # Generate the C++ inference engine (llama.cpp compilation).
+# Scope to the runner's deps — ./... pulls in app/ui's tscriptify/npm
+# directive which we don't need and which isn't in the host toolchain.
 echo "Running go generate (compiling llama.cpp — may take several minutes)..."
-go generate ./...
+go generate ./ml/... ./x/...
+
+# Ensure go.work doesn't redirect us back into ycode's workspace, where
+# external/ollama isn't a `use` entry and ./... resolves the wrong way.
+export GOWORK=off
 
 # Build ONLY the runner binary (not the full ollama server).
 echo "Building runner binary..."

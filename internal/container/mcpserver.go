@@ -1,12 +1,10 @@
 package container
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"time"
 
 	"github.com/qiangli/ycode/internal/runtime/mcp"
@@ -20,12 +18,10 @@ import (
 //
 // Foreign agents typically call this when they need to execute
 // untrusted code (e.g. AI-generated scripts) without giving the model
-// access to the host filesystem or network. Requires `podman` on the
-// host PATH (or running inside `ycode serve`, which embeds it).
+// access to the host filesystem or network. Backed by the embedded
+// Podman engine — no external `podman` binary required.
 type MCPHandler struct{}
 
-// NewMCPHandler builds the handler. Stateless — each call spawns a
-// fresh `podman run --rm` invocation.
 func NewMCPHandler() *MCPHandler { return &MCPHandler{} }
 
 func (h *MCPHandler) ListTools() []mcp.Tool {
@@ -78,10 +74,6 @@ func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json
 		return "", fmt.Errorf("command is required (and must be a non-empty array)")
 	}
 
-	if _, err := exec.LookPath("podman"); err != nil {
-		return "", fmt.Errorf("podman not found in PATH (install podman or run inside `ycode serve`)")
-	}
-
 	image := args.Image
 	if image == "" {
 		image = "alpine:3.21"
@@ -105,33 +97,34 @@ func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json
 		defer cancel()
 	}
 
-	podmanArgs := []string{
-		"run", "--rm",
-		"--network=" + network,
-		"--volume", fmt.Sprintf("%s:/workspace:rw", workdir),
-		"--workdir", "/workspace",
-		image,
+	eng, err := SharedEngine(ctx)
+	if err != nil {
+		return "", fmt.Errorf("container engine unavailable: %w", err)
 	}
-	podmanArgs = append(podmanArgs, args.Command...)
 
-	cmd := exec.CommandContext(ctx, "podman", podmanArgs...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cfg := &ContainerConfig{
+		Image:   image,
+		Network: network,
+		WorkDir: "/workspace",
+		Mounts: []Mount{{
+			Source: workdir,
+			Target: "/workspace",
+		}},
+		Command: args.Command,
+	}
 
-	ctx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeSandbox, "podman", podmanArgs)
-	_ = ctx
+	ctx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeSandbox, "embedded-podman", append([]string{image}, args.Command...))
 	start := time.Now()
-	runErr := cmd.Run()
+	result, runErr := eng.RunOneShot(ctx, cfg)
 	duration := time.Since(start)
 
-	exitCode := 0
-	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			exitCode = -1
-		}
+	exitCode := -1
+	stdoutStr := ""
+	stderrStr := ""
+	if result != nil {
+		exitCode = result.ExitCode
+		stdoutStr = result.Stdout
+		stderrStr = result.Stderr
 	}
 	finish(exitCode, runErr)
 
@@ -142,13 +135,12 @@ func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json
 		DurationMS int64  `json:"duration_ms"`
 		Error      string `json:"error,omitempty"`
 	}{
-		Stdout:     stdout.String(),
-		Stderr:     stderr.String(),
+		Stdout:     stdoutStr,
+		Stderr:     stderrStr,
 		ExitCode:   exitCode,
 		DurationMS: duration.Milliseconds(),
 	}
-	if runErr != nil && exitCode < 0 {
-		// Non-exit errors (timeout, podman binary missing mid-run, etc.)
+	if runErr != nil {
 		envelope.Error = runErr.Error()
 	}
 

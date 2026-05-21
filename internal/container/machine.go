@@ -13,10 +13,30 @@ import (
 	"strings"
 	"time"
 
+	"go.podman.io/common/pkg/config"
+
 	ociMachine "github.com/qiangli/ycode/pkg/oci/machine"
 
 	vfkitEmbed "github.com/qiangli/ycode/internal/container/vfkit_embed"
 )
+
+// defaultMachineImage is the OCI artifact endpoint upstream podman CLI
+// uses when containers.conf doesn't override it. Mirrors the constant in
+// go.podman.io/common/pkg/config so a stripped-down install without a
+// containers.conf on disk still has somewhere to pull the VM image.
+const defaultMachineImage = "docker://quay.io/podman/machine-os"
+
+// resolveMachineImage picks an OCI endpoint for the machine VM image.
+// Empty → upstream's containers.conf default → hardcoded fallback. The
+// libpod shim treats "" as a fatal error (NewOCIArtifactPull rejects it),
+// so this must always return a non-empty string when first-time init is
+// possible.
+func resolveMachineImage() string {
+	if cfg, err := config.Default(); err == nil && cfg.Machine.Image != "" {
+		return cfg.Machine.Image
+	}
+	return defaultMachineImage
+}
 
 // MachineConfig holds configuration for the Linux VM.
 type MachineConfig struct {
@@ -74,6 +94,7 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 			Memory:    uint64(cfg.Memory),
 			DiskSize:  uint64(cfg.Disk),
 			IsDefault: true,
+			Image:     resolveMachineImage(),
 		}
 
 		if err := ociMachine.Init(initOpts, mp); err != nil {

@@ -3,8 +3,8 @@ package builtins
 import (
 	"context"
 	"fmt"
-	"os/exec"
 
+	"github.com/qiangli/ycode/internal/container"
 	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
@@ -23,7 +23,6 @@ func (sandboxVerb) Run(ctx context.Context, args []string, stdio Stdio, cwd stri
 		fmt.Fprintln(stdio.Stderr, "yc sandbox: missing command (use `--` to separate flags from the command)")
 		return 2, nil
 	}
-	// Strip a leading "--" used by users to separate flags from command.
 	if args[0] == "--" {
 		args = args[1:]
 	}
@@ -32,46 +31,48 @@ func (sandboxVerb) Run(ctx context.Context, args []string, stdio Stdio, cwd stri
 		return 2, nil
 	}
 
-	if _, err := exec.LookPath("podman"); err != nil {
-		fmt.Fprintln(stdio.Stderr, "yc sandbox: podman not found in PATH")
-		fmt.Fprintln(stdio.Stderr, "  install podman, or run from inside `ycode serve` (which embeds podman)")
+	eng, err := container.SharedEngine(ctx)
+	if err != nil {
+		fmt.Fprintf(stdio.Stderr, "yc sandbox: container engine unavailable: %v\n", err)
 		return 1, nil
 	}
 
-	// Best-effort minimal sandbox: alpine, cwd mounted read-write, no
-	// network, no escalation. The container is removed on exit.
-	cmdArgs := []string{
-		"run", "--rm",
-		"--network=none",
-		"--volume", fmt.Sprintf("%s:/workspace:rw", cwd),
-		"--workdir", "/workspace",
-		"alpine:3.21",
+	cfg := &container.ContainerConfig{
+		Image:   "alpine:3.21",
+		Network: "none",
+		WorkDir: "/workspace",
+		Mounts: []container.Mount{{
+			Source: cwd,
+			Target: "/workspace",
+		}},
+		Command: args,
 	}
-	cmdArgs = append(cmdArgs, args...)
 
-	cmd := exec.CommandContext(ctx, "podman", cmdArgs...)
-	cmd.Stdin = stdio.Stdin
-	cmd.Stdout = stdio.Stdout
-	cmd.Stderr = stdio.Stderr
+	ctx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeSandbox, "embedded-podman", append([]string{cfg.Image}, args...))
 
-	ctx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeSandbox, "podman", cmdArgs)
-	_ = ctx
-	runErr := cmd.Run()
+	result, err := eng.RunOneShot(ctx, cfg)
 	exitCode := 0
-	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
+	if result != nil {
+		if _, werr := stdio.Stdout.Write([]byte(result.Stdout)); werr != nil {
+			_ = werr
+		}
+		if result.Stdout != "" {
+			fmt.Fprintln(stdio.Stdout)
+		}
+		if _, werr := stdio.Stderr.Write([]byte(result.Stderr)); werr != nil {
+			_ = werr
+		}
+		if result.Stderr != "" {
+			fmt.Fprintln(stdio.Stderr)
+		}
+		exitCode = result.ExitCode
+	}
+	if err != nil {
+		fmt.Fprintf(stdio.Stderr, "yc sandbox: %v\n", err)
+		if exitCode == 0 {
 			exitCode = 1
 		}
 	}
-	finish(exitCode, runErr)
-	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			return exitErr.ExitCode(), nil
-		}
-		fmt.Fprintf(stdio.Stderr, "yc sandbox: %v\n", runErr)
-		return 1, nil
-	}
-	return 0, nil
+	finish(exitCode, err)
+	return exitCode, nil
 }

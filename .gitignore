@@ -9,6 +9,11 @@ bin/
 # Test binary
 *.test
 
+# Embedded inference runner — platform-specific build artifact produced by
+# scripts/build-runner-thin.sh. Devs build locally when they want the
+# embed_runner build tag; default builds use embed_stub.go and don't need it.
+internal/inference/runner_embed/ycode-runner.gz
+
 # Go build cache
 /vendor/
 

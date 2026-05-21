@@ -386,6 +386,100 @@ func (e *Engine) ContainerLogs(ctx context.Context, idOrName string, follow bool
 	return strings.TrimRight(result, "\n"), nil
 }
 
+// RunResult is the outcome of a one-shot container invocation: separate
+// stdout/stderr streams and the process exit code. ExitCode is -1 when
+// the container failed to start or was killed by a signal before producing
+// a status code.
+type RunResult struct {
+	Stdout   string
+	Stderr   string
+	ExitCode int
+}
+
+// RunOneShot creates a container from cfg, starts it, streams its
+// stdout/stderr into separate buffers, waits for it to exit, removes it,
+// and returns the captured output plus the exit code. This is the
+// embedded-engine equivalent of `podman run --rm <image> <cmd>` and is
+// what the sandbox shell builtin and sandbox_exec MCP tool use to execute
+// untrusted code without shelling out to a `podman` binary.
+//
+// The container is always removed on return, even on error paths.
+func (e *Engine) RunOneShot(ctx context.Context, cfg *ContainerConfig) (*RunResult, error) {
+	ctr, err := e.CreateContainer(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("create container: %w", err)
+	}
+	// Always remove, even if the caller cancels. Use a fresh context so
+	// cleanup still runs when ctx has been cancelled (otherwise the user
+	// gets dangling exited containers).
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = ctr.Remove(cleanupCtx, true)
+	}()
+
+	if err := ctr.Start(ctx); err != nil {
+		return nil, fmt.Errorf("start container: %w", err)
+	}
+
+	// Stream logs with follow=true while the container runs. The libpod
+	// HTTP API multiplexes stdout/stderr into separate frames; the
+	// bindings demux them into two channels. Logs blocks until the
+	// container exits, draining both channels.
+	follow := true
+	stdoutFlag := true
+	stderrFlag := true
+	opts := &containers.LogOptions{Follow: &follow, Stdout: &stdoutFlag, Stderr: &stderrFlag}
+
+	stdoutCh := make(chan string, 1024)
+	stderrCh := make(chan string, 1024)
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	stdoutDone := make(chan struct{})
+	stderrDone := make(chan struct{})
+	go func() {
+		for s := range stdoutCh {
+			stdoutBuf.WriteString(s)
+		}
+		close(stdoutDone)
+	}()
+	go func() {
+		for s := range stderrCh {
+			stderrBuf.WriteString(s)
+		}
+		close(stderrDone)
+	}()
+
+	logsErr := containers.Logs(e.connCtx, ctr.ID, opts, stdoutCh, stderrCh)
+	close(stdoutCh)
+	close(stderrCh)
+	<-stdoutDone
+	<-stderrDone
+
+	result := &RunResult{
+		Stdout:   strings.TrimRight(stdoutBuf.String(), "\n"),
+		Stderr:   strings.TrimRight(stderrBuf.String(), "\n"),
+		ExitCode: -1,
+	}
+
+	// Get exit code via Wait (returns when the container is in a
+	// terminal state). Wait against the connection context, not ctx —
+	// if the caller cancelled, the container is still in libpod and
+	// has a real exit code we want to surface.
+	code, waitErr := containers.Wait(e.connCtx, ctr.ID, nil)
+	if waitErr == nil {
+		result.ExitCode = int(code)
+	}
+
+	// Logs errors are usually downstream of the container exiting
+	// abnormally (e.g. context cancelled mid-stream). Surface them only
+	// when we don't have a clean exit code to report.
+	if logsErr != nil && waitErr != nil {
+		return result, fmt.Errorf("logs: %w (wait: %v)", logsErr, waitErr)
+	}
+	return result, nil
+}
+
 // --- tar helpers ---
 
 // tarPath creates a tar archive from a host path.

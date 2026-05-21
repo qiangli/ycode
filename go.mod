@@ -93,6 +93,7 @@ require (
 	go.opentelemetry.io/otel/sdk/log v0.19.0
 	go.opentelemetry.io/otel/sdk/metric v1.43.0
 	go.opentelemetry.io/otel/trace v1.43.0
+	go.podman.io/common v0.67.2-0.20260423135811-cbaa5f41e643
 	golang.org/x/crypto v0.50.0
 	golang.org/x/net v0.53.0
 	golang.org/x/term v0.42.0
@@ -822,7 +823,6 @@ require (
 	go.opentelemetry.io/otel/exporters/prometheus v0.65.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	go.podman.io/buildah v1.42.1-0.20260421143840-0acb6b8cca85 // indirect
-	go.podman.io/common v0.67.2-0.20260423135811-cbaa5f41e643 // indirect
 	go.podman.io/image/v5 v5.39.3-0.20260423135811-cbaa5f41e643 // indirect
 	go.podman.io/podman/v6 v6.0.0-20260424181651-a8c36318565d // indirect
 	go.podman.io/storage v1.62.1-0.20260423135811-cbaa5f41e643 // indirect
