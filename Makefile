@@ -157,11 +157,14 @@ tidy: ## Run mod tidy, fmt, and vet
 clean: ## Remove build artifacts
 	rm -rf bin/ dist/
 
-install: build ## Install ycode to ~/bin/
+install: build ## Install ycode + drop-in shims (ollama, podman, docker) to ~/bin/
 	@mkdir -p ~/bin
 	@cp bin/ycode ~/bin/ycode
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - ~/bin/ycode 2>/dev/null || true; fi
-	@echo "Installed ycode to ~/bin/ycode"
+	@for shim in ollama podman docker; do \
+		cp scripts/shims/$$shim ~/bin/$$shim && chmod +x ~/bin/$$shim; \
+	done
+	@echo "Installed ycode + shims (ollama, podman, docker) to ~/bin/"
 	@echo 'Make sure ~/bin is in your PATH: export PATH="$$HOME/bin:$$PATH"'
 
 all: build ## Full quality gate (alias for build)

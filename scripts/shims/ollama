@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Drop-in shim: routes `ollama …` to `ycode ollama …`.
+#
+# Install one of:
+#   ln -s "$(pwd)/scripts/shims/ollama" /usr/local/bin/ollama
+#   PATH="/path/to/ycode/scripts/shims:$PATH"
+#
+# See cmd/ycode/ollama.go for the verb map.
+exec ycode ollama "$@"

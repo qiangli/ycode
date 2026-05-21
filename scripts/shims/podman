@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Drop-in shim: routes `podman …` to `ycode podman …`.
+#
+# Install one of:
+#   ln -s "$(pwd)/scripts/shims/podman" /usr/local/bin/podman
+#   PATH="/path/to/ycode/scripts/shims:$PATH"
+#
+# See cmd/ycode/podman.go for the verb map.
+exec ycode podman "$@"
