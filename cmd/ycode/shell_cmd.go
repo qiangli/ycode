@@ -50,8 +50,9 @@ func newShellCmd() *cobra.Command {
 	f := &shellFlags{}
 
 	cmd := &cobra.Command{
-		Use:   "shell",
-		Short: "Run an interactive agentic shell (bash + LLM-mediated UX)",
+		Use:     "shell",
+		Aliases: []string{"bash"},
+		Short:   "Run an interactive agentic shell (bash + LLM-mediated UX)",
 		Long: `ycode shell is an interactive shell that is bash-compatible at the
 command layer and LLM-mediated at the UX layer. Bare words go through PATH
 exactly like /bin/bash. Agentic features sit above bash via sentinel prefixes:

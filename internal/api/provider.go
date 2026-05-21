@@ -199,6 +199,17 @@ func detectFromModel(model string) (*ProviderConfig, bool) {
 	lower := strings.ToLower(model)
 
 	switch {
+	// Ollama-style tagged models (`name:variant`, e.g. `qwen2.5:0.5b`,
+	// `llama3.2:3b`, `gemma2:2b`). Distinct from cloud model IDs, which
+	// don't use colons. Checked first so `qwen2.5:0.5b` doesn't fall
+	// into the cloud `qwen` branch and demand a DashScope key.
+	case strings.Contains(lower, ":") && !strings.Contains(lower, "://"):
+		baseURL := envNonEmpty("OPENAI_BASE_URL", envNonEmpty("OLLAMA_HOST", "http://127.0.0.1:11434")+"/v1")
+		return &ProviderConfig{
+			Kind:        ProviderLocal,
+			DisplayName: "ollama",
+			BaseURL:     baseURL,
+		}, true
 	case strings.HasPrefix(lower, "claude-") || isClaudeAlias(lower):
 		if key := envNonEmpty("ANTHROPIC_API_KEY"); key != "" {
 			return &ProviderConfig{
