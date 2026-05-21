@@ -81,7 +81,13 @@ func WrapMainWithOptions(mainFn MainFunc, opts *WrapMainOptions) int {
 	fmt.Fprintf(os.Stderr, "\nError encountered: %v\n", err)
 
 	if !healer.CanHeal(err) {
-		if ClassifyError(err) == FailureTypePortInUse {
+		switch ClassifyError(err) {
+		case FailureTypeNotInstalled:
+			// Verbatim message; the error already tells the user to
+			// reinstall ycode. No "cannot be healed" noise.
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return 1
+		case FailureTypePortInUse:
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			fmt.Fprintln(os.Stderr, "\nA port required by ycode is already in use. Options:")
 			fmt.Fprintln(os.Stderr, "  - `ycode serve stop` (graceful — needs the pidfile)")

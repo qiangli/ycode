@@ -25,6 +25,7 @@ import (
 	"github.com/qiangli/ycode/internal/gitserver/backlog"
 	"github.com/qiangli/ycode/internal/gitserver/projects"
 	"github.com/qiangli/ycode/internal/inference"
+	runnerEmbed "github.com/qiangli/ycode/internal/inference/runner_embed"
 	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/observability/dashboards"
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -323,6 +324,24 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	// Nothing live found — drop any stale PID file from a prior crash
 	// before we proceed to bind ports below.
 	_ = os.Remove(filepath.Join(home, ".agents", "ycode", "serve.pid"))
+
+	// Hard-stop on missing embedded inference runner. The stack manager
+	// demotes per-component Start errors to warnings, so without this
+	// guard serve would come up "fine" but every chat request would
+	// hang for OLLAMA_LOAD_TIMEOUT (5 min) before failing. The error
+	// message tells the end user to reinstall rather than expose
+	// internal build tags.
+	//
+	// Container hard-stop is not symmetric: podman_embed has no
+	// shipped binary today (`embed_podman` builds fail at the embed
+	// directive), and the production container engine uses the
+	// go.podman.io library against an external socket / machine.
+	// The right hard-stop point would be after engine init returns
+	// — track that separately when we actually ship a fully embedded
+	// podman.
+	if fullCfg.Inference.IsEnabled() && !runnerEmbed.Available() {
+		return inference.ErrRunnerNotInstalled
+	}
 
 	// 1. Build and start observability stack first (no dependencies on API).
 	stack, err := buildStackManager(cfg, dataDir, fullCfg.Inference, fullCfg.Container, fullCfg.GitServer)

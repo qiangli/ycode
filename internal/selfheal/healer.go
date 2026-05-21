@@ -42,6 +42,12 @@ const (
 	// AI-mediated healing can do anything useful, so CanHeal returns
 	// false and the wrapper prints a direct hint instead.
 	FailureTypePortInUse FailureType = "port-in-use"
+	// FailureTypeNotInstalled indicates a missing embedded substrate
+	// (inference runner, podman engine) — the binary itself is
+	// incomplete. The wrapper exits cleanly with the verbatim error
+	// (no "Attempting self-healing..." chatter, no misclassification
+	// via substring matching of "build" / "config").
+	FailureTypeNotInstalled FailureType = "not-installed"
 	// FailureTypeUnknown indicates an uncategorized error.
 	FailureTypeUnknown FailureType = "unknown"
 )
@@ -219,7 +225,7 @@ func (h *Healer) CanHeal(err error) bool {
 	case FailureTypeAPI, FailureTypeTool:
 		// These might be transient, healing might help
 		return true
-	case FailureTypePortInUse:
+	case FailureTypePortInUse, FailureTypeNotInstalled:
 		// User-actionable; the wrapper prints a direct hint instead
 		// of running an unhelpful healing attempt.
 		return false
@@ -235,6 +241,15 @@ func ClassifyError(err error) FailureType {
 	}
 
 	errStr := strings.ToLower(err.Error())
+
+	// Terminal "reinstall ycode" errors — surfaced when the binary is
+	// missing an embedded substrate (inference runner, podman engine).
+	// Checked first so the broad "build" / "config" substring branches
+	// below don't mis-classify them. No AI-mediated healing applies;
+	// the wrapper prints the message verbatim and exits.
+	if strings.Contains(errStr, "reinstall ycode") {
+		return FailureTypeNotInstalled
+	}
 
 	// Port collisions — checked BEFORE the "build" substring branch
 	// because messages like "build stack: ... port 4317 already in use"
