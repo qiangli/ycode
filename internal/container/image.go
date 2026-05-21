@@ -148,6 +148,48 @@ func (e *Engine) BuildImageWithContext(ctx context.Context, name string, dockerf
 	return nil
 }
 
+// BuildImageFromContext builds an image using an existing on-disk Dockerfile
+// (no embedded bytes, no write-and-overwrite). dockerfilePath is read by the
+// builder verbatim; contextDir is the root the builder uses to resolve COPY
+// / ADD paths. buildArgs is passed through as --build-arg KEY=VALUE.
+//
+// This is the "build the project's own Dockerfile" path — distinct from
+// BuildImage / BuildImageWithContext which both expect the caller to pass
+// dockerfile bytes (designed for the embedded sandbox Dockerfile).
+func (e *Engine) BuildImageFromContext(ctx context.Context, name, contextDir, dockerfilePath string, buildArgs map[string]string) error {
+	if name == "" {
+		return fmt.Errorf("build: image name is required")
+	}
+	if contextDir == "" {
+		return fmt.Errorf("build: context directory is required")
+	}
+	if dockerfilePath == "" {
+		dockerfilePath = filepath.Join(contextDir, "Dockerfile")
+	}
+	if _, err := os.Stat(dockerfilePath); err != nil {
+		return fmt.Errorf("dockerfile not found at %s: %w", dockerfilePath, err)
+	}
+
+	slog.Info("container: building image from existing dockerfile",
+		"image", name, "context", contextDir, "dockerfile", dockerfilePath,
+		"buildArgs", len(buildArgs))
+
+	buildOpts := entTypes.BuildOptions{
+		BuildOptions: buildahDefine.BuildOptions{
+			Output:           name,
+			ContextDirectory: contextDir,
+			Args:             buildArgs,
+		},
+		ContainerFiles: []string{dockerfilePath},
+	}
+
+	_, err := images.Build(e.connCtx, []string{dockerfilePath}, buildOpts)
+	if err != nil {
+		return fmt.Errorf("build image %s: %w", name, err)
+	}
+	return nil
+}
+
 // Version returns the podman version string via REST API.
 func (e *Engine) Version(ctx context.Context) (string, error) {
 	info, err := system.Version(e.connCtx, nil)

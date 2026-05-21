@@ -2,7 +2,12 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/qiangli/ycode/internal/container"
 )
 
 func TestPodmanCmdStructure(t *testing.T) {
@@ -36,6 +41,8 @@ func TestPodmanCmdStructure(t *testing.T) {
 		"run":     false,
 		"version": false,
 		"inspect": false,
+		"build":   false,
+		"network": false,
 	}
 
 	for _, sub := range cmd.Commands() {
@@ -195,6 +202,177 @@ func TestPodmanSubcommandShortDescriptions(t *testing.T) {
 		if sub.Short == "" {
 			t.Errorf("subcommand %q has no short description", sub.Name())
 		}
+	}
+}
+
+func TestPodmanRunFlagsExtended(t *testing.T) {
+	cmd := newPodmanCmd()
+	run, _, err := cmd.Find([]string{"run"})
+	if err != nil {
+		t.Fatalf("find run: %v", err)
+	}
+	for _, name := range []string{"name", "network", "publish", "volume", "env", "env-file"} {
+		if f := run.Flags().Lookup(name); f == nil {
+			t.Errorf("run missing --%s flag", name)
+		}
+	}
+	if f := run.Flags().Lookup("publish"); f != nil && f.Shorthand != "p" {
+		t.Errorf("expected -p shorthand for --publish, got %q", f.Shorthand)
+	}
+	if f := run.Flags().Lookup("volume"); f != nil && f.Shorthand != "v" {
+		t.Errorf("expected -v shorthand for --volume, got %q", f.Shorthand)
+	}
+	if f := run.Flags().Lookup("env"); f != nil && f.Shorthand != "e" {
+		t.Errorf("expected -e shorthand for --env, got %q", f.Shorthand)
+	}
+}
+
+func TestPodmanBuildCmd(t *testing.T) {
+	cmd := newPodmanCmd()
+	build, _, err := cmd.Find([]string{"build"})
+	if err != nil {
+		t.Fatalf("find build: %v", err)
+	}
+	for _, name := range []string{"tag", "file", "build-arg"} {
+		if f := build.Flags().Lookup(name); f == nil {
+			t.Errorf("build missing --%s flag", name)
+		}
+	}
+
+	// Sanity: build without --tag should fail at the CLI layer (before we
+	// try to dial the engine). Route through the parent so cobra's flag
+	// parsing runs the same way real CLI invocations do.
+	cmd.SetArgs([]string{"build", "."})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err == nil {
+		t.Error("build without --tag should fail")
+	}
+}
+
+func TestPodmanNetworkCmd(t *testing.T) {
+	cmd := newPodmanCmd()
+	net, _, err := cmd.Find([]string{"network"})
+	if err != nil {
+		t.Fatalf("find network: %v", err)
+	}
+	got := map[string]bool{}
+	for _, sub := range net.Commands() {
+		got[sub.Name()] = true
+	}
+	for _, want := range []string{"create", "ls", "rm"} {
+		if !got[want] {
+			t.Errorf("network missing %s subcommand", want)
+		}
+	}
+}
+
+func TestParsePortMappings(t *testing.T) {
+	tests := []struct {
+		in      []string
+		want    []container.PortMapping
+		wantErr bool
+	}{
+		{in: nil, want: nil},
+		{
+			in: []string{"8080:80"},
+			want: []container.PortMapping{
+				{HostPort: 8080, ContainerPort: 80, Protocol: "tcp"},
+			},
+		},
+		{
+			in: []string{"5353:53/udp"},
+			want: []container.PortMapping{
+				{HostPort: 5353, ContainerPort: 53, Protocol: "udp"},
+			},
+		},
+		{
+			in: []string{"80"},
+			want: []container.PortMapping{
+				{HostPort: 80, ContainerPort: 80, Protocol: "tcp"},
+			},
+		},
+		{in: []string{"abc"}, wantErr: true},
+		{in: []string{"99999:80"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		got, err := parsePortMappings(tt.in)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("parsePortMappings(%v) err=%v wantErr=%v", tt.in, err, tt.wantErr)
+			continue
+		}
+		if !tt.wantErr && !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("parsePortMappings(%v) = %v, want %v", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestParseMounts(t *testing.T) {
+	tmp := t.TempDir()
+	got, err := parseMounts([]string{tmp + ":/etc/conf:ro"})
+	if err != nil {
+		t.Fatalf("parseMounts: %v", err)
+	}
+	if len(got) != 1 || got[0].Source != tmp || got[0].Target != "/etc/conf" || !got[0].ReadOnly {
+		t.Errorf("parseMounts ro mount: got %#v", got)
+	}
+
+	// Relative source gets resolved to absolute.
+	cwd, _ := os.Getwd()
+	got2, err := parseMounts([]string{"./localdir:/in"})
+	if err != nil {
+		t.Fatalf("parseMounts relative: %v", err)
+	}
+	if got2[0].Source != filepath.Join(cwd, "localdir") {
+		t.Errorf("parseMounts relative: source not resolved, got %q", got2[0].Source)
+	}
+	if got2[0].ReadOnly {
+		t.Errorf("parseMounts default rw: got ReadOnly=true")
+	}
+
+	if _, err := parseMounts([]string{"bad"}); err == nil {
+		t.Error("malformed volume spec should error")
+	}
+	if _, err := parseMounts([]string{"/a:/b:wat"}); err == nil {
+		t.Error("invalid mount option should error")
+	}
+}
+
+func TestCollectEnv(t *testing.T) {
+	tmp := t.TempDir()
+	envFile := filepath.Join(tmp, "env")
+	body := "# comment\n\nFOO=fromfile\nBAR=keep\n"
+	if err := os.WriteFile(envFile, []byte(body), 0o644); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	got, err := collectEnv([]string{"FOO=fromflag", "BAZ=newvar"}, []string{envFile})
+	if err != nil {
+		t.Fatalf("collectEnv: %v", err)
+	}
+	// -e should win on collision with --env-file
+	want := map[string]string{"FOO": "fromflag", "BAR": "keep", "BAZ": "newvar"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("collectEnv: got %v, want %v", got, want)
+	}
+
+	if _, err := collectEnv([]string{"noequals"}, nil); err == nil {
+		t.Error("malformed -e value should error")
+	}
+}
+
+func TestParseBuildArgs(t *testing.T) {
+	got, err := parseBuildArgs([]string{"K1=V1", "K2=V=with=equals"})
+	if err != nil {
+		t.Fatalf("parseBuildArgs: %v", err)
+	}
+	want := map[string]string{"K1": "V1", "K2": "V=with=equals"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parseBuildArgs: got %v, want %v", got, want)
+	}
+
+	if _, err := parseBuildArgs([]string{"noequals"}); err == nil {
+		t.Error("malformed --build-arg should error")
 	}
 }
 

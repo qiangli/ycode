@@ -31,7 +31,8 @@ type ContainerConfig struct {
 	WorkDir  string            // working directory inside container
 	Network  string            // network name (empty = default bridge)
 	ReadOnly bool              // read-only root filesystem
-	CapDrop  []string          // capabilities to drop (default: ["ALL"])
+	CapDrop  []string          // capabilities to drop (default: ["ALL"] unless KeepCaps is set)
+	KeepCaps bool              // skip the default "drop ALL" — use whatever CapDrop says verbatim (empty means drop nothing). Set this for docker-compatible workloads (e.g. postgres) that need Linux caps to start.
 	Tmpfs    []string          // tmpfs mounts (e.g., /tmp, /var/tmp)
 	Init     bool              // use init for signal handling
 	Labels   map[string]string // container labels for tracking
@@ -101,7 +102,7 @@ func (e *Engine) CreateContainer(ctx context.Context, cfg *ContainerConfig) (*Co
 	}
 
 	capDrop := cfg.CapDrop
-	if len(capDrop) == 0 {
+	if !cfg.KeepCaps && len(capDrop) == 0 {
 		capDrop = []string{"ALL"}
 	}
 	sg.CapDrop = capDrop

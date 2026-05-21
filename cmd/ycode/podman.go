@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -33,16 +36,23 @@ func newPodmanCmd() *cobra.Command {
 		newPodmanRunCmd(),
 		newPodmanVersionCmd(),
 		newPodmanInspectCmd(),
+		newPodmanBuildCmd(),
+		newPodmanNetworkCmd(),
 	)
 
 	return cmd
 }
 
 // newEngine creates a container engine for CLI use.
+//
+// The Engine retains the context it was created with as its connection
+// context for every subsequent REST call (engine.go's connCtx). Using a
+// WithTimeout context here would cap *all* operations — including long
+// ones like `build` (~minutes) — at that timeout, so we hand it the
+// process-lifetime context.Background() and let individual commands
+// cancel via Ctrl-C / cmd.Context() if they need to.
 func newEngine() (*container.Engine, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	return container.NewEngine(ctx, &container.EngineConfig{})
+	return container.NewEngine(context.Background(), &container.EngineConfig{})
 }
 
 // --- ps ---
@@ -256,8 +266,16 @@ func newPodmanRmCmd() *cobra.Command {
 // --- run ---
 
 func newPodmanRunCmd() *cobra.Command {
-	var rm bool
-	var detach bool
+	var (
+		rm       bool
+		detach   bool
+		name     string
+		network  string
+		ports    []string
+		volumes  []string
+		envs     []string
+		envFiles []string
+	)
 	cmd := &cobra.Command{
 		Use:   "run [FLAGS] IMAGE [COMMAND] [ARG...]",
 		Short: "Run a command in a new container",
@@ -269,10 +287,33 @@ func newPodmanRunCmd() *cobra.Command {
 			}
 
 			cfg := &container.ContainerConfig{
-				Image: args[0],
+				Image:   args[0],
+				Name:    name,
+				Network: network,
+				// CLI `run` is for docker-compatible workloads (postgres,
+				// redis, etc.) that expect to start with Linux caps. The
+				// engine's "drop ALL by default" stance is the right pick
+				// for the sandbox use case but breaks ordinary images, so
+				// the CLI explicitly opts out of it. Users who want the
+				// sandbox-grade isolation can pass --cap-drop ALL — wire
+				// when --cap-drop flag is added.
+				KeepCaps: true,
 			}
 			if len(args) > 1 {
 				cfg.Command = args[1:]
+			}
+
+			cfg.Ports, err = parsePortMappings(ports)
+			if err != nil {
+				return err
+			}
+			cfg.Mounts, err = parseMounts(volumes)
+			if err != nil {
+				return err
+			}
+			cfg.Env, err = collectEnv(envs, envFiles)
+			if err != nil {
+				return err
 			}
 
 			ctr, err := engine.CreateContainer(cmd.Context(), cfg)
@@ -303,6 +344,146 @@ func newPodmanRunCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&rm, "rm", false, "Automatically remove the container when it exits")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Run container in background")
+	cmd.Flags().StringVar(&name, "name", "", "Assign a name to the container")
+	cmd.Flags().StringVar(&network, "network", "", "Connect a container to a network")
+	cmd.Flags().StringSliceVarP(&ports, "publish", "p", nil, "Publish a container's port to the host (HOST:CTR[/PROTO])")
+	cmd.Flags().StringSliceVarP(&volumes, "volume", "v", nil, "Bind mount a volume (HOST:CTR[:ro])")
+	cmd.Flags().StringSliceVarP(&envs, "env", "e", nil, "Set environment variable (KEY=VALUE)")
+	cmd.Flags().StringSliceVar(&envFiles, "env-file", nil, "Read environment variables from file (KEY=VALUE per line)")
+	return cmd
+}
+
+// --- build ---
+
+func newPodmanBuildCmd() *cobra.Command {
+	var (
+		tag        string
+		dockerfile string
+		buildArgs  []string
+	)
+	cmd := &cobra.Command{
+		Use:   "build [FLAGS] CONTEXT",
+		Short: "Build an image from a Dockerfile",
+		Long: `Build a container image using the project's existing Dockerfile.
+
+CONTEXT is the build context directory (passed to COPY / ADD instructions).
+Defaults to the current directory if omitted.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if tag == "" {
+				return fmt.Errorf("build: -t/--tag is required")
+			}
+			ctxDir := "."
+			if len(args) == 1 {
+				ctxDir = args[0]
+			}
+			absCtx, err := filepath.Abs(ctxDir)
+			if err != nil {
+				return fmt.Errorf("resolve context: %w", err)
+			}
+			dfPath := dockerfile
+			if dfPath == "" {
+				dfPath = filepath.Join(absCtx, "Dockerfile")
+			} else if !filepath.IsAbs(dfPath) {
+				dfPath = filepath.Join(absCtx, dfPath)
+			}
+
+			argMap, err := parseBuildArgs(buildArgs)
+			if err != nil {
+				return err
+			}
+
+			engine, err := newEngine()
+			if err != nil {
+				return err
+			}
+			if err := engine.BuildImageFromContext(cmd.Context(), tag, absCtx, dfPath, argMap); err != nil {
+				return err
+			}
+			fmt.Printf("Successfully built %s\n", tag)
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&tag, "tag", "t", "", "Name and optionally a tag in the 'name:tag' format")
+	cmd.Flags().StringVarP(&dockerfile, "file", "f", "", "Path to the Dockerfile (default: <CONTEXT>/Dockerfile)")
+	cmd.Flags().StringSliceVar(&buildArgs, "build-arg", nil, "Set build-time variable (KEY=VALUE)")
+	return cmd
+}
+
+// --- network ---
+
+func newPodmanNetworkCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "network",
+		Short: "Manage container networks",
+	}
+	cmd.AddCommand(
+		&cobra.Command{
+			Use:   "create NAME",
+			Short: "Create a bridge network",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				engine, err := newEngine()
+				if err != nil {
+					return err
+				}
+				if err := engine.CreateNetwork(cmd.Context(), args[0]); err != nil {
+					return err
+				}
+				fmt.Println(args[0])
+				return nil
+			},
+		},
+		func() *cobra.Command {
+			var filter string
+			c := &cobra.Command{
+				Use:   "ls",
+				Short: "List networks",
+				RunE: func(cmd *cobra.Command, args []string) error {
+					engine, err := newEngine()
+					if err != nil {
+						return err
+					}
+					nets, err := engine.ListNetworks(cmd.Context(), filter)
+					if err != nil {
+						return err
+					}
+					w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+					fmt.Fprintln(w, "NAME\tDRIVER")
+					for _, n := range nets {
+						fmt.Fprintf(w, "%s\t%s\n", n.Name, n.Driver)
+					}
+					w.Flush()
+					return nil
+				},
+			}
+			c.Flags().StringVar(&filter, "filter", "", "Substring match on network name")
+			return c
+		}(),
+		&cobra.Command{
+			Use:   "rm NAME [NAME...]",
+			Short: "Remove one or more networks",
+			Args:  cobra.MinimumNArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				engine, err := newEngine()
+				if err != nil {
+					return err
+				}
+				var firstErr error
+				for _, n := range args {
+					if err := engine.RemoveNetwork(cmd.Context(), n); err != nil {
+						fmt.Fprintf(os.Stderr, "Error removing %s: %v\n", n, err)
+						if firstErr == nil {
+							firstErr = err
+						}
+						continue
+					}
+					fmt.Println(n)
+				}
+				return firstErr
+			},
+		},
+	)
 	return cmd
 }
 
@@ -349,6 +530,146 @@ func newPodmanInspectCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// --- flag parsers ---
+
+// parsePortMappings reads docker-style "HOST:CTR[/PROTO]" port specs.
+// CTR alone (no colon) maps the same port on both sides; a /udp suffix
+// switches the protocol from the default tcp.
+func parsePortMappings(specs []string) ([]container.PortMapping, error) {
+	if len(specs) == 0 {
+		return nil, nil
+	}
+	out := make([]container.PortMapping, 0, len(specs))
+	for _, s := range specs {
+		proto := "tcp"
+		if i := strings.Index(s, "/"); i >= 0 {
+			proto = s[i+1:]
+			s = s[:i]
+		}
+		hostStr, ctrStr := s, s
+		if i := strings.Index(s, ":"); i >= 0 {
+			hostStr, ctrStr = s[:i], s[i+1:]
+		}
+		host, err := strconv.ParseUint(hostStr, 10, 16)
+		if err != nil {
+			return nil, fmt.Errorf("invalid host port %q: %w", hostStr, err)
+		}
+		ctr, err := strconv.ParseUint(ctrStr, 10, 16)
+		if err != nil {
+			return nil, fmt.Errorf("invalid container port %q: %w", ctrStr, err)
+		}
+		out = append(out, container.PortMapping{
+			HostPort:      uint16(host),
+			ContainerPort: uint16(ctr),
+			Protocol:      proto,
+		})
+	}
+	return out, nil
+}
+
+// parseMounts reads docker-style "HOST:CTR[:ro]" volume specs.
+func parseMounts(specs []string) ([]container.Mount, error) {
+	if len(specs) == 0 {
+		return nil, nil
+	}
+	out := make([]container.Mount, 0, len(specs))
+	for _, s := range specs {
+		parts := strings.Split(s, ":")
+		if len(parts) < 2 || len(parts) > 3 {
+			return nil, fmt.Errorf("invalid volume spec %q (want HOST:CTR[:ro])", s)
+		}
+		m := container.Mount{Source: parts[0], Target: parts[1]}
+		if len(parts) == 3 {
+			switch parts[2] {
+			case "ro":
+				m.ReadOnly = true
+			case "rw":
+				m.ReadOnly = false
+			default:
+				return nil, fmt.Errorf("invalid mount option %q (want ro or rw)", parts[2])
+			}
+		}
+		if !filepath.IsAbs(m.Source) {
+			abs, err := filepath.Abs(m.Source)
+			if err != nil {
+				return nil, fmt.Errorf("resolve mount source %q: %w", m.Source, err)
+			}
+			m.Source = abs
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// collectEnv merges -e and --env-file values into a single map. -e wins
+// on collision (matches docker / podman semantics).
+func collectEnv(envs, envFiles []string) (map[string]string, error) {
+	if len(envs) == 0 && len(envFiles) == 0 {
+		return nil, nil
+	}
+	out := map[string]string{}
+	for _, f := range envFiles {
+		if err := readEnvFile(f, out); err != nil {
+			return nil, err
+		}
+	}
+	for _, kv := range envs {
+		k, v, ok := splitKV(kv)
+		if !ok {
+			return nil, fmt.Errorf("invalid -e value %q (want KEY=VALUE)", kv)
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
+// readEnvFile parses a KEY=VALUE-per-line file, skipping blanks and #-comments.
+// Quotes around the value are not unwrapped (matches docker behavior — the
+// quotes become part of the value).
+func readEnvFile(path string, out map[string]string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open env-file %s: %w", path, err)
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := splitKV(line)
+		if !ok {
+			return fmt.Errorf("env-file %s: malformed line %q", path, line)
+		}
+		out[k] = v
+	}
+	return scanner.Err()
+}
+
+func splitKV(s string) (string, string, bool) {
+	i := strings.Index(s, "=")
+	if i <= 0 {
+		return "", "", false
+	}
+	return s[:i], s[i+1:], true
+}
+
+func parseBuildArgs(specs []string) (map[string]string, error) {
+	if len(specs) == 0 {
+		return nil, nil
+	}
+	out := map[string]string{}
+	for _, kv := range specs {
+		k, v, ok := splitKV(kv)
+		if !ok {
+			return nil, fmt.Errorf("invalid --build-arg %q (want KEY=VALUE)", kv)
+		}
+		out[k] = v
+	}
+	return out, nil
 }
 
 // --- helpers ---

@@ -9,10 +9,19 @@ import (
 )
 
 // CreateNetwork creates a bridge network for the ycode session via REST API.
+//
+// DNSEnabled=true is required so containers attached to the network can
+// resolve each other by container name (powered by aardvark-dns on the
+// host). Without it, multi-container compositions can't reach each other
+// — `getent hosts db` would fail even though both containers share the
+// network. This matches what `podman network create <name>` does by
+// default at the CLI; we set it explicitly because the libnetwork
+// zero-value defaults to false.
 func (e *Engine) CreateNetwork(ctx context.Context, name string) error {
 	net := nettypes.Network{
-		Name:   name,
-		Driver: "bridge",
+		Name:       name,
+		Driver:     "bridge",
+		DNSEnabled: true,
 	}
 	_, err := network.Create(e.connCtx, &net)
 	if err != nil {
