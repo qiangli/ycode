@@ -22,7 +22,7 @@ const persesDefaultKey = "e=dz;`M'5Pjvy^Sq3FVBkTC@N9?H/gua"
 // PersesComponent runs Perses in-process as a goroutine for dashboards.
 type PersesComponent struct {
 	port          int
-	prometheusURL string // URL for Prometheus query API (e.g. "http://127.0.0.1:58080/prometheus")
+	prometheusURL string // URL for Prometheus query API (e.g. "http://127.0.0.1:31415/prometheus")
 	dataDir       string
 	pathPrefix    string // proxy path prefix (e.g. "/dashboard")
 

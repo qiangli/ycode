@@ -313,7 +313,7 @@ Quick compile without checks: `make compile`
 
 ### Deploy
 
-**Target**: `make deploy` (localhost:58080 by default)
+**Target**: `make deploy` (localhost:31415 by default)
 
 **Pre-requisite**: `make build` must have succeeded. Do not deploy a broken build.
 
@@ -327,7 +327,7 @@ make deploy
 make deploy PORT=9090
 
 # Remote host
-make deploy HOST=myserver PORT=58080
+make deploy HOST=myserver PORT=31415
 ```
 
 For remote hosts, passwordless SSH must be configured. If `ssh -o BatchMode=yes <host> "echo ok"` fails, set it up:
@@ -342,7 +342,7 @@ Remote deploy auto-detects architecture and cross-compiles if the remote platfor
 
 ### Validate
 
-**Target**: `make validate` (localhost:58080 by default)
+**Target**: `make validate` (localhost:31415 by default)
 
 **Pre-requisites**: `/build` then `/deploy` must have succeeded.
 
@@ -358,7 +358,7 @@ Runs four test suites against a running ycode instance:
 make validate
 
 # Remote
-make validate HOST=myserver PORT=58080
+make validate HOST=myserver PORT=31415
 ```
 
 **On failure**: Diagnose which suite/test failed. Fix the root cause in source, then repeat the full cycle: build → deploy → validate. Allow up to 3 fix-and-retry cycles before escalating.
@@ -374,8 +374,8 @@ make validate           # run test suites
 
 # Or remote
 make build
-make deploy HOST=staging PORT=58080
-make validate HOST=staging PORT=58080
+make deploy HOST=staging PORT=31415
+make validate HOST=staging PORT=31415
 ```
 
 ## Architecture

@@ -1,46 +1,40 @@
 # AGENTS.md
 
-Instructions for AI coding assistants working in this repository. `CLAUDE.md` is a symlink to this file — edit `AGENTS.md`, not the symlink.
+This file provides guidance to AI coding assistants working in this repository.
 
-> **Scope:** These rules apply when an agent is operating *inside the ycode repo*. Sessions running under `ycode wrap -- <other-agent>` (e.g. `ycode wrap -- claude` against an unrelated project) are independent contexts — do not carry this repo's conventions into wrapped third-party sessions.
+**Read [CLAUDE.md](./CLAUDE.md)** for Claude Code-specific conventions.
+
+## Project Overview
 
 ycode — pure Go CLI agent harness. Single static binary, Go 1.26+, permissive-license dependencies only.
 
-> **Start here:** [`docs/strategy.md`](./docs/strategy.md) — the wedge ("local-first, single-binary, runs offline"), feature-tier policy, graduation criteria.
+Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one-shot.  
+Core loop: `internal/runtime/conversation/runtime.go` — assemble request → provider → dispatch tool calls → repeat.
 
 ## First-Time Setup
 
 ```bash
 make init                              # REQUIRED: submodules, Perses plugins, gzip assets, Gitea bindata
 export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY
-make install-hooks                     # recommended: pre-push hook runs `make ci`
+make install-hooks                     # pre-push hook runs `make ci`
 ```
 
-## Build Quality Gate
+## Build & Test
 
 ```bash
 make build           # full gate: tidy → fmt → vet → compile → test → verify
-make compile         # quick compile
-make test            # unit tests only (-short -race)
-make tidy            # standalone lint: mod tidy + fmt + vet (also runs inside `make build`)
-make vet             # static analysis only
+make compile         # quick compile only
+make test            # unit tests (-short -race)
 ```
 
 **Build tags** (see `Makefile`):
 - Default: `sqlite,sqlite_unlock_notify,bindata`
-- All features compile unconditionally; the `tier` field in `internal/features/registry.yaml` is metadata only (surfaced via `ycode features list`).
 - Manual: `go build -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/`
 
 **Test patterns**:
 ```bash
-# Single package / test (fast iteration)
+# Single package / test
 go test -short -race -run TestName ./internal/path/to/package/
-
-# Single benchmark
-go test -bench BenchmarkName -benchmem -run ^$ ./internal/path/to/package/
-
-# Integration tests (needs container/network)
-go test -tags integration -v -count=1 ./internal/integration/...
 
 # Never use bare `./...` — always exclude priorart/:
 PACKAGES=$(go list ./... | grep -v '/priorart/')
@@ -49,96 +43,49 @@ PACKAGES=$(go list ./... | grep -v '/priorart/')
 ## Critical Conventions
 
 **Directory boundaries:**
-- `priorart/` — **read-only.** Never modify. Use `$(go list ./... | grep -v '/priorart/')` for Go commands.
+- `priorart/` — **NEVER modify.** Read-only reference implementations.
 - `external/` — vendored submodules. Do not modify directly.
 - `peers/` — peer Go modules with own `go.mod`. Run `go mod tidy` inside peer directories, not at root.
 
 **Code standards:**
 - No package-level `var` for mutable state — use `RuntimeContext` (see `internal/runtime/conversation/runtime.go`)
 - No `log.Printf` or `fmt.Println` — use structured logger from `RuntimeContext`
-- Layered build system: logic in Go, orchestration in `scripts/`, dependency graph in `Makefile`
-- No test logic in bash scripts — Go tests only
-
-**Commits:**
 - Stage files by name (never `git add -A` or `git add .`)
-- Match repo prefix style: `fix:`, `feat:`, `docs:`, `refactor:`, `chore:`
-- **Always run `make build` before committing** — must pass with no errors
+- **Always run `make build` before committing**
 
 ## Architecture
-
-Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one-shot.
-
-Core loop: `internal/runtime/conversation/runtime.go` — assemble request → send to provider → dispatch tool calls → repeat.
 
 Key components:
 - **Provider layer** (`internal/api/`) — Anthropic native + OpenAI-compatible
 - **Tool registry** (`internal/tools/registry.go`) — always-available vs deferred (discovered via `ToolSearch`)
-- **Config** (`internal/runtime/config/config.go`) — 4-tier merge: `~/.config/ycode/settings.json` → `~/.agents/ycode/projects/<id>/settings.json` → `<cwd>/.agents/ycode/settings.json` → `<cwd>/.agents/ycode/settings.local.json`
+- **Config** (`internal/runtime/config/config.go`) — 4-tier merge: user → project → workspace → local
 - **Permission modes** — ReadOnly → WorkspaceWrite → DangerFullAccess (declared in `ToolSpec.RequiredMode`)
+- **Memex** (`pkg/memex/`) — five-layer memory system (KV, SQL, vector, graph, memo)
 
 ## Foreman / Worker Model
 
 **You are the Foreman.** Full privileges: source tree, backlog at `~/.agents/ycode/projects/<id>/backlog/`, all MCP tools.
 
-**Workers** are sandboxed subprocesses spawned via `/foreman` — they receive one Gitea issue and one Loom workspace.
-
-> **Wrap-session boundary:** When a worker (or any agent) runs under `ycode wrap -- <other-agent>` against a *different* repo, the Foreman/Worker protocol and these conventions do **not** apply — that's an independent context (see the Scope note at the top of this file).
+Workers are sandboxed subprocesses spawned via `/foreman` — they receive one Gitea issue and one Loom workspace.
 
 **Planning:** Write backlog entries:
 ```bash
 ycode backlog new "title" --priority p1|p2|p3
 ```
-Or directly: `~/.agents/ycode/projects/<id>/backlog/<slug>.md` with frontmatter `title`, `priority`, `state: open`. Markdown files are source of truth; Gitea is a cache.
 
-**Working:** If no specific task, run `/foreman` (or: `ycode backlog list --priority p1`, then `ycode autopilot worker --issue N --loom-id ID`).
+**Working:** If no specific task, run `/foreman` (or: `ycode backlog list --priority p1`).
 
 Boss control: `ycode foreman pause/resume/stop/skip/prio/tell/status`
 
-## Running
+## Documentation
 
-```bash
-bin/ycode doctor                       # health check (provider keys, dependencies)
-bin/ycode                              # interactive REPL (auto-spawns server)
-bin/ycode prompt "explain the runtime" # one-shot; add --print for plain text
-bin/ycode serve                        # explicit server (Gitea, Ollama, SearXNG, NATS)
-```
-
-Server logs when auto-spawned: `~/.agents/ycode/observability/serve.log`
-
-## CI Parity
-
-```bash
-make ci         # full GitHub Actions matrix in Docker (~5-10 min cold, ~2 min cached)
-make ci-fast    # verify-features + unit tests only
-```
-
-Run `make ci` before push when touching CGO-adjacent code (podman/storage, sqlite, gpgme), workflow files, or `go.work`.
-
-## References
-
-- `docs/strategy.md` — wedge positioning, feature-tier policy, graduation criteria (read first for planning)
-- `docs/roadmap.md` — tactical feature-gap inventory (P0/P1/P2)
+- `docs/strategy.md` — wedge positioning, feature-tier policy, graduation criteria
 - `docs/usage.md` — CLI modes, configuration, tools, and workflows
-- `docs/instructions.md` — conventions, skill system, build/test rules
 - `docs/architecture.md` — full architecture, design decisions
 - `docs/backlog.md` — Boss → Foreman → Worker protocol
-- `docs/memory.md` — five-layer memory system
-- `docs/swarm.md` — agent orchestration
-- `docs/lighthouse.md` — MCP federation for foreign agents
-- `docs/observability.md` / `docs/otel.md` — observability stack (Jaeger/Perses/VictoriaLogs forks — kept intentionally; never propose de-forking)
-- `internal/selfheal/README.md` — self-heal subsystem (telemetry-trigger skills, FailureSignal → backlog, autoloop)
 
-<!-- BEGIN YCODE -->
-## ycode
+## Sub-directory Instructions
 
-This repo expects [ycode](https://github.com/qiangli/ycode) running locally.
-See [`.agents/ycode/AGENTS.md`](.agents/ycode/AGENTS.md) for capability descriptions.
-Run `ycode init --refresh` to update this section.
-
-### Self-Bootstrap (Foreman role)
-
-You are the **Foreman**. The Boss → Foreman → Worker protocol is universal.
-Backlog state lives at `~/.agents/ycode/projects/<id>/backlog/` — shared across checkouts of the same repo.
-When starting cold with no specific task, invoke `/foreman`.
-Full protocol: [`docs/backlog.md`](docs/backlog.md).
-<!-- END YCODE -->
+- `external/gitea/AGENTS.md` — embedded git server guidance
+- `external/podman/AGENTS.md` — container engine integration
+- `peers/` modules have their own `CLAUDE.md` files

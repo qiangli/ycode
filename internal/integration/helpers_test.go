@@ -7,12 +7,15 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qiangli/ycode/internal/selfinit"
 )
 
-// baseURL returns the target server URL from env or defaults to localhost:58080.
+// baseURL returns the target server URL from env or defaults to localhost on selfinit.DefaultPort.
 func baseURL(t *testing.T) string {
 	t.Helper()
 	if u := os.Getenv("BASE_URL"); u != "" {
@@ -24,7 +27,7 @@ func baseURL(t *testing.T) string {
 	}
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "58080"
+		port = strconv.Itoa(selfinit.DefaultPort)
 	}
 	return fmt.Sprintf("http://%s:%s", host, port)
 }

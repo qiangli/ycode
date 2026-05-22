@@ -203,7 +203,7 @@ type ObservabilityConfig struct {
 	SampleRate    float64 `json:"sampleRate"`    // default 1.0
 
 	// Embedded server (use --no-otel flag to disable, --port to set port)
-	ProxyPort     int    `json:"proxyPort"`     // reverse proxy port, default 58080
+	ProxyPort     int    `json:"proxyPort"`     // reverse proxy port, default selfinit.DefaultPort (31415)
 	ProxyBindAddr string `json:"proxyBindAddr"` // default "127.0.0.1"
 
 	// OTLP ingress ports — pinned to well-known defaults so any third-party

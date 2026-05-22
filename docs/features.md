@@ -39,7 +39,7 @@ Cobra-based CLI with subcommands for different operational modes.
 |---------|-------------|
 | `ycode` | Interactive REPL mode (default) |
 | `ycode prompt <msg>` | One-shot agent prompt |
-| `ycode serve` | Start server (Gitea, Ollama, SearXNG on :58080) |
+| `ycode serve` | Start server (Gitea, Ollama, SearXNG on :31415) |
 | `ycode mcp serve` | Expose ycode tools via MCP server |
 | `ycode version` | Print version info |
 | `ycode doctor` | Health checks and readiness diagnostics |

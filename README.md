@@ -76,7 +76,7 @@ ycode features verify    # validate the registry (paths exist, no malformed entr
 - [docs/roadmap.md](./docs/roadmap.md) -- tactical feature-gap inventory (P0/P1/P2)
 - [docs/leaderboards.md](./docs/leaderboards.md) -- benchmark targets and submission process
 - [docs/release.md](./docs/release.md) -- release process, Homebrew tap bootstrap, troubleshooting
-- [AGENTS.md](./AGENTS.md) -- instructions for AI coding assistants (CLAUDE.md symlinks here)
+- [AGENTS.md](./AGENTS.md) -- instructions for AI coding assistants (YCODE.md symlinks here)
 - [docs/usage.md](./docs/usage.md) -- CLI modes, configuration, tools, and workflows
 - [docs/instructions.md](./docs/instructions.md) -- conventions, skill system, build/test/commit rules
 - [docs/architecture.md](./docs/architecture.md) -- full architecture, design decisions, component details

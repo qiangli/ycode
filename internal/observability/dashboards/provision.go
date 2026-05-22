@@ -40,7 +40,7 @@ const gridColumns = 24
 //	dataDir/projects/<name>.json
 //	dataDir/dashboards/<project>/<name>.json
 //
-// prometheusURL is the Prometheus query API URL (e.g. "http://127.0.0.1:58080/prometheus").
+// prometheusURL is the Prometheus query API URL (e.g. "http://127.0.0.1:31415/prometheus").
 func Provision(dataDir, prometheusURL string) error {
 	var projects []simplifiedProject
 	if err := json.Unmarshal(DefaultProjectsJSON, &projects); err != nil {

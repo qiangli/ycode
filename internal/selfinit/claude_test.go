@@ -3,6 +3,7 @@ package selfinit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,7 @@ func TestClaude_WriteMCP_FreshConfig(t *testing.T) {
 
 	caps := []CapabilitySpec{
 		{Name: "ycode-stdio", Transport: "stdio", Command: "ycode", Args: []string{"mcp", "serve"}, Family: "stdio"},
-		{Name: "ycode-loom", Transport: "http", URL: "http://127.0.0.1:58080/loom-mcp/", Family: "loom"},
+		{Name: "ycode-loom", Transport: "http", URL: fmt.Sprintf("http://127.0.0.1:%d/loom-mcp/", DefaultPort), Family: "loom"},
 	}
 	changed, err := c.WriteMCP(context.Background(), caps)
 	if err != nil {

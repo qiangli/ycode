@@ -2,6 +2,7 @@ package selfinit
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,7 +40,7 @@ func TestLoadCapabilities_ParsesManifest(t *testing.T) {
 		MCP: manifestMCP{
 			Stdio: manifestStdio{Command: "ycode", Args: []string{"mcp", "serve"}},
 			HTTP: map[string]string{
-				"ycode": "http://127.0.0.1:58080/mcp/",
+				"ycode": fmt.Sprintf("http://127.0.0.1:%d/mcp/", DefaultPort),
 			},
 		},
 	}

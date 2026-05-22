@@ -133,7 +133,7 @@ Never include:
 - User identifiers (login names, internal email addresses, machine
   hostnames) beyond the canonical `git config user.email`.
 - Internal IPs, hostnames, ports beyond the documented public defaults
-  (`127.0.0.1:58080` is fine).
+  (`127.0.0.1:31415` is fine).
 - Copy-pasted error logs containing user paths.
 - API keys, OAuth tokens, signed URLs, JWTs — even expired/rotated.
 

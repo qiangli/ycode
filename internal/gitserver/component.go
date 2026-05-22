@@ -29,7 +29,7 @@ type ComponentConfig struct {
 	HTTPOnly bool   `json:"httpOnly,omitempty"`
 	Token    string `json:"token,omitempty"`
 	// PublicRootURL is the externally-visible URL where the proxy serves
-	// Gitea (e.g. "http://127.0.0.1:58080/git/"). When set, it becomes
+	// Gitea (e.g. "http://127.0.0.1:31415/git/"). When set, it becomes
 	// Gitea's ROOT_URL — Gitea then emits asset/static/link URLs with the
 	// sub-path prefix so the proxy's StripPrefix mount still finds them.
 	// Leave empty for direct-port access without a fronting proxy.

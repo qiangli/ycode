@@ -16,11 +16,11 @@ import (
 	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/cli"
 	"github.com/qiangli/ycode/internal/client"
+	"github.com/qiangli/ycode/internal/selfinit"
 	"github.com/qiangli/ycode/internal/service"
 )
 
 const (
-	defaultServerPort    = 58080
 	serverHealthTimeout  = 500 * time.Millisecond
 	serverStartupTimeout = 10 * time.Second
 )
@@ -220,7 +220,7 @@ func resolveServerPort() int {
 			return port
 		}
 	}
-	return defaultServerPort
+	return selfinit.DefaultPort
 }
 
 // runServerPrompt sends a one-shot prompt to the server and streams the response to stdout.

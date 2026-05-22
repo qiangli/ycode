@@ -20,13 +20,13 @@ ycode serve
 
 The server prints its proxy URL and the composite MCP endpoint:
 ```
-ycode MCP at       http://127.0.0.1:58080/mcp/  (ceiling: DangerFullAccess)
+ycode MCP at       http://127.0.0.1:31415/mcp/  (ceiling: DangerFullAccess)
 ```
 
 ### 2. Pair with Claude Code
 
 ```bash
-ycode pair --tool claude-code --url http://127.0.0.1:58080
+ycode pair --tool claude-code --url http://127.0.0.1:31415
 ```
 
 The printed JSON is a single MCP entry:
@@ -36,7 +36,7 @@ The printed JSON is a single MCP entry:
   "mcpServers": {
     "ycode": {
       "type": "http",
-      "url": "http://127.0.0.1:58080/mcp/",
+      "url": "http://127.0.0.1:31415/mcp/",
       "headers": { "Authorization": "Bearer <token>" }
     }
   }

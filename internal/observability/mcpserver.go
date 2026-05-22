@@ -23,7 +23,7 @@ import (
 // Agents can query traces/logs/metrics, create dashboards, run PromQL,
 // search logs, and manage alerts — making the entire stack programmable.
 type TelemetryHandler struct {
-	// ProxyBaseURL is the base URL for the reverse proxy (e.g. "http://127.0.0.1:58080").
+	// ProxyBaseURL is the base URL for the reverse proxy (e.g. "http://127.0.0.1:31415").
 	ProxyBaseURL string
 	// PersesDataDir is the Perses file database directory for dashboard creation.
 	PersesDataDir string

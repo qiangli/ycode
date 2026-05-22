@@ -9,7 +9,7 @@ import (
 
 func TestProvision(t *testing.T) {
 	dir := t.TempDir()
-	promURL := "http://127.0.0.1:58080/prometheus"
+	promURL := "http://127.0.0.1:31415/prometheus"
 
 	if err := Provision(dir, promURL); err != nil {
 		t.Fatalf("Provision: %v", err)

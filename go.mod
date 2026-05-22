@@ -77,6 +77,7 @@ require (
 	github.com/qiangli/ycode/pkg/oci v0.0.0-00010101000000-000000000000
 	github.com/qiangli/ycode/pkg/ollm v0.0.0-00010101000000-000000000000
 	github.com/qiangli/ycode/pkg/otel v0.0.0-00010101000000-000000000000
+	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
 	github.com/xuri/excelize/v2 v2.10.1
 	go.etcd.io/bbolt v1.4.3
@@ -668,7 +669,6 @@ require (
 	github.com/sigstore/fulcio v1.8.5 // indirect
 	github.com/sigstore/protobuf-specs v0.5.0 // indirect
 	github.com/sigstore/sigstore v1.10.5 // indirect
-	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/skeema/knownhosts v1.3.2 // indirect
 	github.com/smallstep/pkcs7 v0.1.1 // indirect
 	github.com/soheilhy/cmux v0.1.5 // indirect

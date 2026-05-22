@@ -61,7 +61,7 @@ make build          # full quality gate: tidy → fmt → vet → compile → te
 make compile        # quick compile only
 make install        # build + install to ~/bin/ycode (re-signs on macOS)
 make test           # unit tests only (-short -race)
-make deploy         # deploy to localhost:58080 (HOST=<remote> PORT=<port>)
+make deploy         # deploy to localhost:31415 (HOST=<remote> PORT=<port>)
 make validate       # integration tests against running instance
 ```
 

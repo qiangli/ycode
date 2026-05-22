@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Run Go integration tests against a running ycode instance.
-# Env: HOST (default: localhost), PORT (default: 58080), BASE_URL (derived)
+# Env: HOST (default: localhost), PORT (default: 31415), BASE_URL (derived)
 set -euo pipefail
 
 HOST="${HOST:-localhost}"
-PORT="${PORT:-58080}"
+PORT="${PORT:-31415}"
 BASE_URL="${BASE_URL:-http://${HOST}:${PORT}}"
 
 echo "=== Validating ${BASE_URL} ==="

@@ -37,6 +37,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/skills"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
 	"github.com/qiangli/ycode/internal/runtime/widget"
+	"github.com/qiangli/ycode/internal/selfinit"
 	"github.com/qiangli/ycode/internal/shell"
 	_ "github.com/qiangli/ycode/internal/shell/agentmode"
 	_ "github.com/qiangli/ycode/internal/shell/builtins"
@@ -150,7 +151,7 @@ var serveStatusCmd = &cobra.Command{
 		}
 		port := cfg.ProxyPort
 		if port == 0 {
-			port = 58080
+			port = selfinit.DefaultPort
 		}
 
 		home, _ := os.UserHomeDir()
@@ -217,7 +218,7 @@ var serveDashboardCmd = &cobra.Command{
 		}
 		port := cfg.ProxyPort
 		if port == 0 {
-			port = 58080
+			port = selfinit.DefaultPort
 		}
 		if servePort > 0 {
 			port = servePort
@@ -297,7 +298,7 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 
 	port := cfg.ProxyPort
 	if port == 0 {
-		port = 58080
+		port = selfinit.DefaultPort
 	}
 
 	// Idempotency guard. Probing the public manifest endpoint is the
@@ -944,7 +945,7 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 	}
 	proxyPort := cfg.ProxyPort
 	if proxyPort == 0 {
-		proxyPort = 58080
+		proxyPort = selfinit.DefaultPort
 	}
 	mgr.AddComponent(observability.NewPersesComponent(
 		persesPort,
@@ -1170,7 +1171,7 @@ Subcommands:
 Each ycode CLI session auto-connects to the running Pulse collector.
 
 Connect from Claude Code or any MCP client:
-  {"mcpServers": {"ycode-pulse": {"url": "http://localhost:58080/pulse/"}}}`,
+  {"mcpServers": {"ycode-pulse": {"url": "http://localhost:31415/pulse/"}}}`,
 }
 
 // parseMCPPermission maps the user-facing flag value to an mcp.PermissionMode.
@@ -1208,7 +1209,7 @@ func openMemexForServe() (*memorypkg.Manager, error) {
 }
 
 func init() {
-	serveCmd.PersistentFlags().IntVar(&servePort, "port", 58080, "Port for the observability server")
+	serveCmd.PersistentFlags().IntVar(&servePort, "port", selfinit.DefaultPort, "Port for the observability server")
 	serveCmd.Flags().BoolVar(&serveDetach, "detach", true, "Run server in background (pass --detach=false to stay attached)")
 	serveCmd.Flags().BoolVar(&serveAuto, "auto", false, "Auto-started by TUI (enables idle shutdown)")
 	serveCmd.Flags().BoolVar(&serveNoAPI, "no-api", false, "Disable the API/WebSocket server")
@@ -1247,7 +1248,7 @@ func init() {
 			return detachServer(obsCfg, dataDir)
 		},
 	}
-	pulseStartCmd.Flags().IntVar(&servePort, "port", 58080, "Port for Pulse server")
+	pulseStartCmd.Flags().IntVar(&servePort, "port", selfinit.DefaultPort, "Port for Pulse server")
 
 	pulseCmd.AddCommand(
 		pulseStartCmd,

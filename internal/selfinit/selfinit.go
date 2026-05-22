@@ -19,7 +19,7 @@ type Options struct {
 	Home string
 
 	// DefaultPort is the fallback proxy port used when no manifest is
-	// readable. Defaults to selfinit.DefaultPort (58080).
+	// readable. Defaults to selfinit.DefaultPort.
 	DefaultPort int
 
 	// YcodeVersion is the running ycode binary's version, mixed into

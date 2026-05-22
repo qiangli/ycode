@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/qiangli/ycode/internal/runtime/config"
+	"github.com/qiangli/ycode/internal/selfinit"
 )
 
 // StackManager orchestrates all embedded observability components and the reverse proxy.
@@ -71,7 +72,7 @@ func (s *StackManager) Start(ctx context.Context) error {
 	// Start reverse proxy.
 	proxyPort := s.cfg.ProxyPort
 	if proxyPort == 0 {
-		proxyPort = 58080
+		proxyPort = selfinit.DefaultPort
 	}
 	bindAddr := s.cfg.ProxyBindAddr
 	if bindAddr == "" {
@@ -143,7 +144,7 @@ func (s *StackManager) Healthy() bool {
 	return s.started
 }
 
-// ProxyAddr returns the proxy listen address (e.g. "127.0.0.1:58080").
+// ProxyAddr returns the proxy listen address (e.g. "127.0.0.1:31415").
 func (s *StackManager) ProxyAddr() string {
 	if s.proxy != nil {
 		return s.proxy.Addr()

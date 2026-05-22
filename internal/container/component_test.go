@@ -60,7 +60,7 @@ func TestServiceEnv(t *testing.T) {
 		Enabled: true,
 	}
 	comp := NewContainerComponent(cfg, "/tmp/test")
-	comp.SetServicePorts(11434, 4317, 58080)
+	comp.SetServicePorts(11434, 4317, 31415)
 
 	// ServiceEnv returns nil when engine is nil (not started).
 	env := comp.ServiceEnv()
@@ -78,7 +78,7 @@ func TestDefaultContainerConfig(t *testing.T) {
 		Memory:       "2g",
 	}
 	comp := NewContainerComponent(cfg, "/tmp/test")
-	comp.SetServicePorts(11434, 4317, 58080)
+	comp.SetServicePorts(11434, 4317, 31415)
 
 	// Test default container config structure (before engine start).
 	dcfg := comp.defaultContainerConfig()

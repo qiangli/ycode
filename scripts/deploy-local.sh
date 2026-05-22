@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Deploy ycode to localhost.
-# Env: PORT (default: 58080)
+# Env: PORT (default: 31415)
 set -euo pipefail
 
-PORT="${PORT:-58080}"
+PORT="${PORT:-31415}"
 
 echo "=== Deploy to localhost:${PORT} ==="
 

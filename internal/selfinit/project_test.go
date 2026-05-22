@@ -1,6 +1,7 @@
 package selfinit
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,7 +23,7 @@ func makeRepo(t *testing.T) string {
 
 var testCaps = []CapabilitySpec{
 	{Name: "ycode-stdio", Transport: "stdio", Command: "ycode", Args: []string{"mcp", "serve"}, Family: "stdio"},
-	{Name: "ycode-loom", Transport: "http", URL: "http://127.0.0.1:58080/loom-mcp/", Family: "loom"},
+	{Name: "ycode-loom", Transport: "http", URL: fmt.Sprintf("http://127.0.0.1:%d/loom-mcp/", DefaultPort), Family: "loom"},
 }
 
 // WriteProjectFiles is intentionally minimal: writes ONLY the

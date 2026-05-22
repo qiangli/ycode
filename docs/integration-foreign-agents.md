@@ -40,7 +40,7 @@ any other client is **"point it at `/mcp/`."**
 ycode serve
 
 # 2. On the client side, pair with the server:
-ycode pair --tool opencode --url http://your-ycode-host:58080
+ycode pair --tool opencode --url http://your-ycode-host:31415
 
 # 3. Paste the printed snippet into the location the command shows
 #    (e.g. ~/.opencode/opencode.jsonc), then launch your client.
@@ -62,7 +62,7 @@ After step 2 the foreign tool sees `ycode:loom_lease`, `ycode:list_repos`,
 > and `/pulse/`. These were retired in manifest `schemaVersion: "4"`;
 > clients configured with those URLs must switch to `/mcp/`.
 
-All non-OTLP endpoints listen on the proxy port (default `58080`). All
+All non-OTLP endpoints listen on the proxy port (default `31415`). All
 bearer-authenticated endpoints accept `Authorization: Bearer <token>`. The
 token is whatever `ycode pair` printed; rotate by deleting
 `~/.agents/ycode/server.token` and re-running `ycode pair`.

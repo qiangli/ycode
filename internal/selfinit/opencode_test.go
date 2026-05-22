@@ -3,6 +3,7 @@ package selfinit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,9 +25,10 @@ func TestOpenCode_WriteMCP_FreshConfig(t *testing.T) {
 	xdg := withFakeXDG(t)
 	o := &opencodeTool{}
 
+	loomURL := fmt.Sprintf("http://127.0.0.1:%d/loom-mcp/", DefaultPort)
 	caps := []CapabilitySpec{
 		{Name: "ycode-stdio", Transport: "stdio", Command: "ycode", Args: []string{"mcp", "serve"}, Family: "stdio"},
-		{Name: "ycode-loom", Transport: "http", URL: "http://127.0.0.1:58080/loom-mcp/", Family: "loom"},
+		{Name: "ycode-loom", Transport: "http", URL: loomURL, Family: "loom"},
 	}
 	changed, err := o.WriteMCP(context.Background(), caps)
 	if err != nil {
@@ -67,7 +69,7 @@ func TestOpenCode_WriteMCP_FreshConfig(t *testing.T) {
 	if loom["type"] != "remote" {
 		t.Errorf("ycode-loom type=%v want remote", loom["type"])
 	}
-	if loom["url"] != "http://127.0.0.1:58080/loom-mcp/" {
+	if loom["url"] != loomURL {
 		t.Errorf("ycode-loom url=%v", loom["url"])
 	}
 

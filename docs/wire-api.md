@@ -21,8 +21,8 @@ relevant new block:
 {
   "schemaVersion": "3",
   "endpoints": {
-    "proxy":    "http://127.0.0.1:58080",
-    "api":      "http://127.0.0.1:58080/ycode/",
+    "proxy":    "http://127.0.0.1:31415",
+    "api":      "http://127.0.0.1:31415/ycode/",
     "...":      "..."
   },
   "auth": {
@@ -194,7 +194,7 @@ ycode serve [--no-auth] [--no-persona]
 **Multi-tenant deployment pattern:** until G-I lands, run one
 `ycode serve` per security profile when you need per-tenant tool
 restrictions. For example:
-- One serve for parents on port `:58080` started with
+- One serve for parents on port `:31415` started with
   `--tools-allowlist=read_file,grep_search,Agent` and
   `--no-persona`.
 - One serve for admins on port `:58081` with default tool registry.

@@ -16,7 +16,7 @@ import (
 
 // ProxyServer routes requests to backend services based on path prefix.
 // It supports both reverse-proxy backends (URL) and in-process handlers.
-// It listens on a single fixed port (e.g. 58080).
+// It listens on a single fixed port (e.g. 31415).
 type ProxyServer struct {
 	listenAddr string
 	mu         sync.RWMutex

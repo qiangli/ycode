@@ -20,13 +20,13 @@ ycode serve
 
 The server prints its proxy URL and the composite MCP endpoint:
 ```
-ycode MCP at       http://127.0.0.1:58080/mcp/  (ceiling: DangerFullAccess)
+ycode MCP at       http://127.0.0.1:31415/mcp/  (ceiling: DangerFullAccess)
 ```
 
 ### 2. Pair with opencode
 
 ```bash
-ycode pair --tool opencode --url http://127.0.0.1:58080
+ycode pair --tool opencode --url http://127.0.0.1:31415
 ```
 
 Paste the printed JSONC into `~/.opencode/opencode.jsonc` (or your
@@ -37,7 +37,7 @@ project's `.opencode/opencode.jsonc`). The shape is a single MCP entry:
   "mcp": {
     "ycode": {
       "type": "remote",
-      "url": "http://127.0.0.1:58080/mcp/",
+      "url": "http://127.0.0.1:31415/mcp/",
       "headers": { "Authorization": "Bearer <token>" },
       "timeout": 30000
     }

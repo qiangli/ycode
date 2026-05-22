@@ -299,7 +299,7 @@ Key changes to `internal/cli/tui.go`:
 
 **Default mode** (`ycode`): Creates `LocalService` + `InProcessClient` + TUI. Same as today but decoupled.
 
-**Server mode** (`ycode serve api`): Starts HTTP/WebSocket server on port 58090 (distinct from observability on 58080). Optionally starts embedded NATS. Prints token and URL.
+**Server mode** (`ycode serve api`): Starts HTTP/WebSocket server on port 58090 (distinct from observability on 31415). Optionally starts embedded NATS. Prints token and URL.
 
 **Remote TUI via WebSocket** (`ycode --connect ws://localhost:58090`): Creates `WSClient`, launches TUI.
 
@@ -322,7 +322,7 @@ The web client opens a WebSocket to `/api/sessions/{id}/ws` for the active sessi
 - HTTP middleware: OTEL trace spans per request, request/response metrics
 - WebSocket metrics: active connection count, messages in/out per second
 - NATS metrics: subscription count, messages published/received
-- The existing OTEL collector at port 58080 receives telemetry from the API server automatically (same process, same OTEL SDK)
+- The existing OTEL collector at port 31415 receives telemetry from the API server automatically (same process, same OTEL SDK)
 
 ## Phased Implementation
 

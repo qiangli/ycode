@@ -11,7 +11,12 @@ import (
 // DefaultPort is the proxy port `ycode serve` listens on by default.
 // SelfInit uses this when no manifest is readable to register HTTP
 // MCP entries optimistically.
-const DefaultPort = 58080
+//
+// Chosen to sit below the OS ephemeral-port pool on both Linux
+// (default ip_local_port_range 32768–60999) and macOS (49152–65535),
+// so a fresh `ycode serve` cannot race-lose to an OS-assigned
+// ephemeral socket. IANA-unassigned; pi mnemonic.
+const DefaultPort = 31415
 
 // ManifestPath returns the canonical location ycode serve writes its
 // manifest to (~/.agents/ycode/manifest.json).

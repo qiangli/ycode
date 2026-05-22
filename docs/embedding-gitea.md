@@ -108,7 +108,7 @@ info, _ := PrepareWorkspace(ctx, repoDir, agentID, WorkspaceWorktree)
 3. Agent works       → commits to agent/{id} branch
 4. Agent completes   → MergeWorktree(info, "main")  // or CreatePR via API
 5. Cleanup           → CleanupWorkspace(info)
-6. Human review      → web UI at http://localhost:58080/git/
+6. Human review      → web UI at http://localhost:31415/git/
 ```
 
 ### Merge Strategy

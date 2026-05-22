@@ -27,7 +27,15 @@ out-of-the-box OTLP client connects without configuration:
 | --------------------- | ------------ | ------------------------------------------- |
 | OTLP/gRPC             | `4317`       | `observability.otlpGRPCPort` (config.json)  |
 | OTLP/HTTP (protobuf)  | `4318`       | `observability.otlpHTTPPort`                |
-| Reverse-proxy landing | `58080`      | `observability.proxyPort` / `--port`        |
+| Reverse-proxy landing | `31415`      | `observability.proxyPort` / `--port`        |
+
+> **Migration note (port change):** Earlier builds defaulted the reverse
+> proxy to `58080`, which sits inside the OS ephemeral port range on both
+> macOS (49152–65535) and Linux (default `ip_local_port_range` 32768–60999)
+> and could race-lose to an OS-assigned ephemeral socket. The default
+> moved to `31415` (below both ephemeral pools, IANA-unassigned). User
+> scripts or third-party configs that hardcoded `58080` must be updated,
+> or restore the old port explicitly with `ycode serve --port 58080`.
 
 If a default port is already in use, `ycode serve` fails loud rather than
 silently picking another one — third-party publishers can rely on
@@ -38,7 +46,7 @@ set the override to a negative value.
 Internal ports — Prometheus exporter (collector → Prometheus scrape),
 VictoriaLogs HTTP, Jaeger query UI, Perses, Alertmanager, etc. — are
 allocated from an ephemeral range and surfaced at the proxy on
-`58080`. They are not part of the public wire surface.
+`31415`. They are not part of the public wire surface.
 
 ## Source differentiation
 
@@ -79,8 +87,8 @@ import "github.com/qiangli/ycode/pkg/olly/query"
 
 q := query.New(query.Backends{
     Metrics: query.NewPromAdapter(promDB, promEngine),
-    Traces:  query.NewJaegerAdapter("http://127.0.0.1:58080/traces", nil),
-    Logs:    query.NewVLAdapter("http://127.0.0.1:58080/logs", nil),
+    Traces:  query.NewJaegerAdapter("http://127.0.0.1:31415/traces", nil),
+    Logs:    query.NewVLAdapter("http://127.0.0.1:31415/logs", nil),
 })
 
 // Reconstruct a session timeline.
@@ -145,7 +153,7 @@ Configuration is on `config.ObservabilityConfig`:
 | `CollectorAddr`  | `127.0.0.1:4317` | gRPC endpoint the SDK exports to         |
 | `OTLPGRPCPort`   | `4317`        | Embedded collector OTLP/gRPC bind            |
 | `OTLPHTTPPort`   | `4318`        | Embedded collector OTLP/HTTP bind            |
-| `ProxyPort`      | `58080`       | Reverse-proxy landing for all UIs            |
+| `ProxyPort`      | `31415`       | Reverse-proxy landing for all UIs            |
 | `PersistTraces`  | `true`        | Rotating JSONL traces                        |
 | `PersistMetrics` | `true`        | Rotating JSONL metrics                       |
 | `PersistLogs`    | `true`        | Rotating JSONL logs                          |

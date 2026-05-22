@@ -21,11 +21,18 @@ PACKAGES := $(shell go list ./... | grep -v '/priorart/')
 
 # Deploy / validate defaults
 HOST ?= localhost
-PORT ?= 58080
+PORT ?= 31415
 BASE_URL ?= http://$(HOST):$(PORT)
 
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL TAG_LIST
+
+# macOS Xcode 15+ ld warns "ignoring duplicate libraries: '-lc++', '-lobjc'"
+# whenever cgo and a downstream cgo lib both pass them. The duplicate is
+# harmless (ld dedupes), so silence it via the standard ld switch.
+ifeq ($(shell uname),Darwin)
+export CGO_LDFLAGS += -Wl,-no_warn_duplicate_libraries
+endif
 
 .PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-release-smoke test-all vet tidy clean all chrome-extension cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed gvproxy-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
 
@@ -289,7 +296,7 @@ build-single: podman-embed vfkit-embed gvproxy-embed runner-build-thin ## Build 
 
 # ─── Deploy ─────────────────────────────────────────────────────────────────
 
-deploy: ## Deploy ycode serve (HOST=localhost PORT=58080). Use HOST=<remote> for remote deploy
+deploy: ## Deploy ycode serve (HOST=localhost PORT=31415). Use HOST=<remote> for remote deploy
 	@if [ "$(HOST)" = "localhost" ] || [ "$(HOST)" = "127.0.0.1" ]; then \
 		./scripts/deploy-local.sh; \
 	else \
@@ -299,7 +306,7 @@ deploy: ## Deploy ycode serve (HOST=localhost PORT=58080). Use HOST=<remote> for
 deploy-local: ## Deploy to localhost
 	@./scripts/deploy-local.sh
 
-deploy-remote: ## Deploy to remote host (HOST=<remote> PORT=58080)
+deploy-remote: ## Deploy to remote host (HOST=<remote> PORT=31415)
 	@./scripts/deploy-remote.sh
 
 # ─── Validate ───────────────────────────────────────────────────────────────

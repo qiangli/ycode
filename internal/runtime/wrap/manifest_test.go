@@ -29,7 +29,7 @@ func TestReadServeManifestAt(t *testing.T) {
 		{
 			name: "endpoints map present but otlpGRPC missing",
 			contents: `{
-				"endpoints": {"git": "http://127.0.0.1:58080/git/"}
+				"endpoints": {"git": "http://127.0.0.1:31415/git/"}
 			}`,
 			wantOK: false,
 		},

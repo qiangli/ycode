@@ -22,7 +22,7 @@ const TOKEN_PATH = path.join(os.homedir(), ".agents", "ycode", "server.token");
 
 function discoverPort() {
   try { return parseInt(readFileSync(PORT_PATH, "utf-8").trim(), 10); }
-  catch { return 58080; }
+  catch { return 31415; }
 }
 
 function readToken() {

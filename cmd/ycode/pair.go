@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/qiangli/ycode/internal/selfinit"
 )
 
 // pairCmd implements `ycode pair --tool <name>` — the painless on-ramp for
@@ -64,7 +66,7 @@ var (
 
 func init() {
 	pairCmd.Flags().StringVar(&pairTool, "tool", "", "Foreign tool name (opencode|codex|gemini-cli|claude-code|ycode-tui)")
-	pairCmd.Flags().StringVar(&pairURL, "url", "http://127.0.0.1:58080", "Base URL of the ycode server (used in the snippet)")
+	pairCmd.Flags().StringVar(&pairURL, "url", fmt.Sprintf("http://127.0.0.1:%d", selfinit.DefaultPort), "Base URL of the ycode server (used in the snippet)")
 	pairCmd.Flags().BoolVar(&pairJSON, "json", false, "Emit machine-readable JSON instead of human-friendly text")
 	_ = pairCmd.MarkFlagRequired("tool")
 	rootCmd.AddCommand(pairCmd)

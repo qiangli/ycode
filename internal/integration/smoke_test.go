@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/qiangli/ycode/internal/selfinit"
 )
 
 func TestSmoke(t *testing.T) {
@@ -94,7 +97,7 @@ func TestSmoke(t *testing.T) {
 		if !isLocal(t) {
 			t.Skip("CLI tests only run locally")
 		}
-		port := "58080"
+		port := strconv.Itoa(selfinit.DefaultPort)
 		if p := os.Getenv("PORT"); p != "" {
 			port = p
 		}

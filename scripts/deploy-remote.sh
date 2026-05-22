@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Deploy ycode to a remote host via SSH.
-# Env: HOST (required), PORT (default: 58080), VERSION, COMMIT (set by Makefile)
+# Env: HOST (required), PORT (default: 31415), VERSION, COMMIT (set by Makefile)
 set -euo pipefail
 
 HOST="${HOST:?HOST is required}"
-PORT="${PORT:-58080}"
+PORT="${PORT:-31415}"
 
 echo "=== Deploy to ${HOST}:${PORT} ==="
 

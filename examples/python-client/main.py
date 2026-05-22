@@ -30,7 +30,7 @@ def discover_port() -> int:
     try:
         return int(PORT_PATH.read_text().strip())
     except (FileNotFoundError, ValueError):
-        return 58080
+        return 31415
 
 
 def read_token() -> str:

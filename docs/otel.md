@@ -6,11 +6,11 @@ ycode ships a fully embedded observability stack — a single self-contained bin
 
 ```bash
 # Explicit server mode
-ycode serve --port 58080              # foreground
-ycode serve --port 58080 --detach     # background daemon
+ycode serve --port 31415              # foreground
+ycode serve --port 31415 --detach     # background daemon
 
 # Or just run ycode — auto-starts the server if none is running
-ycode --port 58080
+ycode --port 31415
 
 # Skip telemetry entirely
 ycode --no-otel
@@ -24,7 +24,7 @@ ycode --no-otel
        │ gRPC OTLP (127.0.0.1:4317)
        ▼
   ┌──────────────────────────────────────────────┐
-  │  Embedded Observability Server (:58080)       │
+  │  Embedded Observability Server (:31415)       │
   │  All components run as goroutines             │
   │                                               │
   │  ┌─────────────────────────────────────────┐  │
@@ -47,7 +47,7 @@ ycode --no-otel
   │  └─────────┘  └──────────────────────────┘   │
   │                                               │
   │  ┌──────────────────────────────────────────┐ │
-  │  │ Reverse Proxy — 127.0.0.1:58080          │ │
+  │  │ Reverse Proxy — 127.0.0.1:31415          │ │
   │  │ Landing page + /healthz                  │ │
   │  └──────────────────────────────────────────┘ │
   └──────────────────────────────────────────────┘
@@ -63,7 +63,7 @@ ycode --no-otel
 
 ## Proxy Routes
 
-All services accessible via `http://127.0.0.1:58080/`:
+All services accessible via `http://127.0.0.1:31415/`:
 
 | Path | Component | Description |
 |------|-----------|-------------|
@@ -212,12 +212,12 @@ Enables per-client filtering in Prometheus, VictoriaLogs, and Jaeger.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--port` | 58080 | Observability server port |
+| `--port` | 31415 | Observability server port |
 | `--no-otel` | false | Skip server start/connect |
 
 ### Auto-Start Behavior
 
-1. `ycode --port 58080` checks if server is running at the port
+1. `ycode --port 31415` checks if server is running at the port
 2. If running: connects OTEL SDK to existing server
 3. If not: auto-starts server as goroutines, sets `autoStarted = true`
 4. On exit, **only if this instance started the server**: prompts `Keep observability server running? [Y/n]`
@@ -230,7 +230,7 @@ Enables per-client filtering in Prometheus, VictoriaLogs, and Jaeger.
     "enabled": true,
     "collectorAddr": "127.0.0.1:4317",
     "sampleRate": 1.0,
-    "proxyPort": 58080,
+    "proxyPort": 31415,
     "proxyBindAddr": "127.0.0.1",
     "dataDir": "~/.ycode/otel",
     "logRetentionDays": 3,

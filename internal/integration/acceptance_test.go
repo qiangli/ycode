@@ -5,9 +5,12 @@ package integration
 import (
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qiangli/ycode/internal/selfinit"
 )
 
 func TestAcceptance(t *testing.T) {
@@ -59,7 +62,7 @@ func TestAcceptance(t *testing.T) {
 		if !isLocal(t) {
 			t.Skip("CLI tests only run locally")
 		}
-		port := "58080"
+		port := strconv.Itoa(selfinit.DefaultPort)
 		if p := os.Getenv("PORT"); p != "" {
 			port = p
 		}

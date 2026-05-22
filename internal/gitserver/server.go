@@ -36,7 +36,7 @@ type ServerConfig struct {
 	Token    string // admin API token
 	// PublicRootURL is the externally-visible URL Gitea should advertise
 	// in generated links and asset prefixes (e.g.
-	// "http://127.0.0.1:58080/git/"). When set, it is written as
+	// "http://127.0.0.1:31415/git/"). When set, it is written as
 	// ROOT_URL in app.ini, and Gitea derives AppSubURL from its path.
 	// Empty disables the override; Gitea falls back to its own default.
 	PublicRootURL string

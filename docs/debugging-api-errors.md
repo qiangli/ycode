@@ -21,7 +21,7 @@ This queries all error metrics, recent error logs, and firing alerts in one call
 
 Components: `conversation`, `tool`, `session`, `tui`, `subagent`, `command`.
 
-**For humans** — open `http://127.0.0.1:58080/dashboard/` and check **ycode > Error Overview**:
+**For humans** — open `http://127.0.0.1:31415/dashboard/` and check **ycode > Error Overview**:
 
 | Panel | What to look for |
 |-------|------------------|
@@ -32,7 +32,7 @@ Components: `conversation`, `tool`, `session`, `tui`, `subagent`, `command`.
 
 ### Step 2: Check Structured Logs (VictoriaLogs)
 
-Open `http://127.0.0.1:58080/logs/select/vmui/` or use MCP:
+Open `http://127.0.0.1:31415/logs/select/vmui/` or use MCP:
 
 ```json
 {"tool": "search_victorialogs", "input": {"query": "log.type:error"}}
@@ -69,7 +69,7 @@ ycode.error
 
 ### Step 3: Check Traces (Jaeger)
 
-Open `http://127.0.0.1:58080/traces/` and search for error spans:
+Open `http://127.0.0.1:31415/traces/` and search for error spans:
 
 - **Service**: `ycode`
 - **Tags**: `error=true`
@@ -86,7 +86,7 @@ Error spans carry structured attributes:
 
 ### Step 4: Check Alerts (AlertManager)
 
-Open `http://127.0.0.1:58080/alerts/` or use MCP:
+Open `http://127.0.0.1:31415/alerts/` or use MCP:
 
 ```json
 {"tool": "list_alerts", "input": {}}

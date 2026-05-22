@@ -2,10 +2,10 @@
 
 The ycode server exposes a REST + WebSocket API for building thin clients in any language.
 
-**Default:** `http://127.0.0.1:58080`
+**Default:** `http://127.0.0.1:31415`
 **API prefix:** `/ycode/` (the API is mounted on the observability proxy)
 
-All endpoints below are relative to the API prefix: `http://127.0.0.1:58080/ycode/`
+All endpoints below are relative to the API prefix: `http://127.0.0.1:31415/ycode/`
 
 ## Server Discovery
 
@@ -31,7 +31,7 @@ GET /api/health
 ```
 Returns `{"status":"ok"}`. Use this to detect a running server.
 
-Full URL: `http://127.0.0.1:58080/ycode/api/health`
+Full URL: `http://127.0.0.1:31415/ycode/api/health`
 
 ### Server Status
 ```
@@ -145,7 +145,7 @@ Respond with `permission.respond` message.
 
 To detect a running ycode server programmatically:
 
-1. Read port from `~/.agents/ycode/serve.port` (fall back to 58080)
+1. Read port from `~/.agents/ycode/serve.port` (fall back to 31415)
 2. Check PID file exists: `~/.agents/ycode/serve.pid`
 3. Verify process is alive (signal 0 or equivalent)
 4. HTTP GET `http://127.0.0.1:{port}/ycode/api/health` with short timeout

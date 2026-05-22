@@ -145,7 +145,7 @@ func printInitResult(res selfinit.Result) {
 	}
 	if res.RepoRoot != "" && len(res.ProjectFiles) > 0 {
 		fmt.Println()
-		fmt.Println("ycode did not touch your AGENTS.md / CLAUDE.md. If you want")
+		fmt.Println("ycode did not touch your AGENTS.md. If you want")
 		fmt.Println("your root file to point at ycode's capability list, paste:")
 		fmt.Println()
 		for _, line := range strings.Split(selfinit.RootPointerSnippet(), "\n") {
