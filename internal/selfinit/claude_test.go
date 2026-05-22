@@ -177,6 +177,30 @@ func TestClaudeRoundTrip(t *testing.T) {
 	repo := makeRepo(t)
 	t.Setenv("YCODE_SELFINIT_FOREIGN", "") // ensure env doesn't leak opt-in
 
+	// Detect() returns false unless `claude` is on PATH OR ~/.claude/
+	// exists. Hosts running this test typically have one of those (the
+	// developer's own Claude install), so the test "passes" via ambient
+	// state. In a sparse environment (container, fresh CI runner) Run()
+	// short-circuits on Detect()==false, never writes ~/.claude.json,
+	// and the assertion fails. Seed the dir so the test is hermetic.
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatalf("seed ~/.claude: %v", err)
+	}
+	// DetectYcodeCommand probes PATH and ~/go/bin/ycode and ~/.local/bin/ycode
+	// before falling back to `go run github.com/qiangli/ycode/...@latest`.
+	// On a developer host one of those usually exists, so the assertion
+	// below (`args == [mcp serve ...]`) passes via ambient state. In a
+	// container the fallback kicks in and args becomes
+	// `[run github.com/.../cmd/ycode@latest mcp serve]`. Drop an
+	// executable stub at ~/.local/bin/ycode so detection is deterministic.
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("seed bin dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "ycode"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("seed ycode stub: %v", err)
+	}
+
 	configPath := filepath.Join(home, ".claude.json")
 
 	// Default Run: opt-in gate is closed, no write.

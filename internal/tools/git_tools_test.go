@@ -31,6 +31,17 @@ func setupGitRepo(t *testing.T) string {
 	run("init")
 	run("checkout", "-b", "main")
 
+	// Persist identity in the local repo config. The GIT_AUTHOR/COMMITTER
+	// env vars above only reach `git` invocations launched by this `run`
+	// helper — handlers under test (e.g. git_commit) shell out to `git`
+	// from their own exec.Cmd without inheriting these vars, so without
+	// a config-level identity they fail with "Author identity unknown"
+	// in any environment where the host's global git config isn't set
+	// (container, fresh CI runner). Writing to .git/config makes the
+	// test hermetic.
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "Test")
+
 	// Create initial commit.
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test\n"), 0o644); err != nil {
 		t.Fatal(err)

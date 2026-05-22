@@ -1,5 +1,6 @@
 .git
-.agents
+# Don't exclude .agents — internal/features/TestRegistryFilesExist verifies
+# the on-disk skill registry under .agents/ycode/skills/ at repo root.
 .claude
 .gfy-out
 bin/
