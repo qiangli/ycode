@@ -13,6 +13,10 @@ import (
 type (
 	StartOptions  = machine.StartOptions
 	InitOptions   = machineDefine.InitOptions
+	RemoveOptions = machine.RemoveOptions
+	ResetOptions  = machine.ResetOptions
+	ListOptions   = machine.ListOptions
+	ListResponse  = machine.ListResponse
 	Status        = machineDefine.Status
 	MachineConfig = vmconfigs.MachineConfig
 	VMProvider    = vmconfigs.VMProvider
@@ -21,10 +25,13 @@ type (
 const Running = machineDefine.Running
 
 var (
-	GetProvider      = provider.Get
-	Init             = shim.Init
-	Start            = shim.Start
-	Stop             = shim.Stop
-	GetMachineDirs   = env.GetMachineDirs
+	GetProvider       = provider.Get
+	Init              = shim.Init
+	Start             = shim.Start
+	Stop              = shim.Stop
+	Remove            = shim.Remove
+	Reset             = shim.Reset
+	List              = shim.List
+	GetMachineDirs    = env.GetMachineDirs
 	LoadMachineByName = vmconfigs.LoadMachineByName
 )

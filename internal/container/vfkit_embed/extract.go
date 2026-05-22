@@ -76,9 +76,51 @@ func EnsureVfkit(cacheDir string) (string, error) {
 	}
 
 	if runtime.GOOS == "darwin" {
-		exec.Command("codesign", "-f", "-s", "-", binPath).Run() //nolint:errcheck
+		// vfkit talks to Apple's Virtualization.framework, which refuses
+		// to construct a VZVirtualMachineConfiguration unless the calling
+		// process holds `com.apple.security.virtualization`. Without it
+		// `machine start` dies with VZErrorDomain Code=2:
+		//   "Invalid virtual machine configuration. The process doesn't
+		//   have the com.apple.security.virtualization entitlement."
+		// Sign ad-hoc but WITH the entitlements vfkit upstream ships in
+		// `vf.entitlements`.
+		signVfkit(binPath)
 	}
 
 	os.WriteFile(hashPath, []byte(embeddedHash), 0o644) //nolint:errcheck
 	return binPath, nil
+}
+
+// vfkitEntitlements is the plist vfkit upstream embeds via `make codesign`.
+// Mirrored verbatim from github.com/crc-org/vfkit `vf.entitlements`.
+const vfkitEntitlements = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.virtualization</key>
+	<true/>
+</dict>
+</plist>
+`
+
+// signVfkit ad-hoc-signs the extracted vfkit with the Virtualization
+// entitlement. Failure is non-fatal: if codesign is missing or returns
+// an error, the user gets the same VZError on next start and can debug
+// from there.
+func signVfkit(binPath string) {
+	ent, err := os.CreateTemp("", "vfkit-entitlements-*.plist")
+	if err != nil {
+		return
+	}
+	defer os.Remove(ent.Name())
+	if _, err := ent.WriteString(vfkitEntitlements); err != nil {
+		ent.Close()
+		return
+	}
+	ent.Close()
+	exec.Command("codesign", "--force", "--entitlements", ent.Name(), "--sign", "-", binPath).Run() //nolint:errcheck
 }

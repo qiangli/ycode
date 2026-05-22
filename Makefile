@@ -27,7 +27,7 @@ BASE_URL ?= http://$(HOST):$(PORT)
 # Export for scripts (VERSION/COMMIT instead of LDFLAGS to avoid quoting issues)
 export VERSION COMMIT PACKAGES HOST PORT BASE_URL TAG_LIST
 
-.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-release-smoke test-all vet tidy clean all chrome-extension cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
+.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-release-smoke test-all vet tidy clean all chrome-extension cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed gvproxy-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
 
 .DEFAULT_GOAL := help
 
@@ -275,12 +275,15 @@ podman-embed: ## Compress system podman binary for embedding into ycode
 vfkit-embed: ## Compress vfkit binary for embedding into ycode (macOS only)
 	@./scripts/embed-vfkit.sh
 
-build-single: podman-embed vfkit-embed runner-build-thin ## Build single self-contained ycode binary
-	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata,embed_podman,embed_vfkit,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+gvproxy-embed: ## Build gvproxy from module cache and gzip for embedding
+	@./scripts/embed-gvproxy.sh
+
+build-single: podman-embed vfkit-embed gvproxy-embed runner-build-thin ## Build single self-contained ycode binary
+	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata,embed_podman,embed_vfkit,embed_gvproxy,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
 	@echo ""
 	@echo "=== Single binary ready: bin/ycode ==="
-	@echo "Includes: embedded podman, embedded vfkit, embedded inference runner"
+	@echo "Includes: embedded podman, embedded vfkit, embedded gvproxy, embedded inference runner"
 	@echo "Ship this one file — ycode auto-provisions everything on first run."
 	@ls -lh bin/ycode
 

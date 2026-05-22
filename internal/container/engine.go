@@ -161,7 +161,10 @@ func defaultSocketPath() string {
 
 	tmpDir := os.TempDir()
 	candidates = append(candidates,
+		// Current upstream naming (libpod ≥ v6): <tmpdir>/podman/<machine>-api.sock
+		filepath.Join(tmpDir, "podman", "ycode-default-api.sock"),
 		filepath.Join(tmpDir, "podman", "podman-machine-default-api.sock"),
+		// Legacy naming we used before — keep for backwards-compat.
 		filepath.Join(tmpDir, "podman", "podman-machine-ycode-default-api.sock"),
 	)
 

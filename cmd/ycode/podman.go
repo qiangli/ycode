@@ -38,6 +38,7 @@ func newPodmanCmd() *cobra.Command {
 		newPodmanInspectCmd(),
 		newPodmanBuildCmd(),
 		newPodmanNetworkCmd(),
+		newPodmanMachineCmd(),
 	)
 
 	return cmd

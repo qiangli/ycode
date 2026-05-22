@@ -9,14 +9,15 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"go.podman.io/common/pkg/config"
 
 	ociMachine "github.com/qiangli/ycode/pkg/oci/machine"
 
+	gvproxyEmbed "github.com/qiangli/ycode/internal/container/gvproxy_embed"
 	vfkitEmbed "github.com/qiangli/ycode/internal/container/vfkit_embed"
 )
 
@@ -60,7 +61,7 @@ func DefaultMachineConfig() MachineConfig {
 // Uses podman's Go libraries directly — no external binary needed.
 func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 	// Ensure vfkit helper is available (macOS VM hypervisor).
-	ensureVfkitOnPath()
+	ensureHelperBinariesOnPath()
 
 	// Get the platform's VM provider (AppleHV on macOS, QEMU on Linux, HyperV on Windows).
 	mp, err := ociMachine.GetProvider()
@@ -88,6 +89,12 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 		slog.Info("container: initializing machine (first-time setup, downloads ~800MB VM image)",
 			"name", cfg.Name, "cpus", cfg.CPUs, "memory_mb", cfg.Memory, "disk_gb", cfg.Disk)
 
+		// See InitMachine for the rationale on Username — gvproxy
+		// requires a non-empty value or it refuses to start.
+		user := "core"
+		if c, err := config.Default(); err == nil && c.Machine.User != "" {
+			user = c.Machine.User
+		}
 		initOpts := ociMachine.InitOptions{
 			Name:      cfg.Name,
 			CPUS:      uint64(cfg.CPUs),
@@ -95,6 +102,7 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 			DiskSize:  uint64(cfg.Disk),
 			IsDefault: true,
 			Image:     resolveMachineImage(),
+			Username:  user,
 		}
 
 		if err := ociMachine.Init(initOpts, mp); err != nil {
@@ -143,25 +151,172 @@ func StopMachine(ctx context.Context, name string) error {
 	return ociMachine.Stop(mc, mp, false)
 }
 
+// InitMachine creates and registers a new VM without starting it. Use
+// StartMachine afterward (or EnsureMachine which does both).
+func InitMachine(ctx context.Context, cfg MachineConfig) error {
+	ensureHelperBinariesOnPath()
+
+	mp, err := ociMachine.GetProvider()
+	if err != nil {
+		return fmt.Errorf("get machine provider: %w", err)
+	}
+	if _, exists := findMachine(cfg.Name, mp); exists {
+		return fmt.Errorf("machine %q already exists", cfg.Name)
+	}
+	// Username must be set: upstream uses it as `mc.SSH.RemoteUsername`
+	// AND as one of the four `-forward-*` flags passed to gvproxy. If any
+	// of those four are empty, gvproxy refuses to start with "must all be
+	// specified together, the same number of times, or not at all", which
+	// surfaces here as "machine start: unable to connect to gvproxy
+	// socket" after the wait-for-socket backoff times out. The Fedora
+	// CoreOS machine image ships with a "core" account, matching
+	// containers.conf's documented default.
+	user := "core"
+	if c, err := config.Default(); err == nil && c.Machine.User != "" {
+		user = c.Machine.User
+	}
+	opts := ociMachine.InitOptions{
+		Name:      cfg.Name,
+		CPUS:      uint64(cfg.CPUs),
+		Memory:    uint64(cfg.Memory),
+		DiskSize:  uint64(cfg.Disk),
+		IsDefault: true,
+		Image:     resolveMachineImage(),
+		Username:  user,
+	}
+	slog.Info("container: initializing machine (downloads ~800MB VM image on first run)",
+		"name", cfg.Name, "cpus", cfg.CPUs, "memory_mb", cfg.Memory, "disk_gb", cfg.Disk)
+	if err := ociMachine.Init(opts, mp); err != nil {
+		return fmt.Errorf("machine init: %w", err)
+	}
+	return nil
+}
+
+// StartMachine starts an existing machine and registers the user-facing
+// podman connection. Returns nil immediately if the machine is already
+// running.
+func StartMachine(ctx context.Context, name string) error {
+	ensureHelperBinariesOnPath()
+
+	// Honor YCODE_LOG_LEVEL=debug for the upstream libpod logrus chain.
+	// Without this the gvproxy commandline + vfkit/krunkit launch trace
+	// stays hidden, which makes diagnosing "machine start: unable to
+	// connect to gvproxy socket" effectively impossible.
+	if strings.EqualFold(os.Getenv("YCODE_LOG_LEVEL"), "debug") {
+		logrus.SetLevel(logrus.DebugLevel)
+	}
+
+	mp, err := ociMachine.GetProvider()
+	if err != nil {
+		return fmt.Errorf("get machine provider: %w", err)
+	}
+	mc, exists := findMachine(name, mp)
+	if !exists {
+		return fmt.Errorf("machine %q not found", name)
+	}
+	if state, err := mp.State(mc, false); err == nil && state == ociMachine.Running {
+		return nil
+	}
+	updateConn := true
+	if err := ociMachine.Start(mc, mp, ociMachine.StartOptions{}, &updateConn); err != nil {
+		return fmt.Errorf("machine start: %w", err)
+	}
+	return nil
+}
+
+// RemoveMachine deletes a machine's config, image, and ignition files.
+// Force=true skips the running-state check (the machine is stopped if
+// needed). SaveImage/SaveIgnition retain those artifacts for reuse.
+func RemoveMachine(ctx context.Context, name string, opts ociMachine.RemoveOptions) error {
+	mp, err := ociMachine.GetProvider()
+	if err != nil {
+		return fmt.Errorf("get machine provider: %w", err)
+	}
+	mc, exists := findMachine(name, mp)
+	if !exists {
+		return fmt.Errorf("machine %q not found", name)
+	}
+	return ociMachine.Remove(mc, mp, opts)
+}
+
+// ResetMachines wipes ALL podman machine state across every provider on
+// the current platform. Use this to recover from corruption where a
+// machine config exists on disk but the system connection registry
+// disagrees.
+func ResetMachines(ctx context.Context) error {
+	mp, err := ociMachine.GetProvider()
+	if err != nil {
+		return fmt.Errorf("get machine provider: %w", err)
+	}
+	return ociMachine.Reset([]ociMachine.VMProvider{mp}, ociMachine.ResetOptions{Force: true})
+}
+
+// ListMachines returns one entry per VM known to the current platform's
+// provider — running or not.
+func ListMachines(ctx context.Context) ([]*ociMachine.ListResponse, error) {
+	mp, err := ociMachine.GetProvider()
+	if err != nil {
+		return nil, fmt.Errorf("get machine provider: %w", err)
+	}
+	return ociMachine.List([]ociMachine.VMProvider{mp}, ociMachine.ListOptions{})
+}
+
 // --- internal helpers ---
 
-// ensureVfkitOnPath extracts the embedded vfkit (if available) and adds it to PATH.
-func ensureVfkitOnPath() {
-	if !vfkitEmbed.Available() {
-		return
-	}
+// ensureHelperBinariesOnPath extracts every embedded helper binary
+// (vfkit, gvproxy) to the cache dir, prepends that dir to PATH (for
+// helpers searched via PATH like vfkit), and exposes it through the
+// CONTAINERS_HELPER_BINARY_DIR env var (for helpers searched only via
+// upstream's helper_binaries_dir like gvproxy — see
+// `c.Engine.HelperBinariesDir.Get()` in
+// go.podman.io/common/pkg/config.FindHelperBinary).
+//
+// Doing both means users get a working podman machine with no manual
+// containers.conf edits.
+func ensureHelperBinariesOnPath() {
 	cacheDir := defaultBinCacheDir()
-	path, err := vfkitEmbed.EnsureVfkit(cacheDir)
-	if err != nil {
-		slog.Warn("container: embedded vfkit extraction failed", "error", err)
-		return
+
+	vfkitOK := false
+	if vfkitEmbed.Available() {
+		if path, err := vfkitEmbed.EnsureVfkit(cacheDir); err != nil {
+			slog.Warn("container: embedded vfkit extraction failed", "error", err)
+		} else {
+			slog.Info("container: using embedded vfkit", "path", path)
+			vfkitOK = true
+		}
 	}
-	dir := filepath.Dir(path)
+	if gvproxyEmbed.Available() {
+		if path, err := gvproxyEmbed.EnsureGvproxy(cacheDir); err != nil {
+			slog.Warn("container: embedded gvproxy extraction failed", "error", err)
+		} else {
+			slog.Info("container: using embedded gvproxy", "path", path)
+		}
+	}
+
+	// PATH-search (vfkit) — `FindHelperBinary(_, true)`.
 	currentPath := os.Getenv("PATH")
-	if !strings.Contains(currentPath, dir) {
-		os.Setenv("PATH", dir+string(os.PathListSeparator)+currentPath)
+	if !strings.Contains(currentPath, cacheDir) {
+		os.Setenv("PATH", cacheDir+string(os.PathListSeparator)+currentPath)
 	}
-	slog.Info("container: using embedded vfkit", "path", path)
+	// helper_binaries_dir-search (gvproxy) — `FindHelperBinary(_, false)`.
+	// Upstream prepends CONTAINERS_HELPER_BINARY_DIR to the search list.
+	if os.Getenv("CONTAINERS_HELPER_BINARY_DIR") == "" {
+		os.Setenv("CONTAINERS_HELPER_BINARY_DIR", cacheDir)
+	}
+
+	// Provider selection: upstream's macOS default is libkrun, which
+	// needs krunkit + libkrun.dylib. We only embed vfkit, so without an
+	// override the start path fails with `exec: "krunkit": executable
+	// file not found`. Force applehv when (a) vfkit was extracted
+	// successfully and (b) the user hasn't already overridden — either
+	// via containers.conf or CONTAINERS_MACHINE_PROVIDER directly.
+	if vfkitOK && os.Getenv("CONTAINERS_MACHINE_PROVIDER") == "" {
+		if cfg, err := config.Default(); err == nil && cfg.Machine.Provider != "" {
+			// User pinned a provider in containers.conf — respect it.
+		} else {
+			os.Setenv("CONTAINERS_MACHINE_PROVIDER", "applehv")
+		}
+	}
 }
 
 // findMachine looks up a machine config by name from the provider.
