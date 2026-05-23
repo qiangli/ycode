@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-
-	"github.com/qiangli/gfy/pkg/graph"
 )
 
 // graphMirror is the minimal interface internal/runtime/codegraph needs from
@@ -64,9 +62,46 @@ func (gc *GraphContext) mirrorTo(ctx context.Context, mg graphMirror) error {
 		}
 	}
 
+	// Edges are written in batched upserts. Previously this loop did one
+	// Upsert (query + mutation round-trip) per edge — for a code graph
+	// with ~25k edges, that was 25k network calls and 50k string
+	// allocations, which pegged the GC mark workers for ~2 minutes at
+	// startup. Batching cuts round-trips by edgeBatchSize× with a single
+	// DQL query block resolving N source/target uids and a single
+	// mutation block writing N edges. Best-effort error semantics
+	// preserved at batch granularity (a failed batch logs and continues).
+	const edgeBatchSize = 200
+	var (
+		edgeQ   strings.Builder
+		edgeMut strings.Builder
+		batched int
+		flush   = func() {
+			if batched == 0 {
+				return
+			}
+			edgeQ.WriteString("}\n")
+			if err := mg.Upsert(ctx, edgeQ.String(), []byte(edgeMut.String())); err != nil {
+				slog.Debug("codegraph mirror: edge batch upsert", "count", batched, "err", err)
+			}
+			edgeQ.Reset()
+			edgeMut.Reset()
+			batched = 0
+		}
+	)
 	for _, e := range gc.Graph.Edges() {
-		writeEdgeUpsert(ctx, mg, e)
+		if batched == 0 {
+			edgeQ.WriteString("{\n")
+		}
+		pred := edgeKindToPredicate(attrStr(e.Attrs, "type"))
+		fmt.Fprintf(&edgeQ, "  s%d(func: eq(code.label, %q)) { v%d as uid }\n", batched, e.Source, batched)
+		fmt.Fprintf(&edgeQ, "  t%d(func: eq(code.label, %q)) { w%d as uid }\n", batched, e.Target, batched)
+		fmt.Fprintf(&edgeMut, "uid(v%d) <%s> uid(w%d) .\n", batched, pred, batched)
+		batched++
+		if batched >= edgeBatchSize {
+			flush()
+		}
 	}
+	flush()
 
 	slog.Debug("codegraph: mirrored to bonsai",
 		"nodes", gc.Graph.NodeCount(), "edges", gc.Graph.EdgeCount())
@@ -94,18 +129,6 @@ func writeNodeNQuads(b *strings.Builder, id string, attrs map[string]any, commun
 	}
 	if community >= 0 {
 		fmt.Fprintf(b, "%s <code.community> \"%d\"^^<xs:int> .\n", tag, community)
-	}
-}
-
-func writeEdgeUpsert(ctx context.Context, mg graphMirror, e graph.EdgeData) {
-	pred := edgeKindToPredicate(attrStr(e.Attrs, "type"))
-	q := fmt.Sprintf(`{
-  src(func: eq(code.label, %q)) { v as uid }
-  dst(func: eq(code.label, %q)) { w as uid }
-}`, e.Source, e.Target)
-	mut := fmt.Sprintf("uid(v) <%s> uid(w) .\n", pred)
-	if err := mg.Upsert(ctx, q, []byte(mut)); err != nil {
-		slog.Debug("codegraph mirror: edge upsert", "src", e.Source, "tgt", e.Target, "err", err)
 	}
 }
 
