@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Drop-in shim: routes `bash …` to `ycode shell --agent …`.
+#
+# Install one of:
+#   ln -s "$(pwd)/scripts/shims/bash" /usr/local/bin/bash
+#   PATH="/path/to/ycode/scripts/shims:$PATH"
+#
+# `ycode shell` parses bash argv (-c, -l, -lc, --login, ...) with bash
+# semantics; see cmd/ycode/shell_dispatch.go. --agent enables the yc
+# built-in dispatcher and hint engine for foreign-agent shells.
+exec ycode shell --agent "$@"
