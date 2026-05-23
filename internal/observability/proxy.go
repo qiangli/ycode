@@ -18,8 +18,8 @@ import (
 // It supports both reverse-proxy backends (URL) and in-process handlers.
 // It listens on a single fixed port (e.g. 31415).
 type ProxyServer struct {
-	listenAddr string
-	mu         sync.RWMutex
+	listenAddr  string
+	mu          sync.RWMutex
 	routes      map[string]*url.URL     // path prefix -> backend URL
 	handlers    map[string]http.Handler // path prefix -> in-process handler (prefix stripped before handler sees it)
 	rawHandlers map[string]http.Handler // path prefix -> in-process handler (NO prefix strip — handler dispatches on full path)
