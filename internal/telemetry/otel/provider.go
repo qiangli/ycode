@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	otelruntime "go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
@@ -239,6 +240,19 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 		p.shutdownFuncs = append(p.shutdownFuncs, c)
 	}
 	otel.SetMeterProvider(p.MeterProvider)
+
+	// Register Go runtime metrics (goroutines, heap, GC, scheduler latency).
+	// Without this, /metrics only carries the host_metrics receiver output and
+	// `ycode_bus_events_published_total` — no way to see goroutine leaks,
+	// heap growth, or GC pressure. This is the load-bearing debug surface
+	// when the process pegs a core: it's how we tell `runtime.go.goroutines`
+	// is climbing vs. heap is climbing.
+	if err := otelruntime.Start(
+		otelruntime.WithMeterProvider(p.MeterProvider),
+		otelruntime.WithMinimumReadMemStatsInterval(10*time.Second),
+	); err != nil {
+		slog.Warn("OTEL runtime metrics start failed; go_* metrics will be absent", "error", err)
+	}
 
 	// --- Log provider (structured records: gRPC to collector and/or rotating file) ---
 	var logProcessors []sdklog.Processor

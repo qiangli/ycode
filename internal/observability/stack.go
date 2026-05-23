@@ -173,6 +173,17 @@ func (s *StackManager) AddHandler(pathPrefix string, handler http.Handler) {
 	}
 }
 
+// AddHandlerNoStrip registers an in-process HTTP handler that needs to see
+// the full request path (no prefix strip). Required for handlers that
+// self-dispatch on the URL — net/http/pprof is the canonical example.
+func (s *StackManager) AddHandlerNoStrip(pathPrefix string, handler http.Handler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.proxy != nil {
+		s.proxy.AddHandlerNoStrip(pathPrefix, handler)
+	}
+}
+
 // AddLateComponent registers and starts a component after the stack is already running.
 // Its HTTP handler (if any) is mounted on the proxy.
 func (s *StackManager) AddLateComponent(ctx context.Context, c Component) error {

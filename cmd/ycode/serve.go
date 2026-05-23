@@ -687,6 +687,13 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	mgr.AddHandler("/manifest", manifestFullHandler(manifestData, tokenFile, serveNoAuth))
 	fmt.Printf("Manifest HTTP at   http://127.0.0.1:%d/.well-known/ycode-manifest.json (public), /manifest (authed)\n", port)
 
+	// Debug surface: net/http/pprof endpoints under /debug/pprof/. Critical
+	// when serve misbehaves — without these the only available signal is
+	// `ps aux | grep` + macOS `sample`. Bound to localhost via proxy.
+	// Mounted no-strip because pprof self-dispatches on the full URL.
+	mgr.AddHandlerNoStrip("/debug/pprof/", debugPprofMux())
+	fmt.Printf("Debug pprof at     http://127.0.0.1:%d/debug/pprof/ (goroutine, heap, profile, ...)\n", port)
+
 	// If auto-started, write sentinel and enable idle shutdown.
 	autoPath := filepath.Join(home, ".agents", "ycode", "serve.auto")
 	if serveAuto {

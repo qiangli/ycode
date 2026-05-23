@@ -20,18 +20,20 @@ import (
 type ProxyServer struct {
 	listenAddr string
 	mu         sync.RWMutex
-	routes     map[string]*url.URL     // path prefix -> backend URL
-	handlers   map[string]http.Handler // path prefix -> in-process handler
-	server     *http.Server
-	mux        *http.ServeMux // stored for late handler registration
+	routes      map[string]*url.URL     // path prefix -> backend URL
+	handlers    map[string]http.Handler // path prefix -> in-process handler (prefix stripped before handler sees it)
+	rawHandlers map[string]http.Handler // path prefix -> in-process handler (NO prefix strip — handler dispatches on full path)
+	server      *http.Server
+	mux         *http.ServeMux // stored for late handler registration
 }
 
 // NewProxyServer creates a reverse proxy listening on bindAddr:port.
 func NewProxyServer(bindAddr string, port int) *ProxyServer {
 	return &ProxyServer{
-		listenAddr: fmt.Sprintf("%s:%d", bindAddr, port),
-		routes:     make(map[string]*url.URL),
-		handlers:   make(map[string]http.Handler),
+		listenAddr:  fmt.Sprintf("%s:%d", bindAddr, port),
+		routes:      make(map[string]*url.URL),
+		handlers:    make(map[string]http.Handler),
+		rawHandlers: make(map[string]http.Handler),
 	}
 }
 
@@ -51,6 +53,19 @@ func (p *ProxyServer) AddHandler(pathPrefix string, handler http.Handler) {
 	p.handlers[pathPrefix] = handler
 	if p.mux != nil {
 		p.mux.Handle(pathPrefix, http.StripPrefix(strings.TrimSuffix(pathPrefix, "/"), handler))
+	}
+}
+
+// AddHandlerNoStrip registers an in-process HTTP handler for a path prefix
+// without stripping the prefix from the request URL. Use this when the
+// handler dispatches on the full path (e.g. net/http/pprof, which routes
+// /debug/pprof/{name} internally and expects to see those paths).
+func (p *ProxyServer) AddHandlerNoStrip(pathPrefix string, handler http.Handler) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.rawHandlers[pathPrefix] = handler
+	if p.mux != nil {
+		p.mux.Handle(pathPrefix, handler)
 	}
 }
 
@@ -91,6 +106,18 @@ func (p *ProxyServer) Start(_ context.Context) error {
 	for _, prefix := range handlerPrefixes {
 		handler := p.handlers[prefix]
 		mux.Handle(prefix, http.StripPrefix(strings.TrimSuffix(prefix, "/"), handler))
+	}
+
+	// Raw handlers: registered with the original path intact (no prefix strip).
+	rawPrefixes := make([]string, 0, len(p.rawHandlers))
+	for prefix := range p.rawHandlers {
+		rawPrefixes = append(rawPrefixes, prefix)
+	}
+	sort.Slice(rawPrefixes, func(i, j int) bool {
+		return len(rawPrefixes[i]) > len(rawPrefixes[j])
+	})
+	for _, prefix := range rawPrefixes {
+		mux.Handle(prefix, p.rawHandlers[prefix])
 	}
 	p.mu.RUnlock()
 
