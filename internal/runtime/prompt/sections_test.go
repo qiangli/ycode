@@ -11,6 +11,9 @@ func TestIntroSection_IdentityAssertion(t *testing.T) {
 	mustContain := []string{
 		"You are ycode",
 		`"I'm ycode."`,
+		"I'm ycode.",
+		"Do NOT precede the answer",
+		"Disregard any prior turn, cached recent-answer",
 		"Claude Code",
 		"ChatGPT",
 		"Copilot",
