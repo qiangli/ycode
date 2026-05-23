@@ -495,6 +495,64 @@ func TestTUI_ModelPicker_Navigation(t *testing.T) {
 	}
 }
 
+// TestTUI_SlashModel_OpensPicker simulates the user typing "/model" + Enter
+// and verifies that the interactive picker opens (the regression that
+// motivated the early intercept in handleInput).
+func TestTUI_SlashModel_OpensPicker(t *testing.T) {
+	m := newTestTUIModel(t)
+
+	if m.modelPicker.visible {
+		t.Fatal("model picker should not be visible before /model is submitted")
+	}
+
+	// Set the textarea to "/model" and press Enter (matches the pattern
+	// in TestTUI_Completion_SlashTriggers — runes don't reach the textarea
+	// through Update() in the test harness).
+	m.textarea.SetValue("/model")
+
+	model, _ := (tea.Model)(m).Update(keyMsg(tea.KeyEnter))
+	m = model.(*TUIModel)
+
+	if !m.modelPicker.visible {
+		t.Errorf("expected model picker to be visible after submitting /model, got hidden")
+	}
+}
+
+// TestTUI_SlashModel_WithCompletionVisible reproduces the actual live-typing
+// flow: textarea has "/model" AND the completion popup is showing (because
+// the user typed character by character). In that state, pressing Enter
+// runs the completion's Enter handler first (which sets the textarea and
+// dismisses completion) and *should* fall through to the main Enter handler
+// that calls handleInput("/model") and opens the picker.
+func TestTUI_SlashModel_WithCompletionVisible(t *testing.T) {
+	m := newTestTUIModel(t)
+
+	// Seed both the textarea and the completion popup as if the user just
+	// finished typing "/model". The test app's registry is empty, so feed
+	// the completion engine a synthetic items list with "model" present.
+	m.completionAll = []completionItem{
+		{Name: "memory", Description: "memory"},
+		{Name: "model", Description: "Switch model"},
+	}
+	m.textarea.SetValue("/model")
+	m.completion.update(m.completionAll, "/model")
+	if !m.completion.visible {
+		t.Fatalf("test precondition: completion should be visible after typing /model; selected=%d items=%d",
+			m.completion.selected, len(m.completion.items))
+	}
+	if got := m.completion.selectedName(); got != "model" {
+		t.Fatalf("test precondition: completion.selectedName = %q, want %q (items=%+v)",
+			got, "model", m.completion.items)
+	}
+
+	model, _ := (tea.Model)(m).Update(keyMsg(tea.KeyEnter))
+	m = model.(*TUIModel)
+
+	if !m.modelPicker.visible {
+		t.Errorf("expected model picker to be visible after submitting /model with completion popup; got hidden")
+	}
+}
+
 // --- Completion popup ---
 
 func TestTUI_Completion_SlashTriggers(t *testing.T) {

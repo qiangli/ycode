@@ -1428,8 +1428,10 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 
 	// /model (no args): open the interactive model picker. /model <name>
 	// falls through to the registry handler which performs the actual
-	// switch. Works in both thin-client and direct mode.
-	if text == "/model" {
+	// switch. Works in both thin-client and direct mode. Match is
+	// case-insensitive and tolerant of a trailing space (left over from
+	// Tab-completion which appends " ").
+	if strings.EqualFold(strings.TrimSpace(text), "/model") {
 		var models []api.ModelInfo
 		if m.cl != nil {
 			models, _ = m.cl.ListModels(context.Background())
