@@ -19,3 +19,6 @@
 [submodule "external/gitea"]
 	path = external/gitea
 	url = https://github.com/qiangli/gitea.git
+[submodule "external/sh"]
+	path = external/sh
+	url = https://github.com/qiangli/sh.git
