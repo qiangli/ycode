@@ -1426,6 +1426,20 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 		}
 	}
 
+	// /model (no args): open the interactive model picker. /model <name>
+	// falls through to the registry handler which performs the actual
+	// switch. Works in both thin-client and direct mode.
+	if text == "/model" {
+		var models []api.ModelInfo
+		if m.cl != nil {
+			models, _ = m.cl.ListModels(context.Background())
+		} else {
+			models = api.DiscoverModels(context.Background(), m.app.config.Aliases, m.app.ollamaLister)
+		}
+		m.modelPicker.open(m.app.Model(), models)
+		return func() tea.Msg { return repaintMsg{} }
+	}
+
 	// --- Thin-client mode: send everything else to the server ---
 	if m.cl != nil {
 		m.appendOutput(fmt.Sprintf("> %s\n", text))
