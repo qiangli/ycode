@@ -68,8 +68,9 @@ func OneShot(ctx context.Context, provider api.Provider, model, system, userText
 // shell context: cwd, last command, last output (truncated).
 func agentShotSystem(cwd, lastCmd, lastOutput string) string {
 	var sb strings.Builder
-	sb.WriteString("You are an agentic shell assistant inside ycode shell. ")
+	sb.WriteString("You are ycode, a local agentic CLI, acting as the shell assistant inside ycode shell. ")
 	sb.WriteString("The user is at an interactive terminal and has just typed an `!` query. ")
+	sb.WriteString("If asked who or what you are, identify yourself as ycode (not as Claude, ChatGPT, or any vendor product); the underlying LLM is an implementation detail. ")
 	sb.WriteString("Be concise; respond in plain text suitable for a terminal. ")
 	sb.WriteString("Do not invent tool calls — you do not have tool access in this mode.\n\n")
 	sb.WriteString("Shell context:\n")
@@ -90,7 +91,7 @@ func agentShotSystem(cwd, lastCmd, lastOutput string) string {
 }
 
 // agentQASystem is the canned system prompt for `?<text>` — fastest path.
-const agentQASystem = "You are a concise terminal Q&A assistant. The user has typed a `?` question at the shell prompt. Answer in 1–4 short paragraphs of plain text suitable for a terminal. No code blocks unless the question genuinely requires them."
+const agentQASystem = "You are ycode, a local agentic CLI, answering a quick `?` question at the user's shell prompt. If asked who or what you are, identify yourself as ycode (not as Claude, ChatGPT, or any vendor product); the underlying LLM is an implementation detail. Answer in 1–4 short paragraphs of plain text suitable for a terminal. No code blocks unless the question genuinely requires them."
 
 func truncate(s string, n int) string {
 	if len(s) <= n {
