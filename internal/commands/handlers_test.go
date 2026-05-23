@@ -155,6 +155,72 @@ func TestHelpListsAllCommands(t *testing.T) {
 	}
 }
 
+// TestModelNoArgsListsAllSources verifies /model surfaces builtin, config,
+// env (*_API_KEY), and Ollama sources — not just hardcoded aliases. This is
+// the regression guard for the bug where env / ollama models were missing
+// from the slash-command listing even though the modelpicker UI showed them.
+func TestModelNoArgsListsAllSources(t *testing.T) {
+	// Use OPENAI_API_KEY because its envKeyModels entries (gpt-4.1, o3, …)
+	// don't collide with builtins, so the env-source section is non-empty
+	// after DiscoverModels' ID-based dedup.
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	t.Setenv("GOOGLE_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("XAI_API_KEY", "")
+	t.Setenv("DASHSCOPE_API_KEY", "")
+	t.Setenv("MOONSHOT_API_KEY", "")
+	t.Setenv("KIMI_API_KEY", "")
+
+	cfg := config.DefaultConfig()
+	cfg.Model = "claude-sonnet-4-6-20250514"
+	// Use a target that doesn't resolve to a builtin model ID — otherwise
+	// DiscoverModels' dedup hides the config entry.
+	cfg.Aliases = map[string]string{"my-custom": "some-custom-model-id"}
+
+	ollamaLister := func(ctx context.Context) []api.ModelInfo {
+		return []api.ModelInfo{
+			{ID: "llama3.2:3b", Provider: "ollama", Source: "ollama", Size: "1.9 GB"},
+		}
+	}
+
+	r := NewRegistry()
+	RegisterBuiltins(r, &RuntimeDeps{
+		Model:        func() string { return cfg.Model },
+		ProviderKind: func() string { return "anthropic" },
+		Config:       cfg,
+		OllamaLister: ollamaLister,
+	})
+
+	out, err := r.Execute(context.Background(), "model", "")
+	if err != nil {
+		t.Fatalf("/model returned error: %v", err)
+	}
+
+	mustContain := []string{
+		"Model: claude-sonnet-4-6-20250514 (anthropic)",
+		"Built-in:",
+		"sonnet → claude-sonnet-4-6-20250514",
+		"Config:",
+		"my-custom →",
+		"Env (from *_API_KEY):",
+		"gpt-4.1",
+		"Ollama (local):",
+		"llama3.2:3b",
+		"1.9 GB",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(out, want) {
+			t.Errorf("/model output missing %q.\nFull output:\n%s", want, out)
+		}
+	}
+
+	// Should NOT contain the old hardcoded line.
+	if strings.Contains(out, "Built-in aliases: opus, sonnet, haiku, kimi") {
+		t.Errorf("/model output still contains the old hardcoded aliases line")
+	}
+}
+
 // TestStatusShowsLiveCount verifies /status calls the MessageCount function.
 func TestStatusShowsLiveCount(t *testing.T) {
 	r := newTestRegistry(t)

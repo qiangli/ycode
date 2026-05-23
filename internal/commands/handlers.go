@@ -63,6 +63,11 @@ type RuntimeDeps struct {
 	// ModelSwitcher switches the active model at runtime.
 	ModelSwitcher func(name string) (string, error)
 
+	// OllamaLister is the callback used by /model (no-args) to surface
+	// locally-installed Ollama models alongside builtin / config / env
+	// sources. May be nil — DiscoverModels treats nil as "skip Ollama".
+	OllamaLister api.OllamaLister
+
 	// RetryTurn removes the last turn and returns the last user message for re-execution.
 	RetryTurn func() (string, error)
 
@@ -205,30 +210,62 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		},
 		Handler: func(ctx context.Context, args string) (string, error) {
 			name := strings.TrimSpace(args)
-			if name == "" {
-				model := ""
-				if deps.Model != nil {
-					model = deps.Model()
+			if name != "" {
+				if deps.ModelSwitcher == nil {
+					return "", fmt.Errorf("model switching not available")
 				}
-				provider := ""
-				if deps.ProviderKind != nil {
-					provider = deps.ProviderKind()
+				return deps.ModelSwitcher(name)
+			}
+
+			current := ""
+			if deps.Model != nil {
+				current = deps.Model()
+			}
+			provider := ""
+			if deps.ProviderKind != nil {
+				provider = deps.ProviderKind()
+			}
+			var aliases map[string]string
+			if deps.Config != nil {
+				aliases = deps.Config.Aliases
+			}
+			models := api.DiscoverModels(ctx, aliases, deps.OllamaLister)
+
+			var b strings.Builder
+			fmt.Fprintf(&b, "Model: %s (%s)\n", current, provider)
+
+			grouped := map[string][]api.ModelInfo{}
+			for _, m := range models {
+				grouped[m.Source] = append(grouped[m.Source], m)
+			}
+			labels := []struct{ source, heading string }{
+				{"builtin", "Built-in"},
+				{"config", "Config"},
+				{"env", "Env (from *_API_KEY)"},
+				{"ollama", "Ollama (local)"},
+			}
+			for _, l := range labels {
+				list := grouped[l.source]
+				if len(list) == 0 {
+					continue
 				}
-				var b strings.Builder
-				fmt.Fprintf(&b, "Model: %s (%s)\n", model, provider)
-				if deps.Config != nil && len(deps.Config.Aliases) > 0 {
-					b.WriteString("Aliases:\n")
-					for k, v := range deps.Config.Aliases {
-						fmt.Fprintf(&b, "  %s = %s\n", k, v)
+				fmt.Fprintf(&b, "\n%s:\n", l.heading)
+				for _, m := range list {
+					marker := "  "
+					if (m.ID != "" && m.ID == current) || (m.Alias != "" && m.Alias == current) {
+						marker = "● "
+					}
+					switch {
+					case m.Alias != "":
+						fmt.Fprintf(&b, "%s%s → %s (%s)\n", marker, m.Alias, m.ID, m.Provider)
+					case m.Size != "":
+						fmt.Fprintf(&b, "%s%s [%s]\n", marker, m.ID, m.Size)
+					default:
+						fmt.Fprintf(&b, "%s%s (%s)\n", marker, m.ID, m.Provider)
 					}
 				}
-				b.WriteString("Built-in aliases: opus, sonnet, haiku, kimi")
-				return b.String(), nil
 			}
-			if deps.ModelSwitcher == nil {
-				return "", fmt.Errorf("model switching not available")
-			}
-			return deps.ModelSwitcher(name)
+			return strings.TrimRight(b.String(), "\n"), nil
 		},
 	})
 

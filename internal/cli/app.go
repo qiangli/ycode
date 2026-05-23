@@ -267,6 +267,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		Session:       sess,
 		Provider:      app.provider,
 		ModelSwitcher: app.SwitchModel,
+		OllamaLister:  app.ollamaLister,
 		RetryTurn:     app.RetryTurn,
 		RevertFiles:   app.RevertFiles,
 		TrackUsage: func(inputTokens, outputTokens, cacheCreate, cacheRead int) {
