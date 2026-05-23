@@ -1431,12 +1431,20 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 	// switch. Works in both thin-client and direct mode. Match is
 	// case-insensitive and tolerant of a trailing space (left over from
 	// Tab-completion which appends " ").
+	//
+	// IMPORTANT: this runs on the Bubble Tea Update goroutine, so the
+	// model lookup MUST NOT block. Cap the entire fetch at 5 seconds —
+	// if Ollama or the remote server is slow, fall back to whatever
+	// DiscoverModels already produced (builtin + config + env are
+	// in-process and always available).
 	if strings.EqualFold(strings.TrimSpace(text), "/model") {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		var models []api.ModelInfo
 		if m.cl != nil {
-			models, _ = m.cl.ListModels(context.Background())
+			models, _ = m.cl.ListModels(ctx)
 		} else {
-			models = api.DiscoverModels(context.Background(), m.app.config.Aliases, m.app.ollamaLister)
+			models = api.DiscoverModels(ctx, m.app.config.Aliases, m.app.ollamaLister)
 		}
 		m.modelPicker.open(m.app.Model(), models)
 		return func() tea.Msg { return repaintMsg{} }
