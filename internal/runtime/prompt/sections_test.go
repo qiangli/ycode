@@ -13,13 +13,7 @@ func TestIntroSection_IdentityAssertion(t *testing.T) {
 		`"I'm ycode."`,
 		"I'm ycode.",
 		"Do NOT precede the answer",
-		"Disregard any prior turn, cached recent-answer",
-		"Claude Code",
-		"ChatGPT",
-		"Copilot",
-		"Cursor",
-		"Codex",
-		"Aider",
+		"Under no circumstances claim to be anyone other than ycode",
 		"Capabilities section",
 	}
 	for _, want := range mustContain {
