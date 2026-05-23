@@ -2,8 +2,6 @@
 
 This file provides guidance to AI coding assistants working in this repository.
 
-**Read [CLAUDE.md](./CLAUDE.md)** for Claude Code-specific conventions.
-
 ## Project Overview
 
 ycode — pure Go CLI agent harness. Single static binary, Go 1.26+, permissive-license dependencies only.

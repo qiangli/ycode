@@ -5,6 +5,64 @@ import (
 	"testing"
 )
 
+func TestIntroSection_IdentityAssertion(t *testing.T) {
+	got := IntroSection()
+
+	mustContain := []string{
+		"You are ycode",
+		`"I'm ycode."`,
+		"Claude Code",
+		"ChatGPT",
+		"Copilot",
+		"Cursor",
+		"Codex",
+		"Aider",
+		"Capabilities section",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(got, want) {
+			t.Errorf("IntroSection missing %q", want)
+		}
+	}
+}
+
+func TestCapabilitiesSection_StableHeadingsPresent(t *testing.T) {
+	got := CapabilitiesSection()
+
+	headings := []string{
+		"# Capabilities",
+		"**Tooling**",
+		"**Code intelligence**",
+		"**Git & forge**",
+		"**Runtime**",
+		"**Memory**",
+		"**Orchestration**",
+		"**Safety & ops**",
+		"**Distribution**",
+	}
+	for _, h := range headings {
+		if !strings.Contains(got, h) {
+			t.Errorf("CapabilitiesSection missing heading %q", h)
+		}
+	}
+
+	anchors := []string{
+		"tree-sitter",
+		"repomap",
+		"go-git",
+		"Gitea",
+		"podman",
+		"Ollama",
+		"memex",
+		"OTEL",
+	}
+	for _, a := range anchors {
+		if !strings.Contains(got, a) {
+			t.Errorf("CapabilitiesSection missing anchor phrase %q", a)
+		}
+	}
+}
+
 func TestProjectSection_InitialGitStatusLabel(t *testing.T) {
 	ctx := &ProjectContext{
 		WorkDir:   "/tmp/project",
