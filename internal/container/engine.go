@@ -33,6 +33,12 @@ type Engine struct {
 
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	// inProcess is true when libpod is running inside this ycode process
+	// (Linux/FreeBSD path via startServiceInProcess). Used to gate warnings
+	// for features that don't work the same way under in-process rootless
+	// libpod as they do against a rootful socket.
+	inProcess bool
 }
 
 // NewEngine creates a container engine. It connects to an existing Podman

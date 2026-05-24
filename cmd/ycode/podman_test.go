@@ -211,7 +211,7 @@ func TestPodmanRunFlagsExtended(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find run: %v", err)
 	}
-	for _, name := range []string{"name", "network", "publish", "volume", "env", "env-file"} {
+	for _, name := range []string{"name", "network", "publish", "volume", "env", "env-file", "privileged", "cap-add"} {
 		if f := run.Flags().Lookup(name); f == nil {
 			t.Errorf("run missing --%s flag", name)
 		}

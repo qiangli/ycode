@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,20 +24,22 @@ import (
 
 // ContainerConfig holds the configuration for creating a container.
 type ContainerConfig struct {
-	Name     string            // container name
-	Image    string            // container image
-	Env      map[string]string // environment variables
-	Mounts   []Mount           // volume mounts
-	Ports    []PortMapping     // port mappings (host -> container)
-	WorkDir  string            // working directory inside container
-	Network  string            // network name (empty = default bridge)
-	ReadOnly bool              // read-only root filesystem
-	CapDrop  []string          // capabilities to drop (default: ["ALL"] unless KeepCaps is set)
-	KeepCaps bool              // skip the default "drop ALL" — use whatever CapDrop says verbatim (empty means drop nothing). Set this for docker-compatible workloads (e.g. postgres) that need Linux caps to start.
-	Tmpfs    []string          // tmpfs mounts (e.g., /tmp, /var/tmp)
-	Init     bool              // use init for signal handling
-	Labels   map[string]string // container labels for tracking
-	Command  []string          // override command (default: image CMD)
+	Name       string            // container name
+	Image      string            // container image
+	Env        map[string]string // environment variables
+	Mounts     []Mount           // volume mounts
+	Ports      []PortMapping     // port mappings (host -> container)
+	WorkDir    string            // working directory inside container
+	Network    string            // network name (empty = default bridge)
+	ReadOnly   bool              // read-only root filesystem
+	CapAdd     []string          // capabilities to add (e.g. "NET_ADMIN", "SYS_ADMIN"). Conflicts with Privileged.
+	CapDrop    []string          // capabilities to drop (default: ["ALL"] unless KeepCaps or Privileged is set). Conflicts with Privileged.
+	KeepCaps   bool              // skip the default "drop ALL" — use whatever CapDrop says verbatim (empty means drop nothing). Set this for docker-compatible workloads (e.g. postgres) that need Linux caps to start.
+	Privileged bool              // grant all caps, all devices, and disable seccomp/SELinux/AppArmor. Overrides CapAdd/CapDrop/KeepCaps.
+	Tmpfs      []string          // tmpfs mounts (e.g., /tmp, /var/tmp)
+	Init       bool              // use init for signal handling
+	Labels     map[string]string // container labels for tracking
+	Command    []string          // override command (default: image CMD)
 	Resources
 }
 
@@ -101,11 +104,28 @@ func (e *Engine) CreateContainer(ctx context.Context, cfg *ContainerConfig) (*Co
 		sg.ReadOnlyFilesystem = &readOnly
 	}
 
-	capDrop := cfg.CapDrop
-	if !cfg.KeepCaps && len(capDrop) == 0 {
-		capDrop = []string{"ALL"}
+	if cfg.Privileged {
+		priv := true
+		sg.Privileged = &priv
+		// Upstream specgen documents CapAdd/CapDrop as conflicting with
+		// Privileged — privileged already grants all caps, so leave them unset.
+		if e.inProcess {
+			// In-process libpod runs as the invoking UID, so "privileged"
+			// here is rootless-privileged: all caps inside the user
+			// namespace, not real host root. Kernel module loading,
+			// cgroup hierarchy creation, and host-netns iptables rules
+			// will still fail — workloads like k3s won't come up healthy.
+			// Point users at a rootful socket as the escape hatch.
+			slog.Warn("container: --privileged via in-process libpod is rootless-privileged (no host root caps); for k3s-style workloads, run podman rootful and set CONTAINER_HOST=unix:///run/podman/podman.sock", "name", cfg.Name, "image", cfg.Image)
+		}
+	} else {
+		capDrop := cfg.CapDrop
+		if !cfg.KeepCaps && len(capDrop) == 0 {
+			capDrop = []string{"ALL"}
+		}
+		sg.CapDrop = capDrop
+		sg.CapAdd = cfg.CapAdd
 	}
-	sg.CapDrop = capDrop
 
 	for _, p := range cfg.Ports {
 		proto := p.Protocol

@@ -61,6 +61,7 @@ func (e *Engine) startServiceInProcess(ctx context.Context, cfg *EngineConfig) e
 	e.cancel = cancel
 	e.socketPath = socketPath
 	e.apiURL = "unix://" + socketPath
+	e.inProcess = true
 
 	go func() {
 		defer close(e.done)

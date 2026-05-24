@@ -268,14 +268,16 @@ func newPodmanRmCmd() *cobra.Command {
 
 func newPodmanRunCmd() *cobra.Command {
 	var (
-		rm       bool
-		detach   bool
-		name     string
-		network  string
-		ports    []string
-		volumes  []string
-		envs     []string
-		envFiles []string
+		rm         bool
+		detach     bool
+		name       string
+		network    string
+		ports      []string
+		volumes    []string
+		envs       []string
+		envFiles   []string
+		privileged bool
+		capAdd     []string
 	)
 	cmd := &cobra.Command{
 		Use:   "run [FLAGS] IMAGE [COMMAND] [ARG...]",
@@ -298,7 +300,9 @@ func newPodmanRunCmd() *cobra.Command {
 				// the CLI explicitly opts out of it. Users who want the
 				// sandbox-grade isolation can pass --cap-drop ALL — wire
 				// when --cap-drop flag is added.
-				KeepCaps: true,
+				KeepCaps:   true,
+				CapAdd:     capAdd,
+				Privileged: privileged,
 			}
 			if len(args) > 1 {
 				cfg.Command = args[1:]
@@ -351,6 +355,8 @@ func newPodmanRunCmd() *cobra.Command {
 	cmd.Flags().StringSliceVarP(&volumes, "volume", "v", nil, "Bind mount a volume (HOST:CTR[:ro])")
 	cmd.Flags().StringSliceVarP(&envs, "env", "e", nil, "Set environment variable (KEY=VALUE)")
 	cmd.Flags().StringSliceVar(&envFiles, "env-file", nil, "Read environment variables from file (KEY=VALUE per line)")
+	cmd.Flags().BoolVar(&privileged, "privileged", false, "Give extended privileges to the container (all caps, all devices, no seccomp/SELinux/AppArmor)")
+	cmd.Flags().StringSliceVar(&capAdd, "cap-add", nil, "Add Linux capability (e.g. NET_ADMIN, SYS_ADMIN). Ignored when --privileged is set.")
 	return cmd
 }
 
