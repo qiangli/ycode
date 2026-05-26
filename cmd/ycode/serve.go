@@ -21,6 +21,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/docs"
+	"github.com/qiangli/ycode/internal/extractmcp"
 	"github.com/qiangli/ycode/internal/gateway"
 	"github.com/qiangli/ycode/internal/gitserver"
 	"github.com/qiangli/ycode/internal/gitserver/backlog"
@@ -569,7 +570,31 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		// instead of having a human paste a 30-line CLAUDE.md block.
 		// See internal/docs/embed.go for the curation contract.
 		docs.NewMCPHandler(),
+
+		// Cobra→MCP runner. Same handler the stdio composite mounts —
+		// foreign agents can invoke any allowlisted ycode verb (doctor,
+		// model list, docs, features, init) without shelling out via
+		// agent_shell. Per-verb permission tier is gated inside the
+		// handler; the HTTP `_meta.permission` field still applies.
+		newCobraMCPHandler(),
+
+		// Stateless document extractor — same handler the stdio composite
+		// mounts. Mirrors the read_document agent tool but reachable from
+		// any MCP client.
+		extractmcp.NewDocumentHandler(),
 	)
+
+	// Provider-backed extract_json (mirrors HTTP POST /ycode/api/extract).
+	// Detect a provider from env / config here in the serve process so the
+	// MCP tool is callable independent of per-session newApp() lifecycle.
+	// NewJSONHandler returns nil when the provider couldn't be resolved
+	// (no API key) — silently skip registration so foreign agents don't
+	// see an always-failing tool in tools/list.
+	if p := detectExtractProvider(fullCfg.Model); p != nil {
+		if extractJSON := extractmcp.NewJSONHandler(p, fullCfg.Model, fullCfg.MaxTokens); extractJSON != nil {
+			compositeMCP = append(compositeMCP, extractJSON)
+		}
+	}
 
 	// Family A.3: memex memory. Best-effort — if the manager can't be
 	// opened (no writable home, missing memory tree, ...) skip the family

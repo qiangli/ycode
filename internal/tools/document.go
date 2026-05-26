@@ -49,35 +49,44 @@ func RegisterDocumentHandler(r *Registry, v *vfs.VFS) {
 		if err != nil {
 			return "", err
 		}
+		return ReadDocument(absPath, params.Pages)
+	}
+}
 
-		info, err := os.Stat(absPath)
-		if err != nil {
-			return "", fmt.Errorf("stat %s: %w", absPath, err)
-		}
-		if info.Size() > maxDocumentSize {
-			return "", fmt.Errorf("document too large: %d bytes (max %d)", info.Size(), maxDocumentSize)
-		}
+// ReadDocument reads a binary document (PDF, DOCX, XLSX, PPTX, CSV) and
+// returns its extracted text. The path must already be absolute and
+// VFS-validated by the caller — this function does no path checks
+// because the same code services both VFS-gated callers (the
+// read_document agent tool) and non-VFS callers (the extract_document
+// MCP tool, which gates at the MCP transport instead).
+func ReadDocument(absPath, pages string) (string, error) {
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return "", fmt.Errorf("stat %s: %w", absPath, err)
+	}
+	if info.Size() > maxDocumentSize {
+		return "", fmt.Errorf("document too large: %d bytes (max %d)", info.Size(), maxDocumentSize)
+	}
 
-		ext := strings.ToLower(filepath.Ext(absPath))
-		docType, ok := supportedDocExts[ext]
-		if !ok {
-			return "", fmt.Errorf("unsupported document type %q; supported: pdf, docx, xlsx, pptx, csv", ext)
-		}
+	ext := strings.ToLower(filepath.Ext(absPath))
+	docType, ok := supportedDocExts[ext]
+	if !ok {
+		return "", fmt.Errorf("unsupported document type %q; supported: pdf, docx, xlsx, pptx, csv", ext)
+	}
 
-		switch docType {
-		case "pdf":
-			return readPDF(absPath, params.Pages)
-		case "docx":
-			return readDOCX(absPath)
-		case "xlsx":
-			return readXLSX(absPath)
-		case "csv":
-			return readCSV(absPath)
-		case "pptx":
-			return readPPTX(absPath)
-		default:
-			return "", fmt.Errorf("unsupported document type: %s", docType)
-		}
+	switch docType {
+	case "pdf":
+		return readPDF(absPath, pages)
+	case "docx":
+		return readDOCX(absPath)
+	case "xlsx":
+		return readXLSX(absPath)
+	case "csv":
+		return readCSV(absPath)
+	case "pptx":
+		return readPPTX(absPath)
+	default:
+		return "", fmt.Errorf("unsupported document type: %s", docType)
 	}
 }
 

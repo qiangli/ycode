@@ -13,6 +13,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/docs"
+	"github.com/qiangli/ycode/internal/extractmcp"
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/runtime/codegraph"
 	gh "github.com/qiangli/ycode/internal/runtime/github"
@@ -101,6 +102,19 @@ func newMcpServeCmd() *cobra.Command {
 				// stateless, embedded — safe in every permission tier.
 				// See internal/docs/embed.go for the curation contract.
 				docs.NewMCPHandler(),
+
+				// Cobra→MCP runner. Exposes list_ycode_commands +
+				// run_ycode_command{,_workspace}, gating each invocation
+				// against an explicit per-verb allowlist (see
+				// cmd/ycode/cmdmcp.go safeguards). Lets foreign agents
+				// call `ycode doctor`, `ycode model list`, `ycode docs`,
+				// etc. without shelling out via agent_shell.
+				newCobraMCPHandler(),
+
+				// Stateless document extractor (PDF/DOCX/XLSX/PPTX/CSV).
+				// The provider-backed extract_json sibling is HTTP-only
+				// (see serve.go) because stdio doesn't construct a provider.
+				extractmcp.NewDocumentHandler(),
 
 				// Family A.2: repomap. Token-budgeted file→symbol
 				// overview. Stateless — each call walks the tree and

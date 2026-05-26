@@ -128,6 +128,21 @@ func detectHealingProvider() api.Provider {
 	return api.NewProvider(providerCfg)
 }
 
+// detectExtractProvider mirrors detectHealingProvider but resolves
+// against the user's configured chat model so the extract_json MCP
+// tool inherits the same defaults as in-session extraction. Returns
+// nil when no API key is present; callers must guard the registration.
+func detectExtractProvider(model string) api.Provider {
+	if model == "" {
+		return nil
+	}
+	providerCfg, err := api.DetectProvider(model)
+	if err != nil {
+		return nil
+	}
+	return api.NewProvider(providerCfg)
+}
+
 // realMain contains the actual main logic.
 // It returns errors that may be healable by the self-heal system.
 func realMain() error {
@@ -1380,6 +1395,17 @@ func init() {
 	// human-facing counterpart is `ycode help`; they cross-reference
 	// but never share content. See internal/docs/embed.go safeguards.
 	rootCmd.AddCommand(newDocsCmd())
+
+	// `ycode memory` — operator surface for memex memory inspection.
+	// Agent-callable equivalents live in the memex_* MCP family and
+	// the in-session memory_* tools; this command is the human path.
+	rootCmd.AddCommand(newMemoryCmd())
+
+	// `ycode tools` — operator surface for "what tools does this binary
+	// expose, to whom?". Mirrors what foreign agents see via MCP, plus
+	// the in-process tool registry and CLI surface. Operator complement
+	// to `ycode docs` (which is curated for agents).
+	rootCmd.AddCommand(newToolsCmd())
 
 	// Multi-agent collaboration task queue. See docs/agent-collab.md.
 	rootCmd.AddCommand(newTasksCmd())

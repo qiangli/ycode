@@ -535,6 +535,12 @@ func (l *Loader) Load() (*Config, error) {
 		}
 	}
 
+	// Apply YCODE_<UPPER_SNAKE_PATH> env-var overrides over the merged
+	// JSON tiers. Higher precedence than any config file, lower
+	// precedence than CLI flags (applied later in cmd/ycode/main.go).
+	// See env.go for the contract and safeguards.
+	_ = ApplyEnvOverrides(cfg)
+
 	return cfg, nil
 }
 
