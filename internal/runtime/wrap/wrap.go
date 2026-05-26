@@ -419,7 +419,21 @@ func ShimMain() int {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	err = cmd.Run()
+	// Setpgid + signal forwarding so SIGINT/SIGTERM/SIGHUP delivered to
+	// the shim's PID propagate to the wrapped binary (and its
+	// descendants). Without this, Go's default handler terminates the
+	// shim and orphans the child — traps inside the wrapped tool never
+	// fire, which broke mvdan-sh interp.TestKillTimeout and similar
+	// signal-driven tests run with the wrap shim on PATH.
+	cmd.SysProcAttr = newProcessGroupAttr()
+	if err = cmd.Start(); err != nil {
+		finish(0, err)
+		fmt.Fprintf(os.Stderr, "ycode wrap: exec %q: %v\n", real, err)
+		return 1
+	}
+	stopSignals := forwardSignalsToChild(cmd)
+	err = cmd.Wait()
+	stopSignals()
 
 	exitCode := 0
 	if cmd.ProcessState != nil {
