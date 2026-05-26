@@ -198,6 +198,10 @@ func (m *shellModel) runInput(input string) tea.Cmd {
 		m.appendLine(m.shellPrompt())
 		return nil
 	}
+	if _, ok := ParseExitCommand(input); ok {
+		m.appendLine(m.shellPrompt() + " " + input)
+		return tea.Quit
+	}
 	m.appendLine(m.shellPrompt() + " " + input)
 	m.running = true
 

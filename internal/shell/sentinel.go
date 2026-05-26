@@ -5,10 +5,38 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
 )
+
+// ParseExitCommand reports whether s is the literal `exit` REPL command
+// (optionally followed by a single non-negative integer status). It
+// matches the typed-by-hand form so the REPL can terminate itself
+// instead of dispatching `exit` into a bash subprocess — which would
+// exit the child and leave the parent shell alive. Compound forms
+// like `exit; echo`, `exit "$code"`, or `exit -1` fall through to
+// bash on purpose.
+func ParseExitCommand(s string) (int, bool) {
+	fields := strings.Fields(strings.TrimSpace(s))
+	switch len(fields) {
+	case 0:
+		return 0, false
+	case 1:
+		if fields[0] == "exit" {
+			return 0, true
+		}
+	case 2:
+		if fields[0] == "exit" {
+			n, err := strconv.Atoi(fields[1])
+			if err == nil && n >= 0 {
+				return n, true
+			}
+		}
+	}
+	return 0, false
+}
 
 // IntentKind identifies the dispatch route for a submitted line.
 type IntentKind int

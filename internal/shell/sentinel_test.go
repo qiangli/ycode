@@ -238,6 +238,35 @@ func TestClassify_SentinelSourcePipe(t *testing.T) {
 	}
 }
 
+func TestParseExitCommand(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantCode int
+		wantOK   bool
+	}{
+		{"exit", 0, true},
+		{"  exit  ", 0, true},
+		{"exit 0", 0, true},
+		{"exit 7", 7, true},
+		{"  exit   42  ", 42, true},
+		{"", 0, false},
+		{"exit foo", 0, false},
+		{"exit -1", 0, false},
+		{"exit 1 2", 0, false},
+		{"exit;", 0, false},  // bash compound — let the dispatcher run it
+		{"/exit", 0, false},  // slash sentinel
+		{"exit()", 0, false}, // not the literal builtin
+		{"EXIT", 0, false},
+	}
+	for _, tc := range cases {
+		code, ok := ParseExitCommand(tc.in)
+		if ok != tc.wantOK || code != tc.wantCode {
+			t.Errorf("ParseExitCommand(%q) = (%d,%v), want (%d,%v)",
+				tc.in, code, ok, tc.wantCode, tc.wantOK)
+		}
+	}
+}
+
 func TestIntentKindString(t *testing.T) {
 	cases := map[IntentKind]string{
 		IntentBash:      "bash",

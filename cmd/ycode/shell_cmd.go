@@ -507,6 +507,16 @@ func runShellREPL(rt *shell.ShellRuntime, f *shellFlags) error {
 		}
 		line := scanner.Text()
 
+		if code, ok := shell.ParseExitCommand(line); ok {
+			if !f.quiet {
+				fmt.Fprintln(os.Stderr)
+			}
+			if code != 0 {
+				os.Exit(code)
+			}
+			return nil
+		}
+
 		intent, err := shell.Classify(line)
 		if err != nil {
 			if errors.Is(err, shell.ErrSentinelInPipeline) {
