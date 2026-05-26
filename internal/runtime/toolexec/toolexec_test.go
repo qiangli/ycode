@@ -180,8 +180,11 @@ func TestExecutor_GitDef(t *testing.T) {
 	if result.Stdout == "" {
 		t.Error("expected git log output")
 	}
-	if result.Tier != TierHostExec {
-		t.Errorf("expected TierHostExec, got %v", result.Tier)
+	// `git log --oneline -1` is handled natively by gitdef's nativeLog
+	// (go-git). Asserting TierNative is how this test now proves the
+	// native path is wired and reachable end-to-end.
+	if result.Tier != TierNative {
+		t.Errorf("expected TierNative, got %v", result.Tier)
 	}
 }
 
