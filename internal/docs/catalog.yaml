@@ -1,0 +1,83 @@
+# Capability catalog — task → surfaces.
+#
+# This file answers one question for an agent landing in an unfamiliar
+# ycode environment: "is there a ycode surface for this task, and how
+# do I reach it?" Each row names the task in human terms and lists the
+# concrete invocations across each surface: cobra subcommand (cli),
+# shell built-in (yc), MCP tool (mcp). Lint enforces:
+#   - every `cli` entry resolves to a real cobra subcommand.
+#   - every `mcp` entry is registered on the HTTP composite (the
+#     superset transport).
+#   - every `read_more` target either points at a real docs topic or
+#     is on a known-TODO list (warn, don't fail) so catalog stays
+#     useful while topics are still being written.
+#
+# To add a row: pick a verb the user might ask for ("verify CSS",
+# "scrape a page", "check a build"), then enumerate the surfaces that
+# answer it. Empty surface lists are fine — a row with only `yc` is
+# valid (sandbox today).
+
+rows:
+  - task: drive a web page
+    surfaces:
+      cli: [ycode browser]
+      yc:  [yc browser, yc tab]
+      mcp:
+        - browser_navigate
+        - browser_click
+        - browser_type
+        - browser_eval
+        - browser_screenshot
+        - browser_extract
+        - browser_console_get
+        - browser_network_list
+        - browser_lighthouse
+        - browser_wait_for_selector
+        - browser_keyboard_press
+        - browser_cookies_get
+        - browser_storage_get
+        - browser_capabilities
+    prereq: browser.mode set in settings.json; for live mode, run `ycode browser setup` once and verify with `ycode browser doctor`.
+    read_more: browser
+
+  - task: search code symbols
+    surfaces:
+      yc:  [yc symbols, yc search-symbols, yc refs]
+      mcp: [list_symbols, search_symbols_by_pattern, get_supported_languages]
+    prereq: language supported by treesitter (go, python, ts/js, rust, java, c, ruby).
+    read_more: symbols
+
+  - task: repo orientation
+    surfaces:
+      yc:  [yc repomap]
+      mcp: [build_repomap, repomap_for_files]
+    read_more: repomap
+
+  - task: isolated command execution
+    surfaces:
+      yc: [yc sandbox]
+    prereq: podman installed (alpine image used as the sandbox base).
+    read_more: sandbox
+
+  - task: semantic memory
+    surfaces:
+      yc:  [yc remember, yc recall]
+      mcp: [memex_save, memex_recall, memex_list, memex_forget, memex_index, search_memex, list_memory_types]
+    read_more: memex
+
+  - task: multi-branch coordination (loom)
+    surfaces:
+      mcp: [loom_lease, loom_push, loom_merge, loom_status, loom_release]
+    prereq: "`ycode serve` running — loom is HTTP-MCP only."
+    read_more: loom
+
+  - task: MCP transport orientation
+    surfaces:
+      cli: [ycode mcp, ycode pair, ycode serve]
+      mcp: [list_docs, get_doc, list_catalog]
+    read_more: mcp
+
+  - task: outcome_class taxonomy
+    surfaces:
+      mcp: [list_docs, get_doc]
+    read_more: outcomes

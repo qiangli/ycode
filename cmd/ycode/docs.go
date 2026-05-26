@@ -72,6 +72,40 @@ structural metadata for humans.`,
 	cmd.Flags().BoolVar(&listFlag, "list", false, "Print JSON list of topics (machine-readable)")
 	cmd.Flags().BoolVar(&allFlag, "all", false, "Concatenate every topic (for system-prompt stuffing; use sparingly)")
 	cmd.Flags().StringVar(&searchFlag, "search", "", "Substring match on topic, summary, and when fields")
+	cmd.AddCommand(newDocsCatalogCmd())
+	return cmd
+}
+
+// newDocsCatalogCmd is the task→surfaces catalog. One pull tells an
+// agent which CLI / yc verb / MCP tool reaches a given capability,
+// without making them probe every surface in turn. Same offline
+// contract as the rest of `ycode docs` — no I/O, no telemetry, exit
+// 0 for documented invocations.
+func newDocsCatalogCmd() *cobra.Command {
+	var (
+		jsonFlag bool
+		taskFlag string
+	)
+	cmd := &cobra.Command{
+		Use:          "catalog",
+		Short:        "Task → surfaces matrix (cli / yc / mcp) across ycode capabilities",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cat, err := docs.LoadCatalog()
+			if err != nil {
+				return err
+			}
+			if taskFlag != "" {
+				cat = cat.FilterByTask(taskFlag)
+			}
+			if jsonFlag {
+				return cat.RenderJSON(cmd.OutOrStdout())
+			}
+			return cat.RenderText(cmd.OutOrStdout())
+		},
+	}
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "Emit JSON instead of plain text")
+	cmd.Flags().StringVar(&taskFlag, "task", "", "Substring filter on the task field")
 	return cmd
 }
 

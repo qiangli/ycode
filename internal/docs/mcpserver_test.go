@@ -18,15 +18,19 @@ func TestMCPHandlerInterface(t *testing.T) {
 	var _ mcp.PermissionAware = (*MCPHandler)(nil)
 }
 
-func TestListToolsAdvertisesBothTools(t *testing.T) {
+func TestListToolsAdvertisesExpectedSet(t *testing.T) {
 	tools := NewMCPHandler().ListTools()
-	if len(tools) != 2 {
-		t.Fatalf("expected 2 tools, got %d", len(tools))
+	names := map[string]bool{}
+	for _, tool := range tools {
+		names[tool.Name] = true
 	}
-	names := map[string]bool{tools[0].Name: true, tools[1].Name: true}
-	for _, want := range []string{"list_docs", "get_doc"} {
-		if !names[want] {
-			t.Errorf("missing tool %q (got %v)", want, names)
+	want := []string{"list_docs", "get_doc", "list_catalog"}
+	if len(tools) != len(want) {
+		t.Fatalf("expected %d tools, got %d (%v)", len(want), len(tools), names)
+	}
+	for _, w := range want {
+		if !names[w] {
+			t.Errorf("missing tool %q (got %v)", w, names)
 		}
 	}
 }

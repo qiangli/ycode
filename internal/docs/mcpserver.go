@@ -66,11 +66,20 @@ const resourceURI = "ycode://docs/"
 // leading underscore (slugPattern in parse.go rejects underscores).
 const indexResourceSlug = "_index"
 
-// ListTools exposes two tools:
+// catalogResourceSlug is the suffix for the task→surfaces catalog.
+// Distinct from topic slugs by name; slugPattern would actually accept
+// "catalog" as a valid topic, so we rely on the parse-order separation
+// (catalog is not a markdown topic, has no agent/catalog.md file).
+const catalogResourceSlug = "catalog"
+
+// ListTools exposes three tools:
 //
-//   - list_docs — return the topic index (JSON: slug, summary, when, max_lines).
-//   - get_doc   — return the full curated body for one topic, or the
+//   - list_docs    — return the topic index (JSON: slug, summary, when, max_lines).
+//   - get_doc      — return the full curated body for one topic, or the
 //     index when topic is empty / "_index".
+//   - list_catalog — return the task→surfaces matrix (JSON). The
+//     fastest way for an agent to answer "is there a ycode surface for
+//     this task?" in a single call.
 func (h *MCPHandler) ListTools() []mcp.Tool {
 	return []mcp.Tool{
 		{
@@ -95,6 +104,21 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 				}
 			}`),
 		},
+		{
+			Name: "list_catalog",
+			Description: "Return ycode's task→surfaces capability matrix as JSON. Each row " +
+				"names a task (\"drive a web page\", \"search code symbols\") and lists the " +
+				"concrete invocations across each surface: cobra subcommand (cli), shell " +
+				"built-in (yc), MCP tool (mcp). Use this as the first call in an " +
+				"unfamiliar ycode environment — one round-trip answers \"is there a ycode " +
+				"surface for this?\" Optional `task` arg substring-filters rows.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"task": {"type": "string", "description": "Optional substring filter on the task field."}
+				}
+			}`),
+		},
 	}
 }
 
@@ -115,12 +139,18 @@ func (h *MCPHandler) ListResources() []mcp.Resource {
 		}}
 	}
 
-	out := make([]mcp.Resource, 0, len(topics)+1)
+	out := make([]mcp.Resource, 0, len(topics)+2)
 	out = append(out, mcp.Resource{
 		URI:         resourceURI + indexResourceSlug,
 		Name:        "ycode docs index",
 		Description: "Topic index for ycode's agent-facing capability prompts. Start here.",
 		MimeType:    "text/markdown",
+	})
+	out = append(out, mcp.Resource{
+		URI:         resourceURI + catalogResourceSlug,
+		Name:        "ycode docs catalog",
+		Description: "Task→surfaces capability matrix (JSON). One pull answers \"is there a ycode surface for X?\" across cli / yc / mcp.",
+		MimeType:    "application/json",
 	})
 	for _, slug := range topics {
 		d, err := Get(slug)
@@ -138,7 +168,7 @@ func (h *MCPHandler) ListResources() []mcp.Resource {
 	return out
 }
 
-// HandleToolCall dispatches list_docs and get_doc.
+// HandleToolCall dispatches list_docs, get_doc, and list_catalog.
 func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json.RawMessage) (string, error) {
 	switch name {
 	case "list_docs":
@@ -156,17 +186,50 @@ func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json
 		}
 		return resolveDoc(args.Topic)
 
+	case "list_catalog":
+		var args struct {
+			Task string `json:"task"`
+		}
+		if len(input) > 0 && !isEmptyJSON(input) {
+			if err := json.Unmarshal(input, &args); err != nil {
+				return "", fmt.Errorf("list_catalog: parse args: %w", err)
+			}
+		}
+		cat, err := LoadCatalog()
+		if err != nil {
+			return "", err
+		}
+		cat = cat.FilterByTask(args.Task)
+		var sb strings.Builder
+		if err := cat.RenderJSON(&sb); err != nil {
+			return "", err
+		}
+		return sb.String(), nil
+
 	default:
 		return "", fmt.Errorf("unknown tool: %q", name)
 	}
 }
 
-// ReadResource serves ycode://docs/<slug> and ycode://docs/_index.
+// ReadResource serves ycode://docs/<slug>, ycode://docs/_index, and
+// ycode://docs/catalog. The catalog slug returns JSON; topic slugs
+// return markdown.
 func (h *MCPHandler) ReadResource(ctx context.Context, uri string) (string, error) {
 	if !strings.HasPrefix(uri, resourceURI) {
 		return "", fmt.Errorf("unknown resource URI: %q", uri)
 	}
 	slug := strings.TrimPrefix(uri, resourceURI)
+	if slug == catalogResourceSlug {
+		cat, err := LoadCatalog()
+		if err != nil {
+			return "", err
+		}
+		var sb strings.Builder
+		if err := cat.RenderJSON(&sb); err != nil {
+			return "", err
+		}
+		return sb.String(), nil
+	}
 	return resolveDoc(slug)
 }
 
@@ -178,7 +241,7 @@ func (h *MCPHandler) ReadResource(ctx context.Context, uri string) (string, erro
 // callable while denying any future write-capable handler.
 func (h *MCPHandler) RequiredMode(toolName string) mcp.PermissionMode {
 	switch toolName {
-	case "list_docs", "get_doc":
+	case "list_docs", "get_doc", "list_catalog":
 		return mcp.ModeReadOnly
 	default:
 		return mcp.ModeReadOnly
