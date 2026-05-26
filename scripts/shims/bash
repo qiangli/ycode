@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Drop-in shim: routes `bash …` to `ycode shell --agent …`.
 #
 # Install one of:
@@ -8,4 +8,11 @@
 # `ycode shell` parses bash argv (-c, -l, -lc, --login, ...) with bash
 # semantics; see cmd/ycode/shell_dispatch.go. --agent enables the yc
 # built-in dispatcher and hint engine for foreign-agent shells.
+#
+# IMPORTANT: shebang is /bin/bash (absolute), NOT /usr/bin/env bash.
+# When this shim is installed under ~/bin/bash with ~/bin ahead of /bin
+# in PATH, `env bash` would resolve back to this shim and recursively
+# exec — each layer adds to (env + argv), eventually hitting the kernel
+# ARG_MAX limit with "Argument list too long". Absolute /bin/bash
+# bypasses PATH and breaks the recursion.
 exec ycode shell --agent "$@"
