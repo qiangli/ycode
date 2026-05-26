@@ -280,6 +280,121 @@ func TestSessionDedupOptOut(t *testing.T) {
 	}
 }
 
+// TestGrepRecursiveMessageNamesMatchedFlag pins the agent-feedback fix:
+// the grep -r hint must name the matched flag in its rendered message
+// (e.g. "noticing `-rn` on grep — try yc search-symbols ..."). Otherwise
+// agents see the generic "try yc" suggestion, can't tell why it fired,
+// and end up grepping their command for unrelated flags trying to
+// understand which token tripped the wrapper.
+func TestGrepRecursiveMessageNamesMatchedFlag(t *testing.T) {
+	ResetSeen()
+	hints := Suggest(nil, "grep -rn FuncName .")
+	var msg string
+	for _, h := range hints {
+		if h.ID == "grep-r-suggests-search-symbols" {
+			msg = h.Message
+			break
+		}
+	}
+	if msg == "" {
+		t.Fatalf("grep-r hint did not fire; got %+v", hints)
+	}
+	if !strings.Contains(msg, "-rn") {
+		t.Fatalf("expected matched-flag callout in message; got %q", msg)
+	}
+}
+
+// TestSkipOnSuccessPropagates pins that pre-exec hints that opt into
+// SkipOnSuccess on the catalog side surface that flag on the shell.Hint
+// the caller sees — otherwise the dispatcher can't suppress them on
+// exit 0 and the retro-feedback noise complaint reproduces.
+func TestSkipOnSuccessPropagates(t *testing.T) {
+	ResetSeen()
+	hints := Suggest(nil, "git status")
+	if len(hints) == 0 {
+		t.Fatalf("git hint did not fire")
+	}
+	for _, h := range hints {
+		if h.ID == "git-log-status-diff-suggests-yc-git" && !h.SkipOnSuccess {
+			t.Fatalf("git hint must carry SkipOnSuccess so exit-0 idiomatic invocations don't repeat-pitch yc")
+		}
+	}
+}
+
+// TestBinPathPostHintRewritesPerTool covers the /bin/<tool> ENOENT
+// detector: when stderr names a /bin path that doesn't exist on macOS,
+// the hint must name BOTH the /usr/bin/ fix AND a ycode-native verb to
+// upgrade toward. Failures are the right moment to upsell yc — exit-0
+// commands shouldn't get this pitch.
+func TestBinPathPostHintRewritesPerTool(t *testing.T) {
+	cases := []struct {
+		name    string
+		stderr  string
+		wantBin string // /usr/bin/<X> the user should swap to
+		wantYC  string // ycode-native verb the hint should namedrop
+	}{
+		{
+			name:    "/bin/grep ENOENT names search-symbols",
+			stderr:  "/bin/sh: /bin/grep: No such file or directory\n",
+			wantBin: "/usr/bin/grep",
+			wantYC:  "yc search-symbols",
+		},
+		{
+			name:    "/bin/sed ENOENT names yc git",
+			stderr:  "/bin/sed: not found\n",
+			wantBin: "/usr/bin/sed",
+			wantYC:  "yc git",
+		},
+		{
+			name:    "/bin/awk ENOENT names bash arithmetic",
+			stderr:  "exec: /bin/awk: no such file or directory\n",
+			wantBin: "/usr/bin/awk",
+			wantYC:  "bash arithmetic",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ResetSeen()
+			hints := SuggestPost(nil, 127, tc.stderr)
+			var msg string
+			for _, h := range hints {
+				if h.ID == "bin-path-suggests-usr-bin-and-yc" {
+					msg = h.Message
+					break
+				}
+			}
+			if msg == "" {
+				t.Fatalf("bin-path hint did not fire on %q; got %+v", tc.stderr, hints)
+			}
+			if !strings.Contains(msg, tc.wantBin) {
+				t.Fatalf("expected %q in message %q", tc.wantBin, msg)
+			}
+			if !strings.Contains(msg, tc.wantYC) {
+				t.Fatalf("expected ycode-feature %q in message %q", tc.wantYC, msg)
+			}
+		})
+	}
+}
+
+// TestBinPathPostHintIgnoresClean confirms the bin-path detector doesn't
+// fire on stderr without a /bin/X reference, or on a clean exit.
+func TestBinPathPostHintIgnoresClean(t *testing.T) {
+	ResetSeen()
+	hints := SuggestPost(nil, 0, "")
+	for _, h := range hints {
+		if h.ID == "bin-path-suggests-usr-bin-and-yc" {
+			t.Fatalf("bin-path hint fired on clean exit + empty stderr")
+		}
+	}
+	ResetSeen()
+	hints = SuggestPost(nil, 1, "permission denied\n")
+	for _, h := range hints {
+		if h.ID == "bin-path-suggests-usr-bin-and-yc" {
+			t.Fatalf("bin-path hint fired on unrelated permission-denied stderr")
+		}
+	}
+}
+
 // TestIsRemoteExec covers the wrapper-stripping logic so regressions in
 // argument parsing surface independently of the catalog.
 func TestIsRemoteExec(t *testing.T) {

@@ -25,6 +25,14 @@ type Hint struct {
 	Category string `json:"category"`
 	Message  string `json:"message"`
 	Why      string `json:"why,omitempty"`
+
+	// SkipOnSuccess marks the hint as suggestion-only-when-things-go-wrong:
+	// the caller (cmd/ycode/shell_cmd.go and DispatchEnvelope) should
+	// suppress it when the command exited 0. Pre-exec hints set this
+	// when their suggestion is a "you might prefer yc <verb>" nudge
+	// rather than a correctness warning — idiomatic exit-0 invocations
+	// shouldn't carry repeated context-bloat hints.
+	SkipOnSuccess bool `json:"skip_on_success,omitempty"`
 }
 
 var suggestFn SuggestFunc

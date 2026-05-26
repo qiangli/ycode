@@ -339,9 +339,17 @@ func runShellOneShot(rt *shell.ShellRuntime, f *shellFlags) error {
 		return nil
 	}
 
-	// Plain mode: dispatch live, augment with hints on stderr.
+	// Plain mode: dispatch live, augment with hints on stderr. Tee
+	// stderr into a capped buffer so post-exec hints (e.g. the
+	// `/bin/<tool>` ENOENT detector) can inspect the actual error
+	// text — passing "" to SuggestPost would silently disable every
+	// stderr-driven post-hint.
+	var stderrCap stderrTailBuf
 	d := shell.NewDispatcher(rt)
-	sink := shell.WriterSink{StdoutW: os.Stdout, StderrW: os.Stderr}
+	sink := shell.WriterSink{
+		StdoutW: os.Stdout,
+		StderrW: io.MultiWriter(os.Stderr, &stderrCap),
+	}
 
 	dispatchStart := time.Now()
 	dispatchCtx, endSpan := shell.StartSpan(ctx, "ycode.shell.dispatch")
@@ -373,12 +381,15 @@ func runShellOneShot(rt *shell.ShellRuntime, f *shellFlags) error {
 
 	if f.agent {
 		for _, h := range preHints {
+			if h.SkipOnSuccess && res.ExitCode == 0 {
+				continue
+			}
 			fmt.Fprintf(os.Stderr, "# ycode hint [%s]: %s\n", h.Category, h.Message)
 			if h.Why != "" {
 				fmt.Fprintf(os.Stderr, "#   why: %s\n", h.Why)
 			}
 		}
-		for _, h := range agentmode.SuggestPost(rt, res.ExitCode, "") {
+		for _, h := range agentmode.SuggestPost(rt, res.ExitCode, stderrCap.String()) {
 			fmt.Fprintf(os.Stderr, "# ycode hint [%s]: %s\n", h.Category, h.Message)
 			if h.Why != "" {
 				fmt.Fprintf(os.Stderr, "#   why: %s\n", h.Why)
@@ -401,6 +412,31 @@ func runShellOneShot(rt *shell.ShellRuntime, f *shellFlags) error {
 	}
 	return nil
 }
+
+// stderrTailBuf captures stderr for the post-exec hint engine while the
+// real stderr is streamed live to the user. Bounded to ~8 KiB so a
+// runaway error stream can't OOM the process; post-hints only need the
+// last few error lines, not the entire transcript. Writes silently
+// drop the head once the cap is reached.
+type stderrTailBuf struct {
+	buf [8 << 10]byte
+	n   int
+}
+
+func (b *stderrTailBuf) Write(p []byte) (int, error) {
+	for _, c := range p {
+		if b.n < len(b.buf) {
+			b.buf[b.n] = c
+			b.n++
+			continue
+		}
+		copy(b.buf[:], b.buf[1:])
+		b.buf[len(b.buf)-1] = c
+	}
+	return len(p), nil
+}
+
+func (b *stderrTailBuf) String() string { return string(b.buf[:b.n]) }
 
 // emitHints prints any matching agent-mode hints to stderr. Pre-exec
 // hints fire on the raw command; post-exec hints fire on (exitCode, stderr)

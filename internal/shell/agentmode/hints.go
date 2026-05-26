@@ -37,6 +37,12 @@ type Hint struct {
 	Suggest  string
 	Category string
 	Why      string
+
+	// SkipOnSuccess marks the hint as a "you might prefer yc <verb>"
+	// nudge rather than a correctness warning. The caller suppresses
+	// the print when the command exited 0 — idiomatic invocations
+	// shouldn't carry repeated context-bloat hints across a session.
+	SkipOnSuccess bool
 }
 
 // Catalog is the pattern set evaluated against every command in agent
@@ -45,10 +51,13 @@ type Hint struct {
 var Catalog = []Hint{
 	{
 		ID:       "grep-r-suggests-search-symbols",
-		Pattern:  regexp.MustCompile(`\bgrep\b[^|]*\s+-\w*r`),
+		Pattern:  regexp.MustCompile(`\bgrep\b[^|]*\s+(-\w*r\w*)`),
 		Category: "code-search",
-		Suggest:  "try `yc search-symbols '<pattern>' [path]` (AST-aware, language-agnostic)",
+		Suggest:  "noticing `$1` on grep — try `yc search-symbols '<pattern>' [path]` (AST-aware, language-agnostic)",
 		Why:      "AST-aware: skips comments and string literals; resolves Go/TS aliases; no false positives in vendored copies.",
+		// Idiomatic recursive grep that returned hits is still a working
+		// answer — only re-pitch yc when it didn't (or hasn't yet).
+		SkipOnSuccess: true,
 	},
 	{
 		// Single-file or explicit-list grep against a source file (no -r).
@@ -57,60 +66,68 @@ var Catalog = []Hint{
 		// '...' and "..." spans so a `|` inside a quoted regex (e.g.
 		// `'(func|type)'`) doesn't end the match prematurely. $1 captures
 		// the last source-file argument so the suggestion is runnable verbatim.
-		ID:       "grep-source-file-suggests-symbols",
-		Pattern:  regexp.MustCompile(`\bgrep\b(?:[^|'"]|'[^']*'|"[^"]*")*\s(\S+\.(?:go|py|ts|js|rs|java|c|rb))\b`),
-		Category: "code-search",
-		Suggest:  "for declarations in `$1`: `yc symbols $1`; for substring search: `yc search-symbols '<pattern>' $1`",
-		Why:      "`yc symbols` returns top-level decls in one call — no regex to guess, no comments matched.",
+		ID:            "grep-source-file-suggests-symbols",
+		Pattern:       regexp.MustCompile(`\bgrep\b(?:[^|'"]|'[^']*'|"[^"]*")*\s(\S+\.(?:go|py|ts|js|rs|java|c|rb))\b`),
+		Category:      "code-search",
+		Suggest:       "for declarations in `$1`: `yc symbols $1`; for substring search: `yc search-symbols '<pattern>' $1`",
+		Why:           "`yc symbols` returns top-level decls in one call — no regex to guess, no comments matched.",
+		SkipOnSuccess: true,
 	},
 	{
-		ID:       "rg-or-ack-suggests-search-symbols",
-		Pattern:  regexp.MustCompile(`\b(rg|ack|ag)\b`),
-		Category: "code-search",
-		Suggest:  "try `yc search-symbols '<pattern>'` for AST-aware results, or `yc symbols <path>` to enumerate",
-		Why:      "Treesitter-backed: scopes to declared identifiers; ignores string/comment hits that grep-family tools surface.",
+		ID:            "rg-or-ack-suggests-search-symbols",
+		Pattern:       regexp.MustCompile(`\b(rg|ack|ag)\b`),
+		Category:      "code-search",
+		Suggest:       "try `yc search-symbols '<pattern>'` for AST-aware results, or `yc symbols <path>` to enumerate",
+		Why:           "Treesitter-backed: scopes to declared identifiers; ignores string/comment hits that grep-family tools surface.",
+		SkipOnSuccess: true,
 	},
 	{
-		ID:       "find-source-suggests-symbols",
-		Pattern:  regexp.MustCompile(`\bfind\b[^|]*-name\b[^|]*\.(go|py|ts|js|rs|java|c|rb)\b`),
-		Category: "file-walk",
-		Suggest:  "try `yc symbols <path>` to enumerate symbols, or `yc repomap` for a token-budgeted overview",
-		Why:      "`yc repomap` returns files ranked by symbol density + top-level decls — one call replaces find + head loops.",
+		ID:            "find-source-suggests-symbols",
+		Pattern:       regexp.MustCompile(`\bfind\b[^|]*-name\b[^|]*\.(go|py|ts|js|rs|java|c|rb)\b`),
+		Category:      "file-walk",
+		Suggest:       "try `yc symbols <path>` to enumerate symbols, or `yc repomap` for a token-budgeted overview",
+		Why:           "`yc repomap` returns files ranked by symbol density + top-level decls — one call replaces find + head loops.",
+		SkipOnSuccess: true,
 	},
 	{
-		ID:       "tree-suggests-repomap-or-graph",
-		Pattern:  regexp.MustCompile(`\btree\b(\s+-\w+)*`),
-		Category: "structure",
-		Suggest:  "try `yc repomap` (token-budgeted file→symbol overview) or `yc graph \"<DQL>\"` (code knowledge graph) — both beat raw `tree` for understanding code",
-		Why:      "Directory shape rarely answers \"what's the structure here\" — symbol density does.",
+		ID:            "tree-suggests-repomap-or-graph",
+		Pattern:       regexp.MustCompile(`\btree\b(\s+-\w+)*`),
+		Category:      "structure",
+		Suggest:       "try `yc repomap` (token-budgeted file→symbol overview) or `yc graph \"<DQL>\"` (code knowledge graph) — both beat raw `tree` for understanding code",
+		Why:           "Directory shape rarely answers \"what's the structure here\" — symbol density does.",
+		SkipOnSuccess: true,
 	},
 	{
-		ID:       "ls-recursive-suggests-repomap",
-		Pattern:  regexp.MustCompile(`\bls\s+(-\w*R\w*|-\w+\s+-\w*R)`),
-		Category: "structure",
-		Suggest:  "try `yc repomap` for a token-budgeted file→symbol overview",
-		Why:      "`yc repomap` returns the same hierarchy plus top-level symbols, capped to a token budget.",
+		ID:            "ls-recursive-suggests-repomap",
+		Pattern:       regexp.MustCompile(`\bls\s+(-\w*R\w*|-\w+\s+-\w*R)`),
+		Category:      "structure",
+		Suggest:       "try `yc repomap` for a token-budgeted file→symbol overview",
+		Why:           "`yc repomap` returns the same hierarchy plus top-level symbols, capped to a token budget.",
+		SkipOnSuccess: true,
 	},
 	{
-		ID:       "wc-source-suggests-symbols",
-		Pattern:  regexp.MustCompile(`\bwc\b\s+-\w*l\b[^|]*?\s(\S+\.(?:go|py|ts|js|rs|java|c|rb))\b`),
-		Category: "structure",
-		Suggest:  "`yc symbols $1` enumerates functions/types/methods directly without line counting",
-		Why:      "Line count is rarely the question; symbol count + names is what callers actually want.",
+		ID:            "wc-source-suggests-symbols",
+		Pattern:       regexp.MustCompile(`\bwc\b\s+-\w*l\b[^|]*?\s(\S+\.(?:go|py|ts|js|rs|java|c|rb))\b`),
+		Category:      "structure",
+		Suggest:       "`yc symbols $1` enumerates functions/types/methods directly without line counting",
+		Why:           "Line count is rarely the question; symbol count + names is what callers actually want.",
+		SkipOnSuccess: true,
 	},
 	{
-		ID:       "curl-http-suggests-browser",
-		Pattern:  regexp.MustCompile(`\bcurl\b[^|]*?(https?://\S+)`),
-		Category: "net",
-		Suggest:  "for JS-rendered pages: `yc browser fetch $1`; for an interactive session: `yc browser open $1`",
-		Why:      "`yc browser fetch` handles redirects, content-type sniffing, and JS execution; curl returns the unrendered source.",
+		ID:            "curl-http-suggests-browser",
+		Pattern:       regexp.MustCompile(`\bcurl\b[^|]*?(https?://\S+)`),
+		Category:      "net",
+		Suggest:       "for JS-rendered pages: `yc browser fetch $1`; for an interactive session: `yc browser open $1`",
+		Why:           "`yc browser fetch` handles redirects, content-type sniffing, and JS execution; curl returns the unrendered source.",
+		SkipOnSuccess: true,
 	},
 	{
-		ID:       "git-log-status-diff-suggests-yc-git",
-		Pattern:  regexp.MustCompile(`\bgit\s+(log|status|diff|branch|show|blame)\b`),
-		Category: "git",
-		Suggest:  "`yc git $1` uses native go-git (no fork), faster on large repos",
-		Why:      "go-git avoids the fork+exec cost; on large repos that's 50-200ms saved per call.",
+		ID:            "git-log-status-diff-suggests-yc-git",
+		Pattern:       regexp.MustCompile(`\bgit\s+(log|status|diff|branch|show|blame)\b`),
+		Category:      "git",
+		Suggest:       "`yc git $1` uses native go-git (no fork), faster on large repos",
+		Why:           "go-git avoids the fork+exec cost; on large repos that's 50-200ms saved per call.",
+		SkipOnSuccess: true,
 	},
 	{
 		ID:       "rm-rf-advisory",
@@ -120,52 +137,83 @@ var Catalog = []Hint{
 		Why:      "Sandbox runs against a copy-on-write overlay; mistakes are confined to the container's mount.",
 	},
 	{
-		ID:       "cat-pipe-head-suggests-repomap",
-		Pattern:  regexp.MustCompile(`\bcat\b[^|]*\|\s*head\b`),
-		Category: "structure",
-		Suggest:  "for repo context, `yc repomap --budget=N` gives a token-budgeted symbol map",
-		Why:      "`cat | head` peeks at one file; repomap gives the whole repo within a budget you control.",
+		ID:            "cat-pipe-head-suggests-repomap",
+		Pattern:       regexp.MustCompile(`\bcat\b[^|]*\|\s*head\b`),
+		Category:      "structure",
+		Suggest:       "for repo context, `yc repomap --budget=N` gives a token-budgeted symbol map",
+		Why:           "`cat | head` peeks at one file; repomap gives the whole repo within a budget you control.",
+		SkipOnSuccess: true,
 	},
 	{
-		ID:       "ctags-suggests-symbols",
-		Pattern:  regexp.MustCompile(`\b(ctags|etags)\b`),
-		Category: "code-search",
-		Suggest:  "`yc symbols <path>` extracts symbols natively (treesitter, no index file)",
-		Why:      "No index file to maintain or stale; treesitter parses on demand.",
+		ID:            "ctags-suggests-symbols",
+		Pattern:       regexp.MustCompile(`\b(ctags|etags)\b`),
+		Category:      "code-search",
+		Suggest:       "`yc symbols <path>` extracts symbols natively (treesitter, no index file)",
+		Why:           "No index file to maintain or stale; treesitter parses on demand.",
+		SkipOnSuccess: true,
 	},
 	{
-		ID:       "wget-suggests-browser",
-		Pattern:  regexp.MustCompile(`\bwget\b[^|]*?(https?://\S+)`),
-		Category: "net",
-		Suggest:  "for JS-rendered pages: `yc browser fetch $1` (also handles redirects + Content-Type)",
-		Why:      "wget returns the raw response; `yc browser fetch` resolves redirects and reports the final URL.",
+		ID:            "wget-suggests-browser",
+		Pattern:       regexp.MustCompile(`\bwget\b[^|]*?(https?://\S+)`),
+		Category:      "net",
+		Suggest:       "for JS-rendered pages: `yc browser fetch $1` (also handles redirects + Content-Type)",
+		Why:           "wget returns the raw response; `yc browser fetch` resolves redirects and reports the final URL.",
+		SkipOnSuccess: true,
 	},
 	{
-		ID:       "find-large-suggests-repomap",
-		Pattern:  regexp.MustCompile(`\bfind\b\s+\.\s+(-type\s+f\b|-name\b)`),
-		Category: "file-walk",
-		Suggest:  "for a token-budgeted file overview: `yc repomap`",
-		Why:      "`find` enumerates paths; repomap ranks them by symbol density so the most informative files surface first.",
+		ID:            "find-large-suggests-repomap",
+		Pattern:       regexp.MustCompile(`\bfind\b\s+\.\s+(-type\s+f\b|-name\b)`),
+		Category:      "file-walk",
+		Suggest:       "for a token-budgeted file overview: `yc repomap`",
+		Why:           "`find` enumerates paths; repomap ranks them by symbol density so the most informative files surface first.",
+		SkipOnSuccess: true,
 	},
 	{
-		ID:       "echo-content-pipe-grep",
-		Pattern:  regexp.MustCompile(`\becho\b[^|]*\|\s*grep\b`),
-		Category: "code-search",
-		Suggest:  "for richer matching consider `yc search-symbols` (over actual code) or in-process bash regex",
-		Why:      "Echo+grep tests a literal string; bash `[[ \"$x\" =~ regex ]]` does the same without forking.",
+		ID:            "echo-content-pipe-grep",
+		Pattern:       regexp.MustCompile(`\becho\b[^|]*\|\s*grep\b`),
+		Category:      "code-search",
+		Suggest:       "for richer matching consider `yc search-symbols` (over actual code) or in-process bash regex",
+		Why:           "Echo+grep tests a literal string; bash `[[ \"$x\" =~ regex ]]` does the same without forking.",
+		SkipOnSuccess: true,
 	},
 }
 
 // PostHints fire AFTER execution, based on the result.
+//
+// SuggestFunc, when non-nil, takes precedence over the static Suggest
+// field and is called only after Match returns true. Use it for hints
+// whose copy depends on a substring extracted from stderr (e.g. the
+// specific `/bin/<tool>` path that ENOENT'd).
 type PostHint struct {
-	ID       string
-	Suggest  string
-	Category string
-	Why      string
-	Match    func(exitCode int, stderr string) bool
+	ID          string
+	Suggest     string
+	Category    string
+	Why         string
+	Match       func(exitCode int, stderr string) bool
+	SuggestFunc func(stderr string) string
 }
 
+// binPathTools maps Linux-canonical /bin/<tool> paths to their ycode-
+// native counterparts. macOS only ships /usr/bin/<tool> for these, so
+// scripts hard-coding /bin/X exit 127 with a confusing ENOENT; the
+// post-hint below names both the path fix AND the relevant `yc <verb>`
+// follow-up so the agent gets a teachable moment out of the failure.
+var binPathTools = map[string]string{
+	"grep": "yc search-symbols (AST-aware) / yc symbols <path> (declarations)",
+	"sed":  "yc git (native go-git for repo edits) / in-process bash regex",
+	"awk":  "in-process bash arithmetic + parameter expansion",
+}
+
+var binPathRE = regexp.MustCompile(`/bin/(grep|sed|awk)\b`)
+
 var PostCatalog = []PostHint{
+	{
+		ID:          "bin-path-suggests-usr-bin-and-yc",
+		Category:    "platform",
+		Why:         "macOS ships these only under /usr/bin/; scripts hard-coding /bin/X 404 here. Same failure is also ycode's cue to suggest a richer native verb.",
+		Match:       matchBinPath,
+		SuggestFunc: suggestBinPath,
+	},
 	{
 		ID:       "exit-127-suggests-yc-help",
 		Category: "discovery",
@@ -244,7 +292,10 @@ func Suggest(_ *shell.ShellRuntime, command string) []shell.Hint {
 		}
 		markSeen(h.ID)
 		msg := string(h.Pattern.ExpandString(nil, h.Suggest, command, loc))
-		hints = append(hints, shell.Hint{ID: h.ID, Category: h.Category, Message: msg, Why: h.Why})
+		hints = append(hints, shell.Hint{
+			ID: h.ID, Category: h.Category, Message: msg, Why: h.Why,
+			SkipOnSuccess: h.SkipOnSuccess,
+		})
 		firedIDs = append(firedIDs, h.ID)
 		shell.ObserveHint(h.ID, h.Category, "pre")
 	}
@@ -264,19 +315,59 @@ func SuggestPost(_ *shell.ShellRuntime, exitCode int, stderr string) []shell.Hin
 
 	var firedIDs []string
 	for _, h := range PostCatalog {
-		if h.Match(exitCode, stderr) {
-			if _, dup := seen[h.ID]; dup {
-				continue
-			}
-			markSeen(h.ID)
-			hints = append(hints, shell.Hint{ID: h.ID, Category: h.Category, Message: h.Suggest, Why: h.Why})
-			firedIDs = append(firedIDs, h.ID)
-			shell.ObserveHint(h.ID, h.Category, "post")
+		if !h.Match(exitCode, stderr) {
+			continue
 		}
+		if _, dup := seen[h.ID]; dup {
+			continue
+		}
+		markSeen(h.ID)
+		msg := h.Suggest
+		if h.SuggestFunc != nil {
+			msg = h.SuggestFunc(stderr)
+		}
+		hints = append(hints, shell.Hint{ID: h.ID, Category: h.Category, Message: msg, Why: h.Why})
+		firedIDs = append(firedIDs, h.ID)
+		shell.ObserveHint(h.ID, h.Category, "post")
 	}
 	RecordPost(exitCode, firedIDs)
 	end(nil, "fired_count", itoa(len(firedIDs)), "exit_code", itoa(exitCode))
 	return hints
+}
+
+// matchBinPath fires when stderr names a /bin/<tool> we know diverges
+// between Linux and macOS. The shell-exec layer surfaces ENOENT for
+// these as exit 127 with "no such file or directory" in stderr; the
+// match is lenient on the exit code (some runners report 1 instead)
+// and keys off the path text.
+func matchBinPath(_ int, stderr string) bool {
+	if stderr == "" {
+		return false
+	}
+	low := strings.ToLower(stderr)
+	if !strings.Contains(low, "no such file") && !strings.Contains(low, "not found") {
+		return false
+	}
+	return binPathRE.MatchString(stderr)
+}
+
+// suggestBinPath builds the per-match hint copy: name the /bin/<tool>
+// the script hit, the /usr/bin/<tool> macOS equivalent, AND a ycode
+// native verb the agent could reach for instead. The yc suggestion is
+// the teachable-moment payload — the path fix unblocks the agent, the
+// yc nudge upgrades them.
+func suggestBinPath(stderr string) string {
+	m := binPathRE.FindStringSubmatch(stderr)
+	if m == nil {
+		return ""
+	}
+	tool := m[1]
+	ycSuggest := binPathTools[tool]
+	if ycSuggest == "" {
+		ycSuggest = "see `yc help` for ycode-native alternatives"
+	}
+	return "`/bin/" + tool + "` doesn't exist on macOS — try `/usr/bin/" + tool +
+		"`. While you're here: " + ycSuggest + " is the ycode-native path."
 }
 
 // isEnvKey reports whether s is a syntactically valid shell env-var

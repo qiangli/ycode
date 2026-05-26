@@ -80,6 +80,12 @@ func DispatchEnvelope(
 		fmt.Fprintf(&stderr, "shell: dispatch error: %v\n", derr)
 	}
 
+	// Filter pre-exec hints that opted into success-suppression: when
+	// the command exited 0 those hints are pure context bloat. Done
+	// in-place because hints is owned here.
+	if res.ExitCode == 0 {
+		hints = filterSkipOnSuccess(hints)
+	}
 	// Post-exec hints can now consult the captured stderr.
 	hints = append(hints, postHints(rt, res.ExitCode, stderr.String())...)
 
@@ -92,6 +98,21 @@ func DispatchEnvelope(
 		Hints:      hints,
 		Command:    command,
 	}
+}
+
+// filterSkipOnSuccess drops every hint whose SkipOnSuccess flag is set.
+// Used by both --json mode and the plain-mode caller to avoid emitting
+// "you might prefer yc <verb>" nudges when the user's command worked
+// fine. Returns a fresh slice; the input is unmodified.
+func filterSkipOnSuccess(in []Hint) []Hint {
+	out := in[:0:0]
+	for _, h := range in {
+		if h.SkipOnSuccess {
+			continue
+		}
+		out = append(out, h)
+	}
+	return out
 }
 
 // postHints calls the agentmode post-exec catalog. Filled in via
