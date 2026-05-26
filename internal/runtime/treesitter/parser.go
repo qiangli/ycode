@@ -68,41 +68,105 @@ func (p *Parser) Parse(_ context.Context, source []byte, lang string) (*Tree, er
 // tree-sitter Tagger. Signature is the real declaration header from source
 // (everything from the start of the tagged span up to the body delimiter),
 // not a synthesized "<kind> <name>" string.
+//
+// Supplemental walkers (walkSupplementalSymbols) cover languages where the
+// upstream tagger has gaps: TypeScript type-alias declarations and Ruby
+// (which has no upstream tags query at all today).
 func (p *Parser) ExtractSymbols(tree *Tree, file string) []Symbol {
 	if tree == nil || tree.raw == nil || len(tree.Source) == 0 {
 		return nil
 	}
-	tagger := p.taggerFor(tree.Lang, tree.language)
-	if tagger == nil {
+	out := []Symbol{}
+	seen := make(map[uint32]bool)
+	if tagger := p.taggerFor(tree.Lang, tree.language); tagger != nil {
+		tags := tagger.TagTree(tree.raw)
+		for _, t := range tags {
+			if !strings.HasPrefix(t.Kind, "definition.") {
+				continue
+			}
+			if seen[t.Range.StartByte] {
+				continue
+			}
+			seen[t.Range.StartByte] = true
+
+			sig := extractHeader(tree.Source, t.Range)
+			kind := refineKind(tree.Lang, t.Kind, sig)
+			if kind == "" {
+				continue
+			}
+			out = append(out, Symbol{
+				Name:      t.Name,
+				Kind:      kind,
+				Signature: sig,
+				File:      file,
+				Line:      int(t.Range.StartPoint.Row) + 1,
+				Exported:  isExported(tree.Lang, t.Name, sig),
+			})
+		}
+	}
+	out = append(out, walkSupplementalSymbols(tree, file, seen)...)
+	return out
+}
+
+// walkSupplementalSymbols handles symbol kinds the upstream tagger misses.
+// Two known gaps as of upstream gotreesitter v0:
+//
+//   - TypeScript: `type X = ...` (type_alias_declaration node) is not in
+//     the tags query and would otherwise be silently dropped.
+//   - Ruby: ResolveTagsQuery returns "" so the tagger is nil and every
+//     symbol is missed. The walker emits methods, classes, and modules.
+//
+// `seen` is shared with the tagger pass to dedupe by start-byte.
+func walkSupplementalSymbols(tree *Tree, file string, seen map[uint32]bool) []Symbol {
+	var (
+		nodeTypes map[string]string // tree-sitter node kind → ycode Symbol.Kind
+	)
+	switch tree.Lang {
+	case "typescript":
+		nodeTypes = map[string]string{"type_alias_declaration": "type"}
+	case "ruby":
+		nodeTypes = map[string]string{
+			"method":           "func",
+			"singleton_method": "func",
+			"class":            "class",
+			"module":           "class",
+		}
+	default:
 		return nil
 	}
 
-	tags := tagger.TagTree(tree.raw)
-	out := make([]Symbol, 0, len(tags))
-	seen := make(map[uint32]bool, len(tags))
-	for _, t := range tags {
-		if !strings.HasPrefix(t.Kind, "definition.") {
-			continue
+	var out []Symbol
+	WalkNodes(tree.Root, tree.language, func(node *gotreesitter.Node) bool {
+		kind, ok := nodeTypes[node.Type(tree.language)]
+		if !ok {
+			return true
 		}
-		if seen[t.Range.StartByte] {
-			continue
+		startByte := uint32(node.StartByte())
+		if seen[startByte] {
+			return true
 		}
-		seen[t.Range.StartByte] = true
-
-		sig := extractHeader(tree.Source, t.Range)
-		kind := refineKind(tree.Lang, t.Kind, sig)
-		if kind == "" {
-			continue
+		nameNode := node.ChildByFieldName("name", tree.language)
+		if nameNode == nil {
+			return true
 		}
+		seen[startByte] = true
+		name := nodeText(nameNode, tree.Source)
+		sig := extractHeader(tree.Source, gotreesitter.Range{
+			StartByte:  startByte,
+			EndByte:    uint32(node.EndByte()),
+			StartPoint: node.StartPoint(),
+			EndPoint:   node.EndPoint(),
+		})
 		out = append(out, Symbol{
-			Name:      t.Name,
+			Name:      name,
 			Kind:      kind,
 			Signature: sig,
 			File:      file,
-			Line:      int(t.Range.StartPoint.Row) + 1,
-			Exported:  isExported(tree.Lang, t.Name, sig),
+			Line:      int(node.StartPoint().Row) + 1,
+			Exported:  isExported(tree.Lang, name, sig),
 		})
-	}
+		return true
+	})
 	return out
 }
 
