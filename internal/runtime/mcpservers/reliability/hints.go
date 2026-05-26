@@ -102,7 +102,7 @@ func ruleLoginWall(_ mcpservers.BrowserAction, res *mcpservers.BrowserResult) st
 		strings.Contains(low, "please log in") {
 		// Heuristic: only flag if the page is small (login forms are usually short).
 		if len(res.Content) < 3000 {
-			return "login_wall: page appears to require authentication; if user wanted real session, switch to `live` mode"
+			return "login_wall: page appears to require authentication. Recovery: (a) inspect inputs with browser_extract scope=form, (b) drive the form with browser_type + browser_click, or (c) restore an existing session with browser_storage_get/browser_cookies_get on a logged-in tab and replay. If you are not already in `live` mode and the user wants their real session, switch modes via `ycode browser doctor`."
 		}
 	}
 	return ""
