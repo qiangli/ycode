@@ -641,6 +641,9 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	} else {
 		otelRes = setupFileOTEL(cfg, sess, toolReg, provider, v, org)
 	}
+	if otelRes != nil && otelRes.shutdown != nil {
+		selfheal.RegisterPanicHook(otelRes.shutdown)
+	}
 	var convOTEL *conversation.OTELConfig
 	if otelRes != nil {
 		convOTEL = otelRes.convOTEL

@@ -5,10 +5,46 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/qiangli/ycode/internal/api"
 )
+
+// panicHooks are invoked synchronously before the panic recovery path
+// proceeds, so subsystems with buffered exporters (OTEL batch log/span
+// processors, in particular) can flush their state to durable storage
+// before the process exits. Without this, the panic's slog calls are
+// lost — exactly the moment they're most needed.
+var (
+	panicHooksMu sync.Mutex
+	panicHooks   []func()
+)
+
+// RegisterPanicHook registers fn to run synchronously when WrapMain's
+// recovery path traps a panic. Hooks run in registration order, before
+// healing is attempted. Safe for concurrent registration; not intended
+// for de-registration.
+func RegisterPanicHook(fn func()) {
+	if fn == nil {
+		return
+	}
+	panicHooksMu.Lock()
+	panicHooks = append(panicHooks, fn)
+	panicHooksMu.Unlock()
+}
+
+func runPanicHooks() {
+	panicHooksMu.Lock()
+	hooks := append([]func(){}, panicHooks...)
+	panicHooksMu.Unlock()
+	for _, fn := range hooks {
+		func() {
+			defer func() { _ = recover() }()
+			fn()
+		}()
+	}
+}
 
 // MainFunc is the type of the main function to wrap.
 type MainFunc func() error
@@ -172,9 +208,20 @@ func runWithRecovery(mainFn MainFunc, healer *Healer) (err error) {
 				Timestamp:  time.Now(),
 			}
 
+			// Print the stack trace to stderr immediately so it lands
+			// in the operator's log regardless of whether healing
+			// succeeds or whether buffered OTEL exporters can flush.
+			fmt.Fprintf(os.Stderr, "\nPanic recovered: %v\n%s\n", r, stack)
+
+			// Flush any registered exporters (OTEL log/span batches,
+			// etc.) before healing or exit. The panic interrupts the
+			// goroutine running mainFn but the BatchLogProcessor's
+			// queued records would otherwise be dropped with the
+			// process.
+			runPanicHooks()
+
 			// Try to heal the panic
 			if healer.CanHeal(err) {
-				fmt.Fprintf(os.Stderr, "\nPanic recovered: %v\n", r)
 				fmt.Fprintln(os.Stderr, "Attempting self-healing...")
 
 				ctx := context.Background()
