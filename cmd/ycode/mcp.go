@@ -170,6 +170,7 @@ func newMcpServeCmd() *cobra.Command {
 			handlers = append(handlers, inference.NewMCPHandler(""))
 
 			composite := mcp.NewCompositeHandler(handlers...)
+			composite.SetTransport("stdio")
 
 			// Permission ceiling. Default is DangerFullAccess so the
 			// agent_shell tool (and any other write-capable handler)

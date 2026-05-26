@@ -674,6 +674,7 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	// verbs or prefixes so this is safe.
 	if len(compositeMCP) > 0 {
 		composite := mcppkg.NewCompositeHandler(compositeMCP...)
+		composite.SetTransport("http")
 		// Server-side ceiling. Mirrors `ycode mcp serve --permission ...`
 		// at cmd/ycode/mcp.go. Independent of opencode/claude-code's
 		// own per-agent permission policy — defense in depth.

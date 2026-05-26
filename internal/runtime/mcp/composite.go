@@ -19,6 +19,13 @@ type CompositeHandler struct {
 	resources     []Resource
 	toolHandlers  map[string]ServerHandler
 	resourceOwner map[string]ServerHandler
+
+	// transport names the channel this composite serves on ("stdio" /
+	// "http"). When non-empty, unknown-tool errors look up the missing
+	// name in crossTransportTools and append a sibling-transport hint
+	// so an agent on the wrong channel learns where to find the tool.
+	// Zero value disables hints — fine for tests.
+	transport string
 }
 
 // NewCompositeHandler aggregates the given handlers. The first handler that
@@ -50,13 +57,20 @@ func NewCompositeHandler(handlers ...ServerHandler) *CompositeHandler {
 	return c
 }
 
+// SetTransport tags this composite with the transport name it serves
+// on, enabling cross-transport hints in unknown-tool errors. Call
+// once at construction. Production callers pass "stdio" (from
+// `ycode mcp serve`) or "http" (from `ycode serve` /mcp/). Tests can
+// leave it unset.
+func (c *CompositeHandler) SetTransport(name string) { c.transport = name }
+
 func (c *CompositeHandler) ListTools() []Tool         { return c.tools }
 func (c *CompositeHandler) ListResources() []Resource { return c.resources }
 
 func (c *CompositeHandler) HandleToolCall(ctx context.Context, name string, input json.RawMessage) (string, error) {
 	h, ok := c.toolHandlers[name]
 	if !ok {
-		return "", fmt.Errorf("unknown tool: %s", name)
+		return "", c.unknownToolErr(name)
 	}
 	return h.HandleToolCall(ctx, name, input)
 }
@@ -68,7 +82,7 @@ func (c *CompositeHandler) HandleToolCall(ctx context.Context, name string, inpu
 func (c *CompositeHandler) HandleToolCallRich(ctx context.Context, name string, input json.RawMessage) ([]Content, error) {
 	h, ok := c.toolHandlers[name]
 	if !ok {
-		return nil, fmt.Errorf("unknown tool: %s", name)
+		return nil, c.unknownToolErr(name)
 	}
 	if rich, ok := h.(RichHandler); ok {
 		return rich.HandleToolCallRich(ctx, name, input)
