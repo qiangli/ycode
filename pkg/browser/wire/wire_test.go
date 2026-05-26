@@ -184,3 +184,30 @@ func TestResultMarshalJSON_OtherFieldsUnchanged(t *testing.T) {
 		}
 	}
 }
+
+// TestActionUnmarshalEvaluateAlias covers the `expression` → `script`
+// alias for browser_eval, so Chrome-DevTools-flavored callers don't
+// trip on the canonical key name.
+func TestActionUnmarshalEvaluateAlias(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "canonical script", in: `{"script":"document.title"}`, want: "document.title"},
+		{name: "expression alias", in: `{"expression":"document.title"}`, want: "document.title"},
+		{name: "both set, script wins", in: `{"script":"a","expression":"b"}`, want: "a"},
+		{name: "neither", in: `{}`, want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var a Action
+			if err := json.Unmarshal([]byte(tc.in), &a); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if a.Script != tc.want {
+				t.Fatalf("Script: got %q, want %q", a.Script, tc.want)
+			}
+		})
+	}
+}

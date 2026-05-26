@@ -126,10 +126,13 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 		},
 		{
 			Name:        "browser_eval",
-			Description: "Evaluate a JavaScript expression in the current page context and return its value. Supported by live, probe, and solo modes (live runs in the page's MAIN world via chrome.scripting). Accepts either an expression (`document.title`) or a statement block (`{ return computeX(); }`); the return value is returned in the `data` field, JSON-stringified for non-string types.",
+			Description: "Evaluate JavaScript in the current page and return the result in `data` (JSON-stringified for non-string types). Argument: `script` (alias: `expression`). Body is evaluated as a **statement**, not a bare expression — `({foo:1})` returns null. To return a value: (a) write a single expression like `document.title`, (b) wrap in an IIFE and return: `(()=>{ return {foo:1}; })()`, or (c) `JSON.stringify(...)` at the top level. Execution context: probe/solo run via CDP `Runtime.evaluate` in the page's main world; live runs via `chrome.scripting.executeScript` with `world: 'MAIN'`. In both cases there are no `chrome.*` APIs and `window` persists across calls within the same page lifetime.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
-				"properties": {"script": {"type": "string"}},
+				"properties": {
+					"script":     {"type": "string"},
+					"expression": {"type": "string", "description": "alias for script"}
+				},
 				"required": ["script"]
 			}`),
 		},

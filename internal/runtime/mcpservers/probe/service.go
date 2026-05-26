@@ -424,7 +424,7 @@ func (s *Service) doTabs(ctx context.Context, a mcpservers.BrowserAction) (*mcps
 
 func (s *Service) doEvaluate(ctx context.Context, script string) (*mcpservers.BrowserResult, error) {
 	if script == "" {
-		return &mcpservers.BrowserResult{Error: "evaluate: script required"}, nil
+		return &mcpservers.BrowserResult{Error: "evaluate: argument 'script' is required (alias 'expression' also accepted)"}, nil
 	}
 	var out any
 	if err := chromedp.Run(ctx, chromedp.Evaluate(script, &out)); err != nil {

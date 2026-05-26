@@ -179,10 +179,13 @@ func registerBrowserTabs(r *Registry) {
 func registerBrowserEval(r *Registry) {
 	r.Register(&ToolSpec{
 		Name:        "browser_eval",
-		Description: "Evaluate JavaScript in the current page context and return the result as JSON. Supported by live, probe, and solo modes.",
+		Description: "Evaluate JavaScript in the current page and return the result as JSON in `data`. Argument: `script` (alias: `expression`). Body is evaluated as a **statement**, not a bare expression — `({foo:1})` returns null. To return a value: (a) write a single expression (`document.title`), (b) wrap in an IIFE and return (`(()=>{ return {foo:1}; })()`), or (c) `JSON.stringify(...)` at the top level. Execution context: probe/solo via CDP `Runtime.evaluate` in the page main world; live via `chrome.scripting.executeScript` with `world: 'MAIN'` — no `chrome.*` APIs, `window` persists across calls within the same page lifetime.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
-			"properties": {"script": {"type": "string"}},
+			"properties": {
+				"script":     {"type": "string"},
+				"expression": {"type": "string", "description": "alias for script"}
+			},
 			"required": ["script"]
 		}`),
 		AlwaysAvailable: false,

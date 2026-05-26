@@ -66,6 +66,29 @@ type Action struct {
 	StorageKey string `json:"storage_key,omitempty"`
 }
 
+// UnmarshalJSON accepts `expression` as an alias for `script` on
+// Evaluate actions. Chrome DevTools-flavored callers reach for
+// `expression` (matching CDP's Runtime.evaluate), while the rest of
+// ycode uses `script`. Only one is canonical (`script`); the alias
+// folds into the canonical field iff the canonical one is empty.
+func (a *Action) UnmarshalJSON(data []byte) error {
+	type rawAction Action
+	var raw rawAction
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*a = Action(raw)
+	if a.Script == "" {
+		var aux struct {
+			Expression string `json:"expression"`
+		}
+		if err := json.Unmarshal(data, &aux); err == nil {
+			a.Script = aux.Expression
+		}
+	}
+	return nil
+}
+
 // Result is the unified browser result.
 //
 // Data carries a tool-specific payload. Plain-text tools (clipboard
