@@ -27,10 +27,10 @@ import (
 // There was NO CLI surface for an operator to bulk-list, export, or
 // purge memory. This command closes that gap. Subcommands:
 //
-//   list    — print all memories (project + global). --json for machine-readable.
-//   show    — print one memory by name.
-//   forget  — delete a memory by name.
-//   export  — write all memories as a single JSON document to stdout or a file.
+//	list    — print all memories (project + global). --json for machine-readable.
+//	show    — print one memory by name.
+//	forget  — delete a memory by name.
+//	export  — write all memories as a single JSON document to stdout or a file.
 //
 // Import / restore is intentionally NOT exposed yet — it requires
 // careful conflict handling and provenance preservation that the

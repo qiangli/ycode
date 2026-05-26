@@ -181,4 +181,3 @@ func TestRequiredModeReadOnly(t *testing.T) {
 		}
 	}
 }
-
