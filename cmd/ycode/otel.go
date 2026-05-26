@@ -276,10 +276,14 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 	wireShellTelemetry(otelProvider)
 
 	// Build conversation OTEL config for wiring into conversation.Runtime.
+	providerKind := ""
+	if provider != nil {
+		providerKind = string(provider.Kind())
+	}
 	convCfg := &conversation.OTELConfig{
 		Tracer:   otelProvider.Tracer("ycode.conversation"),
 		Inst:     otelProvider.Instruments,
-		Provider: string(provider.Kind()),
+		Provider: providerKind,
 	}
 
 	// Set up request logger for conversation audit.
