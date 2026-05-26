@@ -96,7 +96,7 @@ func TestGrepSearch_FindsKnownPatterns(t *testing.T) {
 			pattern: "type SearchIndex interface",
 			typ:     "go",
 			wantMin: 1,
-			wantAny: "store.go",
+			wantAny: "storage.go",
 		},
 	}
 
