@@ -13,11 +13,21 @@ to every ycode capability that exposes a verb you can call.
 - **mcp** — connect to ycode's MCP composite endpoint (HTTP) or stdio
   server. Start here if you've never used ycode before; most other
   capabilities are reachable as MCP tools.
+- **browser** — drive a real or headless browser (live / probe / solo)
+  via the `browser_*` MCP tools; recovery patterns for AUTH_REDIRECT
+  and BLOCKED.
+- **loom** — isolated git workspaces for parallel sub-agent work.
+  Lease → push → merge → release lifecycle.
+- **outcomes** — taxonomy reference for the `outcome_class` field on
+  every browser_* result.
+- **sandbox** — `yc sandbox` podman-isolated command execution.
+- **memex** — semantic memory: save / recall / list / forget.
+- **repomap** — token-budgeted repo orientation (`yc repomap`).
 
-> Phase 0 of the docs registry ships one topic. New entries land here as
-> each capability earns a verb worth surfacing to agents. The rule is
-> deliberate: a topic earns a doc only when an agent has a verb to
-> perform — not because a feature is interesting to humans.
+> New entries land here as each capability earns a verb worth surfacing
+> to agents. The rule is deliberate: a topic earns a doc only when an
+> agent has a verb to perform — not because a feature is interesting
+> to humans.
 
 ## Sibling surfaces (read the right one)
 
