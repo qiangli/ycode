@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/container"
+	"github.com/qiangli/ycode/internal/docs"
 	"github.com/qiangli/ycode/internal/gateway"
 	"github.com/qiangli/ycode/internal/gitserver"
 	"github.com/qiangli/ycode/internal/gitserver/backlog"
@@ -561,6 +562,13 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 		// the tree and re-parses. Foreign agents (opencode, claude-code,
 		// codex, gemini-cli) call this once early for system-prompt seeding.
 		repomap.NewMCPHandler(),
+		// Agent-facing capability prompts. Same handler the stdio
+		// composite mounts at cmd/ycode/mcp.go — pure-read, embedded,
+		// safe under every permission gate. Foreign agents discover
+		// ycode capabilities by calling list_docs / get_doc here
+		// instead of having a human paste a 30-line CLAUDE.md block.
+		// See internal/docs/embed.go for the curation contract.
+		docs.NewMCPHandler(),
 	)
 
 	// Family A.3: memex memory. Best-effort — if the manager can't be

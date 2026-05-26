@@ -844,7 +844,8 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "ycode",
 	Short: "ycode – autonomous agent harness for software development",
-	Long:  "ycode is a CLI agent harness that provides 50+ tools, MCP/LSP integration, a plugin system, permission enforcement, and session management.",
+	Long: "ycode is a CLI agent harness that provides 50+ tools, MCP/LSP integration, a plugin system, permission enforcement, and session management.\n\n" +
+		"Agent-facing capability prompts: `ycode docs` (curated for LLMs; complement to this human-facing help).",
 	// No PersistentPreRun: ycode does not auto-modify a repo on first
 	// invocation. To establish ycode in a repo (write
 	// <repo>/.agents/ycode/AGENTS.md), run `ycode init` explicitly.
@@ -1374,6 +1375,11 @@ func init() {
 	// See docs/lighthouse.md for the pattern.
 	rootCmd.AddCommand(newMcpCmd())
 	rootCmd.AddCommand(newInitCmd())
+
+	// `ycode docs` — agent-facing capability prompts (embedded). The
+	// human-facing counterpart is `ycode help`; they cross-reference
+	// but never share content. See internal/docs/embed.go safeguards.
+	rootCmd.AddCommand(newDocsCmd())
 
 	// Multi-agent collaboration task queue. See docs/agent-collab.md.
 	rootCmd.AddCommand(newTasksCmd())

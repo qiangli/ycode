@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/container"
+	"github.com/qiangli/ycode/internal/docs"
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/runtime/codegraph"
 	gh "github.com/qiangli/ycode/internal/runtime/github"
@@ -93,6 +94,13 @@ func newMcpServeCmd() *cobra.Command {
 				treesitter.NewMCPHandler(),
 				shell.NewMCPHandler(shellRT),
 				skills.NewMCPHandler(),
+
+				// Agent-facing capability prompts. Exposes list_docs +
+				// get_doc; resources/list surfaces one ycode://docs/<slug>
+				// per topic plus the curated index. Pure-read,
+				// stateless, embedded — safe in every permission tier.
+				// See internal/docs/embed.go for the curation contract.
+				docs.NewMCPHandler(),
 
 				// Family A.2: repomap. Token-budgeted file→symbol
 				// overview. Stateless — each call walks the tree and
