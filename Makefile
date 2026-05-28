@@ -174,14 +174,20 @@ tidy: ## Run mod tidy, fmt, and vet
 clean: ## Remove build artifacts
 	rm -rf bin/ dist/
 
-install: build ## Install ycode + drop-in shims (bash, ollama, podman, docker) to ~/bin/
+install: build ## Install ycode + drop-in shims (ollama, podman, docker) to ~/bin/
 	@mkdir -p ~/bin
 	@cp bin/ycode ~/bin/ycode
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - ~/bin/ycode 2>/dev/null || true; fi
-	@for shim in bash ollama podman docker; do \
+	@# The `bash` shim is intentionally excluded: dropping it into ~/bin in
+	@# front of /bin/bash hijacks every shell — interactive prompts, system
+	@# scripts, and CI runners alike — which has caused real mayhem in past
+	@# sessions. If you want bash routed through ycode, opt in explicitly
+	@# (e.g. `cp scripts/shims/bash ~/.local/bin/bash` or wire a per-tool
+	@# PATH wrapper) rather than blanket-installing it here.
+	@for shim in ollama podman docker; do \
 		cp scripts/shims/$$shim ~/bin/$$shim && chmod +x ~/bin/$$shim; \
 	done
-	@echo "Installed ycode + shims (bash, ollama, podman, docker) to ~/bin/"
+	@echo "Installed ycode + shims (ollama, podman, docker) to ~/bin/"
 	@echo 'Make sure ~/bin is in your PATH: export PATH="$$HOME/bin:$$PATH"'
 
 all: build ## Full quality gate (alias for build)
