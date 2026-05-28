@@ -41,7 +41,27 @@ func newPodmanCmd() *cobra.Command {
 		newPodmanMachineCmd(),
 	)
 
+	brandFlagErrors(cmd)
+
 	return cmd
+}
+
+// brandFlagErrors prepends a "this is ycode's embedded podman" header to any
+// unknown-flag / parse error so users running through the scripts/shims/podman
+// shim realize they aren't talking to upstream podman. Without this, a missing
+// flag like `-w` surfaces as a bare "unknown flag" line that's easy to
+// misattribute to the real binary.
+func brandFlagErrors(root *cobra.Command) {
+	errFn := func(cmd *cobra.Command, err error) error {
+		return fmt.Errorf("ycode podman (embedded engine, not upstream podman): %w", err)
+	}
+	root.SetFlagErrorFunc(errFn)
+	for _, sub := range root.Commands() {
+		sub.SetFlagErrorFunc(errFn)
+		for _, gsub := range sub.Commands() {
+			gsub.SetFlagErrorFunc(errFn)
+		}
+	}
 }
 
 // newEngine creates a container engine for CLI use.
@@ -155,7 +175,7 @@ func newPodmanPullCmd() *cobra.Command {
 // --- exec ---
 
 func newPodmanExecCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "exec CONTAINER COMMAND [ARG...]",
 		Short: "Execute a command in a running container",
 		Args:  cobra.MinimumNArgs(2),
@@ -182,6 +202,10 @@ func newPodmanExecCmd() *cobra.Command {
 			return nil
 		},
 	}
+	// Pass `sh -c "..."` and other flag-shaped command args through to
+	// the container rather than letting pflag try to parse them.
+	cmd.Flags().SetInterspersed(false)
+	return cmd
 }
 
 // --- logs ---
@@ -268,16 +292,19 @@ func newPodmanRmCmd() *cobra.Command {
 
 func newPodmanRunCmd() *cobra.Command {
 	var (
-		rm         bool
-		detach     bool
-		name       string
-		network    string
-		ports      []string
-		volumes    []string
-		envs       []string
-		envFiles   []string
-		privileged bool
-		capAdd     []string
+		rm          bool
+		detach      bool
+		name        string
+		network     string
+		ports       []string
+		volumes     []string
+		envs        []string
+		envFiles    []string
+		privileged  bool
+		capAdd      []string
+		workdir     string
+		interactive bool
+		tty         bool
 	)
 	cmd := &cobra.Command{
 		Use:   "run [FLAGS] IMAGE [COMMAND] [ARG...]",
@@ -293,6 +320,7 @@ func newPodmanRunCmd() *cobra.Command {
 				Image:   args[0],
 				Name:    name,
 				Network: network,
+				WorkDir: workdir,
 				// CLI `run` is for docker-compatible workloads (postgres,
 				// redis, etc.) that expect to start with Linux caps. The
 				// engine's "drop ALL by default" stance is the right pick
@@ -303,6 +331,11 @@ func newPodmanRunCmd() *cobra.Command {
 				KeepCaps:   true,
 				CapAdd:     capAdd,
 				Privileged: privileged,
+			}
+			if (interactive || tty) && detach {
+				fmt.Fprintln(os.Stderr, "ycode podman run: -i/-t are no-ops in detach mode")
+			} else if interactive || tty {
+				fmt.Fprintln(os.Stderr, "ycode podman run: -i/-t accepted but not yet wired to a PTY; container runs without an attached terminal")
 			}
 			if len(args) > 1 {
 				cfg.Command = args[1:]
@@ -357,6 +390,13 @@ func newPodmanRunCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&envFiles, "env-file", nil, "Read environment variables from file (KEY=VALUE per line)")
 	cmd.Flags().BoolVar(&privileged, "privileged", false, "Give extended privileges to the container (all caps, all devices, no seccomp/SELinux/AppArmor)")
 	cmd.Flags().StringSliceVar(&capAdd, "cap-add", nil, "Add Linux capability (e.g. NET_ADMIN, SYS_ADMIN). Ignored when --privileged is set.")
+	cmd.Flags().StringVarP(&workdir, "workdir", "w", "", "Working directory inside the container")
+	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Keep STDIN open (accepted for docker/podman compatibility; not yet wired)")
+	cmd.Flags().BoolVarP(&tty, "tty", "t", false, "Allocate a pseudo-TTY (accepted for docker/podman compatibility; not yet wired)")
+	// Treat anything after the IMAGE positional as the command, so users
+	// can write `podman run alpine sh -c "echo hi"` without pflag eating
+	// the `-c` as if it were a run-level flag.
+	cmd.Flags().SetInterspersed(false)
 	return cmd
 }
 

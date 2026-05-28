@@ -221,7 +221,16 @@ func (h *Healer) CanHeal(err error) bool {
 	// Check if error type is healable
 	switch errType {
 	case FailureTypeBuild, FailureTypeRuntime, FailureTypeConfig:
-		return true
+		// These categories can only be repaired via the AI healer
+		// (fixBuildError/fixRuntimeError/fixConfigError fall through
+		// to "requires AI integration" when no aiHealer is attached).
+		// Return false up front so the wrapper takes the quiet
+		// "Error: <err>" path instead of printing
+		//   Attempting self-healing...
+		//   Self-healing failed: ... requires AI integration (no AI provider configured)
+		// which is pure noise on every `ycode podman build` failure
+		// when the binary was built without an AI provider.
+		return h.aiHealer != nil
 	case FailureTypeAPI, FailureTypeTool:
 		// These might be transient, healing might help
 		return true

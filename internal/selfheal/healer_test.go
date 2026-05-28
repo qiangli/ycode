@@ -91,15 +91,26 @@ func TestHealer_CanHeal(t *testing.T) {
 		expected bool
 	}{
 		{
+			// API errors are healable without an AI provider (retry path).
 			name:     "enabled and healable error",
 			config:   &Config{Enabled: true, MaxAttempts: 3},
-			err:      errors.New("build failed"),
+			err:      errors.New("api connection timeout"),
 			expected: true,
+		},
+		{
+			// Build errors are AI-only; without an AI healer attached
+			// CanHeal must return false so the wrapper takes the quiet
+			// "Error: <err>" path instead of printing the noisy
+			// "Self-healing failed: ... requires AI integration" line.
+			name:     "build error without AI provider",
+			config:   &Config{Enabled: true, MaxAttempts: 3},
+			err:      errors.New("build failed"),
+			expected: false,
 		},
 		{
 			name:     "disabled",
 			config:   &Config{Enabled: false},
-			err:      errors.New("build failed"),
+			err:      errors.New("api connection timeout"),
 			expected: false,
 		},
 		{

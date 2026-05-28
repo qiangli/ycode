@@ -113,9 +113,12 @@ func WrapMainWithOptions(mainFn MainFunc, opts *WrapMainOptions) int {
 		return 0
 	}
 
-	// Try to heal the error
-	fmt.Fprintf(os.Stderr, "\nError encountered: %v\n", err)
-
+	// Decide upfront whether healing will actually be attempted. When it
+	// won't (e.g. build error but no AI provider configured), we skip the
+	// "Error encountered" / "Attempting self-healing..." / "cannot be
+	// automatically healed" ceremony and just surface the error verbatim.
+	// Those ceremony lines were the user-visible noise on every podman
+	// build failure when no AI provider is wired up.
 	if !healer.CanHeal(err) {
 		switch ClassifyError(err) {
 		case FailureTypeNotInstalled:
@@ -131,11 +134,13 @@ func WrapMainWithOptions(mainFn MainFunc, opts *WrapMainOptions) int {
 			fmt.Fprintln(os.Stderr, "  - reconfigure the port in settings.json or set it negative to allocate ephemerally")
 			return 1
 		}
-		fmt.Fprintf(os.Stderr, "This error cannot be automatically healed.\n")
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
 	}
 
+	// Healing path — chatty by design; the user opted in by configuring
+	// an AI provider.
+	fmt.Fprintf(os.Stderr, "\nError encountered: %v\n", err)
 	fmt.Fprintln(os.Stderr, "Attempting self-healing...")
 
 	errInfo := ErrorInfo{

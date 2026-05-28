@@ -110,7 +110,10 @@ func (e *Engine) BuildImage(ctx context.Context, name string, dockerfile []byte)
 
 	buildOpts := entTypes.BuildOptions{
 		BuildOptions: buildahDefine.BuildOptions{
-			Output: name,
+			Output:       name,
+			Out:          os.Stdout,
+			Err:          os.Stderr,
+			ReportWriter: os.Stderr,
 		},
 		ContainerFiles: []string{dockerfilePath},
 	}
@@ -137,6 +140,9 @@ func (e *Engine) BuildImageWithContext(ctx context.Context, name string, dockerf
 		BuildOptions: buildahDefine.BuildOptions{
 			Output:           name,
 			ContextDirectory: contextDir,
+			Out:              os.Stdout,
+			Err:              os.Stderr,
+			ReportWriter:     os.Stderr,
 		},
 		ContainerFiles: []string{dockerfilePath},
 	}
@@ -174,11 +180,20 @@ func (e *Engine) BuildImageFromContext(ctx context.Context, name, contextDir, do
 		"image", name, "context", contextDir, "dockerfile", dockerfilePath,
 		"buildArgs", len(buildArgs))
 
+	// Wire Out/Err/ReportWriter so the per-step build output (and any
+	// `RUN`-step test output) streams to the user in real time instead of
+	// being silently buffered until the build exits. Without these, the
+	// upstream binding falls back to os.Stdout for `Out` but leaves
+	// buildah's progress reporter unattached, which produces the
+	// "everything appears at once" UX users have hit in cloudbox runs.
 	buildOpts := entTypes.BuildOptions{
 		BuildOptions: buildahDefine.BuildOptions{
 			Output:           name,
 			ContextDirectory: contextDir,
 			Args:             buildArgs,
+			Out:              os.Stdout,
+			Err:              os.Stderr,
+			ReportWriter:     os.Stderr,
 		},
 		ContainerFiles: []string{dockerfilePath},
 	}
