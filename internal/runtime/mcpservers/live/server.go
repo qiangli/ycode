@@ -397,6 +397,11 @@ func (h *hub) handleDispatch(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
+	if req.Method == "capabilities" {
+		slog.Info("live: capabilities probed via /dispatch",
+			"remote", r.RemoteAddr, "user_agent", r.UserAgent())
+	}
+
 	// Span + metrics for the cross-process path. The agent-side
 	// Manager.Execute is instrumented separately; this branch
 	// catches `yc tab`, `curl /dispatch`, and any external client.

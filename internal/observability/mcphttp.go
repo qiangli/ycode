@@ -3,7 +3,9 @@ package observability
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/qiangli/ycode/internal/runtime/mcp"
 )
@@ -44,6 +46,11 @@ func (h *MCPHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(errResp)
 		return
+	}
+
+	if req.Method == "tools/call" && strings.Contains(string(body), `"browser_capabilities"`) {
+		slog.Info("mcp/http: browser_capabilities tools/call",
+			"remote", r.RemoteAddr, "user_agent", r.UserAgent())
 	}
 
 	resp, err := h.server.HandleRequest(r.Context(), &req)

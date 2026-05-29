@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -222,6 +223,10 @@ func (s *Service) Execute(ctx context.Context, action mcpservers.BrowserAction) 
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	if action.Type == mcpservers.ActionCapabilities {
+		slog.Info("live: capabilities probed", "role", role, "callers", captureCallers(2, 8))
+	}
+
 	var res *mcpservers.BrowserResult
 	switch role {
 	case roleHub:
@@ -261,6 +266,28 @@ func (s *Service) postprocess(action mcpservers.BrowserAction, res *mcpservers.B
 	if h != nil && res.URL != "" {
 		h.RecordLastTab(res.URL)
 	}
+}
+
+// captureCallers walks the stack starting `skip` frames above the
+// caller and returns up to `max` "package.Function:line" strings.
+// Used by the capabilities-probe log to attribute the originator
+// without dumping a full debug.Stack().
+func captureCallers(skip, max int) []string {
+	pcs := make([]uintptr, max)
+	n := runtime.Callers(skip+1, pcs)
+	if n == 0 {
+		return nil
+	}
+	frames := runtime.CallersFrames(pcs[:n])
+	out := make([]string, 0, n)
+	for {
+		f, more := frames.Next()
+		out = append(out, fmt.Sprintf("%s:%d", f.Function, f.Line))
+		if !more {
+			break
+		}
+	}
+	return out
 }
 
 // staleExtensionError builds the actionable message for an extension
