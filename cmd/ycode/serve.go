@@ -493,12 +493,12 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	// TUI/prompt processes will see the port in use and forward via
 	// HTTP /dispatch instead of trying to bind.
 	//
-	// We discard the returned browser.Client: tool dispatch happens
-	// inside per-App newApp() flows, each of which calls
-	// setupBrowserBackend and installs its own Client on its rootCtx.
-	// This call's only purpose is the side effect of binding the live
-	// hub port.
-	_ = setupBrowserBackend(ctx, fullCfg)
+	// Keep the returned client and reuse it for the public MCP
+	// boundary below: calling setupBrowserBackend a second time would
+	// create a second live.Service that finds the port already in use,
+	// switches to client role, and round-trips every call through HTTP
+	// /dispatch back to this same process's hub.
+	browserClient := setupBrowserBackend(ctx, fullCfg)
 
 	// 2. Build API/WebSocket + NATS (may take time or fail if no API key).
 	var api *apiStack
@@ -628,7 +628,7 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	// MCP boundary, so attach state (probe Chrome, live extension
 	// hub) is shared across both surfaces.
 	compositeMCP = append(compositeMCP,
-		browsermcp.NewMCPHandler(setupBrowserBackend(ctx, fullCfg)),
+		browsermcp.NewMCPHandler(browserClient),
 	)
 
 	// Canvas / generative-UI tools. Foreign agents (claude-code, opencode,

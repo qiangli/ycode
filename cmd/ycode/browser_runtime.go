@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"sync"
 
 	"github.com/qiangli/ycode/internal/runtime/browser"
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -14,15 +15,41 @@ import (
 	"github.com/qiangli/ycode/internal/tools"
 )
 
+// Process-wide singleton: setupBrowserBackend is called from several
+// places (serve.go, newApp() inside main.go, the session-pool factory
+// in serve_api.go). Without a cache, each call builds an independent
+// Manager + live.Service; the second-onwards Service finds the WS
+// port already bound, falls back to client role, and round-trips
+// every browser action through HTTP /dispatch back to this same
+// process's hub. One client per process is correct and sufficient —
+// cfg.Browser doesn't change between calls.
+var (
+	browserBackendMu     sync.Mutex
+	browserBackendClient browser.Client
+	browserBackendReady  bool
+)
+
 // setupBrowserBackend installs the configured browser mode (live,
 // probe, or solo) and returns a browser.Client that dispatches
 // wire.Actions through the manager. Returns nil when browser.mode is
 // unset; callers install the client on their rootCtx via
-// browser.WithClient.
+// browser.WithClient. The same client is returned to every caller in
+// the process — see the singleton rationale above.
 //
 // Stable builds use the stub in browser_runtime_stub.go and always
 // return nil.
 func setupBrowserBackend(ctx context.Context, cfg *config.Config) browser.Client {
+	browserBackendMu.Lock()
+	defer browserBackendMu.Unlock()
+	if browserBackendReady {
+		return browserBackendClient
+	}
+	browserBackendClient = buildBrowserBackend(ctx, cfg)
+	browserBackendReady = true
+	return browserBackendClient
+}
+
+func buildBrowserBackend(ctx context.Context, cfg *config.Config) browser.Client {
 	if cfg == nil || cfg.Browser == nil || cfg.Browser.Mode == "" {
 		return nil
 	}
