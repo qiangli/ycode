@@ -312,6 +312,10 @@ async function onMessage(ev) {
     error = String(err.message || err);
     ws.send(JSON.stringify({ id: req.id, error }));
   }
+  // capabilities is pure metadata (version + method list); the agent
+  // calls it once per session as a drift probe. Surfacing it in the
+  // audit log buries real actions behind stale 0 ms rows, so skip.
+  if (req.method === "capabilities") return;
   recordToolCall({
     id: req.id,
     method: req.method,
