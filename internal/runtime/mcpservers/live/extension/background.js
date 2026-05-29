@@ -312,10 +312,11 @@ async function onMessage(ev) {
     error = String(err.message || err);
     ws.send(JSON.stringify({ id: req.id, error }));
   }
-  // capabilities is pure metadata (version + method list); the agent
-  // calls it once per session as a drift probe. Surfacing it in the
-  // audit log buries real actions behind stale 0 ms rows, so skip.
-  if (req.method === "capabilities") return;
+  // Record EVERY dispatched method — including capabilities. Do not
+  // add per-method skips here. A pathological client that hammers
+  // capabilities (or any other low-cost probe) is exactly what this
+  // log is meant to surface; suppressing "noisy" methods hides the
+  // misbehavior that the panel exists to catch.
   recordToolCall({
     id: req.id,
     method: req.method,
