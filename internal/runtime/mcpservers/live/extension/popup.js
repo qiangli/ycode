@@ -8,6 +8,9 @@
 // Also renders a live debug-log panel of recent tool calls fed from
 // background.js over a long-lived chrome.runtime.connect port.
 
+document.getElementById("version").textContent =
+  "v" + chrome.runtime.getManifest().version;
+
 const portEl = document.getElementById("port");
 const connectBtn = document.getElementById("connect");
 const disconnectBtn = document.getElementById("disconnect");
