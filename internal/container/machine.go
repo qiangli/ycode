@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -127,6 +128,13 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 		if socketPath := defaultSocketPath(); socketPath != "" {
 			if err := waitForSocket(socketPath, 2*time.Second); err == nil {
 				slog.Info("container: machine ready", "name", cfg.Name, "socket", socketPath)
+				// One-shot: enable cpuset delegation in the VM's
+				// systemd-user cgroup tree so containers can run
+				// k3s (which hard-requires cpuset). Best-effort;
+				// failure logs but doesn't gate machine readiness.
+				if err := enableCpusetDelegation(cfg.Name); err != nil {
+					slog.Warn("container: cpuset delegation setup failed (k3s in container won't start)", "err", err)
+				}
 				return nil
 			}
 		}
@@ -134,6 +142,56 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 	}
 
 	return fmt.Errorf("machine started but socket not available after 30s")
+}
+
+// enableCpusetDelegation SSHes into the running podman machine and
+// adds `cpuset` to each level of the systemd-user cgroup hierarchy's
+// subtree_control. Fedora's systemd-user instance doesn't delegate
+// cpuset by default (historical: cpuset was v1-only and required
+// CAP_SYS_NICE); modern systemd CAN delegate it but only when asked.
+//
+// Without this, `cat /sys/fs/cgroup/cgroup.controllers` from inside
+// a container shows `cpu io memory pids` — no cpuset — and any tool
+// that requires it (k3s, kubelet, runc with cpu pinning) fails at
+// startup with "failed to find cpuset cgroup (v2)".
+//
+// Idempotent: writing `+cpuset` to a cgroup that already has it is a
+// no-op (linux kernel accepts the syscall and returns success).
+// Runs once per machine-start; on a freshly-rebooted machine the
+// hierarchy resets so we re-apply.
+func enableCpusetDelegation(machineName string) error {
+	mp, err := ociMachine.GetProvider()
+	if err != nil {
+		return fmt.Errorf("get provider: %w", err)
+	}
+	mc, exists := findMachine(machineName, mp)
+	if !exists {
+		return fmt.Errorf("machine %q not found", machineName)
+	}
+	identity := mc.SSH.IdentityPath
+	port := mc.SSH.Port
+	user := mc.SSH.RemoteUsername
+	if identity == "" || port == 0 || user == "" {
+		return fmt.Errorf("ssh details missing on machine %q", machineName)
+	}
+	cmd := exec.Command("ssh",
+		"-i", identity,
+		"-p", fmt.Sprintf("%d", port),
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+		fmt.Sprintf("%s@localhost", user),
+		// One-shot script: walk the user-slice hierarchy, write
+		// +cpuset to subtree_control at each level. sudo because
+		// the writes need root.
+		`for p in /user.slice /user.slice/user-501.slice /user.slice/user-501.slice/user@501.service /user.slice/user-501.slice/user@501.service/user.slice; do echo +cpuset | sudo tee /sys/fs/cgroup${p}/cgroup.subtree_control >/dev/null 2>&1 || true; done`,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ssh: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	slog.Info("container: cpuset delegation enabled on machine", "name", machineName)
+	return nil
 }
 
 // StopMachine stops the podman machine using Go libraries.
