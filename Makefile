@@ -176,6 +176,12 @@ clean: ## Remove build artifacts
 
 install: build ## Install ycode + drop-in shims (ollama, podman, docker) to ~/bin/
 	@mkdir -p ~/bin
+	@# Unlink before copy so the new binary lands on a fresh inode. On macOS,
+	@# overwriting a signed Mach-O in place leaves the kernel's per-vnode
+	@# cs_blob cache pointing at the previous signature; the next exec then
+	@# fails validation ("load code signature error 2") and the process is
+	@# SIGKILLed before main() — surfaced as `zsh: killed ycode ...`.
+	@rm -f ~/bin/ycode
 	@cp bin/ycode ~/bin/ycode
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - ~/bin/ycode 2>/dev/null || true; fi
 	@# The `bash` shim is intentionally excluded: dropping it into ~/bin in
