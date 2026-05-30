@@ -17,6 +17,12 @@ type Registry struct {
 	skills map[string]*SkillSpec // name -> latest version
 	dir    string                // persistence directory
 	logger *slog.Logger
+
+	// wg tracks in-flight async persist goroutines. Tests (and any caller
+	// that needs ordering between mutations and the on-disk state) call
+	// Sync to wait for them — otherwise t.TempDir cleanup can race with
+	// RecordOutcome's fire-and-forget write.
+	wg sync.WaitGroup
 }
 
 // NewRegistry creates a skill registry backed by the given directory.
@@ -167,7 +173,15 @@ func (r *Registry) RecordOutcome(name string, success bool, durationMs float64) 
 
 	// Copy for safe async persistence.
 	cp := *s
-	go r.persist(&cp)
+	r.wg.Go(func() { r.persist(&cp) })
+}
+
+// Sync blocks until all in-flight async persistence (kicked off by
+// RecordOutcome) has completed. Required before a caller deletes the
+// backing directory (e.g. t.TempDir cleanup) or expects on-disk state
+// to reflect prior mutations.
+func (r *Registry) Sync() {
+	r.wg.Wait()
 }
 
 // ApplyDecay reduces skill scores by 5% per week since last use.

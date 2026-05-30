@@ -66,6 +66,10 @@ func TestRegistryFindBestMatch(t *testing.T) {
 func TestRegistryRecordOutcome(t *testing.T) {
 	dir := t.TempDir()
 	reg := NewRegistry(dir)
+	// Wait for async persists before t.TempDir cleanup runs, else the
+	// in-flight goroutines race with RemoveAll and the test fails with
+	// "directory not empty".
+	t.Cleanup(reg.Sync)
 
 	_ = reg.Register(&SkillSpec{
 		Name:            "test",
