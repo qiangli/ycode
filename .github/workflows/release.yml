@@ -71,7 +71,8 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - uses: ./.github/actions/checkout-nadir
+      - name: Bootstrap sibling deps (../sh, ../nadir)
+        run: ./scripts/bootstrap-siblings.sh
 
       - uses: actions/setup-go@v6
         with:

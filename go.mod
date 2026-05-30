@@ -32,9 +32,10 @@ replace go.yaml.in/yaml/v4 => go.yaml.in/yaml/v4 v4.0.0-rc.3
 
 replace github.com/nektos/act => gitea.com/gitea/act v0.261.10
 
-// Local sibling: nadir (skill-router library). Pinned to the working copy
-// while the integration is being prototyped; switch to a tagged version
-// once the integration stabilises.
+// Sibling-path replace: works in the dhnt umbrella (../nadir is the
+// dhnt/nadir submodule). For standalone clones of ycode, run
+// script/bootstrap-siblings.sh — it materialises ../sh and ../nadir
+// at the SHAs in .sibling-pins so this replace resolves.
 replace github.com/qiangli/nadir => ../nadir
 
 require (
