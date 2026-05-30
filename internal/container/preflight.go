@@ -18,7 +18,9 @@
 package container
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 )
@@ -224,6 +226,45 @@ type PreflightError struct {
 }
 
 func (p *PreflightError) Error() string { return p.Message }
+
+// PreflightAndCleanup runs CheckHostResources; on a PreflightError it
+// attempts CleanupHost (free vfkit/gvproxy zombies, stale sockets) and
+// re-runs the preflight. Returns the final result.
+//
+// Set noAutoCleanup=true to skip the cleanup step (the `--no-auto-
+// cleanup` CLI flag). This is the default the auto-provisioning paths
+// (InitMachine, EnsureMachine) call: we'd rather attempt a recovery
+// than refuse to run when the user has memory tied up in known-dead
+// zombies.
+func PreflightAndCleanup(probe ResourceProbe, cfg MachineConfig, dataDir string, opt PreflightOptions, noAutoCleanup bool) error {
+	err := CheckHostResources(probe, cfg, dataDir, opt)
+	if err == nil {
+		return nil
+	}
+	var pe *PreflightError
+	if !errors.As(err, &pe) || noAutoCleanup {
+		return err
+	}
+	slog.Info("preflight failed; attempting auto-cleanup of host VM state",
+		"kind_memory", pe.Kind == PreflightMemory,
+		"kind_disk", pe.Kind == PreflightDisk,
+		"have_mb", pe.Have, "want_mb", pe.Want)
+	report, cerr := CleanupHost(HostCleanupOptions{DryRun: false})
+	if cerr != nil {
+		slog.Warn("auto-cleanup failed; surfacing original preflight error", "err", cerr)
+		return err
+	}
+	if !report.AnythingCleaned() {
+		slog.Info("auto-cleanup found nothing to remove; surfacing original preflight error")
+		return err
+	}
+	slog.Info("auto-cleanup freed state; retrying preflight",
+		"orphaned_processes", len(report.OrphanedProcesses),
+		"stale_sockets", len(report.StaleSockets))
+	// Re-run preflight after cleanup. If still failing, that error is
+	// what the user sees — they need to free more state themselves.
+	return CheckHostResources(probe, cfg, dataDir, opt)
+}
 
 func formatMemoryShortfall(memMB, headroomMB, freeMB, totalMB uint64) string {
 	var b strings.Builder

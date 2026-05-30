@@ -40,6 +40,7 @@ func newPodmanCmd() *cobra.Command {
 		newPodmanBuildCmd(),
 		newPodmanNetworkCmd(),
 		newPodmanMachineCmd(),
+		newPodmanCleanupCmd(),
 	)
 
 	brandFlagErrors(cmd)

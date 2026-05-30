@@ -79,6 +79,14 @@ type MachineConfig struct {
 	CPUs   int    // number of CPUs (default: 2)
 	Memory int    // memory in MB (default: 4096)
 	Disk   int    // disk size in GB (default: 50)
+
+	// NoAutoCleanup disables the preflight's auto-cleanup retry. When
+	// false (default), a preflight failure triggers CleanupHost (kill
+	// orphaned vfkit/gvproxy zombies, remove stale sockets) and re-
+	// runs the preflight before refusing. Set true to skip cleanup
+	// and surface the original PreflightError immediately. Surfaced
+	// via the `--no-auto-cleanup` CLI flag.
+	NoAutoCleanup bool
 }
 
 // DefaultMachineConfig returns sensible defaults.
@@ -122,8 +130,9 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 		// Machine doesn't exist — init and start. Same preflight as
 		// the explicit InitMachine path so accidental auto-provisions
 		// (e.g., `ycode podman ps` against a wiped config) don't
-		// silently allocate beyond what the host can serve.
-		if err := CheckHostResources(DefaultProbe{}, cfg, machineDataDir(), PreflightOptions{}); err != nil {
+		// silently allocate beyond what the host can serve. Honours
+		// cfg.NoAutoCleanup for the cleanup-retry behavior.
+		if err := PreflightAndCleanup(DefaultProbe{}, cfg, machineDataDir(), PreflightOptions{}, cfg.NoAutoCleanup); err != nil {
 			return err
 		}
 
@@ -258,9 +267,12 @@ func InitMachine(ctx context.Context, cfg MachineConfig) error {
 	// this, vfkit would happily allocate a 50 GB sparse image on a
 	// 30 GB partition or a 4 GB VM on a swapping host, then OOM-kill
 	// the user's first heavy build with no warning. Soft-fails on
-	// unsupported platforms (the probe returns an error, the gate
-	// passes — better than gating on an uncertified read).
-	if err := CheckHostResources(DefaultProbe{}, cfg, machineDataDir(), PreflightOptions{}); err != nil {
+	// unsupported platforms.
+	//
+	// PreflightAndCleanup attempts an offline cleanup (kill orphaned
+	// vfkit/gvproxy zombies, remove stale sockets) on initial refusal
+	// and retries the preflight. Disable with cfg.NoAutoCleanup.
+	if err := PreflightAndCleanup(DefaultProbe{}, cfg, machineDataDir(), PreflightOptions{}, cfg.NoAutoCleanup); err != nil {
 		return err
 	}
 

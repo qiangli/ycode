@@ -56,6 +56,8 @@ func newPodmanMachineInitCmd() *cobra.Command {
 	cmd.Flags().IntVar(&cfg.CPUs, "cpus", cfg.CPUs, "Number of vCPUs")
 	cmd.Flags().IntVar(&cfg.Memory, "memory", cfg.Memory, "Memory in MB")
 	cmd.Flags().IntVar(&cfg.Disk, "disk-size", cfg.Disk, "Disk size in GB")
+	cmd.Flags().BoolVar(&cfg.NoAutoCleanup, "no-auto-cleanup", false,
+		"Skip auto-cleanup of orphaned vfkit/gvproxy processes on preflight refusal")
 	return cmd
 }
 
