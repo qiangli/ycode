@@ -119,7 +119,14 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 			return fmt.Errorf("machine start: %w", err)
 		}
 	} else {
-		// Machine doesn't exist — init and start.
+		// Machine doesn't exist — init and start. Same preflight as
+		// the explicit InitMachine path so accidental auto-provisions
+		// (e.g., `ycode podman ps` against a wiped config) don't
+		// silently allocate beyond what the host can serve.
+		if err := CheckHostResources(DefaultProbe{}, cfg, machineDataDir(), PreflightOptions{}); err != nil {
+			return err
+		}
+
 		slog.Info("container: initializing machine (first-time setup, downloads ~800MB VM image)",
 			"name", cfg.Name, "cpus", cfg.CPUs, "memory_mb", cfg.Memory, "disk_gb", cfg.Disk)
 
@@ -246,6 +253,17 @@ func StopMachine(ctx context.Context, name string) error {
 // InitMachine creates and registers a new VM without starting it. Use
 // StartMachine afterward (or EnsureMachine which does both).
 func InitMachine(ctx context.Context, cfg MachineConfig) error {
+	// Preflight: refuse before we touch any state if the host doesn't
+	// have enough memory or disk to run the VM as configured. Without
+	// this, vfkit would happily allocate a 50 GB sparse image on a
+	// 30 GB partition or a 4 GB VM on a swapping host, then OOM-kill
+	// the user's first heavy build with no warning. Soft-fails on
+	// unsupported platforms (the probe returns an error, the gate
+	// passes — better than gating on an uncertified read).
+	if err := CheckHostResources(DefaultProbe{}, cfg, machineDataDir(), PreflightOptions{}); err != nil {
+		return err
+	}
+
 	ensureHelperBinariesOnPath()
 
 	mp, err := ociMachine.GetProvider()
@@ -410,6 +428,20 @@ func ensureHelperBinariesOnPath() {
 			os.Setenv("CONTAINERS_MACHINE_PROVIDER", "applehv")
 		}
 	}
+}
+
+// machineDataDir returns the path Statfs should run against for the
+// preflight disk check. We don't have a single canonical "machine data
+// dir" — vfkit's disk image lives under
+// ~/.local/share/containers/podman/machine/<provider>/ — so we point
+// at the user's home directory; on every supported OS the home
+// partition is the one Statfs reports free bytes for that path. Falls
+// back to /tmp on the unusual case where home isn't resolvable.
+func machineDataDir() string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return home
+	}
+	return os.TempDir()
 }
 
 // findMachine looks up a machine config by name from the provider.
