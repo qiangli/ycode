@@ -338,6 +338,94 @@ func TestParseMounts(t *testing.T) {
 	}
 }
 
+func TestIsNamedVolumeSource(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"cloudbox-gomodcache", true},
+		{"my_data", true},
+		{"vol.1", true},
+		{"v1", true},
+		{"/abs/path", false},     // absolute path
+		{"./relative", false},    // relative path with dot prefix
+		{"../parent", false},     // parent-relative path
+		{"sub/dir", false},       // contains slash
+		{`win\path`, false},      // contains backslash
+		{"a", false},             // too short (1 char)
+		{"-leading-dash", false}, // must start alphanumeric
+		{"_underscore", false},   // must start alphanumeric
+		{"has space", false},     // space invalid
+		{"with$dollar", false},   // $ invalid
+	}
+	for _, c := range cases {
+		got := isNamedVolumeSource(c.in)
+		if got != c.want {
+			t.Errorf("isNamedVolumeSource(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestMaterializeNamedVolume(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path, err := materializeNamedVolume("cloudbox-gomodcache")
+	if err != nil {
+		t.Fatalf("materializeNamedVolume: %v", err)
+	}
+	want := filepath.Join(home, ".agents", "ycode", "container", "volumes", "cloudbox-gomodcache")
+	if path != want {
+		t.Errorf("path = %q, want %q", path, want)
+	}
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		t.Errorf("expected dir at %q, stat err=%v", path, err)
+	}
+
+	// Idempotent: second call returns same path, no error.
+	path2, err := materializeNamedVolume("cloudbox-gomodcache")
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if path2 != path {
+		t.Errorf("non-idempotent: got %q vs %q", path2, path)
+	}
+
+	// Invalid names rejected.
+	if _, err := materializeNamedVolume("bad name"); err == nil {
+		t.Error("space in name should error")
+	}
+	if _, err := materializeNamedVolume(""); err == nil {
+		t.Error("empty name should error")
+	}
+}
+
+func TestParseMountsNamedVolume(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	got, err := parseMounts([]string{"cloudbox-gomodcache:/go/pkg/mod"})
+	if err != nil {
+		t.Fatalf("parseMounts: %v", err)
+	}
+	want := filepath.Join(home, ".agents", "ycode", "container", "volumes", "cloudbox-gomodcache")
+	if len(got) != 1 {
+		t.Fatalf("want 1 mount, got %d", len(got))
+	}
+	if got[0].Source != want {
+		t.Errorf("Source = %q, want %q", got[0].Source, want)
+	}
+	if got[0].Target != "/go/pkg/mod" {
+		t.Errorf("Target = %q, want /go/pkg/mod", got[0].Target)
+	}
+	if got[0].ReadOnly {
+		t.Errorf("named volume defaulted to read-only")
+	}
+	if info, err := os.Stat(want); err != nil || !info.IsDir() {
+		t.Errorf("named-volume dir not created at %q (err=%v)", want, err)
+	}
+}
+
 func TestCollectEnv(t *testing.T) {
 	tmp := t.TempDir()
 	envFile := filepath.Join(tmp, "env")

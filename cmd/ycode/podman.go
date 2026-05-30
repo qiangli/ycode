@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -616,7 +617,10 @@ func parsePortMappings(specs []string) ([]container.PortMapping, error) {
 	return out, nil
 }
 
-// parseMounts reads docker-style "HOST:CTR[:ro]" volume specs.
+// parseMounts reads docker-style "SRC:CTR[:ro]" volume specs. SRC is
+// either a host path (absolute, or relative starting with `.`) or a
+// docker-style named volume (bare name matching volumeNameRe) that gets
+// materialized under the ycode container data dir on first reference.
 func parseMounts(specs []string) ([]container.Mount, error) {
 	if len(specs) == 0 {
 		return nil, nil
@@ -625,7 +629,7 @@ func parseMounts(specs []string) ([]container.Mount, error) {
 	for _, s := range specs {
 		parts := strings.Split(s, ":")
 		if len(parts) < 2 || len(parts) > 3 {
-			return nil, fmt.Errorf("invalid volume spec %q (want HOST:CTR[:ro])", s)
+			return nil, fmt.Errorf("invalid volume spec %q (want SRC:CTR[:ro])", s)
 		}
 		m := container.Mount{Source: parts[0], Target: parts[1]}
 		if len(parts) == 3 {
@@ -638,7 +642,14 @@ func parseMounts(specs []string) ([]container.Mount, error) {
 				return nil, fmt.Errorf("invalid mount option %q (want ro or rw)", parts[2])
 			}
 		}
-		if !filepath.IsAbs(m.Source) {
+		switch {
+		case isNamedVolumeSource(m.Source):
+			path, err := materializeNamedVolume(m.Source)
+			if err != nil {
+				return nil, fmt.Errorf("named volume %q: %w", m.Source, err)
+			}
+			m.Source = path
+		case !filepath.IsAbs(m.Source):
 			abs, err := filepath.Abs(m.Source)
 			if err != nil {
 				return nil, fmt.Errorf("resolve mount source %q: %w", m.Source, err)
@@ -648,6 +659,51 @@ func parseMounts(specs []string) ([]container.Mount, error) {
 		out = append(out, m)
 	}
 	return out, nil
+}
+
+// volumeNameRe matches docker's named-volume rules: alphanumeric start,
+// then alphanumeric or _ . -. Length ≥ 2 mirrors moby/moby's validator
+// (single-character names are rejected to keep typos from silently
+// materializing one-byte volume dirs).
+var volumeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`)
+
+// isNamedVolumeSource reports whether s looks like a docker-style named
+// volume. Anything containing a path separator or starting with `.`
+// (relative-path syntax) is treated as a host path instead.
+func isNamedVolumeSource(s string) bool {
+	if strings.ContainsAny(s, `/\`) {
+		return false
+	}
+	if strings.HasPrefix(s, ".") {
+		return false
+	}
+	return volumeNameRe.MatchString(s)
+}
+
+// volumeStoreDir returns the directory under which named volumes live.
+// Mirrors service_linux.go's data-dir convention so an operator browsing
+// `~/.agents/ycode/container/` sees one tree, not two.
+func volumeStoreDir() string {
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		return filepath.Join(os.TempDir(), "ycode", "container", "volumes")
+	}
+	return filepath.Join(home, ".agents", "ycode", "container", "volumes")
+}
+
+// materializeNamedVolume ensures the named volume's backing directory
+// exists and returns its absolute path. Idempotent — repeated references
+// to the same name re-use the existing directory, so data persists across
+// container runs.
+func materializeNamedVolume(name string) (string, error) {
+	if !volumeNameRe.MatchString(name) {
+		return "", fmt.Errorf("invalid volume name %q (must match %s)", name, volumeNameRe)
+	}
+	path := filepath.Join(volumeStoreDir(), name)
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return "", fmt.Errorf("create volume dir %s: %w", path, err)
+	}
+	return path, nil
 }
 
 // collectEnv merges -e and --env-file values into a single map. -e wins
