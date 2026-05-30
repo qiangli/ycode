@@ -40,6 +40,39 @@ func resolveMachineImage() string {
 	return defaultMachineImage
 }
 
+// resolveMachineVolumes returns the list of host:guest mount specs that
+// should be added at machine init time. Without these the VM can't see
+// any path on the macOS host (or any path outside its rootfs on Linux),
+// so docker-style bind mounts via `-v /Users/me/proj:/src` fail with
+// `statfs ...: no such file or directory` from inside libpod.
+//
+// We reuse upstream's defaults via containers.conf (on darwin: /Users,
+// /private, /var/folders — see go.podman.io/common/pkg/config's
+// default_darwin.go) so behaviour matches the `podman machine init`
+// CLI with no `-v` flags. `os.ExpandEnv` mirrors the same step upstream
+// performs in cmd/podman/machine/init.go after binding the flag.
+//
+// Existing machines created without volumes won't grow them — upstream
+// has no SetOptions field for Volumes — so this only takes effect on
+// machines initialized after this code runs. Users with a pre-existing
+// `ycode-default` machine need to `ycode podman machine rm` + re-init
+// to pick up host bind-mount support.
+func resolveMachineVolumes() []string {
+	cfg, err := config.Default()
+	if err != nil {
+		return nil
+	}
+	vols := cfg.Machine.Volumes.Get()
+	out := make([]string, 0, len(vols))
+	for _, v := range vols {
+		if v == "" {
+			continue
+		}
+		out = append(out, os.ExpandEnv(v))
+	}
+	return out
+}
+
 // MachineConfig holds configuration for the Linux VM.
 type MachineConfig struct {
 	Name   string // VM name (default: "ycode-default")
@@ -104,6 +137,7 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 			IsDefault: true,
 			Image:     resolveMachineImage(),
 			Username:  user,
+			Volumes:   resolveMachineVolumes(),
 		}
 
 		if err := ociMachine.Init(initOpts, mp); err != nil {
@@ -241,6 +275,7 @@ func InitMachine(ctx context.Context, cfg MachineConfig) error {
 		IsDefault: true,
 		Image:     resolveMachineImage(),
 		Username:  user,
+		Volumes:   resolveMachineVolumes(),
 	}
 	slog.Info("container: initializing machine (downloads ~800MB VM image on first run)",
 		"name", cfg.Name, "cpus", cfg.CPUs, "memory_mb", cfg.Memory, "disk_gb", cfg.Disk)
