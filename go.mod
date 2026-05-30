@@ -20,7 +20,7 @@ replace github.com/qiangli/ycode/pkg/ollm => ./pkg/ollm
 
 replace github.com/qiangli/ycode/pkg/otel => ./pkg/otel
 
-replace mvdan.cc/sh/v3 => ./external/sh
+replace mvdan.cc/sh/v3 => ../sh
 
 replace code.gitea.io/gitea => ./external/gitea
 
