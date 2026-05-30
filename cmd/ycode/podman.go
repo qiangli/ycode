@@ -355,28 +355,52 @@ func newPodmanRunCmd() *cobra.Command {
 				return err
 			}
 
-			ctr, err := engine.CreateContainer(cmd.Context(), cfg)
-			if err != nil {
-				return err
-			}
-
-			if rm {
-				defer ctr.Remove(cmd.Context(), true)
-			}
-
-			if err := ctr.Start(cmd.Context()); err != nil {
-				return err
-			}
-
+			// Detach path: create + start + print ID + leave running. No
+			// log streaming, no wait — matches docker/podman semantics.
 			if detach {
+				ctr, err := engine.CreateContainer(cmd.Context(), cfg)
+				if err != nil {
+					return err
+				}
+				if err := ctr.Start(cmd.Context()); err != nil {
+					return err
+				}
 				fmt.Println(ctr.ID)
 				return nil
 			}
 
-			// Wait for container to finish and print logs.
-			logs, err := engine.ContainerLogs(cmd.Context(), ctr.ID, false, "")
-			if err == nil && logs != "" {
-				fmt.Print(logs)
+			// Foreground path: stream stdout/stderr live and block until
+			// the container exits. Reuses Engine.RunOneShot — without it,
+			// the prior code path called ContainerLogs(follow=false)
+			// immediately after Start, which returned the empty buffer of
+			// not-yet-emitted bytes, then the deferred --rm tore down the
+			// still-running container. Visible as `ycode podman run` exiting
+			// in milliseconds with truncated or empty output.
+			//
+			// RunOneShot always removes the container at the end, matching
+			// the spirit of --rm. The CLI's --rm flag is a no-op here (we
+			// ignore it deliberately rather than wire a second cleanup
+			// path) — leaving a container behind from `run` (no -d) would
+			// be a worse default than docker's, where containers leak
+			// without --rm.
+			_ = rm // accepted for flag compatibility; foreground always cleans up.
+			result, err := engine.RunOneShot(cmd.Context(), cfg)
+			if result != nil {
+				if result.Stdout != "" {
+					fmt.Println(result.Stdout)
+				}
+				if result.Stderr != "" {
+					fmt.Fprintln(os.Stderr, result.Stderr)
+				}
+			}
+			if err != nil {
+				return err
+			}
+			// Propagate the container exit code so callers (Makefiles,
+			// CI scripts) see test failures as non-zero exits instead of
+			// silently passing.
+			if result != nil && result.ExitCode != 0 {
+				os.Exit(result.ExitCode)
 			}
 			return nil
 		},
