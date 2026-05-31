@@ -190,7 +190,12 @@ install: build ## Install ycode + drop-in shims (ollama, podman, docker) to ~/bi
 	@# sessions. If you want bash routed through ycode, opt in explicitly
 	@# (e.g. `cp scripts/shims/bash ~/.local/bin/bash` or wire a per-tool
 	@# PATH wrapper) rather than blanket-installing it here.
+	@# rm -f before cp so an existing symlink (e.g. ~/bin/podman pointing
+	@# at /opt/homebrew/bin/podman from a prior brew install) is replaced
+	@# rather than followed — cp follows symlinks on write, which would
+	@# overwrite the homebrew target and permission-deny on protected paths.
 	@for shim in ollama podman docker; do \
+		rm -f ~/bin/$$shim; \
 		cp scripts/shims/$$shim ~/bin/$$shim && chmod +x ~/bin/$$shim; \
 	done
 	@echo "Installed ycode + shims (ollama, podman, docker) to ~/bin/"

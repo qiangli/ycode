@@ -50,12 +50,14 @@ ssh "${HOST}" "lsof -ti :${PORT} | xargs kill -TERM 2>/dev/null; sleep 1; lsof -
 
 echo "--- Starting ycode serve on ${HOST} ---"
 ssh "${HOST}" "cd ~/ycode && nohup bin/ycode serve --port ${PORT} > ~/.ycode/serve.log 2>&1 & echo \$!"
-sleep 3
 
-echo "--- Verifying health ---"
-if ssh "${HOST}" "curl -sf http://127.0.0.1:${PORT}/healthz" > /dev/null; then
-    echo "=== Deploy PASSED — http://${HOST}:${PORT}/ ==="
-else
-    echo "=== Deploy FAILED — health check failed ==="
-    exit 1
-fi
+echo "--- Verifying health (up to 15s) ---"
+for i in $(seq 1 30); do
+    if ssh "${HOST}" "curl -sf http://127.0.0.1:${PORT}/healthz" > /dev/null 2>&1; then
+        echo "=== Deploy PASSED — http://${HOST}:${PORT}/ (ready after ${i} attempts) ==="
+        exit 0
+    fi
+    sleep 0.5
+done
+echo "=== Deploy FAILED — /healthz did not respond within 15s ==="
+exit 1
