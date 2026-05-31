@@ -67,7 +67,7 @@ func newPodmanMachineStartCmd() *cobra.Command {
 		Short: "Start a stopped VM",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := container.DefaultMachineConfig().Name
+			name := container.DefaultMachineName
 			if len(args) == 1 {
 				name = args[0]
 			}
@@ -86,7 +86,7 @@ func newPodmanMachineStopCmd() *cobra.Command {
 		Short: "Stop a running VM",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := container.DefaultMachineConfig().Name
+			name := container.DefaultMachineName
 			if len(args) == 1 {
 				name = args[0]
 			}
@@ -131,7 +131,7 @@ func newPodmanMachineRmCmd() *cobra.Command {
 		Short: "Remove a VM",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := container.DefaultMachineConfig().Name
+			name := container.DefaultMachineName
 			if len(args) == 1 {
 				name = args[0]
 			}

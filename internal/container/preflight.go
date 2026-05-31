@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -133,6 +134,75 @@ type DefaultProbe struct{}
 
 func (DefaultProbe) FreeMemoryMB() (uint64, uint64, error)     { return freeMemoryMB() }
 func (DefaultProbe) FreeDiskBytes(path string) (uint64, error) { return freeDiskBytes(path) }
+
+// SizingSource carries the host stats RecommendMachineSizing observed
+// when picking VM defaults, so callers can log why a particular size
+// was chosen. DetectionOK=false means probing failed and the returned
+// sizing is the historical fallback (2 CPU / 4 GB / 50 GB).
+type SizingSource struct {
+	HostCPUs       int
+	HostTotalMemMB uint64
+	HostFreeDiskGB uint64
+	DetectionOK    bool
+}
+
+// Fallback values used when a probe errors. These match the original
+// hardcoded DefaultMachineConfig prior to host-aware sizing — keeping
+// them lets a probe failure degrade to the previous behaviour rather
+// than refusing to provision.
+const (
+	fallbackCPUs   = 2
+	fallbackMemMB  = 4096
+	fallbackDiskGB = 50
+)
+
+// RecommendMachineSizing returns host-aware (CPUs, memMB, diskGB) for a
+// fresh VM, picked as a sensible fraction of host CPU / total memory /
+// free disk on the partition holding dataDir. Falls back to the
+// historical defaults on any probe error.
+//
+// Formulas (all clamped):
+//   - CPUs    = numCPU/2,        floor 2,    ceiling 8
+//   - Mem MB  = totalMemMB/4,    floor 2048, ceiling 16384
+//   - Disk GB = freeDiskGB/4,    floor 10,   ceiling 50
+//
+// The disk formula is chosen so the 2x sparse-growth preflight
+// (DefaultDiskHeadroomMultiplier) is mathematically satisfied
+// whenever free disk ≥ 20 GB — a 23 GB disk on a 92 GB-free host
+// asks the preflight for 46 GB, which passes.
+func RecommendMachineSizing(probe ResourceProbe, dataDir string) (cpus, memMB, diskGB int, src SizingSource) {
+	return recommendMachineSizing(probe, dataDir, runtime.NumCPU())
+}
+
+// recommendMachineSizing is the testable core — numCPU is parameterised
+// so tests can pin it (runtime.NumCPU is not stubbable). Production
+// callers go through RecommendMachineSizing.
+func recommendMachineSizing(probe ResourceProbe, dataDir string, numCPU int) (cpus, memMB, diskGB int, src SizingSource) {
+	src.HostCPUs = numCPU
+
+	_, totalMem, memErr := probe.FreeMemoryMB()
+	freeDiskB, diskErr := probe.FreeDiskBytes(dataDir)
+	if memErr != nil || diskErr != nil {
+		// Probe failure: degrade to the historical hardcoded defaults
+		// rather than refusing to provision. The preflight downstream
+		// is still the safety net for a truly under-resourced host.
+		slog.Warn("container: host resource probe failed; using fallback VM defaults",
+			"mem_err", memErr, "disk_err", diskErr)
+		return fallbackCPUs, fallbackMemMB, fallbackDiskGB, src
+	}
+	src.HostTotalMemMB = totalMem
+	src.HostFreeDiskGB = freeDiskB / (1024 * 1024 * 1024)
+	src.DetectionOK = true
+
+	cpus = clampInt(numCPU/2, 2, 8)
+	memMB = clampInt(int(totalMem/4), 2048, 16384)
+	diskGB = clampInt(int(src.HostFreeDiskGB/4), 10, 50)
+	return cpus, memMB, diskGB, src
+}
+
+func clampInt(v, lo, hi int) int {
+	return min(max(v, lo), hi)
+}
 
 // PreflightOptions tunes the threshold rules. Zero values fall back to
 // HostHeadroomMB / DiskHeadroomMultiplier below.

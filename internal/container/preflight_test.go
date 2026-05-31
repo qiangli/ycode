@@ -195,3 +195,101 @@ SwapTotal:             0 kB
 		t.Errorf("total = %d MB, want %d MB", total, 8000000/1024)
 	}
 }
+
+// TestRecommendMachineSizing pins the host-aware sizing formula.
+// The reported failure mode (8c / 16 GB / 92 GB-free Mac asking for a
+// 50 GB disk and being refused by the 2x preflight) lives in the
+// "8c/16GB/92GB" row — we want a 23 GB disk so the preflight 2x = 46 GB
+// passes against 92 GB free.
+//
+// Invariant on every non-fallback row: chosen disk * 2 ≤ freeDiskGB,
+// i.e. the formula self-satisfies the DefaultDiskHeadroomMultiplier.
+func TestRecommendMachineSizing(t *testing.T) {
+	tests := []struct {
+		name                         string
+		numCPU                       int
+		freeMB, totalMB              uint64
+		freeDisk                     uint64
+		memErr, diskErr              error
+		wantCPUs, wantMem, wantDisk  int
+		wantDetectionOK              bool
+		wantHostTotalMem, wantFreeGB uint64
+	}{
+		{
+			name:   "tiny laptop (2c/4GB/20GB)",
+			numCPU: 2, freeMB: 1500, totalMB: 4096, freeDisk: 20 * gb,
+			wantCPUs: 2, wantMem: 2048, wantDisk: 10,
+			wantDetectionOK: true, wantHostTotalMem: 4096, wantFreeGB: 20,
+		},
+		{
+			name:   "reported 92GB Mac (8c/16GB/92GB)",
+			numCPU: 8, freeMB: 8000, totalMB: 16384, freeDisk: 92 * gb,
+			wantCPUs: 4, wantMem: 4096, wantDisk: 23,
+			wantDetectionOK: true, wantHostTotalMem: 16384, wantFreeGB: 92,
+		},
+		{
+			name:   "big workstation (16c/64GB/800GB)",
+			numCPU: 16, freeMB: 30_000, totalMB: 65_536, freeDisk: 800 * gb,
+			wantCPUs: 8, wantMem: 16384, wantDisk: 50,
+			wantDetectionOK: true, wantHostTotalMem: 65_536, wantFreeGB: 800,
+		},
+		{
+			name:   "huge server (64c/512GB/4TB) — all clamps engage",
+			numCPU: 64, freeMB: 200_000, totalMB: 524_288, freeDisk: 4096 * gb,
+			wantCPUs: 8, wantMem: 16384, wantDisk: 50,
+			wantDetectionOK: true, wantHostTotalMem: 524_288, wantFreeGB: 4096,
+		},
+		{
+			name:   "single-core host — floor clamps to 2",
+			numCPU: 1, freeMB: 2000, totalMB: 4096, freeDisk: 20 * gb,
+			wantCPUs: 2, wantMem: 2048, wantDisk: 10,
+			wantDetectionOK: true, wantHostTotalMem: 4096, wantFreeGB: 20,
+		},
+		{
+			name:   "mem probe error — fallback to historical defaults",
+			numCPU: 8, memErr: errors.New("sysctl boom"), freeDisk: 500 * gb,
+			wantCPUs: 2, wantMem: 4096, wantDisk: 50,
+			wantDetectionOK: false,
+		},
+		{
+			name:   "disk probe error — fallback to historical defaults",
+			numCPU: 8, freeMB: 8000, totalMB: 16384, diskErr: errors.New("statfs boom"),
+			wantCPUs: 2, wantMem: 4096, wantDisk: 50,
+			wantDetectionOK: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			probe := &stubProbe{
+				freeMB: tc.freeMB, totalMB: tc.totalMB, memErr: tc.memErr,
+				freeDisk: tc.freeDisk, diskErr: tc.diskErr,
+			}
+			cpus, mem, disk, src := recommendMachineSizing(probe, "/tmp", tc.numCPU)
+			if cpus != tc.wantCPUs || mem != tc.wantMem || disk != tc.wantDisk {
+				t.Errorf("got (cpus=%d mem=%d disk=%d), want (cpus=%d mem=%d disk=%d)",
+					cpus, mem, disk, tc.wantCPUs, tc.wantMem, tc.wantDisk)
+			}
+			if src.DetectionOK != tc.wantDetectionOK {
+				t.Errorf("DetectionOK = %v, want %v", src.DetectionOK, tc.wantDetectionOK)
+			}
+			if src.HostCPUs != tc.numCPU {
+				t.Errorf("HostCPUs = %d, want %d", src.HostCPUs, tc.numCPU)
+			}
+			if tc.wantDetectionOK {
+				if src.HostTotalMemMB != tc.wantHostTotalMem {
+					t.Errorf("HostTotalMemMB = %d, want %d", src.HostTotalMemMB, tc.wantHostTotalMem)
+				}
+				if src.HostFreeDiskGB != tc.wantFreeGB {
+					t.Errorf("HostFreeDiskGB = %d, want %d", src.HostFreeDiskGB, tc.wantFreeGB)
+				}
+				// Invariant: chosen disk self-satisfies the 2x preflight.
+				if uint64(disk*int(DefaultDiskHeadroomMultiplier)) > tc.freeDisk/gb {
+					t.Errorf("disk %d GB * %dx = %d GB exceeds free %d GB (preflight would refuse)",
+						disk, DefaultDiskHeadroomMultiplier, disk*int(DefaultDiskHeadroomMultiplier),
+						tc.freeDisk/gb)
+				}
+			}
+		})
+	}
+}

@@ -73,12 +73,17 @@ func resolveMachineVolumes() []string {
 	return out
 }
 
+// DefaultMachineName is the VM name used when none is supplied. Exposed
+// as a const so name-only callers (start/stop/rm) don't pay the cost of
+// probing host resources just to look up the default name.
+const DefaultMachineName = "ycode-default"
+
 // MachineConfig holds configuration for the Linux VM.
 type MachineConfig struct {
-	Name   string // VM name (default: "ycode-default")
-	CPUs   int    // number of CPUs (default: 2)
-	Memory int    // memory in MB (default: 4096)
-	Disk   int    // disk size in GB (default: 50)
+	Name   string // VM name (default: DefaultMachineName)
+	CPUs   int    // number of vCPUs (host-aware default via RecommendMachineSizing)
+	Memory int    // memory in MB (host-aware default via RecommendMachineSizing)
+	Disk   int    // disk size in GB (host-aware default via RecommendMachineSizing)
 
 	// NoAutoCleanup disables the preflight's auto-cleanup retry. When
 	// false (default), a preflight failure triggers CleanupHost (kill
@@ -87,15 +92,26 @@ type MachineConfig struct {
 	// and surface the original PreflightError immediately. Surfaced
 	// via the `--no-auto-cleanup` CLI flag.
 	NoAutoCleanup bool
+
+	// sizing is the host-resource snapshot RecommendMachineSizing used
+	// to pick CPUs/Memory/Disk. Populated by DefaultMachineConfig only;
+	// CLI overrides leave it at the zero value (DetectionOK=false) and
+	// logs surface that as "cli-override".
+	sizing SizingSource
 }
 
-// DefaultMachineConfig returns sensible defaults.
+// DefaultMachineConfig returns host-aware defaults sized as a fraction
+// of available CPU / memory / free disk. See RecommendMachineSizing for
+// the formulas. CLI flags (--cpus, --memory, --disk-size) bind on top
+// of these defaults and continue to override.
 func DefaultMachineConfig() MachineConfig {
+	cpus, mem, disk, src := RecommendMachineSizing(DefaultProbe{}, machineDataDir())
 	return MachineConfig{
-		Name:   "ycode-default",
-		CPUs:   2,
-		Memory: 4096,
-		Disk:   50,
+		Name:   DefaultMachineName,
+		CPUs:   cpus,
+		Memory: mem,
+		Disk:   disk,
+		sizing: src,
 	}
 }
 
@@ -137,7 +153,8 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 		}
 
 		slog.Info("container: initializing machine (first-time setup, downloads ~800MB VM image)",
-			"name", cfg.Name, "cpus", cfg.CPUs, "memory_mb", cfg.Memory, "disk_gb", cfg.Disk)
+			append([]any{"name", cfg.Name, "cpus", cfg.CPUs, "memory_mb", cfg.Memory, "disk_gb", cfg.Disk},
+				sizingLogAttrs(cfg.sizing)...)...)
 
 		// See InitMachine for the rationale on Username — gvproxy
 		// requires a non-empty value or it refuses to start.
@@ -308,7 +325,8 @@ func InitMachine(ctx context.Context, cfg MachineConfig) error {
 		Volumes:   resolveMachineVolumes(),
 	}
 	slog.Info("container: initializing machine (downloads ~800MB VM image on first run)",
-		"name", cfg.Name, "cpus", cfg.CPUs, "memory_mb", cfg.Memory, "disk_gb", cfg.Disk)
+		append([]any{"name", cfg.Name, "cpus", cfg.CPUs, "memory_mb", cfg.Memory, "disk_gb", cfg.Disk},
+			sizingLogAttrs(cfg.sizing)...)...)
 	if err := ociMachine.Init(opts, mp); err != nil {
 		return fmt.Errorf("machine init: %w", err)
 	}
@@ -439,6 +457,26 @@ func ensureHelperBinariesOnPath() {
 		} else {
 			os.Setenv("CONTAINERS_MACHINE_PROVIDER", "applehv")
 		}
+	}
+}
+
+// sizingLogAttrs builds the trailing key/value attrs for the init slog
+// line so users see why a particular CPUs/Memory/Disk was chosen. When
+// the source is zero-valued (e.g. CLI flag overrides built MachineConfig
+// without going through DefaultMachineConfig), reports "cli-override".
+func sizingLogAttrs(src SizingSource) []any {
+	switch {
+	case src.DetectionOK:
+		return []any{
+			"sizing", "host-aware",
+			"host_cpus", src.HostCPUs,
+			"host_total_mem_mb", src.HostTotalMemMB,
+			"host_free_disk_gb", src.HostFreeDiskGB,
+		}
+	case src.HostCPUs == 0 && src.HostTotalMemMB == 0 && src.HostFreeDiskGB == 0:
+		return []any{"sizing", "cli-override"}
+	default:
+		return []any{"sizing", "fallback-default", "host_cpus", src.HostCPUs}
 	}
 }
 
