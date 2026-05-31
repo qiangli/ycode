@@ -131,13 +131,13 @@ type ResourceProbe interface {
 // preflight_linux.go, preflight_other.go).
 type DefaultProbe struct{}
 
-func (DefaultProbe) FreeMemoryMB() (uint64, uint64, error)    { return freeMemoryMB() }
+func (DefaultProbe) FreeMemoryMB() (uint64, uint64, error)     { return freeMemoryMB() }
 func (DefaultProbe) FreeDiskBytes(path string) (uint64, error) { return freeDiskBytes(path) }
 
 // PreflightOptions tunes the threshold rules. Zero values fall back to
 // HostHeadroomMB / DiskHeadroomMultiplier below.
 type PreflightOptions struct {
-	HostHeadroomMB        uint64 // host memory to keep free beyond the VM's request
+	HostHeadroomMB         uint64 // host memory to keep free beyond the VM's request
 	DiskHeadroomMultiplier uint64 // free disk must be at least N * VM disk
 }
 
