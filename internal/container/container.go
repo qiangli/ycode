@@ -36,10 +36,17 @@ type ContainerConfig struct {
 	CapDrop    []string          // capabilities to drop (default: ["ALL"] unless KeepCaps or Privileged is set). Conflicts with Privileged.
 	KeepCaps   bool              // skip the default "drop ALL" — use whatever CapDrop says verbatim (empty means drop nothing). Set this for docker-compatible workloads (e.g. postgres) that need Linux caps to start.
 	Privileged bool              // grant all caps, all devices, and disable seccomp/SELinux/AppArmor. Overrides CapAdd/CapDrop/KeepCaps.
-	Tmpfs      []string          // tmpfs mounts (e.g., /tmp, /var/tmp)
-	Init       bool              // use init for signal handling
-	Labels     map[string]string // container labels for tracking
-	Command    []string          // override command (default: image CMD)
+	// CgroupNS sets the container's cgroup namespace mode. One of
+	// "private" (default; private cgroup namespace per container),
+	// "host" (share the host VM's cgroup namespace — required for
+	// k3s-agent / kubelet-in-container so cpuset and other v2
+	// controllers propagate from the VM root), or "" (engine default).
+	// Mirrors `podman run --cgroupns=host`.
+	CgroupNS string
+	Tmpfs    []string          // tmpfs mounts (e.g., /tmp, /var/tmp)
+	Init     bool              // use init for signal handling
+	Labels   map[string]string // container labels for tracking
+	Command  []string          // override command (default: image CMD)
 	Resources
 }
 
@@ -102,6 +109,18 @@ func (e *Engine) CreateContainer(ctx context.Context, cfg *ContainerConfig) (*Co
 	if cfg.ReadOnly {
 		readOnly := true
 		sg.ReadOnlyFilesystem = &readOnly
+	}
+	switch cfg.CgroupNS {
+	case "", "default":
+		// engine default — typically Private
+	case "host":
+		sg.CgroupNS = specgen.Namespace{NSMode: specgen.Host}
+	case "private":
+		sg.CgroupNS = specgen.Namespace{NSMode: specgen.Private}
+	case "none":
+		sg.CgroupNS = specgen.Namespace{NSMode: specgen.None}
+	default:
+		return nil, fmt.Errorf("CgroupNS=%q unsupported (expect host|private|none|default)", cfg.CgroupNS)
 	}
 
 	if cfg.Privileged {

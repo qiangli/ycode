@@ -307,6 +307,7 @@ func newPodmanRunCmd() *cobra.Command {
 		workdir     string
 		interactive bool
 		tty         bool
+		cgroupns    string
 	)
 	cmd := &cobra.Command{
 		Use:   "run [FLAGS] IMAGE [COMMAND] [ARG...]",
@@ -333,6 +334,7 @@ func newPodmanRunCmd() *cobra.Command {
 				KeepCaps:   true,
 				CapAdd:     capAdd,
 				Privileged: privileged,
+				CgroupNS:   cgroupns,
 			}
 			if (interactive || tty) && detach {
 				fmt.Fprintln(os.Stderr, "ycode podman run: -i/-t are no-ops in detach mode")
@@ -419,6 +421,7 @@ func newPodmanRunCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&workdir, "workdir", "w", "", "Working directory inside the container")
 	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Keep STDIN open (accepted for docker/podman compatibility; not yet wired)")
 	cmd.Flags().BoolVarP(&tty, "tty", "t", false, "Allocate a pseudo-TTY (accepted for docker/podman compatibility; not yet wired)")
+	cmd.Flags().StringVar(&cgroupns, "cgroupns", "", "Cgroup namespace to use: host|private|none. Default leaves the engine's default (typically private). 'host' shares the VM root cgroup — required for k3s-agent / kubelet-in-container to see cpuset and other v2 controllers.")
 	// Treat anything after the IMAGE positional as the command, so users
 	// can write `podman run alpine sh -c "echo hi"` without pflag eating
 	// the `-c` as if it were a run-level flag.
