@@ -58,6 +58,8 @@ func newPodmanMachineInitCmd() *cobra.Command {
 	cmd.Flags().IntVar(&cfg.Disk, "disk-size", cfg.Disk, "Disk size in GB")
 	cmd.Flags().BoolVar(&cfg.NoAutoCleanup, "no-auto-cleanup", false,
 		"Skip auto-cleanup of orphaned vfkit/gvproxy processes on preflight refusal")
+	cmd.Flags().BoolVar(&cfg.Rootful, "rootful", false,
+		"Forward the machine's API socket to the VM's rootful podman daemon. Required for k3s-agent / kubelet-in-container workloads that mkdir into /sys/fs/cgroup.")
 	return cmd
 }
 

@@ -15,7 +15,16 @@ comma := ,
 #                                  produce it; without it `ycode serve`
 #                                  hard-stops at startup because no
 #                                  inference can be served.
-TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata$(if $(wildcard internal/inference/runner_embed/ycode-runner.gz),$(comma)embed_runner)
+#   embed_vfkit (auto)             Apple Virtualization Framework helper
+#                                  for podman machine on macOS. Added
+#                                  automatically when the gz exists.
+#                                  Run `make vfkit-embed` to produce it;
+#                                  without it `ycode podman machine
+#                                  start` defaults to libkrun and aborts
+#                                  with "krunkit: executable file not
+#                                  found" on macOS hosts without a
+#                                  separately-installed krunkit.
+TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata$(if $(wildcard internal/inference/runner_embed/ycode-runner.gz),$(comma)embed_runner)$(if $(wildcard internal/container/vfkit_embed/vfkit.gz),$(comma)embed_vfkit)
 TAGS := -tags "$(TAG_LIST)"
 PACKAGES := $(shell go list ./... | grep -v '/priorart/')
 
@@ -34,7 +43,7 @@ ifeq ($(shell uname),Darwin)
 export CGO_LDFLAGS += -Wl,-no_warn_duplicate_libraries
 endif
 
-.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-release-smoke test-all vet tidy clean all chrome-extension cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed gvproxy-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
+.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-release-smoke test-all vet tidy clean all chrome-extension cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed vfkit-embed-if-darwin gvproxy-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
 
 .DEFAULT_GOAL := help
 
@@ -66,7 +75,7 @@ priorart-sync: ## Pull latest changes for all priorart repos
 
 # ─── Build ──────────────────────────────────────────────────────────────────
 
-compile: ## Compile the ycode binary to bin/ (no checks)
+compile: vfkit-embed-if-darwin ## Compile the ycode binary to bin/ (no checks)
 	go build -trimpath $(TAGS) $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 	@echo "Built bin/ycode (tags: $(TAG_LIST))"
 
@@ -298,6 +307,14 @@ podman-embed: ## Compress system podman binary for embedding into ycode
 
 vfkit-embed: ## Compress vfkit binary for embedding into ycode (macOS only)
 	@./scripts/embed-vfkit.sh
+
+# Internal target: run vfkit-embed once on macOS if the gz is missing.
+# Other platforms (Linux, Windows) are no-ops — the embedded vfkit only
+# helps macOS hosts of `ycode podman machine`.
+vfkit-embed-if-darwin:
+	@if [ "$$(uname)" = "Darwin" ] && [ ! -f internal/container/vfkit_embed/vfkit.gz ]; then \
+		./scripts/embed-vfkit.sh; \
+	fi
 
 gvproxy-embed: ## Build gvproxy from module cache and gzip for embedding
 	@./scripts/embed-gvproxy.sh

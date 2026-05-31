@@ -93,6 +93,18 @@ type MachineConfig struct {
 	// via the `--no-auto-cleanup` CLI flag.
 	NoAutoCleanup bool
 
+	// Rootful selects which podman daemon the machine forwards its
+	// API socket to:
+	//   false (default) → /run/user/<UID>/podman/podman.sock — rootless;
+	//                     OK for ordinary docker-compatible workloads.
+	//   true            → /run/podman/podman.sock — rootful; required for
+	//                     k3s-agent / kubelet-in-container that needs to
+	//                     mkdir into /sys/fs/cgroup. The rootless variant
+	//                     refuses with "permission denied" on cgroup
+	//                     writes even under --privileged.
+	// Surfaced via the `--rootful` CLI flag on `machine init`.
+	Rootful bool
+
 	// sizing is the host-resource snapshot RecommendMachineSizing used
 	// to pick CPUs/Memory/Disk. Populated by DefaultMachineConfig only;
 	// CLI overrides leave it at the zero value (DetectionOK=false) and
@@ -171,6 +183,7 @@ func EnsureMachine(ctx context.Context, cfg MachineConfig) error {
 			Image:     resolveMachineImage(),
 			Username:  user,
 			Volumes:   resolveMachineVolumes(),
+			Rootful:   cfg.Rootful,
 		}
 
 		if err := ociMachine.Init(initOpts, mp); err != nil {
