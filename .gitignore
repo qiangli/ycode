@@ -14,12 +14,14 @@ bin/
 # embed_runner build tag; default builds use embed_stub.go and don't need it.
 internal/inference/runner_embed/ycode-runner.gz
 
-# Embedded macOS helper binaries — produced by scripts/embed-vfkit.sh /
-# scripts/embed-gvproxy.sh (build from the Go module cache when no
-# installed binary is found). Same pattern as runner_embed: built
-# locally, consumed only when the matching `embed_*` build tag is set.
+# Embedded container helper binaries — produced by scripts/embed-vfkit.sh,
+# scripts/embed-gvproxy.sh, and scripts/embed-podman.sh (build from
+# the Go module cache / external/podman submodule when no system
+# binary is found). Same pattern as runner_embed: built locally,
+# consumed only when the matching `embed_*` build tag is set.
 internal/container/vfkit_embed/vfkit.gz
 internal/container/gvproxy_embed/gvproxy.gz
+internal/container/podman_embed/podman.gz
 
 # Go build cache
 /vendor/

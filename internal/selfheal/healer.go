@@ -231,8 +231,17 @@ func (h *Healer) CanHeal(err error) bool {
 		// which is pure noise on every `ycode podman build` failure
 		// when the binary was built without an AI provider.
 		return h.aiHealer != nil
-	case FailureTypeAPI, FailureTypeTool:
-		// These might be transient, healing might help
+	case FailureTypeAPI:
+		// Process-level "retry" for API errors is meaningless: a CLI
+		// one-shot like `ycode ollama list` that hits `connection
+		// refused` will reproduce the same error after restart. In-loop
+		// retry/backoff belongs in the API client; the wrapper can't
+		// help. Treat as user-actionable like FailureTypePortInUse.
+		// Without this guard, fixAPIError's no-op "success" triggered
+		// AutoRestart → syscall.Exec same args → infinite loop.
+		return false
+	case FailureTypeTool:
+		// Might be transient; healing might help.
 		return true
 	case FailureTypePortInUse, FailureTypeNotInstalled:
 		// User-actionable; the wrapper prints a direct hint instead
@@ -458,15 +467,19 @@ func (h *Healer) fixConfigError(ctx context.Context, attempt *HealingAttempt, er
 	return fmt.Errorf("config error healing requires AI integration (no AI provider configured)")
 }
 
-// fixAPIError handles transient API errors by marking them for retry.
-// API errors are often transient (timeouts, rate limits) and benefit from retry.
+// fixAPIError does not attempt to heal — the wrapper's only "retry"
+// option for an API error is to restart the same command, which
+// reproduces the failure deterministically. In-loop retry (backoff,
+// key rotation) belongs in the API client. Returns an error so
+// AttemptHealing reports failure and the wrapper surfaces the
+// original message to the user instead of looping.
 func (h *Healer) fixAPIError(ctx context.Context, attempt *HealingAttempt, errInfo ErrorInfo) error {
 	attempt.Actions = append(attempt.Actions, HealingAction{
-		Type:        "retry",
-		Description: fmt.Sprintf("Marked for retry after API error: %s", errInfo.Message),
-		Success:     true,
+		Type:        "analyze",
+		Description: fmt.Sprintf("API error not auto-healable at wrapper level: %s", errInfo.Message),
+		Success:     false,
 	})
-	return nil
+	return fmt.Errorf("API error is not auto-healable (transient retry belongs in the API client, not in a process restart)")
 }
 
 // fixToolError attempts to fix a tool execution error.

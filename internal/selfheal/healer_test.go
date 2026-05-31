@@ -91,11 +91,15 @@ func TestHealer_CanHeal(t *testing.T) {
 		expected bool
 	}{
 		{
-			// API errors are healable without an AI provider (retry path).
-			name:     "enabled and healable error",
+			// API errors are NOT healable at the wrapper level. The
+			// old "retry path" was a no-op success that triggered
+			// AutoRestart → exec same args → infinite loop (e.g.
+			// `ycode ollama list` against a not-running daemon).
+			// In-loop retry/backoff belongs in the API client.
+			name:     "api error not healable at wrapper level",
 			config:   &Config{Enabled: true, MaxAttempts: 3},
 			err:      errors.New("api connection timeout"),
-			expected: true,
+			expected: false,
 		},
 		{
 			// Build errors are AI-only; without an AI healer attached
@@ -120,9 +124,14 @@ func TestHealer_CanHeal(t *testing.T) {
 			expected: false,
 		},
 		{
+			// Uses a tool-classified error because tool errors are the
+			// only category whose CanHeal returns true unconditionally
+			// (API errors now return false; build/runtime/config require
+			// an AI healer). This keeps the max-attempts branch
+			// reachable so the test exercises the attempt-counter gate.
 			name:     "max attempts exceeded",
 			config:   &Config{Enabled: true, MaxAttempts: 1},
-			err:      errors.New("connection timeout"),
+			err:      errors.New("tool command failed"),
 			expected: false,
 		},
 	}
@@ -134,7 +143,7 @@ func TestHealer_CanHeal(t *testing.T) {
 			// For max attempts test, consume the one allowed attempt
 			if tt.name == "max attempts exceeded" {
 				errInfo := ErrorInfo{
-					Type:      FailureTypeAPI,
+					Type:      FailureTypeTool,
 					Error:     tt.err,
 					Timestamp: time.Now(),
 				}
@@ -158,7 +167,11 @@ func TestHealer_AttemptHealing(t *testing.T) {
 		BuildCommand: "",
 	}
 
-	t.Run("successful healing - API error", func(t *testing.T) {
+	t.Run("api error is not auto-healable", func(t *testing.T) {
+		// Previously this asserted the buggy "API error always heals"
+		// behavior that triggered AutoRestart → exec same args →
+		// infinite loop. fixAPIError now returns an error so callers
+		// see the real failure instead of looping.
 		h := NewHealer(config)
 		errInfo := ErrorInfo{
 			Type:      FailureTypeAPI,
@@ -168,15 +181,11 @@ func TestHealer_AttemptHealing(t *testing.T) {
 		}
 
 		success, err := h.AttemptHealing(context.Background(), errInfo)
-		if err != nil {
-			t.Errorf("AttemptHealing returned error: %v", err)
+		if err == nil {
+			t.Error("Expected error from API healing — wrapper has no fix to apply")
 		}
-		if !success {
-			t.Error("AttemptHealing should have succeeded for API error")
-		}
-
-		if h.State() != HealerStateSucceeded {
-			t.Errorf("Expected state %v, got %v", HealerStateSucceeded, h.State())
+		if success {
+			t.Error("API healing must not report success (would trigger AutoRestart loop)")
 		}
 	})
 
@@ -206,17 +215,22 @@ func TestHealer_AttemptHealing(t *testing.T) {
 			AutoRestart: false,
 		})
 
+		// Tool type is used here because it still hits the attempt
+		// recorder (fixToolError returns an error, but the attempt
+		// is still appended to h.attempts) — exercising the
+		// MaxAttempts gate on the second call.
 		errInfo := ErrorInfo{
-			Type:      FailureTypeAPI,
-			Error:     errors.New("connection timeout"),
-			Message:   "connection timeout",
+			Type:      FailureTypeTool,
+			Error:     errors.New("tool command failed"),
+			Message:   "tool command failed",
 			Timestamp: time.Now(),
 		}
 
-		// First attempt succeeds (API error)
+		// First attempt records an attempt (and fails — no AI provider).
 		_, _ = h.AttemptHealing(context.Background(), errInfo)
 
-		// Second attempt should fail due to max attempts
+		// Second attempt should fail with the max-attempts message,
+		// not the per-type failure message.
 		success, err := h.AttemptHealing(context.Background(), errInfo)
 		if err == nil {
 			t.Error("Expected error for max attempts exceeded")
@@ -356,6 +370,29 @@ func TestWrapMain(t *testing.T) {
 		exitCode := WrapMain(mainFn, DefaultConfig())
 		if exitCode != 1 {
 			t.Errorf("Expected exit code 1, got %d", exitCode)
+		}
+	})
+
+	t.Run("api error does not trigger restart loop", func(t *testing.T) {
+		// Regression: `ycode ollama list` against a not-running daemon
+		// returned a "connection refused" error that classified as
+		// FailureTypeAPI. The wrapper's old fixAPIError no-op reported
+		// success, then AutoRestart syscall.Exec'd the same args,
+		// reproducing the failure → loop. With the fix, CanHeal
+		// returns false for API errors so WrapMain takes the quiet
+		// "Error: <err>" path and exits 1.
+		callCount := 0
+		mainFn := func() error {
+			callCount++
+			return errors.New(`Get "http://127.0.0.1:11434/api/tags": dial tcp 127.0.0.1:11434: connect: connection refused`)
+		}
+
+		exitCode := WrapMain(mainFn, DefaultConfig())
+		if exitCode != 1 {
+			t.Errorf("Expected exit code 1, got %d", exitCode)
+		}
+		if callCount != 1 {
+			t.Errorf("Expected mainFn to be called once (no restart), got %d calls", callCount)
 		}
 	})
 }
@@ -850,6 +887,10 @@ func containsStr(s, substr string) bool {
 }
 
 func ExampleHealer() {
+	// API errors are deliberately not auto-healable at the wrapper
+	// level — a process-level "retry" would just exec the same
+	// failing command again. The example shows the resulting
+	// failure path so callers know to surface the original error.
 	config := DefaultConfig()
 	healer := NewHealer(config)
 
@@ -860,14 +901,9 @@ func ExampleHealer() {
 		Timestamp: time.Now(),
 	}
 
-	success, err := healer.AttemptHealing(context.Background(), errInfo)
-	if err != nil {
-		fmt.Printf("Healing failed: %v\n", err)
-		return
+	success, _ := healer.AttemptHealing(context.Background(), errInfo)
+	if !success {
+		fmt.Println("API error surfaced — caller should print and exit")
 	}
-
-	if success {
-		fmt.Println("Self-healing succeeded!")
-	}
-	// Output: Self-healing succeeded!
+	// Output: API error surfaced — caller should print and exit
 }

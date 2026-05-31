@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -38,7 +40,7 @@ func newOllamaCmd() *cobra.Command {
 		Long: `Drop-in shim for the upstream ollama CLI. Each verb maps to either
 the embedded server's /api/* HTTP surface or to ycode itself:
 
-  ollama serve            → ycode serve
+  ollama serve            → bind embedded ollama on $OLLAMA_HOST (foreground)
   ollama pull MODEL       → POST /api/pull
   ollama list / ls        → GET  /api/tags
   ollama rm MODEL         → DELETE /api/delete
@@ -48,8 +50,10 @@ the embedded server's /api/* HTTP surface or to ycode itself:
                             or one-shot via ycode prompt if args given)
   ollama --version        → ycode version
 
-All HTTP calls go to whatever OLLAMA_HOST resolves to. A running
-ycode serve is required for everything except serve itself.`,
+All HTTP calls go to whatever OLLAMA_HOST resolves to. ` + "`ollama serve`" + ` runs
+the embedded ollama HTTP server in the foreground (just the ollama
+component — no observability stack); for the full ycode stack run
+` + "`ycode serve`" + ` separately.`,
 	}
 
 	cmd.AddCommand(
@@ -71,14 +75,100 @@ func ollamaBaseURL() string {
 	return inference.DefaultOllamaURL()
 }
 
+// newOllamaServeCmd matches the upstream `ollama serve` UX: bind the
+// embedded ollama HTTP server on $OLLAMA_HOST (default 127.0.0.1:11434)
+// in the foreground, log readiness, and stop on SIGINT/SIGTERM.
+//
+// Previously this exec'd into `ycode serve`, which brings up the full
+// observability stack (vlogs, jaeger, perses, gitea, NATS, OTLP) and
+// defaults to detaching to a background process. Two failure modes
+// surfaced:
+//
+//  1. The detacher printed "Server started in background (PID N)" even
+//     when the child immediately exited because another `ycode serve`
+//     was already running — misleading the user.
+//  2. Even when serve came up cleanly, the ollama component is silently
+//     skipped when the binary was built without `-tags embed_runner`,
+//     so 11434 wasn't bound and subsequent `ollama list` calls hit
+//     `connection refused`.
+//
+// The standalone-component path is what an `ollama serve` user
+// expects: synchronous bind, immediate "listening on …" log, Ctrl-C
+// to stop. `ErrRunnerNotInstalled` and port-collision errors classify
+// cleanly under the selfheal wrapper (FailureTypeNotInstalled and
+// FailureTypePortInUse) so the user gets actionable output instead of
+// a silent "started" lie.
 func newOllamaServeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "serve",
-		Short: "Start the ycode server (which embeds ollama on :11434)",
+		Short: "Bind the embedded ollama HTTP server on $OLLAMA_HOST (foreground)",
+		Long: `Run the embedded ollama server in the foreground on whatever
+OLLAMA_HOST resolves to (default 127.0.0.1:11434). Ctrl-C to stop.
+
+This is the standalone ollama component — no observability stack,
+no API/NATS/Gitea. For the full ycode stack run ` + "`ycode serve`" + ` separately
+(it also embeds ollama when built with -tags embed_runner).`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return execYcode(append([]string{"serve"}, args...))
+			return runOllamaServe(cmd.Context())
 		},
 	}
+}
+
+// runOllamaServe boots just the OllamaComponent and blocks until a
+// terminating signal arrives. Shares dataDir with `ycode serve` so
+// pulled models are visible to both.
+func runOllamaServe(ctx context.Context) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("user home dir: %w", err)
+	}
+
+	// In system-binaries mode (--use-system-binaries or
+	// inference.useSystem: true) this command is a no-op: the user runs
+	// upstream `ollama serve` themselves. Refuse cleanly with a hint
+	// rather than try to bind a competing listener on the same port.
+	if useSystemBinaries {
+		fmt.Fprintln(os.Stderr, "ycode ollama serve: --use-system-binaries set — this command is a no-op.")
+		fmt.Fprintln(os.Stderr, "Run upstream `ollama serve` yourself (https://ollama.com/download), then use `ycode ollama list/pull/...` against the system daemon.")
+		return nil
+	}
+
+	// Match the dataDir layout used by `ycode serve` (loadFullServeConfig
+	// → ~/.agents/ycode/observability) so models live in one place
+	// regardless of which entry point started ollama.
+	inferenceDataDir := filepath.Join(home, ".agents", "ycode", "observability", "inference")
+
+	// nil cfg → OllamaComponent uses defaults; OLLAMA_HOST / OLLAMA_MODELS
+	// from the environment still take effect via ollama's envconfig.
+	comp := inference.NewOllamaComponent(nil, inferenceDataDir)
+
+	startCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := comp.Start(startCtx); err != nil {
+		return err
+	}
+
+	baseURL := comp.BaseURL()
+	if baseURL == "" {
+		baseURL = inference.DefaultOllamaURL()
+	}
+	fmt.Printf("Ollama server listening on %s\n", baseURL)
+	fmt.Println("Press Ctrl-C to stop.")
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	select {
+	case <-sigCh:
+		fmt.Println("\nShutting down...")
+	case <-ctx.Done():
+	}
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stopCancel()
+	return comp.Stop(stopCtx)
 }
 
 func newOllamaPullCmd() *cobra.Command {

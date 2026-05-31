@@ -84,10 +84,19 @@ make validate-all     # both validate + validate-ui
 
 Inference runner (local Ollama):
 ```bash
-make runner-download  # download pre-built Ollama runner for current platform
-make runner-build     # build runner from source (requires C++ toolchain)
-make runner-check     # verify runner binary + health check
+make runner-build-thin   # build thin embedded runner (auto-invoked by `make build`)
+make runner-build        # full Ollama build from source (requires C++ toolchain)
+make runner-check        # verify a system ollama binary is reachable (for --use-system-binaries)
 ```
+
+`make build` auto-produces `internal/inference/runner_embed/ycode-runner.gz`
+on first run via `runner-build-if-missing`. On darwin/arm64 no extra
+toolchain is needed (Metal in-tree); other platforms need CMake. Without
+the toolchain the script warns and skip-cleans — ycode still builds but
+ollama features are disabled at runtime. Run ycode with
+`--use-system-binaries` (or set `inference.useSystem: true` in
+`settings.json`) to defer to a user-installed upstream `ollama` daemon
+instead.
 
 ### Testing
 

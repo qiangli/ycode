@@ -77,3 +77,66 @@ func TestOllamaComponent_Prepare_ModelsDir_EnvVar(t *testing.T) {
 		t.Errorf("OLLAMA_MODELS = %q, want %q", got, modelsDir)
 	}
 }
+
+// TestOllamaComponent_Start_UseSystem verifies the escape-hatch path
+// in OllamaComponent.Start: when cfg.UseSystem is true, the component
+// must NOT bind its own listener and must NOT call into the embedded
+// runner_embed package. It either succeeds (system daemon reachable)
+// and reports BaseURL pointing at $OLLAMA_HOST, or returns a clean
+// error pointing the user at their --use-system-binaries choice.
+//
+// We isolate the test from a real local ollama by pointing OLLAMA_HOST
+// at a deliberately-unused port.
+func TestOllamaComponent_Start_UseSystem_NotReachable(t *testing.T) {
+	// Pick a port nothing is listening on (port 1 is reserved by IANA
+	// for tcpmux; almost never bound by anything in user-space).
+	t.Setenv("OLLAMA_HOST", "127.0.0.1:1")
+
+	tr := true
+	cfg := &Config{UseSystem: &tr}
+	comp := NewOllamaComponent(cfg, t.TempDir())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err := comp.Start(ctx)
+	if err == nil {
+		t.Fatal("Start should fail when useSystem=true and no daemon is reachable")
+	}
+	// Verify the error mentions the user's choice rather than the
+	// generic "connection refused" — surfacing the right remediation.
+	msg := err.Error()
+	for _, want := range []string{"system mode", "--use-system-binaries"} {
+		if !contains(msg, want) {
+			t.Errorf("error message should mention %q for clarity; got: %v", want, err)
+		}
+	}
+	if comp.Healthy() {
+		t.Error("component should not be healthy after failed start")
+	}
+}
+
+func TestOllamaComponent_BaseURL_UseSystem(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "127.0.0.1:11434")
+	tr := true
+	cfg := &Config{UseSystem: &tr}
+	comp := NewOllamaComponent(cfg, t.TempDir())
+
+	// Even though Start was never called (no listener bound), BaseURL
+	// must report the system URL so downstream proxies/clients have a
+	// consistent endpoint regardless of which daemon is serving it.
+	if got := comp.BaseURL(); got == "" {
+		t.Error("BaseURL should return system URL in useSystem mode, even before Start")
+	}
+}
+
+// contains is a local helper to avoid pulling in strings just for this
+// test file (matches the pattern used elsewhere in the codebase).
+func contains(s, substr string) bool {
+	for i := 0; i+len(substr) <= len(s); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

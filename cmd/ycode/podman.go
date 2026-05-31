@@ -75,7 +75,9 @@ func brandFlagErrors(root *cobra.Command) {
 // process-lifetime context.Background() and let individual commands
 // cancel via Ctrl-C / cmd.Context() if they need to.
 func newEngine() (*container.Engine, error) {
-	return container.NewEngine(context.Background(), &container.EngineConfig{})
+	return container.NewEngine(context.Background(), &container.EngineConfig{
+		UseSystem: useSystemBinaries,
+	})
 }
 
 // --- ps ---

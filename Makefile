@@ -11,10 +11,16 @@ comma := ,
 #   bindata                        Gitea bundled assets
 #   embed_runner (auto)            llama.cpp inference runner — added
 #                                  automatically when the gz exists.
-#                                  Run `make runner-build-thin` to
-#                                  produce it; without it `ycode serve`
-#                                  hard-stops at startup because no
-#                                  inference can be served.
+#                                  `make build` produces it on first run
+#                                  via `runner-build-if-missing` (which
+#                                  delegates to `scripts/build-runner-thin.sh`).
+#                                  On darwin/arm64 no extra toolchain is
+#                                  needed (Metal is in-tree); other
+#                                  platforms need CMake + a C/C++ compiler.
+#                                  If the toolchain is missing the script
+#                                  warns and exits 0 — the binary still
+#                                  builds, ollama features degrade to
+#                                  ErrRunnerNotInstalled at runtime.
 #   embed_vfkit (auto)             Apple Virtualization Framework helper
 #                                  for podman machine on macOS. Added
 #                                  automatically when the gz exists.
@@ -24,7 +30,22 @@ comma := ,
 #                                  with "krunkit: executable file not
 #                                  found" on macOS hosts without a
 #                                  separately-installed krunkit.
-TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata$(if $(wildcard internal/inference/runner_embed/ycode-runner.gz),$(comma)embed_runner)$(if $(wildcard internal/container/vfkit_embed/vfkit.gz),$(comma)embed_vfkit)
+#   embed_podman (auto)            containers/podman client binary (built
+#                                  with -tags remote on macOS/Windows,
+#                                  native on Linux). Added automatically
+#                                  when the gz exists. Produced by
+#                                  `make build` via podman-embed-if-missing,
+#                                  which calls scripts/embed-podman.sh
+#                                  (prefers an upstream system podman,
+#                                  falls back to building from
+#                                  external/podman/cmd/podman/).
+#   embed_gvproxy (auto)           containers/gvisor-tap-vsock user-mode
+#                                  network proxy for podman machine
+#                                  (macOS + Windows; not needed on
+#                                  Linux where podman uses its native
+#                                  socket directly). Added automatically
+#                                  when the gz exists.
+TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata$(if $(wildcard internal/inference/runner_embed/ycode-runner.gz),$(comma)embed_runner)$(if $(wildcard internal/container/vfkit_embed/vfkit.gz),$(comma)embed_vfkit)$(if $(wildcard internal/container/podman_embed/podman.gz),$(comma)embed_podman)$(if $(wildcard internal/container/gvproxy_embed/gvproxy.gz),$(comma)embed_gvproxy)
 TAGS := -tags "$(TAG_LIST)"
 PACKAGES := $(shell go list ./... | grep -v '/priorart/')
 
@@ -43,7 +64,7 @@ ifeq ($(shell uname),Darwin)
 export CGO_LDFLAGS += -Wl,-no_warn_duplicate_libraries
 endif
 
-.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-release-smoke test-all vet tidy clean all chrome-extension cross runner-download runner-build runner-build-thin runner-check podman-embed vfkit-embed vfkit-embed-if-darwin gvproxy-embed build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
+.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-release-smoke test-all vet tidy clean all chrome-extension cross runner-build runner-build-thin runner-build-if-missing runner-check podman-embed podman-embed-if-missing vfkit-embed vfkit-embed-if-darwin gvproxy-embed gvproxy-embed-if-applicable ensure-embeds _compile-inner build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
 
 .DEFAULT_GOAL := help
 
@@ -75,17 +96,27 @@ priorart-sync: ## Pull latest changes for all priorart repos
 
 # ─── Build ──────────────────────────────────────────────────────────────────
 
-compile: vfkit-embed-if-darwin ## Compile the ycode binary to bin/ (no checks)
+ensure-embeds: vfkit-embed-if-darwin runner-build-if-missing podman-embed-if-missing gvproxy-embed-if-applicable
+
+# `compile` runs the embed prereqs first, then re-invokes Make for the
+# actual `go build`. The sub-make is required because TAG_LIST's
+# $(wildcard ...) probes are expanded ONCE per Make invocation (at
+# parse time) — embeds produced during the same invocation would
+# otherwise be on disk but missing from TAG_LIST, and the go build
+# would link without their embed_* tags. The sub-make re-parses
+# TAG_LIST after the .gz files exist.
+compile: ensure-embeds ## Compile the ycode binary to bin/ (no checks)
+	@$(MAKE) --no-print-directory _compile-inner
+
+_compile-inner:
 	go build -trimpath $(TAGS) $(LDFLAGS) -o bin/ycode ./cmd/ycode/
 	@echo "Built bin/ycode (tags: $(TAG_LIST))"
 
 verify-features: ## Verify the feature registry structure (paths exist, no malformed entries)
 	go test -count=1 ./internal/features/...
 
-compile-full: ## Compile with embedded podman + runner (single binary, all-in-one)
-	go build -trimpath -tags "$(TAG_LIST),embed_podman,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+compile-full: compile ## Alias for `make compile` — kept for back-compat; TAG_LIST now auto-adds every embed_* tag whose .gz exists, so all embeds land in `make build`
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
-	@echo "Built single binary with embedded podman + runner: bin/ycode"
 
 compile-debug: ## Compile with debug symbols (for profiling/debugging)
 	go build -trimpath $(TAGS) -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/ycode ./cmd/ycode/
@@ -290,28 +321,74 @@ dist/ycode-windows-amd64.exe:
 
 # ─── Inference Runner ──────────────────────────────────────────────────────
 
-runner-download: ## Download pre-built Ollama runner for current platform
-	@./scripts/download-runner.sh
-
 runner-build: ## Build Ollama runner from source (requires C++ toolchain)
 	@./scripts/build-runner.sh
+
+# Two-track build dev fast-path. By default the *-if-missing wrappers
+# try `embed-fetch` first (downloads prebuilt blobs from the latest
+# GitHub release for the current platform — ~30s, no CMake/cgo work)
+# and fall through to the source-build script only if the fetch
+# didn't produce the .gz. Set BUILD_EMBEDS_FROM_SOURCE=1 to skip the
+# fetch entirely and always build from source — what release CI does.
+embed-fetch: ## Download prebuilt embed blobs (runner+podman+vfkit+gvproxy) from the latest GitHub release for the current platform
+	@./scripts/embed-fetch.sh
 
 runner-build-thin: ## Build thin runner and compress for embedding into ycode
 	@./scripts/build-runner-thin.sh
 
+# Idempotent wrapper called from `compile`. Two-track:
+#   1. If .gz is already present, no-op.
+#   2. Else, unless BUILD_EMBEDS_FROM_SOURCE=1 is set, try fetching
+#      a prebuilt blob from the latest GitHub release (~30s).
+#   3. If fetch didn't produce the .gz, fall back to the source build
+#      (build-runner-thin.sh), which itself skip-cleans when CMake is
+#      absent on non-darwin/arm64.
+# Release CI sets BUILD_EMBEDS_FROM_SOURCE=1 and skips step 2 entirely.
+runner-build-if-missing:
+	@if [ ! -f internal/inference/runner_embed/ycode-runner.gz ]; then \
+		if [ -z "$$BUILD_EMBEDS_FROM_SOURCE" ]; then \
+			./scripts/embed-fetch.sh runner; \
+		fi; \
+	fi
+	@if [ ! -f internal/inference/runner_embed/ycode-runner.gz ]; then \
+		./scripts/build-runner-thin.sh; \
+	fi
+
 runner-check: ## Verify runner binary exists and responds to health check
 	@./scripts/check-runner.sh
 
-podman-embed: ## Compress system podman binary for embedding into ycode
+podman-embed: ## Compress podman binary for embedding into ycode
 	@./scripts/embed-podman.sh
+
+# Internal target: run podman-embed once if the gz is missing.
+# Two-track like runner-build-if-missing (fetch first, source build
+# second). Source-build via embed-podman.sh prefers a system upstream
+# podman, falls back to building from external/podman/cmd/podman/
+# (Apache-2.0), and skip-cleans (exit 0) if neither works so
+# non-container devs aren't blocked.
+podman-embed-if-missing:
+	@if [ ! -f internal/container/podman_embed/podman.gz ]; then \
+		if [ -z "$$BUILD_EMBEDS_FROM_SOURCE" ]; then \
+			./scripts/embed-fetch.sh podman; \
+		fi; \
+	fi
+	@if [ ! -f internal/container/podman_embed/podman.gz ]; then \
+		./scripts/embed-podman.sh; \
+	fi
 
 vfkit-embed: ## Compress vfkit binary for embedding into ycode (macOS only)
 	@./scripts/embed-vfkit.sh
 
 # Internal target: run vfkit-embed once on macOS if the gz is missing.
-# Other platforms (Linux, Windows) are no-ops — the embedded vfkit only
-# helps macOS hosts of `ycode podman machine`.
+# Two-track like the others. Other platforms (Linux, Windows) are
+# no-ops — the embedded vfkit only helps macOS hosts of
+# `ycode podman machine`.
 vfkit-embed-if-darwin:
+	@if [ "$$(uname)" = "Darwin" ] && [ ! -f internal/container/vfkit_embed/vfkit.gz ]; then \
+		if [ -z "$$BUILD_EMBEDS_FROM_SOURCE" ]; then \
+			./scripts/embed-fetch.sh vfkit; \
+		fi; \
+	fi
 	@if [ "$$(uname)" = "Darwin" ] && [ ! -f internal/container/vfkit_embed/vfkit.gz ]; then \
 		./scripts/embed-vfkit.sh; \
 	fi
@@ -319,13 +396,29 @@ vfkit-embed-if-darwin:
 gvproxy-embed: ## Build gvproxy from module cache and gzip for embedding
 	@./scripts/embed-gvproxy.sh
 
-build-single: podman-embed vfkit-embed gvproxy-embed runner-build-thin ## Build single self-contained ycode binary
-	go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata,embed_podman,embed_vfkit,embed_gvproxy,embed_runner" $(LDFLAGS) -o bin/ycode ./cmd/ycode/
+# Internal target: run gvproxy-embed once if the gz is missing AND the
+# platform actually needs it. gvproxy is the user-mode network proxy
+# `podman machine` forwards through; only relevant where machine
+# auto-provisions a VM (macOS + Windows). Linux uses podman's native
+# socket directly, so embedding gvproxy there would just bloat the
+# binary.
+gvproxy-embed-if-applicable:
+	@case "$$(uname)" in \
+		Darwin|MINGW*|MSYS*|CYGWIN*) \
+			if [ ! -f internal/container/gvproxy_embed/gvproxy.gz ]; then \
+				if [ -z "$$BUILD_EMBEDS_FROM_SOURCE" ]; then \
+					./scripts/embed-fetch.sh gvproxy; \
+				fi; \
+			fi; \
+			if [ ! -f internal/container/gvproxy_embed/gvproxy.gz ]; then \
+				./scripts/embed-gvproxy.sh; \
+			fi ;; \
+	esac
+
+build-single: compile ## Alias for `make compile` — kept for back-compat. The standard `compile` target now produces a single self-contained binary with every embed auto-built (runner via build-runner-thin, podman via embed-podman, vfkit via embed-vfkit on darwin, gvproxy via embed-gvproxy on darwin/windows) when its .gz isn't already present
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
 	@echo ""
-	@echo "=== Single binary ready: bin/ycode ==="
-	@echo "Includes: embedded podman, embedded vfkit, embedded gvproxy, embedded inference runner"
-	@echo "Ship this one file — ycode auto-provisions everything on first run."
+	@echo "=== Single binary ready: bin/ycode (tags: $(TAG_LIST)) ==="
 	@ls -lh bin/ycode
 
 # ─── Deploy ─────────────────────────────────────────────────────────────────

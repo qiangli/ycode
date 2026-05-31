@@ -120,7 +120,62 @@ When the release matrix expands (e.g., `linux-arm64` lands), edit `scripts/gener
 
 | Asset | Source | Path in archive |
 |---|---|---|
-| `ycode-<os>-<arch>.tar.gz` | Per-platform native build | `./ycode` (executable, codesigned ad-hoc on macOS) |
-| `SHA256SUMS` | `sha256sum` over all `.tar.gz` | n/a |
+| `ycode-<os>-<arch>.tar.gz` | Per-platform native build with all embeds baked in | `./ycode` (executable, codesigned ad-hoc on macOS) |
+| `<embed>-<os>-<arch>.gz`   | Per-embed standalone blob (consumed by `make embed-fetch`) | n/a (the blob itself) |
+| `SHA256SUMS`               | `sha256sum` over every `.tar.gz` AND every `.gz` | n/a |
 
-Currently shipped: `ycode-linux-amd64.tar.gz`, `ycode-darwin-arm64.tar.gz`. Other platforms blocked on code-level fixes — see comments in `.github/workflows/release.yml`.
+Embeds shipped per platform (matches `Makefile` gates + `scripts/embed-fetch.sh` per-platform applicability):
+
+| Platform | runner | podman | vfkit | gvproxy |
+|---|---|---|---|---|
+| `darwin-arm64` | ✅ `ycode-runner-darwin-arm64.gz` | ✅ `podman-darwin-arm64.gz` (client-only, `-tags remote`) | ✅ `vfkit-darwin-arm64.gz` | ✅ `gvproxy-darwin-arm64.gz` |
+| `linux-amd64`  | ✅ `ycode-runner-linux-amd64.gz`  | ✅ `podman-linux-amd64.gz` (native engine, no VM) | — | — |
+| `linux-arm64`  | ✅ `ycode-runner-linux-arm64.gz`  | ✅ `podman-linux-arm64.gz` | — | — |
+
+Currently shipped binaries: `ycode-linux-amd64.tar.gz`, `ycode-linux-arm64.tar.gz`, `ycode-darwin-arm64.tar.gz`. `darwin-amd64` and `windows-amd64` remain blocked on code-level fixes — see the matrix comments in `.github/workflows/release.yml`.
+
+## Two-track build (producer / consumer)
+
+- **CI is the canonical producer.** `release.yml` sets `BUILD_EMBEDS_FROM_SOURCE=1`, runs `make ensure-embeds`, and uploads each resulting `.gz` as a standalone Release asset. CMake + ccache cache the llama.cpp rebuild between runs.
+- **Local dev is the canonical consumer.** `make build` defaults to fetching the prebuilt embeds from the latest GitHub release matching the dev's `GOOS/GOARCH` (`scripts/embed-fetch.sh`), then falls through to a source build only if the fetch produced nothing for that embed. Set `BUILD_EMBEDS_FROM_SOURCE=1` to force source.
+
+Implication: a dev with no CMake on a non-macOS-arm64 machine still gets a fully-functional `bin/ycode` in ~30 seconds via fetch (provided a release with their platform exists). The toolchain is only required for release-pipeline runners and devs iterating on the embeds themselves.
+
+## Escape hatch — `--use-system-binaries`
+
+End users who already run upstream `ollama` and `podman` and prefer them over ycode's embeds can pass `--use-system-binaries` (or set `inference.useSystem: true` / `container.useSystem: true` in `settings.json`). ycode never auto-installs upstream binaries; the flag is opt-in. Document this in any user-facing install guide that suggests pre-installing ollama/podman.
+
+## Pre-release smoke tests (do before each tag)
+
+```bash
+git pull origin main && git submodule update --init --recursive
+rm -f internal/inference/runner_embed/ycode-runner.gz \
+      internal/container/{podman,vfkit,gvproxy}_embed/*.gz
+BUILD_EMBEDS_FROM_SOURCE=1 make build       # exercise the source path CI uses
+./bin/ycode ollama serve &                   # confirm 11434 binds
+sleep 3
+./bin/ycode ollama list                      # exit 0 with model list (or header-only)
+kill %1                                      # stop daemon
+./bin/ycode podman ps                        # confirms embedded podman + machine boot
+```
+
+After the tag is published and CI uploads the embeds, sanity-check the dev fast-path on a *separate* clean clone:
+
+```bash
+git clone <repo> /tmp/ycode-smoke && cd /tmp/ycode-smoke
+git submodule update --init --recursive
+make build                                   # should fetch (~30s), NOT source-build
+ls -lh internal/inference/runner_embed/ycode-runner.gz
+./bin/ycode ollama serve                     # verifies the released runner works
+```
+
+## Cross-cutting consumers
+
+- **outpost** and **cloudbox** fleet upgrade should consume per-platform release artifacts from the same release URLs so a single ycode release flows out to all paired hosts consistently (see `dhnt/CLAUDE.md` "Cross-cutting touchpoints" → fleet upgrade).
+- Bumping the umbrella pin after a release:
+  ```bash
+  cd ../          # to dhnt root
+  git add ycode
+  git commit -m "sync: bump ycode pin to v0.X.Y"
+  git push origin main
+  ```

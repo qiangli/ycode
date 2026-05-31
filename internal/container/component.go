@@ -45,6 +45,7 @@ type ComponentConfig struct {
 	PoolSize     int    `json:"poolSize,omitempty"`     // warm pool size (0 = no pool)
 	CPUs         string `json:"cpus,omitempty"`         // per-container CPU limit
 	Memory       string `json:"memory,omitempty"`       // per-container memory limit
+	UseSystem    bool   `json:"useSystem,omitempty"`    // defer to system-installed podman (no auto-provisioned VM/in-process service)
 }
 
 // NewContainerComponent creates a new container component.
@@ -74,6 +75,7 @@ func (c *ContainerComponent) Start(ctx context.Context) error {
 	engine, err := NewEngine(ctx, &EngineConfig{
 		SocketPath: c.cfg.SocketPath,
 		DataDir:    c.dataDir,
+		UseSystem:  c.cfg.UseSystem,
 	})
 	if err != nil {
 		return fmt.Errorf("container: init engine: %w", err)

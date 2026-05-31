@@ -256,6 +256,16 @@ type InferenceConfig struct {
 	GPULayers    int    `json:"gpuLayers,omitempty"`    // GPU offload layers (-1 = auto)
 	MaxVRAMMB    int    `json:"maxVramMB,omitempty"`    // limit GPU memory usage
 
+	// UseSystem makes ycode defer to a user-installed upstream `ollama`
+	// binary on $PATH instead of extracting/spawning the embedded
+	// ycode-runner. Default false. Also toggled by the global
+	// --use-system-binaries CLI flag (which sets both this and
+	// ContainerConfig.UseSystem at runtime). When true and ollama isn't
+	// on $PATH (or its daemon isn't reachable on $OLLAMA_HOST), ycode
+	// surfaces a clean error instead of falling back to the embed —
+	// the user opted in explicitly.
+	UseSystem *bool `json:"useSystem,omitempty"`
+
 	// Gateway controls the per-process localhost gateway that fronts
 	// ollama. When Mode is "remote", outbound calls are proxied through
 	// cloudbox to a remote ollama running on another machine; agents and
@@ -280,6 +290,39 @@ func (c *InferenceConfig) IsEnabled() bool {
 	return *c.Enabled
 }
 
+// UseSystemBinary reports whether ycode should defer to a system-installed
+// upstream ollama instead of the embedded runner. nil receiver and nil
+// UseSystem both return false (default off — embedded path is canonical).
+func (c *InferenceConfig) UseSystemBinary() bool {
+	if c == nil || c.UseSystem == nil {
+		return false
+	}
+	return *c.UseSystem
+}
+
+// ApplyCLIOverrides mutates cfg in place to reflect process-wide CLI
+// overrides set on the root cobra command. Called once per config load
+// (newApp + loadFullServeConfig) before the runtime starts. Currently
+// handles --use-system-binaries, which forces both inference.useSystem
+// and container.useSystem to true when set. Passing false is a no-op
+// — config keys remain whatever settings.json says — matching the
+// plan's "CLI flag > config > default" precedence with the CLI flag
+// being one-directional (only forces "true", never "false").
+func ApplyCLIOverrides(cfg *Config, useSystemBinaries bool) {
+	if cfg == nil || !useSystemBinaries {
+		return
+	}
+	t := true
+	if cfg.Inference == nil {
+		cfg.Inference = &InferenceConfig{}
+	}
+	cfg.Inference.UseSystem = &t
+	if cfg.Container == nil {
+		cfg.Container = &ContainerConfig{}
+	}
+	cfg.Container.UseSystem = &t
+}
+
 // ContainerConfig controls the embedded Podman-based container isolation engine.
 //
 // On by default. Sandbox isolation for the agent's bash tool, yc
@@ -296,6 +339,14 @@ type ContainerConfig struct {
 	PoolSize     int    `json:"poolSize,omitempty"`     // warm pool size (0 = no pool)
 	CPUs         string `json:"cpus,omitempty"`         // per-container CPU limit (e.g., "2.0")
 	Memory       string `json:"memory,omitempty"`       // per-container memory limit (e.g., "4g")
+
+	// UseSystem makes ycode defer to a user-installed upstream `podman`
+	// binary on $PATH instead of extracting/spawning the embedded
+	// podman blob. Default false. Also toggled by the global
+	// --use-system-binaries CLI flag. When true and podman isn't on
+	// $PATH, ycode surfaces a clean error instead of falling back to
+	// the embed — the user opted in explicitly.
+	UseSystem *bool `json:"useSystem,omitempty"`
 
 	// Gateway controls the per-process localhost gateway that fronts the
 	// container engine. When Mode is "remote", podman/docker requests are
@@ -320,6 +371,16 @@ func (c *ContainerConfig) IsEnabled() bool {
 		return true
 	}
 	return *c.Enabled
+}
+
+// UseSystemBinary reports whether ycode should defer to a system-installed
+// upstream podman instead of the embedded binary. nil receiver and nil
+// UseSystem both return false (default off — embedded path is canonical).
+func (c *ContainerConfig) UseSystemBinary() bool {
+	if c == nil || c.UseSystem == nil {
+		return false
+	}
+	return *c.UseSystem
 }
 
 // GitServerConfig controls the embedded Gitea-based git server for agent swarm coordination.

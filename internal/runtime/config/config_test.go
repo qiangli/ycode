@@ -300,3 +300,86 @@ func TestLoaderMissingFiles(t *testing.T) {
 		t.Error("should have default model")
 	}
 }
+
+// TestUseSystemBinary_NilSafe verifies the nil-safe defaults for the
+// escape-hatch getters: nil receiver and nil pointer field both return
+// false (embedded path is the canonical default).
+func TestUseSystemBinary_NilSafe(t *testing.T) {
+	var nilInf *InferenceConfig
+	if nilInf.UseSystemBinary() {
+		t.Error("nil InferenceConfig should report UseSystemBinary=false")
+	}
+	if (&InferenceConfig{}).UseSystemBinary() {
+		t.Error("zero-value InferenceConfig should report UseSystemBinary=false")
+	}
+
+	var nilCon *ContainerConfig
+	if nilCon.UseSystemBinary() {
+		t.Error("nil ContainerConfig should report UseSystemBinary=false")
+	}
+	if (&ContainerConfig{}).UseSystemBinary() {
+		t.Error("zero-value ContainerConfig should report UseSystemBinary=false")
+	}
+
+	tr := true
+	if !(&InferenceConfig{UseSystem: &tr}).UseSystemBinary() {
+		t.Error("InferenceConfig with UseSystem=true should report true")
+	}
+	if !(&ContainerConfig{UseSystem: &tr}).UseSystemBinary() {
+		t.Error("ContainerConfig with UseSystem=true should report true")
+	}
+
+	fa := false
+	if (&InferenceConfig{UseSystem: &fa}).UseSystemBinary() {
+		t.Error("InferenceConfig with UseSystem=false should report false")
+	}
+}
+
+// TestApplyCLIOverrides_UseSystem verifies the CLI-flag plumbing:
+// --use-system-binaries forces both inference.useSystem and
+// container.useSystem to true; the flag is one-directional (passing
+// false is a no-op, config keys remain whatever settings.json said).
+func TestApplyCLIOverrides_UseSystem(t *testing.T) {
+	t.Run("flag=false is a no-op", func(t *testing.T) {
+		cfg := &Config{}
+		ApplyCLIOverrides(cfg, false)
+		if cfg.Inference != nil && cfg.Inference.UseSystem != nil {
+			t.Error("flag=false should not mutate Inference.UseSystem")
+		}
+		if cfg.Container != nil && cfg.Container.UseSystem != nil {
+			t.Error("flag=false should not mutate Container.UseSystem")
+		}
+	})
+
+	t.Run("flag=true forces both to true", func(t *testing.T) {
+		cfg := &Config{}
+		ApplyCLIOverrides(cfg, true)
+		if !cfg.Inference.UseSystemBinary() {
+			t.Error("flag=true should set Inference.UseSystem=true")
+		}
+		if !cfg.Container.UseSystemBinary() {
+			t.Error("flag=true should set Container.UseSystem=true")
+		}
+	})
+
+	t.Run("flag=true overrides existing config keys", func(t *testing.T) {
+		fa := false
+		cfg := &Config{
+			Inference: &InferenceConfig{UseSystem: &fa},
+			Container: &ContainerConfig{UseSystem: &fa},
+		}
+		ApplyCLIOverrides(cfg, true)
+		if !cfg.Inference.UseSystemBinary() {
+			t.Error("flag=true should override Inference.UseSystem=false")
+		}
+		if !cfg.Container.UseSystemBinary() {
+			t.Error("flag=true should override Container.UseSystem=false")
+		}
+	})
+
+	t.Run("nil cfg is a no-op", func(t *testing.T) {
+		// Just verify no panic. Nothing to assert.
+		ApplyCLIOverrides(nil, true)
+		ApplyCLIOverrides(nil, false)
+	})
+}

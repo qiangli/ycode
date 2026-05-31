@@ -177,6 +177,7 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
+	config.ApplyCLIOverrides(cfg, useSystemBinaries)
 
 	// `ycode serve --no-persona` is the operator switch that disables the
 	// per-user persona system process-wide. Useful when one ycode serve is
@@ -322,6 +323,7 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	if cfg.Container.IsEnabled() {
 		engine, err := container.NewEngine(rootCtx, &container.EngineConfig{
 			SocketPath: cfg.Container.SocketPath,
+			UseSystem:  cfg.Container.UseSystemBinary(),
 		})
 		if err != nil {
 			slog.Warn("container sandbox unavailable, falling back to host execution", "error", err)
@@ -857,6 +859,7 @@ var (
 	modelFlag             string
 	dangerSkipPermissions bool
 	connectURL            string
+	useSystemBinaries     bool
 )
 
 var rootCmd = &cobra.Command{
@@ -1333,6 +1336,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "Model to use (overrides config and env vars)")
 	rootCmd.PersistentFlags().BoolVar(&dangerSkipPermissions, "danger-skip-permissions", false, "Skip all permission checks (grants full access to all tools)")
 	rootCmd.PersistentFlags().StringVar(&connectURL, "connect", "", "Connect to a remote ycode server (ws:// or nats://)")
+	rootCmd.PersistentFlags().BoolVar(&useSystemBinaries, "use-system-binaries", false, "Defer to user-installed upstream ollama + podman on $PATH instead of using the embedded binaries (also: inference.useSystem / container.useSystem in settings.json)")
 	rootCmd.Flags().Bool("dry-run", false, "Preview session setup without calling the model")
 
 	// no-otel: accepted for backward compatibility with integration tests (no-op).

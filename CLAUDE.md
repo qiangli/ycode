@@ -15,12 +15,34 @@ ycode — pure Go CLI agent harness. Single static binary, Go 1.26+, permissive-
 ## First-time setup
 
 ```bash
-make init                              # REQUIRED: submodules, Perses plugins, gzip embeds, Gitea bindata
+make init                              # REQUIRED: submodules, Perses plugins, Prometheus asset embeds, Gitea bindata
 export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY (+ optional OPENAI_BASE_URL)
 make install-hooks                     # pre-push runs `make ci` in the ycode-builder Docker image
 ```
 
 Skipping `make init` will leave Gitea bindata + Perses plugins missing; many tests and `ycode serve` will fail in subtle ways.
+
+The embedded ollama runner (`internal/inference/runner_embed/ycode-runner.gz`) is produced by `make build` on first run via `runner-build-if-missing` — *not* by `make init`. On `darwin/arm64` no extra toolchain is needed (Metal is in-tree); other platforms need CMake + a C/C++ compiler. Without the toolchain the script warns and skip-cleans — ycode still builds but ollama features degrade to `ErrRunnerNotInstalled` at runtime. The embedded podman binary follows the same shape via `scripts/embed-podman.sh` (system binary first, fallback to a `-tags remote` build from `external/podman/cmd/podman/` on macOS/Windows or native on Linux).
+
+## Escape hatch — `--use-system-binaries`
+
+For devs who already have official upstream `ollama` and `podman` installed and want ycode to defer to them:
+
+```bash
+ycode --use-system-binaries serve              # globally use system binaries
+ycode --use-system-binaries ollama list        # talk to user-run `ollama serve` instead of embedded
+```
+
+Or per-binary in `settings.json` (`~/.config/ycode/settings.json`):
+
+```json
+{
+  "inference": { "useSystem": true },
+  "container":  { "useSystem": true }
+}
+```
+
+The CLI flag forces both to true at runtime (CLI flag > config > default). When set, ycode never extracts the embedded runner/podman, never auto-provisions a podman machine, and surfaces clean errors pointing at the opt-in choice when the user's system daemon isn't reachable — instead of silently spinning up the embed. ycode never *installs* upstream podman/ollama; users install them themselves.
 
 ## Build & test
 
@@ -31,7 +53,7 @@ make test            # unit tests (-short -race) with default tags
 make ci              # full GitHub Actions matrix in a Linux container (slow, definitive)
 ```
 
-**Build tags** are non-trivial — the default is `sqlite,sqlite_unlock_notify,bindata` plus `embed_runner` auto-added when `internal/inference/runner_embed/ycode-runner.gz` exists. Bare `go build` without tags will not produce a working binary. Use the Makefile or:
+**Build tags** are non-trivial — the default is `sqlite,sqlite_unlock_notify,bindata` plus `embed_runner` auto-added when `internal/inference/runner_embed/ycode-runner.gz` exists and `embed_vfkit` auto-added when `internal/container/vfkit_embed/vfkit.gz` exists. The auto-add probes are in `Makefile:27`. Bare `go build` without tags will not produce a working binary. Use the Makefile or:
 
 ```bash
 go build -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/

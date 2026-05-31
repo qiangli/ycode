@@ -90,14 +90,49 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libbtrfs-dev libgpgme-dev libsqlite3-dev
+            libbtrfs-dev libgpgme-dev libsqlite3-dev cmake ccache
 
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install gpgme
+        run: brew install gpgme ccache
+
+      # ccache + sccache speed up llama.cpp's repeated CMake rebuilds
+      # (the embedded ollama runner). First clean run ~3-5 min; warm
+      # ccache hit ~30s. Cache key includes the external/ollama
+      # submodule SHA so we invalidate on upstream bumps.
+      - name: Restore ccache (for llama.cpp)
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ matrix.target }}-${{ hashFiles('external/ollama/**/CMakeLists.txt', 'external/ollama/.git/HEAD') }}
+          restore-keys: |
+            ccache-${{ matrix.target }}-
 
       - name: Verify feature registry
         run: go test -count=1 ./internal/features/...
+
+      # Build all embeds from source (no fetch fallback in CI — release
+      # builds are the canonical producer of the .gz blobs). Sets
+      # BUILD_EMBEDS_FROM_SOURCE=1 so the *-if-missing wrappers skip
+      # the embed-fetch step. Each platform builds only the embeds
+      # applicable to it (per Makefile gates: vfkit darwin-only,
+      # gvproxy darwin+windows-only).
+      - name: Build embed blobs from source
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          BUILD_EMBEDS_FROM_SOURCE: "1"
+          CC: "ccache cc"
+          CXX: "ccache c++"
+        run: |
+          set -euo pipefail
+          make ensure-embeds
+          echo "--- embed blobs produced ---"
+          ls -lh internal/inference/runner_embed/ycode-runner.gz 2>/dev/null || echo "(no runner gz)"
+          ls -lh internal/container/podman_embed/podman.gz       2>/dev/null || echo "(no podman gz)"
+          ls -lh internal/container/vfkit_embed/vfkit.gz         2>/dev/null || echo "(no vfkit gz)"
+          ls -lh internal/container/gvproxy_embed/gvproxy.gz     2>/dev/null || echo "(no gvproxy gz)"
 
       - name: Build binary
         shell: bash
@@ -120,10 +155,15 @@ jobs:
           if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
             VERSION="${VERSION}-dryrun"
           fi
-          go build -trimpath \
-            -tags "sqlite,sqlite_unlock_notify,bindata" \
-            -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT" \
-            -o "$BIN" ./cmd/ycode/
+          # Use `make _compile-inner` so TAG_LIST's wildcard probe runs
+          # AFTER `Build embed blobs from source` above, picking up the
+          # newly-produced .gz files and adding the corresponding
+          # embed_* tags. (Calling `make compile` would re-trigger the
+          # embed prereqs unnecessarily — _compile-inner is just the
+          # final go-build step.) VERSION/COMMIT propagate into
+          # Makefile's LDFLAGS substitution.
+          make --no-print-directory _compile-inner
+          mv bin/ycode "$BIN"
           # Ad-hoc codesign on macOS so binaries don't get killed by Gatekeeper.
           if [ "$RUNNER_OS" = "macOS" ]; then
             codesign -f -s - "$BIN" 2>/dev/null || true
@@ -136,6 +176,42 @@ jobs:
           name: ycode-${{ matrix.target }}
           path: dist/ycode-${{ matrix.target }}${{ matrix.ext }}
           if-no-files-found: error
+          retention-days: 1
+
+      # Per-embed .gz uploads — published as standalone release assets
+      # so devs can grab them via scripts/embed-fetch.sh and skip the
+      # multi-minute source build. Naming convention matches
+      # embed-fetch.sh: <embed>-<platform>.gz. Missing files are
+      # silently skipped (e.g., vfkit/gvproxy on linux don't exist).
+      - name: Stage embed blobs for upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p embed-dist
+          # Each line is "<source-relative-path> <renamed-dest>".
+          # Renaming embeds the platform suffix so a single release can
+          # carry all 4 platforms' embeds side-by-side.
+          stage_if_present() {
+            local src="$1" dest="$2"
+            [ -f "$src" ] || { echo "  (skip $src — not present on ${{ matrix.target }})"; return 0; }
+            cp "$src" "embed-dist/$dest"
+            ls -lh "embed-dist/$dest"
+          }
+          stage_if_present internal/inference/runner_embed/ycode-runner.gz \
+                           ycode-runner-${{ matrix.target }}.gz
+          stage_if_present internal/container/podman_embed/podman.gz \
+                           podman-${{ matrix.target }}.gz
+          stage_if_present internal/container/vfkit_embed/vfkit.gz \
+                           vfkit-${{ matrix.target }}.gz
+          stage_if_present internal/container/gvproxy_embed/gvproxy.gz \
+                           gvproxy-${{ matrix.target }}.gz
+
+      - name: Upload embed blobs artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: embeds-${{ matrix.target }}
+          path: embed-dist/
+          if-no-files-found: warn
           retention-days: 1
 
   # Packages artifacts on every successful build (tag, dispatch, or PR) so
@@ -161,10 +237,12 @@ jobs:
             echo "is_release=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Package archives + checksums
+      - name: Package archives + embed blobs + checksums
         run: |
           set -euo pipefail
           mkdir -p release-assets
+
+          # Per-platform ycode binary tarballs (existing behavior).
           for dir in artifacts/ycode-*; do
             target=$(basename "$dir" | sed 's/^ycode-//')
             cd "$dir"
@@ -174,8 +252,19 @@ jobs:
             rm ycode
             cd ../..
           done
+
+          # Per-platform embed blobs (standalone .gz, consumed by
+          # scripts/embed-fetch.sh). Each embeds-<target>/ dir holds 1-4
+          # files depending on platform applicability — copy them all.
+          for dir in artifacts/embeds-*; do
+            [ -d "$dir" ] || continue
+            cp -v "$dir"/*.gz release-assets/ 2>/dev/null || true
+          done
+
           cd release-assets
-          sha256sum *.tar.gz > SHA256SUMS
+          # Single checksum file covers both binary tarballs and embed
+          # .gz blobs so `embed-fetch.sh` can validate downloads.
+          sha256sum *.tar.gz *.gz > SHA256SUMS 2>/dev/null || sha256sum *.tar.gz > SHA256SUMS
           ls -la
 
       - name: Upload packaged assets (dryrun visibility)

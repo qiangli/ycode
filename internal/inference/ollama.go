@@ -145,6 +145,23 @@ func ensureOllamaKeypair() error {
 // http.DefaultServeMux); a typical ycode serve lifecycle calls Start
 // exactly once.
 func (o *OllamaComponent) Start(ctx context.Context) error {
+	// Escape hatch: when the user opted into system binaries
+	// (`inference.useSystem: true` or `--use-system-binaries`), don't
+	// bind our own listener — defer to a user-installed upstream
+	// `ollama serve` daemon at $OLLAMA_HOST. Probe its reachability
+	// so we surface a clean error at startup instead of letting
+	// downstream chat requests hit `connection refused`.
+	if o.cfg.UseSystemBinary() {
+		baseURL := DefaultOllamaURL()
+		if err := waitTCPReady(envconfig.Host().Host, 1*time.Second); err != nil {
+			return fmt.Errorf("ollama: system mode requested but no daemon reachable at %s — start `ollama serve` yourself or omit --use-system-binaries / inference.useSystem to use the embedded runtime", baseURL)
+		}
+		slog.Info("ollama: deferring to system daemon", "url", baseURL)
+		o.healthy.Store(true)
+		o.updateOTELGauges()
+		return nil
+	}
+
 	// Defense in depth — the canonical hard-stop lives at the serve
 	// entry point (cmd/ycode/serve.go: runAllServices), which fails
 	// before any component is constructed. The stack manager demotes
@@ -218,6 +235,12 @@ func (o *OllamaComponent) Stop(ctx context.Context) error {
 	o.healthy.Store(false)
 	o.updateOTELGauges()
 
+	// In system-binaries mode Start() never bound a listener; nothing to
+	// close. Don't try to drain the (also-nil) serve channel.
+	if o.cfg.UseSystemBinary() {
+		return nil
+	}
+
 	o.mu.Lock()
 	ln := o.ln
 	serve := o.serve
@@ -282,7 +305,13 @@ func (o *OllamaComponent) Port() int {
 }
 
 // BaseURL returns the full Ollama API base URL clients should hit.
+// In system-binaries mode the component never binds its own listener;
+// the URL still resolves to $OLLAMA_HOST so downstream proxies/clients
+// see a consistent endpoint regardless of which daemon is serving it.
 func (o *OllamaComponent) BaseURL() string {
+	if o.cfg.UseSystemBinary() {
+		return "http://" + envconfig.ConnectableHost().Host
+	}
 	o.mu.Lock()
 	ln := o.ln
 	o.mu.Unlock()

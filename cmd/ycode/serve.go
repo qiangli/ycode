@@ -1025,6 +1025,7 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 				PoolSize:     containerCfg.PoolSize,
 				CPUs:         containerCfg.CPUs,
 				Memory:       containerCfg.Memory,
+				UseSystem:    containerCfg.UseSystemBinary(),
 			},
 			filepath.Join(dataDir, "container"),
 		)
@@ -1180,6 +1181,7 @@ func loadFullServeConfig() (*config.Config, *config.ObservabilityConfig, string,
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("load config: %w", err)
 	}
+	config.ApplyCLIOverrides(cfg, useSystemBinaries)
 
 	obsCfg := cfg.Observability
 	if obsCfg == nil {

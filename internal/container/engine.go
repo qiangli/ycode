@@ -63,6 +63,16 @@ func NewEngine(ctx context.Context, cfg *EngineConfig) (*Engine, error) {
 		return e, nil
 	}
 
+	// Escape hatch: --use-system-binaries / container.useSystem stops
+	// here. If the user opted into "system podman" we must not
+	// auto-provision an embedded VM or start an in-process service
+	// behind their back — they explicitly asked to use their own
+	// podman, which means they're responsible for having it set up
+	// and listening on a socket we can discover.
+	if cfg.UseSystem {
+		return nil, fmt.Errorf("container: system mode requested but no podman socket found (looked at %q and default candidates) — start your own `podman machine` (macOS/Windows) or `podman system service` (Linux), then re-run, or omit --use-system-binaries / container.useSystem to use ycode's embedded engine", socketPath)
+	}
+
 	// 2. Linux/FreeBSD: start in-process API server (no binary, no VM).
 	if canStartInProcess() {
 		if err := e.startServiceInProcess(ctx, cfg); err != nil {
@@ -102,6 +112,16 @@ func NewEngine(ctx context.Context, cfg *EngineConfig) (*Engine, error) {
 type EngineConfig struct {
 	SocketPath string // explicit socket path (optional)
 	DataDir    string // data directory for podman storage
+
+	// UseSystem makes NewEngine refuse to auto-provision its own VM /
+	// in-process service. It will only connect to an existing socket
+	// (either explicit via SocketPath, or discovered via
+	// defaultSocketPath()). When no socket is found, NewEngine returns
+	// a clear error pointing the user at their own podman setup
+	// instead of silently spinning up ycode's embedded machine. Set
+	// from `container.useSystem: true` in settings.json or the global
+	// `--use-system-binaries` CLI flag.
+	UseSystem bool
 }
 
 // ConnCtx returns the REST API connection context for direct bindings access.
