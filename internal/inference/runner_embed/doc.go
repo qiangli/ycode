@@ -6,11 +6,14 @@
 //
 // Upstream:    github.com/ollama/ollama (cmd/runner)
 // License:     MIT — verified against external/ollama/LICENSE.
-//              Permissive OSI per the ycode embed policy (see
-//              ~/.claude/projects/.../feedback_ycode_licenses.md).
+//
+//	Permissive OSI per the ycode embed policy (see
+//	~/.claude/projects/.../feedback_ycode_licenses.md).
+//
 // How to rebuild the embed:
-//     make runner-build-thin        # explicit
-//     make build                    # implicit, via runner-build-if-missing
+//
+//	make runner-build-thin        # explicit
+//	make build                    # implicit, via runner-build-if-missing
 //
 // Platform notes:
 //   - darwin/arm64: Metal compute is in-tree via Go cgo; no CMake required.

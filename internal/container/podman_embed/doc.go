@@ -5,10 +5,13 @@
 //
 // Upstream:    github.com/containers/podman (cmd/podman)
 // License:     Apache-2.0 — verified against external/podman/LICENSE.
-//              Permissive OSI per the ycode embed policy.
+//
+//	Permissive OSI per the ycode embed policy.
+//
 // How to rebuild the embed:
-//     make podman-embed             # explicit
-//     make build                    # implicit, via podman-embed-if-missing
+//
+//	make podman-embed             # explicit
+//	make build                    # implicit, via podman-embed-if-missing
 //
 // embed-podman.sh prefers an upstream-podman binary already installed
 // on $PATH (detected by `podman --version` returning the upstream

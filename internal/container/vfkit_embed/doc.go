@@ -8,8 +8,9 @@
 // Upstream:    github.com/crc-org/vfkit
 // License:     Apache-2.0 — permissive OSI per the ycode embed policy.
 // How to rebuild the embed:
-//     make vfkit-embed              # explicit
-//     make build                    # implicit, via vfkit-embed-if-darwin
+//
+//	make vfkit-embed              # explicit
+//	make build                    # implicit, via vfkit-embed-if-darwin
 //
 // On macOS the embed script ad-hoc-signs the binary with the
 // `com.apple.security.virtualization` entitlement (sourced from

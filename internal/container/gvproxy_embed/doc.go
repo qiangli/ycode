@@ -9,8 +9,9 @@
 // Upstream:    github.com/containers/gvisor-tap-vsock (cmd/gvproxy)
 // License:     Apache-2.0 — permissive OSI per the ycode embed policy.
 // How to rebuild the embed:
-//     make gvproxy-embed                  # explicit
-//     make build                          # implicit, via gvproxy-embed-if-applicable
+//
+//	make gvproxy-embed                  # explicit
+//	make build                          # implicit, via gvproxy-embed-if-applicable
 //
 // The build sources the binary from the Go module cache (the version
 // pinned by external/podman/go.mod), not from a system install. There
