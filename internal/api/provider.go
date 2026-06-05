@@ -71,11 +71,40 @@ func ResolveModelWithAliases(model string, configAliases map[string]string) stri
 // DetectProvider determines which provider to use based on the model name
 // and available environment variables. It follows this priority:
 //
-//  1. Model name prefix/alias → known provider
-//  2. Explicit base URL env vars (OPENAI_BASE_URL) → OpenAI-compatible
-//  3. Available API keys: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY
-//  4. Default: Anthropic
+//  1. DHNT_BASE_URL (+ DHNT_API_KEY) → cloudbox-pooled OpenAI-compatible
+//     (checked first because an explicit user signal must beat the
+//     model-name heuristic — e.g. "qwen3.5:9b" looks like an Ollama tag
+//     but the user's DHNT_BASE_URL says "route this through cloudbox").
+//  2. Model name prefix/alias → known provider
+//  3. OPENAI_BASE_URL (+ OPENAI_API_KEY) → generic OpenAI-compatible
+//  4. Available API keys: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY
+//  5. Default: Anthropic
+//
+// The DHNT_* pair follows the existing per-provider convention
+// (<PROVIDER>_BASE_URL + <PROVIDER>_API_KEY, same as OPENAI_*,
+// ANTHROPIC_*, XAI_*, DASHSCOPE_*, MOONSHOT_*, KIMI_*) and takes
+// precedence over OPENAI_* so a user who has OPENAI_API_KEY exported
+// for direct OpenAI access from another tool can ALSO set
+// DHNT_BASE_URL + DHNT_API_KEY to route ycode through cloudbox's
+// pooled Ollama (https://ai.dhnt.io/v1) without disturbing the other
+// tool in the same shell. The two paths are independent — neither
+// clobbers the other.
 func DetectProvider(model string) (*ProviderConfig, error) {
+	// dhnt-namespaced override (cloudbox-pooled OpenAI-compat). Wins
+	// over model-name detection AND OPENAI_* so an explicit user signal
+	// beats both the model-prefix heuristic and a real OpenAI key in
+	// the same shell.
+	if baseURL := envNonEmpty("DHNT_BASE_URL"); baseURL != "" {
+		// Allow empty key: cloudbox returns 401 on /v1/* without an
+		// llm:chat bearer, which surfaces as a clear error at the
+		// first inference call.
+		return &ProviderConfig{
+			Kind:    ProviderOpenAI,
+			APIKey:  envNonEmpty("DHNT_API_KEY"),
+			BaseURL: baseURL,
+		}, nil
+	}
+
 	resolved := ResolveModel(model)
 
 	// Check model name for provider hints.
@@ -166,7 +195,7 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 		}, nil
 	}
 
-	return nil, fmt.Errorf("no API key found; set one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY\nor run: ycode login")
+	return nil, fmt.Errorf("no API key found; set one of: DHNT_BASE_URL (+ DHNT_API_KEY) for cloudbox-pooled Ollama, ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY\nor run: ycode login")
 }
 
 // NewProvider creates a Provider from a ProviderConfig.

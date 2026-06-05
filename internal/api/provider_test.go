@@ -8,6 +8,7 @@ import (
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
+		"DHNT_BASE_URL", "DHNT_API_KEY",
 		"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL",
 		"OPENAI_API_KEY", "OPENAI_BASE_URL",
 		"XAI_API_KEY", "XAI_BASE_URL",
@@ -125,6 +126,74 @@ func TestDetectProvider_OpenAIBaseURL(t *testing.T) {
 	}
 	if cfg.BaseURL != "http://localhost:11434/v1" {
 		t.Errorf("BaseURL = %q, want Ollama URL", cfg.BaseURL)
+	}
+}
+
+// TestDetectProvider_DHNTBaseURL pins the dhnt-namespaced override:
+// when DHNT_BASE_URL is set, ycode routes through it as an
+// OpenAI-compatible provider with DHNT_API_KEY as the bearer. The
+// model name passes through verbatim — even Ollama-style colon tags
+// like "qwen3.5:9b" route via DHNT (rather than triggering the
+// model-prefix heuristic) because DHNT_BASE_URL is checked first.
+func TestDetectProvider_DHNTBaseURL(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("DHNT_BASE_URL", "https://ai.dhnt.io/v1")
+	t.Setenv("DHNT_API_KEY", "eyJ-cloudbox-bearer")
+
+	cfg, err := DetectProvider("qwen3.5:9b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Kind != ProviderOpenAI {
+		t.Errorf("Kind = %v, want %v", cfg.Kind, ProviderOpenAI)
+	}
+	if cfg.BaseURL != "https://ai.dhnt.io/v1" {
+		t.Errorf("BaseURL = %q, want cloudbox URL", cfg.BaseURL)
+	}
+	if cfg.APIKey != "eyJ-cloudbox-bearer" {
+		t.Errorf("APIKey = %q, want cloudbox bearer", cfg.APIKey)
+	}
+}
+
+// TestDetectProvider_DHNTBeatsOpenAI is the load-bearing precedence
+// check: when BOTH DHNT_* and OPENAI_* are set, DHNT wins so a user's
+// real OpenAI key stays usable from other tools but ycode still
+// routes through cloudbox.
+func TestDetectProvider_DHNTBeatsOpenAI(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("DHNT_BASE_URL", "https://ai.dhnt.io/v1")
+	t.Setenv("DHNT_API_KEY", "dhnt-token")
+	t.Setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+	t.Setenv("OPENAI_API_KEY", "sk-real-openai")
+
+	cfg, err := DetectProvider("llama3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BaseURL != "https://ai.dhnt.io/v1" {
+		t.Errorf("DHNT_BASE_URL must win over OPENAI_BASE_URL; got %q", cfg.BaseURL)
+	}
+	if cfg.APIKey != "dhnt-token" {
+		t.Errorf("DHNT_API_KEY must win over OPENAI_API_KEY; got %q", cfg.APIKey)
+	}
+}
+
+// TestDetectProvider_DHNTBaseURLAlone allows an empty token — cloudbox
+// will return 401 on the first /v1 call, which is a clearer error
+// than silently falling through to a different provider.
+func TestDetectProvider_DHNTBaseURLAlone(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("DHNT_BASE_URL", "https://ai.dhnt.io/v1")
+
+	cfg, err := DetectProvider("anything")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BaseURL != "https://ai.dhnt.io/v1" {
+		t.Errorf("BaseURL = %q, want cloudbox URL", cfg.BaseURL)
+	}
+	if cfg.APIKey != "" {
+		t.Errorf("APIKey should be empty when DHNT_API_KEY unset; got %q", cfg.APIKey)
 	}
 }
 
