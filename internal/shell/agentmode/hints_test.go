@@ -180,6 +180,59 @@ func TestSuggestEmitsMetrics(t *testing.T) {
 	}
 }
 
+// TestSuggestCdBackgroundPrecedence pins the operator-precedence
+// hint: `cd X && a & b` fires (because b runs in the parent cwd),
+// while `(cd X && a &) && b` does NOT (parens scope the cd to the
+// background subshell deliberately).
+func TestSuggestCdBackgroundPrecedence(t *testing.T) {
+	cases := []struct {
+		name      string
+		command   string
+		wantFire  bool
+		wantSubID string
+	}{
+		{
+			name:      "cd then nohup then write pid file",
+			command:   `cd /repo && build && nohup ./srv >log 2>&1 & echo $! > bin/.pid && tail log`,
+			wantFire:  true,
+			wantSubID: "cd-with-background-warns-precedence",
+		},
+		{
+			name:     "cd then build && tail (no backgrounding)",
+			command:  `cd /repo && make build && tail bin/foo.log`,
+			wantFire: false,
+		},
+		{
+			name:     "background without a cd (no cwd surprise)",
+			command:  `nohup ./srv >log 2>&1 & echo $! > /tmp/pid`,
+			wantFire: false,
+		},
+		{
+			name:     "parens scope the backgrounded segment to its own subshell",
+			command:  `(cd /repo && nohup ./srv >log 2>&1 &) && tail /tmp/log`,
+			wantFire: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ResetSeen()
+			hints := Suggest(nil, tc.command)
+			var fired bool
+			for _, h := range hints {
+				if h.ID == "cd-with-background-warns-precedence" {
+					fired = true
+					if !strings.Contains(h.Message, "operator precedence") {
+						t.Fatalf("hint message should explain operator precedence: %q", h.Message)
+					}
+				}
+			}
+			if fired != tc.wantFire {
+				t.Fatalf("command %q: wantFire=%v, gotFired=%v (hints=%+v)", tc.command, tc.wantFire, fired, hints)
+			}
+		})
+	}
+}
+
 // TestSuggestNoFalseFire keeps a small negative set so future regex
 // changes don't start firing on benign input.
 func TestSuggestNoFalseFire(t *testing.T) {

@@ -4,20 +4,28 @@
 //
 // Strategies attempted in order (each is skipped when its
 // preconditions aren't met):
-//  1. as-given        — selector unchanged.
-//  2. trimmed         — whitespace stripped.
-//  3. unquoted        — outer matching quotes removed.
-//  4. js-click        — document.querySelector + element.click() via
+//  1. element-id-passthrough — when ElementID > 0 and no selector/
+//                       match_text was given, pass the original action
+//                       straight to the backend (live mode resolves
+//                       element_id natively; probe surfaces a clear
+//                       backend error instead of "0 strategies").
+//  2. as-given        — selector unchanged.
+//  3. trimmed         — whitespace stripped.
+//  4. unquoted        — outer matching quotes removed.
+//  5. js-click        — document.querySelector + element.click() via
 //                       the `evaluate` action (probe/solo).
-//  5. js-text-click   — when MatchText is set, walk visible text and
+//  6. js-text-click   — when MatchText is set, walk visible text and
 //                       click the first match (probe/solo via eval,
 //                       live via the extension's matching path).
-//  6. extract-click-by-text — when MatchText is set, run extract with
+//  7. extract-click-by-text — when MatchText is set, run extract with
 //                       goal=MatchText and click the first returned
 //                       element_id. Works in every mode.
 //
 // On total failure the wrapper enumerates each strategy + reason in
 // the hint so the caller can see exactly which paths were tried.
+// When zero strategies even applied (e.g. caller passed no selector,
+// match_text, OR element_id), the hint says so explicitly rather
+// than emitting a misleading "all 0 strategies failed —".
 
 package reliability
 
@@ -74,11 +82,21 @@ func (r *ralphWrapper) Execute(ctx context.Context, action mcpservers.BrowserAct
 	if last == nil {
 		last = &mcpservers.BrowserResult{}
 	}
-	var parts []string
-	for _, a := range failed {
-		parts = append(parts, fmt.Sprintf("%s: %s", a.name, a.fail))
+	// Distinguish "tried N strategies, all failed" from "the caller
+	// passed no clickable hint at all". The second case is the harder-
+	// to-debug one — emit a directive error instead of an enumeration
+	// that reads as a silent no-op.
+	var hint string
+	if len(failed) == 0 {
+		last.Error = "click: provide one of `selector`, `match_text`, or `element_id` (from a prior browser_extract result)"
+		hint = "ralph: 0 click strategies applied — " + last.Error
+	} else {
+		var parts []string
+		for _, a := range failed {
+			parts = append(parts, fmt.Sprintf("%s: %s", a.name, a.fail))
+		}
+		hint = fmt.Sprintf("ralph: all %d click strategies failed — %s", len(failed), strings.Join(parts, "; "))
 	}
-	hint := fmt.Sprintf("ralph: all %d click strategies failed — %s", len(failed), strings.Join(parts, "; "))
 	last.Hints = append(last.Hints, hint)
 	return last, lastErr
 }
@@ -104,6 +122,21 @@ type ralphStrategy struct {
 func ralphStrategies(inner mcpservers.Service, orig mcpservers.BrowserAction) []ralphStrategy {
 	sel := orig.Selector
 	out := []ralphStrategy{}
+
+	// element-id-passthrough — when the caller drove the click off an
+	// element_id returned by a prior browser_extract/browser_navigate,
+	// the original action already carries everything the backend needs.
+	// In live mode the Chrome extension resolves element_id via the
+	// same enumeration extract uses (see live/extension/background.js
+	// resolveTarget). In probe mode the backend currently rejects
+	// element_id-only clicks with a clear error — better than the old
+	// "all 0 strategies failed —" empty-tail message.
+	if orig.ElementID > 0 && sel == "" && orig.MatchText == "" && orig.Goal == "" {
+		out = append(out, ralphStrategy{
+			name: "element-id-passthrough",
+			run:  func(ctx context.Context) (*mcpservers.BrowserResult, error) { return inner.Execute(ctx, orig) },
+		})
+	}
 
 	if sel != "" {
 		out = append(out, ralphStrategy{

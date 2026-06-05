@@ -73,6 +73,71 @@ func TestRalphSuccessByJSClickAnnotates(t *testing.T) {
 	}
 }
 
+// TestRalphElementIDPassthrough exercises the regression where a
+// click driven by element_id alone (no selector, no match_text)
+// short-circuited with "all 0 click strategies failed — " — the
+// trailing empty-tail message that motivated the fix. The
+// pass-through strategy now reaches the backend, which resolves the
+// element_id natively in live mode.
+func TestRalphElementIDPassthrough(t *testing.T) {
+	var sawElementID int
+	inner := &fakeService{
+		name: "live",
+		execute: func(a mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
+			sawElementID = a.ElementID
+			return &mcpservers.BrowserResult{Success: true}, nil
+		},
+	}
+	r := &ralphWrapper{inner: inner}
+	res, err := r.Execute(context.Background(), mcpservers.BrowserAction{
+		Type:      mcpservers.ActionClick,
+		ElementID: 25,
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected element_id pass-through to succeed: %+v", res)
+	}
+	if sawElementID != 25 {
+		t.Fatalf("backend should have received ElementID=25, got %d", sawElementID)
+	}
+}
+
+// TestRalphNoHintRequestIsDirective pins the message shape when the
+// caller passes no selector, match_text, OR element_id — the case
+// where the old code emitted "all 0 click strategies failed —" with
+// nothing past the dash and no actionable result error.
+func TestRalphNoHintRequestIsDirective(t *testing.T) {
+	inner := &fakeService{
+		name: "live",
+		execute: func(a mcpservers.BrowserAction) (*mcpservers.BrowserResult, error) {
+			t.Fatalf("backend should not be called when no click hint is provided; got %+v", a)
+			return nil, nil
+		},
+	}
+	r := &ralphWrapper{inner: inner}
+	res, err := r.Execute(context.Background(), mcpservers.BrowserAction{
+		Type: mcpservers.ActionClick,
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if res.Success {
+		t.Fatalf("expected failure when no click hint provided")
+	}
+	if res.Error == "" || !strings.Contains(res.Error, "selector") || !strings.Contains(res.Error, "element_id") {
+		t.Fatalf("error should name the missing inputs; got %q", res.Error)
+	}
+	if len(res.Hints) == 0 {
+		t.Fatalf("expected directive hint, got none")
+	}
+	last := res.Hints[len(res.Hints)-1]
+	if !strings.Contains(last, "0 click strategies applied") {
+		t.Fatalf("hint should distinguish 'no strategies applied' from 'all failed'; got %q", last)
+	}
+}
+
 // TestRalphTextClickStrategy verifies the new MatchText-based
 // strategies. With js-text-click returning "false" (no DOM match) the
 // final extract-by-text + click-by-id strategy should succeed.

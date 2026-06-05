@@ -130,6 +130,26 @@ var Catalog = []Hint{
 		SkipOnSuccess: true,
 	},
 	{
+		// `cd X && a && b & c` parses as `(cd X && a && b) & (c)` because
+		// `&` binds looser than `&&`. The cd happens in the backgrounded
+		// subshell; the commands after `&` run in the parent shell's cwd
+		// — usually NOT the cd'd directory — and write to surprising
+		// places ("bin/.pid: No such file or directory"). Real cases that
+		// hit this: `cd /repo && build && nohup ./srv >log & echo $! > pid
+		// && tail log` (the echo + tail run in the parent cwd, not /repo).
+		//
+		// Match shape: `cd <path> &&` … then a bare `&` that's whitespace-
+		// flanked, followed by another command word. The whitespace
+		// flanking is what distinguishes the backgrounding `&` from
+		// shell redirects (`2>&1`, `>&3`), `&&`, and the closing `&)`
+		// pattern where parens already scope the cd.
+		ID:       "cd-with-background-warns-precedence",
+		Pattern:  regexp.MustCompile(`\bcd\s+\S+\s+&&.*?\s&\s+\S`),
+		Category: "shell-syntax",
+		Suggest:  "bash operator precedence: `&` is looser than `&&`, so commands AFTER the `&` run in the parent shell's cwd, not the cd'd directory. Wrap the backgrounded segment in parentheses: `(cd … && cmd &) && next`, or split into two commands. Common failure mode: `nohup foo & echo $! > bin/.pid` writes the pid file in the wrong directory.",
+		Why:      "Silent failures: the second half runs successfully but against the wrong filesystem path; debugging is painful because each piece looks fine in isolation.",
+	},
+	{
 		ID:       "rm-rf-advisory",
 		Pattern:  regexp.MustCompile(`\brm\b\s+(-rf|-fr|-r\s+-f|-f\s+-r)\b`),
 		Category: "safety",
