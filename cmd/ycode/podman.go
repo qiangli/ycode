@@ -1,825 +1,159 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strconv"
-	"strings"
-	"text/tabwriter"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/container"
+	"github.com/qiangli/ycode/internal/container/podman_embed"
 )
 
+// newPodmanCmd is a thin pass-through to the embedded upstream
+// podman binary built from the external/podman submodule. ycode does
+// NOT reimplement podman's verb surface — every verb, flag, and
+// output format upstream supports works here automatically. The
+// only sub-commands ycode owns are extensions that don't exist in
+// upstream:
+//
+//   - machine: ycode's vfkit-based VM lifecycle (upstream `podman
+//     machine` uses qemu and doesn't know about ycode's embedded
+//     vfkit/gvproxy, so this stays a ycode-managed surface).
+//   - cleanup: prune orphaned vfkit/gvproxy processes + stale
+//     sockets (ycode-host-state housekeeping, no podman parallel).
+//
+// Everything else dispatches to the upstream binary with
+// CONTAINER_HOST pointed at ycode's running engine socket, so
+// containers + images created via `ycode podman …` land in the same
+// store the rest of ycode (sandbox, agent_shell, ollama-via-podman)
+// uses.
+//
+// --use-system-binaries (or container.useSystem in settings.json)
+// makes the pass-through defer to whatever podman is on $PATH
+// instead of the embedded one. If neither the embed nor a PATH
+// podman is present, the command surfaces a clear "no podman
+// available" error.
 func newPodmanCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "podman",
+		Use:     "podman [ARGS...]",
 		Aliases: []string{"docker"},
-		Short:   "Container management (Podman-based)",
-		Long:    "Manage containers, images, and networks via the embedded Podman engine.",
-	}
+		Short:   "Container management — pass-through to the embedded Podman CLI",
+		Long: `Thin pass-through to the embedded Podman binary (built from the
+external/podman submodule). Every verb, flag, and output format
+upstream podman supports is available — ycode does not reimplement
+them. CONTAINER_HOST is auto-set to ycode's running engine socket so
+containers + images land in the same store the rest of ycode uses.
 
+ycode-specific extension commands:
+  machine   Manage the embedded vfkit VM (ycode-owned; distinct from
+            upstream` + " `podman machine` " + `which uses qemu)
+  cleanup   Remove orphaned vfkit/gvproxy processes + stale sockets
+
+For everything else, run` + " `ycode podman --help` " + `to see the upstream
+help text, or consult the official docs at https://docs.podman.io/.
+
+--use-system-binaries (or container.useSystem in settings.json)
+defers to whatever podman is on $PATH instead of the embedded one.`,
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		SilenceUsage:       true, // upstream podman owns its own usage text
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return execEmbeddedPodman(cmd.Context(), args)
+		},
+	}
 	cmd.AddCommand(
-		newPodmanPsCmd(),
-		newPodmanImagesCmd(),
-		newPodmanPullCmd(),
-		newPodmanExecCmd(),
-		newPodmanLogsCmd(),
-		newPodmanStopCmd(),
-		newPodmanRmCmd(),
-		newPodmanRunCmd(),
-		newPodmanVersionCmd(),
-		newPodmanInspectCmd(),
-		newPodmanBuildCmd(),
-		newPodmanNetworkCmd(),
 		newPodmanMachineCmd(),
 		newPodmanCleanupCmd(),
 	)
-
-	brandFlagErrors(cmd)
-
 	return cmd
 }
 
-// brandFlagErrors prepends a "this is ycode's embedded podman" header to any
-// unknown-flag / parse error so users running through the scripts/shims/podman
-// shim realize they aren't talking to upstream podman. Without this, a missing
-// flag like `-w` surfaces as a bare "unknown flag" line that's easy to
-// misattribute to the real binary.
-func brandFlagErrors(root *cobra.Command) {
-	errFn := func(cmd *cobra.Command, err error) error {
-		return fmt.Errorf("ycode podman (embedded engine, not upstream podman): %w", err)
-	}
-	root.SetFlagErrorFunc(errFn)
-	for _, sub := range root.Commands() {
-		sub.SetFlagErrorFunc(errFn)
-		for _, gsub := range sub.Commands() {
-			gsub.SetFlagErrorFunc(errFn)
-		}
-	}
-}
-
-// newEngine creates a container engine for CLI use.
-//
-// The Engine retains the context it was created with as its connection
-// context for every subsequent REST call (engine.go's connCtx). Using a
-// WithTimeout context here would cap *all* operations — including long
-// ones like `build` (~minutes) — at that timeout, so we hand it the
-// process-lifetime context.Background() and let individual commands
-// cancel via Ctrl-C / cmd.Context() if they need to.
-func newEngine() (*container.Engine, error) {
-	return container.NewEngine(context.Background(), &container.EngineConfig{
-		UseSystem: useSystemBinaries,
-	})
-}
-
-// --- ps ---
-
-func newPodmanPsCmd() *cobra.Command {
-	var all bool
-	cmd := &cobra.Command{
-		Use:   "ps",
-		Short: "List containers",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			engine, err := newEngine()
-			if err != nil {
-				return err
-			}
-
-			var filters map[string]string
-			if !all {
-				filters = map[string]string{"status": "running"}
-			}
-
-			containers, err := engine.ListContainers(cmd.Context(), filters)
-			if err != nil {
-				return err
-			}
-
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "CONTAINER ID\tIMAGE\tSTATUS\tNAMES")
-			for _, c := range containers {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
-					truncStr(c.ID, 12), c.Image, c.State, c.Name)
-			}
-			w.Flush()
-			return nil
-		},
-	}
-	cmd.Flags().BoolVarP(&all, "all", "a", false, "Show all containers (default shows just running)")
-	return cmd
-}
-
-// --- images ---
-
-func newPodmanImagesCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "images",
-		Short: "List images",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			engine, err := newEngine()
-			if err != nil {
-				return err
-			}
-
-			images, err := engine.ListImages(cmd.Context())
-			if err != nil {
-				return err
-			}
-
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "REPOSITORY\tTAG\tIMAGE ID\tSIZE")
-			for _, img := range images {
-				repo := "<none>"
-				tag := "<none>"
-				if len(img.Names) > 0 {
-					parts := strings.SplitN(img.Names[0], ":", 2)
-					repo = parts[0]
-					if len(parts) > 1 {
-						tag = parts[1]
-					}
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
-					repo, tag, truncStr(img.ID, 12), formatSize(float64(img.Size)))
-			}
-			w.Flush()
-			return nil
-		},
-	}
-}
-
-// --- pull ---
-
-func newPodmanPullCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "pull IMAGE",
-		Short: "Pull an image from a registry",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			engine, err := newEngine()
-			if err != nil {
-				return err
-			}
-			if err := engine.PullImage(cmd.Context(), args[0]); err != nil {
-				return err
-			}
-			fmt.Printf("Pulled %s\n", args[0])
-			return nil
-		},
-	}
-}
-
-// --- exec ---
-
-func newPodmanExecCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "exec CONTAINER COMMAND [ARG...]",
-		Short: "Execute a command in a running container",
-		Args:  cobra.MinimumNArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			engine, err := newEngine()
-			if err != nil {
-				return err
-			}
-			ctr := container.NewContainer(engine, args[0])
-			command := strings.Join(args[1:], " ")
-			result, err := ctr.Exec(cmd.Context(), command, "")
-			if err != nil {
-				return err
-			}
-			if result.Stdout != "" {
-				fmt.Println(result.Stdout)
-			}
-			if result.Stderr != "" {
-				fmt.Fprintln(os.Stderr, result.Stderr)
-			}
-			if result.ExitCode != 0 {
-				os.Exit(result.ExitCode)
-			}
-			return nil
-		},
-	}
-	// Pass `sh -c "..."` and other flag-shaped command args through to
-	// the container rather than letting pflag try to parse them.
-	cmd.Flags().SetInterspersed(false)
-	return cmd
-}
-
-// --- logs ---
-
-func newPodmanLogsCmd() *cobra.Command {
-	var follow bool
-	var tail string
-	cmd := &cobra.Command{
-		Use:   "logs CONTAINER",
-		Short: "Fetch the logs of a container",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			engine, err := newEngine()
-			if err != nil {
-				return err
-			}
-			logs, err := engine.ContainerLogs(cmd.Context(), args[0], follow, tail)
-			if err != nil {
-				return err
-			}
-			fmt.Print(logs)
-			return nil
-		},
-	}
-	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow log output")
-	cmd.Flags().StringVar(&tail, "tail", "", "Number of lines to show from the end of the logs")
-	return cmd
-}
-
-// --- stop ---
-
-func newPodmanStopCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "stop CONTAINER [CONTAINER...]",
-		Short: "Stop one or more running containers",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			engine, err := newEngine()
-			if err != nil {
-				return err
-			}
-			for _, id := range args {
-				ctr := container.NewContainer(engine, id)
-				if err := ctr.Stop(cmd.Context(), 10*time.Second); err != nil {
-					fmt.Fprintf(os.Stderr, "Error stopping %s: %v\n", id, err)
-				} else {
-					fmt.Println(id)
-				}
-			}
-			return nil
-		},
-	}
-}
-
-// --- rm ---
-
-func newPodmanRmCmd() *cobra.Command {
-	var force bool
-	cmd := &cobra.Command{
-		Use:   "rm CONTAINER [CONTAINER...]",
-		Short: "Remove one or more containers",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			engine, err := newEngine()
-			if err != nil {
-				return err
-			}
-			for _, id := range args {
-				ctr := container.NewContainer(engine, id)
-				if err := ctr.Remove(cmd.Context(), force); err != nil {
-					fmt.Fprintf(os.Stderr, "Error removing %s: %v\n", id, err)
-				} else {
-					fmt.Println(id)
-				}
-			}
-			return nil
-		},
-	}
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force removal of a running container")
-	return cmd
-}
-
-// --- run ---
-
-func newPodmanRunCmd() *cobra.Command {
-	var (
-		rm          bool
-		detach      bool
-		name        string
-		network     string
-		ports       []string
-		volumes     []string
-		envs        []string
-		envFiles    []string
-		privileged  bool
-		capAdd      []string
-		workdir     string
-		interactive bool
-		tty         bool
-		cgroupns    string
-	)
-	cmd := &cobra.Command{
-		Use:   "run [FLAGS] IMAGE [COMMAND] [ARG...]",
-		Short: "Run a command in a new container",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			engine, err := newEngine()
-			if err != nil {
-				return err
-			}
-
-			cfg := &container.ContainerConfig{
-				Image:   args[0],
-				Name:    name,
-				Network: network,
-				WorkDir: workdir,
-				// CLI `run` is for docker-compatible workloads (postgres,
-				// redis, etc.) that expect to start with Linux caps. The
-				// engine's "drop ALL by default" stance is the right pick
-				// for the sandbox use case but breaks ordinary images, so
-				// the CLI explicitly opts out of it. Users who want the
-				// sandbox-grade isolation can pass --cap-drop ALL — wire
-				// when --cap-drop flag is added.
-				KeepCaps:   true,
-				CapAdd:     capAdd,
-				Privileged: privileged,
-				CgroupNS:   cgroupns,
-			}
-			if (interactive || tty) && detach {
-				fmt.Fprintln(os.Stderr, "ycode podman run: -i/-t are no-ops in detach mode")
-			} else if interactive || tty {
-				fmt.Fprintln(os.Stderr, "ycode podman run: -i/-t accepted but not yet wired to a PTY; container runs without an attached terminal")
-			}
-			if len(args) > 1 {
-				cfg.Command = args[1:]
-			}
-
-			cfg.Ports, err = parsePortMappings(ports)
-			if err != nil {
-				return err
-			}
-			cfg.Mounts, err = parseMounts(volumes)
-			if err != nil {
-				return err
-			}
-			cfg.Env, err = collectEnv(envs, envFiles)
-			if err != nil {
-				return err
-			}
-
-			// Detach path: create + start + print ID + leave running. No
-			// log streaming, no wait — matches docker/podman semantics.
-			if detach {
-				ctr, err := engine.CreateContainer(cmd.Context(), cfg)
-				if err != nil {
-					return err
-				}
-				if err := ctr.Start(cmd.Context()); err != nil {
-					return err
-				}
-				fmt.Println(ctr.ID)
-				return nil
-			}
-
-			// Foreground path: stream stdout/stderr live and block until
-			// the container exits. Reuses Engine.RunOneShot — without it,
-			// the prior code path called ContainerLogs(follow=false)
-			// immediately after Start, which returned the empty buffer of
-			// not-yet-emitted bytes, then the deferred --rm tore down the
-			// still-running container. Visible as `ycode podman run` exiting
-			// in milliseconds with truncated or empty output.
-			//
-			// RunOneShot always removes the container at the end, matching
-			// the spirit of --rm. The CLI's --rm flag is a no-op here (we
-			// ignore it deliberately rather than wire a second cleanup
-			// path) — leaving a container behind from `run` (no -d) would
-			// be a worse default than docker's, where containers leak
-			// without --rm.
-			_ = rm // accepted for flag compatibility; foreground always cleans up.
-			result, err := engine.RunOneShot(cmd.Context(), cfg)
-			if result != nil {
-				if result.Stdout != "" {
-					fmt.Println(result.Stdout)
-				}
-				if result.Stderr != "" {
-					fmt.Fprintln(os.Stderr, result.Stderr)
-				}
-			}
-			if err != nil {
-				return err
-			}
-			// Propagate the container exit code so callers (Makefiles,
-			// CI scripts) see test failures as non-zero exits instead of
-			// silently passing.
-			if result != nil && result.ExitCode != 0 {
-				os.Exit(result.ExitCode)
-			}
-			return nil
-		},
-	}
-	cmd.Flags().BoolVar(&rm, "rm", false, "Automatically remove the container when it exits")
-	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "Run container in background")
-	cmd.Flags().StringVar(&name, "name", "", "Assign a name to the container")
-	cmd.Flags().StringVar(&network, "network", "", "Connect a container to a network")
-	cmd.Flags().StringSliceVarP(&ports, "publish", "p", nil, "Publish a container's port to the host (HOST:CTR[/PROTO])")
-	cmd.Flags().StringSliceVarP(&volumes, "volume", "v", nil, "Bind mount a volume (HOST:CTR[:ro])")
-	cmd.Flags().StringSliceVarP(&envs, "env", "e", nil, "Set environment variable (KEY=VALUE)")
-	cmd.Flags().StringSliceVar(&envFiles, "env-file", nil, "Read environment variables from file (KEY=VALUE per line)")
-	cmd.Flags().BoolVar(&privileged, "privileged", false, "Give extended privileges to the container (all caps, all devices, no seccomp/SELinux/AppArmor)")
-	cmd.Flags().StringSliceVar(&capAdd, "cap-add", nil, "Add Linux capability (e.g. NET_ADMIN, SYS_ADMIN). Ignored when --privileged is set.")
-	cmd.Flags().StringVarP(&workdir, "workdir", "w", "", "Working directory inside the container")
-	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Keep STDIN open (accepted for docker/podman compatibility; not yet wired)")
-	cmd.Flags().BoolVarP(&tty, "tty", "t", false, "Allocate a pseudo-TTY (accepted for docker/podman compatibility; not yet wired)")
-	cmd.Flags().StringVar(&cgroupns, "cgroupns", "", "Cgroup namespace to use: host|private|none. Default leaves the engine's default (typically private). 'host' shares the VM root cgroup — required for k3s-agent / kubelet-in-container to see cpuset and other v2 controllers.")
-	// Treat anything after the IMAGE positional as the command, so users
-	// can write `podman run alpine sh -c "echo hi"` without pflag eating
-	// the `-c` as if it were a run-level flag.
-	cmd.Flags().SetInterspersed(false)
-	return cmd
-}
-
-// --- build ---
-
-func newPodmanBuildCmd() *cobra.Command {
-	var (
-		tag        string
-		dockerfile string
-		buildArgs  []string
-	)
-	cmd := &cobra.Command{
-		Use:   "build [FLAGS] CONTEXT",
-		Short: "Build an image from a Dockerfile",
-		Long: `Build a container image using the project's existing Dockerfile.
-
-CONTEXT is the build context directory (passed to COPY / ADD instructions).
-Defaults to the current directory if omitted.`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if tag == "" {
-				return fmt.Errorf("build: -t/--tag is required")
-			}
-			ctxDir := "."
-			if len(args) == 1 {
-				ctxDir = args[0]
-			}
-			absCtx, err := filepath.Abs(ctxDir)
-			if err != nil {
-				return fmt.Errorf("resolve context: %w", err)
-			}
-			dfPath := dockerfile
-			if dfPath == "" {
-				dfPath = filepath.Join(absCtx, "Dockerfile")
-			} else if !filepath.IsAbs(dfPath) {
-				dfPath = filepath.Join(absCtx, dfPath)
-			}
-
-			argMap, err := parseBuildArgs(buildArgs)
-			if err != nil {
-				return err
-			}
-
-			engine, err := newEngine()
-			if err != nil {
-				return err
-			}
-			if err := engine.BuildImageFromContext(cmd.Context(), tag, absCtx, dfPath, argMap); err != nil {
-				return err
-			}
-			fmt.Printf("Successfully built %s\n", tag)
-			return nil
-		},
-	}
-	cmd.Flags().StringVarP(&tag, "tag", "t", "", "Name and optionally a tag in the 'name:tag' format")
-	cmd.Flags().StringVarP(&dockerfile, "file", "f", "", "Path to the Dockerfile (default: <CONTEXT>/Dockerfile)")
-	cmd.Flags().StringSliceVar(&buildArgs, "build-arg", nil, "Set build-time variable (KEY=VALUE)")
-	return cmd
-}
-
-// --- network ---
-
-func newPodmanNetworkCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "network",
-		Short: "Manage container networks",
-	}
-	cmd.AddCommand(
-		&cobra.Command{
-			Use:   "create NAME",
-			Short: "Create a bridge network",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				engine, err := newEngine()
-				if err != nil {
-					return err
-				}
-				if err := engine.CreateNetwork(cmd.Context(), args[0]); err != nil {
-					return err
-				}
-				fmt.Println(args[0])
-				return nil
-			},
-		},
-		func() *cobra.Command {
-			var filter string
-			c := &cobra.Command{
-				Use:   "ls",
-				Short: "List networks",
-				RunE: func(cmd *cobra.Command, args []string) error {
-					engine, err := newEngine()
-					if err != nil {
-						return err
-					}
-					nets, err := engine.ListNetworks(cmd.Context(), filter)
-					if err != nil {
-						return err
-					}
-					w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-					fmt.Fprintln(w, "NAME\tDRIVER")
-					for _, n := range nets {
-						fmt.Fprintf(w, "%s\t%s\n", n.Name, n.Driver)
-					}
-					w.Flush()
-					return nil
-				},
-			}
-			c.Flags().StringVar(&filter, "filter", "", "Substring match on network name")
-			return c
-		}(),
-		&cobra.Command{
-			Use:   "rm NAME [NAME...]",
-			Short: "Remove one or more networks",
-			Args:  cobra.MinimumNArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				engine, err := newEngine()
-				if err != nil {
-					return err
-				}
-				var firstErr error
-				for _, n := range args {
-					if err := engine.RemoveNetwork(cmd.Context(), n); err != nil {
-						fmt.Fprintf(os.Stderr, "Error removing %s: %v\n", n, err)
-						if firstErr == nil {
-							firstErr = err
-						}
-						continue
-					}
-					fmt.Println(n)
-				}
-				return firstErr
-			},
-		},
-	)
-	return cmd
-}
-
-// --- version ---
-
-func newPodmanVersionCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "version",
-		Short: "Display the Podman version",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			engine, err := newEngine()
-			if err != nil {
-				return err
-			}
-			v, err := engine.Version(cmd.Context())
-			if err != nil {
-				return err
-			}
-			fmt.Printf("podman version %s\n", v)
-			return nil
-		},
-	}
-}
-
-// --- inspect ---
-
-func newPodmanInspectCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "inspect CONTAINER",
-		Short: "Display detailed information on a container",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			engine, err := newEngine()
-			if err != nil {
-				return err
-			}
-			data, err := engine.InspectContainer(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			enc.Encode(json.RawMessage(data))
-			return nil
-		},
-	}
-}
-
-// --- flag parsers ---
-
-// parsePortMappings reads docker-style "HOST:CTR[/PROTO]" port specs.
-// CTR alone (no colon) maps the same port on both sides; a /udp suffix
-// switches the protocol from the default tcp.
-func parsePortMappings(specs []string) ([]container.PortMapping, error) {
-	if len(specs) == 0 {
-		return nil, nil
-	}
-	out := make([]container.PortMapping, 0, len(specs))
-	for _, s := range specs {
-		proto := "tcp"
-		if i := strings.Index(s, "/"); i >= 0 {
-			proto = s[i+1:]
-			s = s[:i]
-		}
-		hostStr, ctrStr := s, s
-		if i := strings.Index(s, ":"); i >= 0 {
-			hostStr, ctrStr = s[:i], s[i+1:]
-		}
-		host, err := strconv.ParseUint(hostStr, 10, 16)
-		if err != nil {
-			return nil, fmt.Errorf("invalid host port %q: %w", hostStr, err)
-		}
-		ctr, err := strconv.ParseUint(ctrStr, 10, 16)
-		if err != nil {
-			return nil, fmt.Errorf("invalid container port %q: %w", ctrStr, err)
-		}
-		out = append(out, container.PortMapping{
-			HostPort:      uint16(host),
-			ContainerPort: uint16(ctr),
-			Protocol:      proto,
-		})
-	}
-	return out, nil
-}
-
-// parseMounts reads docker-style "SRC:CTR[:ro]" volume specs. SRC is
-// either a host path (absolute, or relative starting with `.`) or a
-// docker-style named volume (bare name matching volumeNameRe) that gets
-// materialized under the ycode container data dir on first reference.
-func parseMounts(specs []string) ([]container.Mount, error) {
-	if len(specs) == 0 {
-		return nil, nil
-	}
-	out := make([]container.Mount, 0, len(specs))
-	for _, s := range specs {
-		parts := strings.Split(s, ":")
-		if len(parts) < 2 || len(parts) > 3 {
-			return nil, fmt.Errorf("invalid volume spec %q (want SRC:CTR[:ro])", s)
-		}
-		m := container.Mount{Source: parts[0], Target: parts[1]}
-		if len(parts) == 3 {
-			switch parts[2] {
-			case "ro":
-				m.ReadOnly = true
-			case "rw":
-				m.ReadOnly = false
-			default:
-				return nil, fmt.Errorf("invalid mount option %q (want ro or rw)", parts[2])
-			}
-		}
-		switch {
-		case isNamedVolumeSource(m.Source):
-			path, err := materializeNamedVolume(m.Source)
-			if err != nil {
-				return nil, fmt.Errorf("named volume %q: %w", m.Source, err)
-			}
-			m.Source = path
-		case !filepath.IsAbs(m.Source):
-			abs, err := filepath.Abs(m.Source)
-			if err != nil {
-				return nil, fmt.Errorf("resolve mount source %q: %w", m.Source, err)
-			}
-			m.Source = abs
-		}
-		out = append(out, m)
-	}
-	return out, nil
-}
-
-// volumeNameRe matches docker's named-volume rules: alphanumeric start,
-// then alphanumeric or _ . -. Length ≥ 2 mirrors moby/moby's validator
-// (single-character names are rejected to keep typos from silently
-// materializing one-byte volume dirs).
-var volumeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`)
-
-// isNamedVolumeSource reports whether s looks like a docker-style named
-// volume. Anything containing a path separator or starting with `.`
-// (relative-path syntax) is treated as a host path instead.
-func isNamedVolumeSource(s string) bool {
-	if strings.ContainsAny(s, `/\`) {
-		return false
-	}
-	if strings.HasPrefix(s, ".") {
-		return false
-	}
-	return volumeNameRe.MatchString(s)
-}
-
-// volumeStoreDir returns the directory under which named volumes live.
-// Mirrors service_linux.go's data-dir convention so an operator browsing
-// `~/.agents/ycode/container/` sees one tree, not two.
-func volumeStoreDir() string {
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		return filepath.Join(os.TempDir(), "ycode", "container", "volumes")
-	}
-	return filepath.Join(home, ".agents", "ycode", "container", "volumes")
-}
-
-// materializeNamedVolume ensures the named volume's backing directory
-// exists and returns its absolute path. Idempotent — repeated references
-// to the same name re-use the existing directory, so data persists across
-// container runs.
-func materializeNamedVolume(name string) (string, error) {
-	if !volumeNameRe.MatchString(name) {
-		return "", fmt.Errorf("invalid volume name %q (must match %s)", name, volumeNameRe)
-	}
-	path := filepath.Join(volumeStoreDir(), name)
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		return "", fmt.Errorf("create volume dir %s: %w", path, err)
-	}
-	return path, nil
-}
-
-// collectEnv merges -e and --env-file values into a single map. -e wins
-// on collision (matches docker / podman semantics).
-func collectEnv(envs, envFiles []string) (map[string]string, error) {
-	if len(envs) == 0 && len(envFiles) == 0 {
-		return nil, nil
-	}
-	out := map[string]string{}
-	for _, f := range envFiles {
-		if err := readEnvFile(f, out); err != nil {
-			return nil, err
-		}
-	}
-	for _, kv := range envs {
-		k, v, ok := splitKV(kv)
-		if !ok {
-			return nil, fmt.Errorf("invalid -e value %q (want KEY=VALUE)", kv)
-		}
-		out[k] = v
-	}
-	return out, nil
-}
-
-// readEnvFile parses a KEY=VALUE-per-line file, skipping blanks and #-comments.
-// Quotes around the value are not unwrapped (matches docker behavior — the
-// quotes become part of the value).
-func readEnvFile(path string, out map[string]string) error {
-	f, err := os.Open(path)
+// execEmbeddedPodman resolves the podman binary (embedded or
+// system) and execs it with the caller's args, pointed at ycode's
+// engine socket via CONTAINER_HOST. Stdin/stdout/stderr are
+// inherited so streaming output (build progress, `logs -f`,
+// interactive runs once -i/-t are wired) works as expected.
+// Propagates the child's exit code via os.Exit so callers
+// (Makefiles, CI scripts) see test failures as non-zero exits.
+func execEmbeddedPodman(ctx context.Context, args []string) error {
+	bin, err := resolvePodmanBinary()
 	if err != nil {
-		return fmt.Errorf("open env-file %s: %w", path, err)
+		return err
 	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+	cmd := buildPodmanExec(ctx, bin, container.DefaultSocketPath(), args)
+	if runErr := cmd.Run(); runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			os.Exit(exitErr.ExitCode())
 		}
-		k, v, ok := splitKV(line)
-		if !ok {
-			return fmt.Errorf("env-file %s: malformed line %q", path, line)
+		return fmt.Errorf("podman: %w", runErr)
+	}
+	return nil
+}
+
+// buildPodmanExec constructs the exec.Cmd that ships args to the
+// resolved podman binary. Split out from execEmbeddedPodman so tests
+// can assert on the resulting command shape (binary path, args,
+// CONTAINER_HOST env) without spawning a real process.
+func buildPodmanExec(ctx context.Context, bin, socket string, args []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	env := os.Environ()
+	if socket != "" {
+		env = append(env, "CONTAINER_HOST=unix://"+socket)
+	}
+	cmd.Env = env
+	return cmd
+}
+
+// resolvePodmanBinary picks the podman binary the pass-through
+// should exec. Order:
+//
+//  1. --use-system-binaries → look up "podman" on $PATH (clean
+//     error if missing — the operator asked for system mode
+//     explicitly, fall-back to embed would silently violate that).
+//  2. Embedded podman from internal/container/podman_embed —
+//     extracted into the per-user cache on first use, re-validated
+//     via sha256 on subsequent runs.
+//  3. Fall back to a system $PATH lookup when no embed was built
+//     (some dev builds skip the embed to save link time).
+//  4. Hard error with a recipe pointing at `make podman-embed`.
+func resolvePodmanBinary() (string, error) {
+	if useSystemBinaries {
+		bin, err := exec.LookPath("podman")
+		if err != nil {
+			return "", fmt.Errorf("podman not found on PATH (--use-system-binaries is set; clear it to use the embedded binary): %w", err)
 		}
-		out[k] = v
+		return bin, nil
 	}
-	return scanner.Err()
-}
-
-func splitKV(s string) (string, string, bool) {
-	i := strings.Index(s, "=")
-	if i <= 0 {
-		return "", "", false
-	}
-	return s[:i], s[i+1:], true
-}
-
-func parseBuildArgs(specs []string) (map[string]string, error) {
-	if len(specs) == 0 {
-		return nil, nil
-	}
-	out := map[string]string{}
-	for _, kv := range specs {
-		k, v, ok := splitKV(kv)
-		if !ok {
-			return nil, fmt.Errorf("invalid --build-arg %q (want KEY=VALUE)", kv)
+	if podman_embed.Available() {
+		bin, err := podman_embed.EnsurePodman(podmanCacheDir())
+		if err != nil {
+			return "", fmt.Errorf("extract embedded podman: %w", err)
 		}
-		out[k] = v
+		return bin, nil
 	}
-	return out, nil
+	if bin, err := exec.LookPath("podman"); err == nil {
+		return bin, nil
+	}
+	return "", fmt.Errorf("no embedded podman in this build and no podman on PATH — rebuild with `make podman-embed` or install upstream podman")
 }
 
-// --- helpers ---
-
-func truncStr(s string, n int) string {
-	if len(s) <= n {
-		return s
+// podmanCacheDir is where the embedded binary self-extracts on
+// first use. Per-user cache so the binary survives across ycode
+// upgrades that don't change the embed hash; sha256-validated by
+// EnsurePodman, so an upgrade with a new podman version transparently
+// re-extracts.
+func podmanCacheDir() string {
+	if dir, err := os.UserCacheDir(); err == nil {
+		return filepath.Join(dir, "ycode", "bin")
 	}
-	return s[:n]
-}
-
-func formatSize(s float64) string {
-	if s > 1e9 {
-		return fmt.Sprintf("%.1f GB", s/1e9)
-	}
-	if s > 1e6 {
-		return fmt.Sprintf("%.1f MB", s/1e6)
-	}
-	return fmt.Sprintf("%.0f B", s)
+	return filepath.Join(os.TempDir(), "ycode-bin")
 }

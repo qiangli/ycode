@@ -181,6 +181,18 @@ func defaultBinCacheDir() string {
 	return filepath.Join(os.TempDir(), "ycode-bin")
 }
 
+// DefaultSocketPath returns the Podman user socket path the engine
+// (and the embedded `podman` CLI when invoked via `ycode podman …`)
+// connects to. Probes ycode-default → upstream-default → systemd
+// runtime dir → XDG_RUNTIME_DIR → CONTAINER_HOST in order and
+// returns the first one that exists. Empty when no socket is
+// reachable — callers should fall back to a fresh machine init.
+//
+// Exported so cmd/ycode/podman.go can pass the same path into the
+// embedded podman binary via CONTAINER_HOST without duplicating
+// the discovery logic.
+func DefaultSocketPath() string { return defaultSocketPath() }
+
 // defaultSocketPath returns the default Podman user socket path.
 func defaultSocketPath() string {
 	var candidates []string
