@@ -53,7 +53,7 @@ make test            # unit tests (-short -race) with default tags
 make ci              # full GitHub Actions matrix in a Linux container (slow, definitive)
 ```
 
-**Build tags** are non-trivial — the default is `sqlite,sqlite_unlock_notify,bindata` plus `embed_runner` auto-added when `internal/inference/runner_embed/ycode-runner.gz` exists and `embed_vfkit` auto-added when `internal/container/vfkit_embed/vfkit.gz` exists. The auto-add probes are in `Makefile:27`. Bare `go build` without tags will not produce a working binary. Use the Makefile or:
+**Build tags** are non-trivial — the default is `sqlite,sqlite_unlock_notify,bindata` plus four auto-added tags, each gated on the presence of its embed `.gz`: `embed_runner` (llama.cpp inference), `embed_vfkit` (macOS podman-machine helper), `embed_podman` (podman client), `embed_gvproxy` (podman user-mode net). The auto-add probes are in the single `TAG_LIST` line near the top of the `Makefile`. Bare `go build` without tags will not produce a working binary. Use the Makefile or:
 
 ```bash
 go build -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/
