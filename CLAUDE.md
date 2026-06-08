@@ -102,6 +102,15 @@ The Makefile / scripts / Go split is enforced:
 
 Don't push test logic into bash, and don't grow shell blocks inside the Makefile.
 
+## `yc <verb>` quick reference
+
+When your bash backend routes through `ycode shell -c`, the `yc <verb>` built-ins are in-process and unshadowable. The canonical, ROI-ordered list with one-line "why use this instead of grep/find/git" rationale lives in `AGENTS.md` (§ `yc <verb>` quick reference) — see that table before reaching for `grep -rn`, `find . -name`, or `git log` on a code question. Highlights:
+
+- **Code exploration**: `yc symbols` (declarations) → `yc repomap` (orientation) → `yc search-symbols` (AST-aware substring) → `yc refs` (callers).
+- **Structured output**: `yc test --json`, `yc lsp <action> --json`, `yc run --json -- <cmd>` all emit typed envelopes instead of per-tool text formats.
+- **Memory bridge**: `yc remember` writes through to `~/.claude/projects/<project-id>/memory/` when `$CLAUDE_PROJECT_DIR` is set, so a fact saved in either tool surfaces in both. `yc recall` searches both corpora.
+- **Hints**: the agent-mode engine in `internal/shell/agentmode/` fires on stderr (and into the envelope's `hints[]` in `--json` mode) when a bash command would be better served by a `yc <verb>`. Each hint carries a `Why:` line — read it before re-running with the system tool.
+
 ## Architecture pillars
 
 Three load-bearing systems — read these directories before making non-trivial changes:
