@@ -337,7 +337,8 @@ func (s *LocalService) SendMessage(ctx context.Context, sessionID string, input 
 		toolResults := rt.ExecuteTools(ctx, result.ToolCalls, progressCh)
 		close(progressCh)
 
-		// Publish tool results.
+		// Publish tool results. Include the result body so the chat UI can
+		// render the full tool-call entry inline (tool name + args + result).
 		for _, block := range toolResults {
 			status := "completed"
 			if block.IsError {
@@ -350,6 +351,7 @@ func (s *LocalService) SendMessage(ctx context.Context, sessionID string, input 
 					"tool_use_id": block.ToolUseID,
 					"status":      status,
 					"is_error":    block.IsError,
+					"content":     block.Content,
 				}),
 			})
 		}
