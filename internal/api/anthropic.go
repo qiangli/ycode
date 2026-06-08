@@ -182,7 +182,16 @@ func (c *AnthropicClient) Send(ctx context.Context, req *Request) (<-chan *Strea
 		}
 		defer resp.Body.Close()
 
-		parser := NewSSEParser(resp.Body)
+		bodyReader, err := DecodeResponseBody(resp)
+		if err != nil {
+			errc <- fmt.Errorf("decode response: %w", err)
+			return
+		}
+		if bodyReader != resp.Body {
+			defer bodyReader.Close()
+		}
+
+		parser := NewSSEParser(bodyReader)
 		for {
 			raw, err := parser.Next()
 			if err != nil {

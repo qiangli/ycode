@@ -51,19 +51,22 @@ func (c *OpenAICompatClient) Send(ctx context.Context, req *Request) (<-chan *St
 			return
 		}
 
-		// Compress request body if beneficial.
-		compressedData, contentEncoding := CompressGzip(data)
+		// Send the request body uncompressed. Request-body gzip is a
+		// documented Anthropic extension, but is NOT part of the OpenAI
+		// API surface — cloudbox and most OpenAI-compatible gateways
+		// don't decompress incoming bodies and instead bomb with
+		// "invalid character '\\x1f' looking for beginning of value"
+		// (the gzip magic). The upload-bandwidth saving isn't worth
+		// breaking every OpenAI-compatible provider that wasn't built
+		// to handle this non-standard request encoding.
 
 		makeReq := func() (*http.Request, error) {
 			httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-				c.baseURL+"/chat/completions", bytes.NewReader(compressedData))
+				c.baseURL+"/chat/completions", bytes.NewReader(data))
 			if err != nil {
 				return nil, fmt.Errorf("create request: %w", err)
 			}
 			httpReq.Header.Set("Content-Type", "application/json")
-			if contentEncoding != "" {
-				httpReq.Header.Set("Content-Encoding", contentEncoding)
-			}
 			httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 			return httpReq, nil
 		}
@@ -75,10 +78,25 @@ func (c *OpenAICompatClient) Send(ctx context.Context, req *Request) (<-chan *St
 		}
 		defer resp.Body.Close()
 
+		// Wrap the body in a decoder driven by the response's
+		// Content-Encoding header. Works for plain SSE (local Ollama,
+		// most self-hosted), gzip-encoded SSE (some commercial
+		// gateways), and would surface a clear error for any unknown
+		// encoding rather than silently feeding raw bytes to the JSON
+		// parser.
+		bodyReader, err := DecodeResponseBody(resp)
+		if err != nil {
+			errc <- fmt.Errorf("decode response: %w", err)
+			return
+		}
+		if bodyReader != resp.Body {
+			defer bodyReader.Close()
+		}
+
 		if req.Stream {
-			c.readStream(resp.Body, events, errc)
+			c.readStream(bodyReader, events, errc)
 		} else {
-			c.readNonStream(resp.Body, events, errc)
+			c.readNonStream(bodyReader, events, errc)
 		}
 	}()
 
