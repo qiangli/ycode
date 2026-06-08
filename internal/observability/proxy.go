@@ -273,8 +273,12 @@ color:rgba(255,255,255,0.4);font-size:14px}
 	type featuredTile struct {
 		href, label, color, initial string
 	}
+	// /ycode/ hosts both the chat thread and the canvas pane in one shell
+	// (see internal/web/static/index.html). The standalone /ycode/canvas/
+	// route is still mounted for foreign agents (claude-code, opencode,
+	// codex) per cmd/ycode/manifest.go, but it no longer warrants a
+	// separate tile.
 	featured := []featuredTile{
-		{"/ycode/canvas/", "Canvas", "#4f46e5", "✦"},
 		{"/ycode/", "Chat", "#1f2328", "Y"},
 		{"/memos/", "Memos", "#10b981", "M"},
 		{"/graph/", "Graph", "#8b5cf6", "G"},

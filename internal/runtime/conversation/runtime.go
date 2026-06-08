@@ -632,13 +632,13 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 	// llm.request emitted above. The UI uses this to render the "raw
 	// response" panel under each turn.
 	r.emitEvent("llm.response", map[string]any{
-		"model":            req.Model,
-		"text":             result.TextContent,
-		"thinking":         result.ThinkingContent,
-		"tool_calls":       result.ToolCalls,
-		"stop_reason":      result.StopReason,
-		"usage":            result.Usage,
-		"duration_ms":      result.Duration.Milliseconds(),
+		"model":       req.Model,
+		"text":        result.TextContent,
+		"thinking":    result.ThinkingContent,
+		"tool_calls":  result.ToolCalls,
+		"stop_reason": result.StopReason,
+		"usage":       result.Usage,
+		"duration_ms": result.Duration.Milliseconds(),
 	})
 
 	// Cache the completed response for short-TTL reuse.

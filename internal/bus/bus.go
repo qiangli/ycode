@@ -10,12 +10,12 @@ import (
 type EventType string
 
 const (
-	EventTurnStart        EventType = "turn.start"
-	EventTextDelta        EventType = "text.delta"
-	EventThinkingDelta    EventType = "thinking.delta"
-	EventToolUseStart     EventType = "tool_use.start"
-	EventToolProgress     EventType = "tool.progress"
-	EventToolResult       EventType = "tool.result"
+	EventTurnStart     EventType = "turn.start"
+	EventTextDelta     EventType = "text.delta"
+	EventThinkingDelta EventType = "thinking.delta"
+	EventToolUseStart  EventType = "tool_use.start"
+	EventToolProgress  EventType = "tool.progress"
+	EventToolResult    EventType = "tool.result"
 
 	// LLM request / response snapshots for debugging. EventLLMRequest carries
 	// the full outbound provider payload (model, system, messages, tools,
@@ -23,8 +23,8 @@ const (
 	// response (text, thinking, tool_use blocks, stop_reason, usage) after
 	// the stream completes. Both are emitted once per turn — the chat UI
 	// renders them as expandable "raw" log entries.
-	EventLLMRequest  EventType = "llm.request"
-	EventLLMResponse EventType = "llm.response"
+	EventLLMRequest       EventType = "llm.request"
+	EventLLMResponse      EventType = "llm.response"
 	EventTurnComplete     EventType = "turn.complete"
 	EventTurnError        EventType = "turn.error"
 	EventPermissionReq    EventType = "permission.request"

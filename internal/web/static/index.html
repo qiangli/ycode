@@ -14,16 +14,34 @@
         <span id="status-badge" class="badge">connecting...</span>
       </div>
       <div class="header-right">
-        <span id="model-label" class="model-label"></span>
+        <select id="model-select" class="header-select" aria-label="Model" title="Active model">
+          <option value="">…</option>
+        </select>
+        <select id="theme-select" class="header-select" aria-label="Theme" title="Theme">
+          <option value="system">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+        <button id="canvas-toggle" class="header-btn hidden" type="button" aria-label="Toggle canvas pane" title="Toggle canvas">✦</button>
         <span id="token-count" class="token-count"></span>
       </div>
     </header>
 
-    <main id="messages" role="log" aria-live="polite">
-      <div id="welcome" class="welcome">
-        <p>Connected to ycode. Type a message to start.</p>
-      </div>
-    </main>
+    <div id="shell">
+      <main id="messages" role="log" aria-live="polite">
+        <div id="welcome" class="welcome">
+          <p>Connected to ycode. Type a message to start.</p>
+        </div>
+      </main>
+
+      <aside id="canvas-pane" class="canvas-pane collapsed" aria-label="Canvas">
+        <div class="canvas-pane-header">
+          <span class="canvas-pane-title">Canvas</span>
+          <button id="canvas-close" class="canvas-pane-close" type="button" aria-label="Close canvas">×</button>
+        </div>
+        <div id="canvas-pane-root" class="canvas-pane-root"></div>
+      </aside>
+    </div>
 
     <footer id="input-area">
       <div id="tool-progress" class="tool-progress hidden"></div>
@@ -38,6 +56,8 @@
       </form>
     </footer>
   </div>
+  <script src="canvas/a2ui.js"></script>
+  <script src="canvas/canvas.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
