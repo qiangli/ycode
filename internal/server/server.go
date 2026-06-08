@@ -202,6 +202,14 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("PUT /api/groups/{id}/sessions/{sid}", s.authMiddleware(s.handleAddSessionToGroup))
 	s.mux.HandleFunc("DELETE /api/groups/{id}/sessions/{sid}", s.authMiddleware(s.handleRemoveSessionFromGroup))
 
+	// Workspace management — list, create, and delete per-session
+	// workspace directories under ~/.agents/ycode/workspaces/<owner>/.
+	// All scoped to the bearer-token owner; the resolver enforces
+	// path-traversal safety.
+	s.mux.HandleFunc("GET /api/workspaces", s.authMiddleware(s.handleListWorkspaces))
+	s.mux.HandleFunc("POST /api/workspaces", s.authMiddleware(s.handleCreateWorkspace))
+	s.mux.HandleFunc("DELETE /api/workspaces/{id}", s.authMiddleware(s.handleDeleteWorkspace))
+
 	// WebSocket endpoint. Uses authMiddlewareWS so the upgrade can also
 	// authenticate via the ?token= query parameter, since browsers cannot
 	// set arbitrary headers on a WebSocket upgrade request.
@@ -398,12 +406,24 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
-	// Extract workDir + session_options from request body or header for
-	// multi-project / multi-tenant support.
+	// Extract workDir + session_options + workspace hints from request
+	// body or header for multi-project / multi-tenant support.
+	//
+	// Resolution priority (highest first):
+	//   1. work_dir / X-Work-Dir       — explicit absolute path
+	//   2. workspace_id                — reattach an existing per-session
+	//                                    workspace by ID
+	//   3. nothing                     — fall through to the workspace
+	//                                    policy (per-session by default)
+	//
+	// The workspace owner is the authenticated user's email when bearer
+	// auth is on, else "local" — sanitized inside the resolver. See
+	// service.WorkspaceResolver.
 	ctx := r.Context()
 	var body struct {
-		WorkDir string                  `json:"work_dir"`
-		Options *service.SessionOptions `json:"session_options,omitempty"`
+		WorkDir     string                  `json:"work_dir"`
+		WorkspaceID string                  `json:"workspace_id,omitempty"`
+		Options     *service.SessionOptions `json:"session_options,omitempty"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.WorkDir == "" {
@@ -412,6 +432,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if body.WorkDir != "" {
 		ctx = context.WithValue(ctx, service.CtxWorkDir, body.WorkDir)
 	}
+	if body.WorkspaceID != "" {
+		ctx = context.WithValue(ctx, service.CtxWorkspaceID, body.WorkspaceID)
+	}
+	ctx = context.WithValue(ctx, service.CtxWorkspaceOwner, callerOwner(r))
 	if body.Options != nil && !body.Options.IsZero() {
 		ctx = context.WithValue(ctx, service.CtxSessionOptions, *body.Options)
 	}
@@ -421,6 +445,113 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, info)
+}
+
+// callerOwner derives the workspace-owner identity for the current
+// request. Today the auth chain stamps the authenticated email on
+// the request via the actor middleware; absent that, the resolver
+// maps "" to "local" so unauthenticated dev deployments still get a
+// stable, scoped owner directory.
+func callerOwner(r *http.Request) string {
+	// Prefer the actor-middleware-stamped header if present (set by
+	// the bearer/cookie auth chains upstream of this handler).
+	if v := r.Header.Get("X-Actor-Email"); v != "" {
+		return v
+	}
+	return ""
+}
+
+// resolverOrError returns the WorkspaceResolver attached to the
+// underlying MultiService, writing a 503 to the response when no
+// resolver is configured (an embedded / single-session setup).
+func (s *Server) resolverOrError(w http.ResponseWriter) *service.WorkspaceResolver {
+	ms, ok := s.service.(*service.MultiService)
+	if !ok || ms.Resolver() == nil {
+		writeError(w, http.StatusServiceUnavailable,
+			fmt.Errorf("workspaces not enabled on this server"))
+		return nil
+	}
+	return ms.Resolver()
+}
+
+// workspaceJSON is the wire shape for workspace responses. Mirrors the
+// service.Workspace struct but flattens CreatedAt to RFC3339 so the
+// JSON consumer doesn't have to know Go's time encoding.
+type workspaceJSON struct {
+	ID        string `json:"id"`
+	Owner     string `json:"owner"`
+	Path      string `json:"path"`
+	CreatedAt string `json:"created_at"`
+}
+
+func toWorkspaceJSON(ws service.Workspace) workspaceJSON {
+	return workspaceJSON{
+		ID:        ws.ID,
+		Owner:     ws.Owner,
+		Path:      ws.Path,
+		CreatedAt: ws.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+// handleListWorkspaces returns the per-session workspaces existing on
+// disk for the calling owner. Sorted newest-first by mod time so the
+// dropdown's first entry is the most-recently-used.
+func (s *Server) handleListWorkspaces(w http.ResponseWriter, r *http.Request) {
+	resolver := s.resolverOrError(w)
+	if resolver == nil {
+		return
+	}
+	owner := callerOwner(r)
+	list, err := resolver.List(owner)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	out := make([]workspaceJSON, 0, len(list))
+	for _, ws := range list {
+		out = append(out, toWorkspaceJSON(ws))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"workspaces": out,
+		"policy":     string(resolver.Policy()),
+	})
+}
+
+// handleCreateWorkspace allocates a new empty workspace and returns
+// its descriptor. Useful for the "+ new workspace" affordance in the
+// UI when the user wants to prepare a workspace before attaching a
+// session to it.
+func (s *Server) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
+	resolver := s.resolverOrError(w)
+	if resolver == nil {
+		return
+	}
+	owner := callerOwner(r)
+	ws, err := resolver.CreateNew(owner)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, toWorkspaceJSON(ws))
+}
+
+// handleDeleteWorkspace RemoveAlls the workspace directory. Sessions
+// currently attached to the deleted workspace are NOT proactively
+// closed — the next message they send will fail (filesystem missing)
+// and the client can recover by attaching to a fresh workspace. A
+// proactive-close pass is a follow-up.
+func (s *Server) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
+	resolver := s.resolverOrError(w)
+	if resolver == nil {
+		return
+	}
+	owner := callerOwner(r)
+	id := r.PathValue("id")
+	if err := resolver.Delete(owner, id); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {

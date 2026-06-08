@@ -16,9 +16,19 @@ type ctxKey string
 
 const (
 	// CtxWorkDir is the context key for the project working directory.
+	// Explicit override — when present, bypasses the workspace policy.
 	CtxWorkDir ctxKey = "workDir"
 	// CtxSessionOptions carries per-session overrides into CreateSession.
 	CtxSessionOptions ctxKey = "sessionOptions"
+	// CtxWorkspaceID names an existing per-session workspace to
+	// reattach a new session to. Bypasses workspace allocation; the
+	// resolver verifies the dir still exists on disk.
+	CtxWorkspaceID ctxKey = "workspaceID"
+	// CtxWorkspaceOwner is the resolved bearer-token email (or "local"
+	// when unauthenticated). The resolver scopes workspaces by owner
+	// so two users on the same `ycode serve` can't see each other's
+	// directories.
+	CtxWorkspaceOwner ctxKey = "workspaceOwner"
 )
 
 // MultiService implements Service with support for multiple concurrent sessions.
@@ -40,6 +50,12 @@ type MultiService struct {
 	// builtin, config, and Ollama models are intentionally excluded from the
 	// serve-side surface.
 	cloudboxLister api.CloudboxLister
+
+	// WorkspaceResolver decides what workDir a new session attaches to
+	// when the client doesn't pin one. Nil-safe: when unset, CreateSession
+	// falls back to its pre-policy behavior (CtxWorkDir required from
+	// the caller).
+	resolver *WorkspaceResolver
 }
 
 // NewMultiService creates a multi-session service backed by a session pool.
@@ -60,6 +76,22 @@ func (m *MultiService) SetOllamaLister(lister api.OllamaLister) {
 // When set, ListModels returns ONLY the cloudbox-pooled list.
 func (m *MultiService) SetCloudboxLister(lister api.CloudboxLister) {
 	m.cloudboxLister = lister
+}
+
+// SetWorkspaceResolver installs the workspace policy resolver. When
+// set, CreateSession routes through it for callers that didn't pin a
+// work_dir explicitly. Read by Resolver() so the HTTP layer can wire
+// the /api/workspaces management surface to the same instance.
+func (m *MultiService) SetWorkspaceResolver(r *WorkspaceResolver) {
+	m.resolver = r
+}
+
+// Resolver returns the installed WorkspaceResolver, or nil. The HTTP
+// server's /api/workspaces handlers use this to surface list/create/
+// delete operations against the same on-disk tree that CreateSession
+// allocates into.
+func (m *MultiService) Resolver() *WorkspaceResolver {
+	return m.resolver
 }
 
 func (m *MultiService) Bus() bus.Bus { return m.b }
@@ -95,10 +127,28 @@ func (m *MultiService) localService(sessionID string) (*LocalService, error) {
 
 func (m *MultiService) CreateSession(ctx context.Context) (*SessionInfo, error) {
 	workDir, _ := ctx.Value(CtxWorkDir).(string)
-	if workDir == "" {
+	wsID, _ := ctx.Value(CtxWorkspaceID).(string)
+	owner, _ := ctx.Value(CtxWorkspaceOwner).(string)
+	opts, _ := ctx.Value(CtxSessionOptions).(SessionOptions)
+
+	// When a workspace resolver is installed, route the caller through
+	// it so the active --workspace-policy decides what dir the new
+	// session attaches to. Falls back to the pre-policy contract
+	// (CtxWorkDir required) when no resolver is set so embedded
+	// (non-serve) callers keep working.
+	if m.resolver != nil {
+		ws, err := m.resolver.Resolve(ResolveHint{
+			ExplicitWorkDir: workDir,
+			WorkspaceID:     wsID,
+			Owner:           owner,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("resolve workspace: %w", err)
+		}
+		workDir = ws.Path
+	} else if workDir == "" {
 		return nil, fmt.Errorf("work_dir required to create a session")
 	}
-	opts, _ := ctx.Value(CtxSessionOptions).(SessionOptions)
 
 	ms, err := m.pool.GetOrCreate(workDir)
 	if err != nil {
@@ -221,23 +271,36 @@ func (m *MultiService) SwitchModel(ctx context.Context, model string) error {
 }
 
 func (m *MultiService) GetStatus(ctx context.Context) (*StatusInfo, error) {
+	policy := ""
+	if m.resolver != nil {
+		policy = string(m.resolver.Policy())
+	}
 	sessions := m.pool.List()
 	if len(sessions) == 0 {
-		return &StatusInfo{Version: "dev"}, nil
+		return &StatusInfo{Version: "dev", WorkspacePolicy: policy}, nil
 	}
 	// Return status from the first session (caller should specify via context in future).
 	ms := m.pool.Get(sessions[0].ID)
 	if ms == nil {
-		return &StatusInfo{Version: "dev"}, nil
+		return &StatusInfo{Version: "dev", WorkspacePolicy: policy}, nil
 	}
-	return &StatusInfo{
-		Model:        ms.App.Model(),
-		ProviderKind: ms.App.ProviderKind(),
-		SessionID:    ms.ID,
-		WorkDir:      ms.WorkDir,
-		PlanMode:     ms.App.InPlanMode(),
-		Version:      ms.App.Version(),
-	}, nil
+	// Under per-session policy the seeded session is rooted at the
+	// server's startup dir, NOT a per-session sandbox — so the web UI
+	// must NOT auto-adopt it. Hide the session_id from /status under
+	// that policy; the client then POSTs /api/sessions to allocate or
+	// reattach to a real per-session workspace.
+	info := &StatusInfo{
+		Model:           ms.App.Model(),
+		ProviderKind:    ms.App.ProviderKind(),
+		PlanMode:        ms.App.InPlanMode(),
+		Version:         ms.App.Version(),
+		WorkspacePolicy: policy,
+	}
+	if policy != string(PolicyPerSession) {
+		info.SessionID = ms.ID
+		info.WorkDir = ms.WorkDir
+	}
+	return info, nil
 }
 
 func (m *MultiService) ListModels(ctx context.Context) ([]api.ModelInfo, error) {

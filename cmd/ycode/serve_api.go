@@ -19,14 +19,15 @@ import (
 )
 
 var (
-	serveNoAPI          bool
-	serveNoNATS         bool
-	serveNoAuth         bool
-	serveNoPersona      bool
-	serveToolsAllowlist []string
-	serveToolsBlocklist []string
-	serveMCPPermission  string
-	apiNATSPort         int
+	serveNoAPI           bool
+	serveNoNATS          bool
+	serveNoAuth          bool
+	serveNoPersona       bool
+	serveToolsAllowlist  []string
+	serveToolsBlocklist  []string
+	serveMCPPermission   string
+	serveWorkspacePolicy string
+	apiNATSPort          int
 )
 
 // apiStack holds the API/NATS server state for the unified serve command.
@@ -34,6 +35,7 @@ type apiStack struct {
 	app      *cli.App              // primary app (first session or server-started)
 	pool     *service.SessionPool  // session pool for multi-project support
 	multiSvc *service.MultiService // multi-session service
+	resolver *service.WorkspaceResolver
 	memBus   *bus.MemoryBus
 	svc      service.Service // the active service (LocalService or MultiService)
 	srv      *internalserver.Server
@@ -94,6 +96,23 @@ func buildAPIStack(noNATS bool) (*apiStack, error) {
 	multiSvc = service.NewMultiService(pool, memBus)
 	multiSvc.SetOllamaLister(ollamaLister)
 	multiSvc.SetCloudboxLister(cloudboxLister)
+
+	// Workspace resolver — decides what working directory a new web
+	// session attaches to when the client doesn't pin one explicitly.
+	// Default (per-session) allocates a fresh dir under
+	// ~/.agents/ycode/workspaces/<owner>/<wsID>/; cwd preserves the
+	// pre-policy behavior. The TUI / primary app keep using the
+	// server's startup cwd regardless — the policy only affects
+	// /api/sessions on the web path.
+	startupCwd, _ := os.Getwd()
+	home, _ := os.UserHomeDir()
+	workspacesRoot := filepath.Join(home, ".agents", "ycode", "workspaces")
+	resolver := service.NewWorkspaceResolver(
+		service.WorkspacePolicy(serveWorkspacePolicy),
+		workspacesRoot,
+		startupCwd,
+	)
+	multiSvc.SetWorkspaceResolver(resolver)
 
 	// Token is used by the server's authMiddleware. When --no-auth is set
 	// (or the operator otherwise wants permissive mode), we skip token

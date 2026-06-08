@@ -40,6 +40,7 @@
   const sendBtn = document.getElementById('send-btn');
   const statusBadge = document.getElementById('status-badge');
   const modelSelect = document.getElementById('model-select');
+  const workspaceSelect = document.getElementById('workspace-select');
   const themeSelect = document.getElementById('theme-select');
   const tokenCount = document.getElementById('token-count');
   const toolProgressEl = document.getElementById('tool-progress');
@@ -133,17 +134,43 @@
   }
 
   // --- Init ---
+  // The init flow takes the workspace policy into account:
+  //
+  //   policy=cwd (or unset): server seeded a primary session against
+  //     its startup CWD. /api/status returns it; we adopt as today.
+  //     The workspace dropdown shows just "cwd" and is read-only.
+  //
+  //   policy=per-session (default): status.session_id is intentionally
+  //     blank under this policy because the seeded session is rooted
+  //     at the server's startup dir, not a per-session sandbox. We
+  //     fetch /api/workspaces, reattach to the last-used one (via
+  //     localStorage) when it still exists, otherwise pick the
+  //     newest existing workspace, otherwise allocate a fresh one.
+  //
+  //   policy=loom: TBD — wired in a follow-up task. The dropdown
+  //     surfaces the policy so the user understands the workspace
+  //     model their session is operating under.
+  const WORKSPACE_KEY = 'ycode.workspaceID';
+  let workspacePolicy = '';
+
   async function init() {
     initTheme();
     initCanvas();
 
     try {
       const status = await apiGet('/api/status');
-      sessionID = status.session_id;
+      workspacePolicy = status.workspace_policy || '';
 
-      if (!sessionID) {
-        const sess = await apiPost('/api/sessions', {});
-        sessionID = sess.id;
+      if (workspacePolicy === 'per-session') {
+        await initWorkspaceSelect_PerSession();
+      } else {
+        // cwd / loom / unset — preserve today's auto-adopt-seeded shape.
+        sessionID = status.session_id;
+        if (!sessionID) {
+          const sess = await apiPost('/api/sessions', {});
+          sessionID = sess.id;
+        }
+        await initWorkspaceSelect_Static(status.work_dir || '');
       }
 
       // Populate model dropdown after we know the active model.
@@ -153,6 +180,234 @@
     } catch (err) {
       setStatus('error', 'Failed to connect: ' + err.message);
     }
+  }
+
+  // initWorkspaceSelect_PerSession lists the user's workspaces, picks
+  // one (last-used > newest existing > freshly allocated), and creates
+  // a session attached to it.
+  async function initWorkspaceSelect_PerSession() {
+    let list = [];
+    try {
+      const resp = await apiGet('/api/workspaces');
+      list = (resp && resp.workspaces) || [];
+    } catch (e) {
+      console.warn('/api/workspaces failed', e);
+    }
+
+    const stored = (function () {
+      try { return localStorage.getItem(WORKSPACE_KEY) || ''; } catch (e) { return ''; }
+    })();
+
+    let pickID = '';
+    if (stored && list.some(function (w) { return w.id === stored; })) {
+      pickID = stored;
+    } else if (list.length > 0) {
+      pickID = list[0].id; // newest first per server-side sort
+    }
+
+    // Create a session attached to pickID (or freshly allocated when
+    // pickID is empty).
+    const body = pickID ? { workspace_id: pickID } : {};
+    const sess = await apiPost('/api/sessions', body);
+    sessionID = sess.id;
+    const activeWorkspace = sess.work_dir || '';
+    // The server may have allocated a fresh workspace — refresh the
+    // list so the dropdown sees it.
+    if (!pickID) {
+      try {
+        const refreshed = await apiGet('/api/workspaces');
+        list = (refreshed && refreshed.workspaces) || [];
+      } catch (e) { /* keep stale list */ }
+    }
+    // Persist the chosen workspace for the next page load.
+    const chosenID = inferWorkspaceID(activeWorkspace, list, pickID);
+    try { localStorage.setItem(WORKSPACE_KEY, chosenID); } catch (e) {}
+
+    renderWorkspaceSelect(list, chosenID);
+  }
+
+  // initWorkspaceSelect_Static is the cwd/loom path — the workspace is
+  // pinned by the server, no per-session list. We still render the
+  // dropdown for visibility but it has just one entry.
+  async function initWorkspaceSelect_Static(workDir) {
+    workspaceSelect.innerHTML = '';
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = workspacePolicy ? (workspacePolicy + ': ' + (workDir || '?')) : (workDir || '(no workspace)');
+    workspaceSelect.appendChild(opt);
+    workspaceSelect.disabled = true;
+    workspaceSelect.title = 'Workspace policy: ' + (workspacePolicy || 'cwd') + ' — pinned by server';
+  }
+
+  // inferWorkspaceID derives the workspace id from the server's session
+  // info. The session response carries work_dir; we match it against
+  // the listed workspaces to find the id. Fallback to pickID (when we
+  // reattached) or the list's first id.
+  function inferWorkspaceID(workDir, list, pickID) {
+    if (pickID) return pickID;
+    if (workDir) {
+      for (const w of list) {
+        if (w.path === workDir) return w.id;
+      }
+    }
+    return list.length > 0 ? list[0].id : '';
+  }
+
+  function renderWorkspaceSelect(list, activeID) {
+    workspaceSelect.innerHTML = '';
+    workspaceSelect.disabled = false;
+    for (const w of list) {
+      const opt = document.createElement('option');
+      opt.value = w.id;
+      opt.textContent = shortWorkspaceLabel(w);
+      opt.title = w.path;
+      if (w.id === activeID) opt.selected = true;
+      workspaceSelect.appendChild(opt);
+    }
+    // Sentinel rows for "new" and "manage" — handled in the change
+    // listener via the special-prefix values "+new" / "+manage".
+    const sep = document.createElement('option');
+    sep.disabled = true;
+    sep.textContent = '──────────';
+    workspaceSelect.appendChild(sep);
+    const newOpt = document.createElement('option');
+    newOpt.value = '+new';
+    newOpt.textContent = '+ New workspace';
+    workspaceSelect.appendChild(newOpt);
+    const manageOpt = document.createElement('option');
+    manageOpt.value = '+manage';
+    manageOpt.textContent = 'Manage workspaces…';
+    workspaceSelect.appendChild(manageOpt);
+
+    workspaceSelect.dataset.previous = activeID;
+    workspaceSelect.onchange = onWorkspaceSelectChange;
+  }
+
+  function shortWorkspaceLabel(w) {
+    // The id is timestamp-prefix-randhex; show just the date + time
+    // portion + last 4 chars of the random so the dropdown stays
+    // narrow but the entries remain distinguishable.
+    const id = w.id || '';
+    const m = id.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-([0-9a-f]+)$/);
+    if (m) {
+      return m[2] + '/' + m[3] + ' ' + m[4] + ':' + m[5] + '  ' + m[7].slice(-4);
+    }
+    return id || '(workspace)';
+  }
+
+  async function onWorkspaceSelectChange() {
+    const next = workspaceSelect.value;
+    if (next === '+new') {
+      await switchToNewWorkspace();
+      return;
+    }
+    if (next === '+manage') {
+      // Revert the visible selection back to the previous, since
+      // "manage" isn't an actual workspace.
+      const prev = workspaceSelect.dataset.previous || '';
+      if (prev) workspaceSelect.value = prev;
+      showManageModal();
+      return;
+    }
+    // Real workspace pick: switch by reloading the page with the new
+    // selection stored. Simpler than tearing down the live WebSocket
+    // and reinitializing state in-place; the page is cheap to rebuild.
+    try { localStorage.setItem(WORKSPACE_KEY, next); } catch (e) {}
+    window.location.reload();
+  }
+
+  async function switchToNewWorkspace() {
+    try {
+      const ws = await apiPost('/api/workspaces', {});
+      if (ws && ws.id) {
+        try { localStorage.setItem(WORKSPACE_KEY, ws.id); } catch (e) {}
+        window.location.reload();
+      }
+    } catch (e) {
+      console.error('create workspace failed', e);
+      const prev = workspaceSelect.dataset.previous || '';
+      if (prev) workspaceSelect.value = prev;
+    }
+  }
+
+  // --- Manage workspaces modal -------------------------------------------
+  let manageModal = null;
+
+  async function showManageModal() {
+    if (!manageModal) {
+      manageModal = document.createElement('div');
+      manageModal.className = 'prompt-modal';
+      manageModal.innerHTML =
+        '<div class="prompt-modal-backdrop"></div>' +
+        '<div class="prompt-modal-card">' +
+        '<div class="prompt-modal-header">' +
+        '<span>Workspaces</span>' +
+        '<button class="prompt-modal-close" type="button" aria-label="Close">×</button>' +
+        '</div>' +
+        '<div class="prompt-modal-body manage-list"></div>' +
+        '</div>';
+      const close = function () { manageModal.classList.add('hidden'); };
+      manageModal.querySelector('.prompt-modal-backdrop').addEventListener('click', close);
+      manageModal.querySelector('.prompt-modal-close').addEventListener('click', close);
+      document.body.appendChild(manageModal);
+    }
+    const listEl = manageModal.querySelector('.manage-list');
+    listEl.textContent = 'Loading…';
+    manageModal.classList.remove('hidden');
+    let list = [];
+    try {
+      const resp = await apiGet('/api/workspaces');
+      list = (resp && resp.workspaces) || [];
+    } catch (e) {
+      listEl.textContent = 'Failed: ' + e.message;
+      return;
+    }
+    listEl.innerHTML = '';
+    if (list.length === 0) {
+      listEl.textContent = '(no workspaces yet)';
+      return;
+    }
+    const activeID = (function () {
+      try { return localStorage.getItem(WORKSPACE_KEY) || ''; } catch (e) { return ''; }
+    })();
+    for (const w of list) {
+      const row = document.createElement('div');
+      row.className = 'manage-row';
+      const isActive = w.id === activeID;
+      row.innerHTML =
+        '<div class="manage-info">' +
+        '<div class="manage-id">' + escapeHtml(shortWorkspaceLabel(w)) +
+        (isActive ? ' <span class="manage-active">active</span>' : '') +
+        '</div>' +
+        '<div class="manage-path">' + escapeHtml(w.path) + '</div>' +
+        '</div>' +
+        '<button class="manage-delete" type="button" data-id="' + escapeHtml(w.id) + '">Delete</button>';
+      row.querySelector('.manage-delete').addEventListener('click', async function () {
+        if (!confirm('Delete workspace and all its files?\n' + w.path)) return;
+        try {
+          await apiDelete('/api/workspaces/' + encodeURIComponent(w.id));
+          // If we deleted the active workspace, clear localStorage so
+          // next reload picks fresh.
+          if (w.id === activeID) {
+            try { localStorage.removeItem(WORKSPACE_KEY); } catch (e) {}
+          }
+          // Refresh the modal in place.
+          showManageModal();
+        } catch (e) {
+          alert('delete failed: ' + e.message);
+        }
+      });
+      listEl.appendChild(row);
+    }
+  }
+
+  async function apiDelete(path) {
+    const resp = await fetch(API_BASE + path, {
+      method: 'DELETE',
+      headers: apiHeaders(),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    return resp.json();
   }
 
   // --- Model dropdown -----------------------------------------------------

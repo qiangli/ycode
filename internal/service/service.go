@@ -56,6 +56,15 @@ type StatusInfo struct {
 	WorkDir      string `json:"work_dir,omitempty"`
 	PlanMode     bool   `json:"plan_mode"`
 	Version      string `json:"version"`
+
+	// WorkspacePolicy is the active --workspace-policy setting on the
+	// server. The web UI reads this to decide whether to auto-adopt
+	// the seeded session_id (safe under cwd policy; unsafe under
+	// per-session because the seeded session is rooted at the
+	// server's startup dir, not a per-session sandbox). Empty when
+	// the service backend isn't wired to a resolver (e.g. embedded
+	// /single-session callers).
+	WorkspacePolicy string `json:"workspace_policy,omitempty"`
 }
 
 // Service is the backend contract shared by all transports

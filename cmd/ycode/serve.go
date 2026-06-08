@@ -853,6 +853,15 @@ func detachServer(cfg *config.ObservabilityConfig, dataDir string) error {
 	if serveNoNATS {
 		args = append(args, "--no-nats")
 	}
+	if serveNoAuth {
+		args = append(args, "--no-auth")
+	}
+	if serveNoPersona {
+		args = append(args, "--no-persona")
+	}
+	if serveWorkspacePolicy != "" {
+		args = append(args, "--workspace-policy", serveWorkspacePolicy)
+	}
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -1262,6 +1271,7 @@ func init() {
 	serveCmd.Flags().StringSliceVar(&serveToolsAllowlist, "tools-allowlist", nil, "Register only these built-in tool names (process-wide; mutually exclusive with --tools-blocklist)")
 	serveCmd.Flags().StringSliceVar(&serveToolsBlocklist, "tools-blocklist", nil, "Register every built-in tool except these (process-wide; ignored when --tools-allowlist is set)")
 	serveCmd.Flags().StringVar(&serveMCPPermission, "mcp-permission", "danger-full-access", "Server-side MCP permission ceiling: read-only | workspace-write | danger-full-access")
+	serveCmd.Flags().StringVar(&serveWorkspacePolicy, "workspace-policy", "per-session", "Web-session workspace policy: per-session (default; allocates ~/.agents/ycode/workspaces/<owner>/<id>/ per new session), cwd (server's startup dir; single-user dev), loom (opt-in git lease).")
 	_ = serveCmd.Flags().MarkHidden("auto")
 	serveCmd.Flags().IntVar(&apiNATSPort, "nats-port", 4222, "Port for the embedded NATS server")
 

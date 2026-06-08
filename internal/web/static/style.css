@@ -465,6 +465,67 @@ header {
   word-break: break-word;
 }
 
+/* --- Manage-workspaces modal rows ------------------------------------- */
+.manage-list {
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.manage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+}
+.manage-info { flex: 1; min-width: 0; }
+.manage-id {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.manage-active {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--success);
+  border: 1px solid var(--success);
+  background: rgba(63, 185, 80, 0.08);
+}
+.manage-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manage-delete {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+}
+.manage-delete:hover {
+  color: var(--error);
+  border-color: var(--error);
+  background: rgba(248, 81, 73, 0.08);
+}
+
 /* Tool progress */
 .tool-item {
   display: flex;
