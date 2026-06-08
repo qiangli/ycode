@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // DefaultCloudboxURL is the OpenAI-compatible gateway base URL for the
@@ -46,7 +48,13 @@ func NewCloudboxLister(baseURL, bearerToken string, hc *http.Client) CloudboxLis
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 	if hc == nil {
-		hc = &http.Client{Timeout: 5 * time.Second}
+		// Wrap with otelhttp so the model-list call also stamps
+		// `traceparent` on outbound — keeps the model picker path
+		// observable end-to-end via the same trace fabric as chat.
+		hc = &http.Client{
+			Timeout:   5 * time.Second,
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+		}
 	}
 
 	return func(ctx context.Context) []ModelInfo {

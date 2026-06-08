@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	otellog "go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -193,6 +194,16 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 		p.shutdownFuncs = append(p.shutdownFuncs, c)
 	}
 	otel.SetTracerProvider(p.TracerProvider)
+
+	// W3C trace-context propagator is the wire format for the dhnt
+	// cross-process trace fabric (ycode → cloudbox-hub → outpost →
+	// cooperative apps). Setting it globally is what makes the
+	// otelhttp transport in api/openai_compat.go + api/cloudbox.go
+	// stamp `traceparent` on outbound LLM HTTP calls without each
+	// caller having to thread a propagator through. Composite with
+	// Baggage is intentionally avoided — baggage values would leak
+	// through the matrix tunnel as cookie-like attributes.
+	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	// --- Metric provider ---
 	var metricReaders []sdkmetric.Reader

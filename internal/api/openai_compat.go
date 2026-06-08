@@ -8,25 +8,35 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // OpenAICompatClient implements Provider for OpenAI-compatible APIs
 // (OpenAI, xAI/Grok, DashScope/Qwen, Moonshot/Kimi, etc.).
 type OpenAICompatClient struct {
-	apiKey  string
-	baseURL string
-	kind    ProviderKind
+	apiKey     string
+	baseURL    string
+	kind       ProviderKind
+	httpClient *http.Client
 }
 
 // NewOpenAICompatClient creates an OpenAI-compatible client.
+//
+// The returned client uses an http.Client whose Transport is wrapped
+// with otelhttp.NewTransport. This auto-injects W3C `traceparent` on
+// every outbound request and creates a child HTTP span linked to the
+// parent ycode.api.call span — making the cloudbox / pooled-LLM hop
+// the first visible node in the cross-process trace fabric.
 func NewOpenAICompatClient(apiKey, baseURL string) *OpenAICompatClient {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
 	return &OpenAICompatClient{
-		apiKey:  apiKey,
-		baseURL: strings.TrimRight(baseURL, "/"),
-		kind:    ProviderOpenAI,
+		apiKey:     apiKey,
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		kind:       ProviderOpenAI,
+		httpClient: &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)},
 	}
 }
 
@@ -71,7 +81,7 @@ func (c *OpenAICompatClient) Send(ctx context.Context, req *Request) (<-chan *St
 			return httpReq, nil
 		}
 
-		resp, err := doWithRetry(ctx, http.DefaultClient, makeReq)
+		resp, err := doWithRetry(ctx, c.httpClient, makeReq)
 		if err != nil {
 			errc <- err
 			return
