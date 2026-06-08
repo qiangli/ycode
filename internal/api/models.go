@@ -12,7 +12,7 @@ type ModelInfo struct {
 	ID       string `json:"id"`                // full model ID (e.g. "claude-opus-4-6-20250415", "llama3.2:3b")
 	Alias    string `json:"alias,omitempty"`   // short alias if any (e.g. "opus")
 	Provider string `json:"provider"`          // provider name (e.g. "anthropic", "ollama")
-	Source   string `json:"source"`            // "builtin", "config", "env", "ollama"
+	Source   string `json:"source"`            // "builtin", "config", "env", "ollama", "cloudbox"
 	Size     string `json:"size,omitempty"`    // human-readable size (Ollama models only)
 	Current  bool   `json:"current,omitempty"` // true if this is the active model
 }
@@ -86,15 +86,17 @@ var envKeyModels = []struct {
 	}},
 }
 
-// DiscoverModels aggregates all available models from four sources:
+// DiscoverModels aggregates all available models from five sources:
 //  1. Built-in aliases (hardcoded defaults)
 //  2. Config file aliases (user-defined in settings.json)
 //  3. Env-detected models (API keys present in environment)
 //  4. Ollama local models (dynamically queried via ollamaLister callback)
+//  5. Cloudbox-pooled models (dynamically queried via cloudboxLister callback)
 //
 // The configAliases parameter should be config.Aliases (may be nil).
-// The ollamaLister parameter is optional; pass nil to skip Ollama discovery.
-func DiscoverModels(ctx context.Context, configAliases map[string]string, ollamaLister OllamaLister) []ModelInfo {
+// The ollamaLister and cloudboxLister parameters are optional; pass nil to
+// skip the respective source.
+func DiscoverModels(ctx context.Context, configAliases map[string]string, ollamaLister OllamaLister, cloudboxLister CloudboxLister) []ModelInfo {
 	seen := make(map[string]bool) // track model IDs to avoid duplicates
 	var models []ModelInfo
 
@@ -126,28 +128,7 @@ func DiscoverModels(ctx context.Context, configAliases map[string]string, ollama
 	}
 
 	// 3. Env-detected models.
-	envSeen := make(map[string]bool) // avoid duplicate providers (GOOGLE_API_KEY and GEMINI_API_KEY)
-	for _, entry := range envKeyModels {
-		if os.Getenv(entry.envKey) == "" {
-			continue
-		}
-		provKey := entry.provider
-		if envSeen[provKey] {
-			continue
-		}
-		envSeen[provKey] = true
-		for _, modelID := range entry.models {
-			if seen[modelID] {
-				continue
-			}
-			models = append(models, ModelInfo{
-				ID:       modelID,
-				Provider: entry.provider,
-				Source:   "env",
-			})
-			seen[modelID] = true
-		}
-	}
+	models = appendEnvModels(models, seen)
 
 	// 4. Ollama local models.
 	if ollamaLister != nil {
@@ -160,6 +141,82 @@ func DiscoverModels(ctx context.Context, configAliases map[string]string, ollama
 		}
 	}
 
+	// 5. Cloudbox-pooled models.
+	if cloudboxLister != nil {
+		for _, cm := range cloudboxLister(ctx) {
+			if seen[cm.ID] {
+				continue
+			}
+			models = append(models, cm)
+			seen[cm.ID] = true
+		}
+	}
+
+	return models
+}
+
+// DiscoverCloudboxOnly returns only the cloudbox-pooled models. Used by
+// `ycode serve`'s /api/models endpoint where cloudbox is the sole source.
+// Returns an empty slice (not nil) when the lister is nil or returns nothing.
+func DiscoverCloudboxOnly(ctx context.Context, cloudboxLister CloudboxLister) []ModelInfo {
+	if cloudboxLister == nil {
+		return []ModelInfo{}
+	}
+	models := cloudboxLister(ctx)
+	if models == nil {
+		return []ModelInfo{}
+	}
+	return models
+}
+
+// DiscoverEnvAndCloudbox returns env-detected flagship models merged with
+// cloudbox-pooled models, deduped by ID. Used by the TUI /model picker:
+// env (local) + cloudbox, intentionally excluding built-in aliases, config
+// aliases, and the local Ollama daemon.
+func DiscoverEnvAndCloudbox(ctx context.Context, cloudboxLister CloudboxLister) []ModelInfo {
+	seen := make(map[string]bool)
+	var models []ModelInfo
+
+	models = appendEnvModels(models, seen)
+
+	if cloudboxLister != nil {
+		for _, cm := range cloudboxLister(ctx) {
+			if seen[cm.ID] {
+				continue
+			}
+			models = append(models, cm)
+			seen[cm.ID] = true
+		}
+	}
+
+	return models
+}
+
+// appendEnvModels walks envKeyModels and appends any flagship models whose
+// API key is set in the environment, deduping via the shared `seen` map.
+// It returns the (possibly extended) slice.
+func appendEnvModels(models []ModelInfo, seen map[string]bool) []ModelInfo {
+	envSeen := make(map[string]bool) // avoid duplicate providers (GOOGLE_API_KEY and GEMINI_API_KEY)
+	for _, entry := range envKeyModels {
+		if os.Getenv(entry.envKey) == "" {
+			continue
+		}
+		if envSeen[entry.provider] {
+			continue
+		}
+		envSeen[entry.provider] = true
+		for _, modelID := range entry.models {
+			if seen[modelID] {
+				continue
+			}
+			models = append(models, ModelInfo{
+				ID:       modelID,
+				Provider: entry.provider,
+				Source:   "env",
+			})
+			seen[modelID] = true
+		}
+	}
 	return models
 }
 

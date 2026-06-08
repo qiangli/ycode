@@ -68,6 +68,11 @@ type RuntimeDeps struct {
 	// sources. May be nil — DiscoverModels treats nil as "skip Ollama".
 	OllamaLister api.OllamaLister
 
+	// CloudboxLister is the callback used by /model (no-args) to surface
+	// cloudbox-pooled models alongside the other sources. May be nil —
+	// DiscoverModels treats nil as "skip cloudbox".
+	CloudboxLister api.CloudboxLister
+
 	// RetryTurn removes the last turn and returns the last user message for re-execution.
 	RetryTurn func() (string, error)
 
@@ -229,7 +234,7 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			if deps.Config != nil {
 				aliases = deps.Config.Aliases
 			}
-			models := api.DiscoverModels(ctx, aliases, deps.OllamaLister)
+			models := api.DiscoverModels(ctx, aliases, deps.OllamaLister, deps.CloudboxLister)
 
 			var b strings.Builder
 			fmt.Fprintf(&b, "Model: %s (%s)\n", current, provider)
@@ -243,6 +248,7 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 				{"config", "Config"},
 				{"env", "Env (from *_API_KEY)"},
 				{"ollama", "Ollama (local)"},
+				{"cloudbox", "Cloudbox (pooled)"},
 			}
 			for _, l := range labels {
 				list := grouped[l.source]

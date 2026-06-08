@@ -113,6 +113,9 @@ type App struct {
 	// Ollama model lister for model discovery (optional).
 	ollamaLister api.OllamaLister
 
+	// Cloudbox model lister for the cloudbox-pooled gateway (optional).
+	cloudboxLister api.CloudboxLister
+
 	// Inference router for Tier 2 tool pre-activation and model selection.
 	inferenceRouter *routing.Router
 
@@ -151,6 +154,7 @@ type AppOptions struct {
 	MemexGraph      *memexgraph.Graph
 	ConvOTEL        *conversation.OTELConfig
 	OllamaLister    api.OllamaLister
+	CloudboxLister  api.CloudboxLister
 	AgentDefsDir    string // directory containing custom agent YAML definitions
 	InferenceRouter *routing.Router
 	MemoryManager   *memory.Manager
@@ -226,6 +230,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		sessionStart:    time.Now(),
 		convOTEL:        o.ConvOTEL,
 		ollamaLister:    o.OllamaLister,
+		cloudboxLister:  o.CloudboxLister,
 		inferenceRouter: o.InferenceRouter,
 		memoryManager:   o.MemoryManager,
 		laneScheduler:   lanes.NewScheduler(),
@@ -254,22 +259,23 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 	// Set up command registry.
 	cmdRegistry := commands.NewRegistry()
 	commands.RegisterBuiltins(cmdRegistry, &commands.RuntimeDeps{
-		SessionID:     sess.ID,
-		MessageCount:  sess.MessageCount,
-		Model:         func() string { return app.config.Model },
-		ProviderKind:  func() string { return app.providerKind },
-		CostSummary:   func() string { return "Cost tracking not yet available" },
-		Version:       o.Version,
-		WorkDir:       o.WorkDir,
-		Config:        cfg,
-		ConfigDirs:    o.ConfigDirs,
-		MemoryDir:     o.MemoryDir,
-		Session:       sess,
-		Provider:      app.provider,
-		ModelSwitcher: app.SwitchModel,
-		OllamaLister:  app.ollamaLister,
-		RetryTurn:     app.RetryTurn,
-		RevertFiles:   app.RevertFiles,
+		SessionID:      sess.ID,
+		MessageCount:   sess.MessageCount,
+		Model:          func() string { return app.config.Model },
+		ProviderKind:   func() string { return app.providerKind },
+		CostSummary:    func() string { return "Cost tracking not yet available" },
+		Version:        o.Version,
+		WorkDir:        o.WorkDir,
+		Config:         cfg,
+		ConfigDirs:     o.ConfigDirs,
+		MemoryDir:      o.MemoryDir,
+		Session:        sess,
+		Provider:       app.provider,
+		ModelSwitcher:  app.SwitchModel,
+		OllamaLister:   app.ollamaLister,
+		CloudboxLister: app.cloudboxLister,
+		RetryTurn:      app.RetryTurn,
+		RevertFiles:    app.RevertFiles,
 		TrackUsage: func(inputTokens, outputTokens, cacheCreate, cacheRead int) {
 			app.usageTracker.Add(inputTokens, outputTokens, cacheCreate, cacheRead)
 			if app.usageFunc != nil {

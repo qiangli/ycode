@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/cli"
 	"github.com/qiangli/ycode/internal/inference"
@@ -53,6 +54,11 @@ func buildAPIStack(noNATS bool) (*apiStack, error) {
 
 	memBus := bus.NewMemoryBus()
 	ollamaLister := inference.NewOllamaLister()
+	cloudboxLister := api.NewCloudboxLister(
+		os.Getenv("DHNT_BASE_URL"),
+		os.Getenv("DHNT_API_KEY"),
+		nil,
+	)
 
 	// The remote permission prompter routes elevated-tool checks over the bus
 	// to whichever client is attached to the session (web UI, VS Code
@@ -87,6 +93,7 @@ func buildAPIStack(noNATS bool) (*apiStack, error) {
 	// Create the multi-session service.
 	multiSvc = service.NewMultiService(pool, memBus)
 	multiSvc.SetOllamaLister(ollamaLister)
+	multiSvc.SetCloudboxLister(cloudboxLister)
 
 	// Token is used by the server's authMiddleware. When --no-auth is set
 	// (or the operator otherwise wants permissive mode), we skip token

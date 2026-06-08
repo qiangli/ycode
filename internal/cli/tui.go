@@ -468,12 +468,9 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Handle built-in actions.
 					switch name {
 					case "Switch Model":
-						var models []api.ModelInfo
-						if m.cl != nil {
-							models, _ = m.cl.ListModels(context.Background())
-						} else {
-							models = api.DiscoverModels(context.Background(), m.app.config.Aliases, m.app.ollamaLister)
-						}
+						// Env-detected (local) + cloudbox-pooled — see the
+						// /model handler below for the full rationale.
+						models := api.DiscoverEnvAndCloudbox(context.Background(), m.app.cloudboxLister)
 						m.modelPicker.open(m.app.Model(), models)
 					case "Toggle Mode":
 						return m, m.toggleMode()
@@ -1432,20 +1429,24 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 	// case-insensitive and tolerant of a trailing space (left over from
 	// Tab-completion which appends " ").
 	//
+	// Discovery scope is intentionally narrow: env-detected flagship
+	// models (the local *_API_KEY signals) merged with the cloudbox-
+	// pooled gateway. Built-in aliases, config aliases, and the local
+	// Ollama daemon are intentionally excluded — the picker should
+	// reflect what the user can actually route to right now.
+	//
+	// Thin-client mode and direct mode behave the same here: env and
+	// cloudbox are both reachable from the TUI process regardless of
+	// whether a remote serve is attached, and the serve-side ListModels
+	// is cloudbox-only anyway, so bouncing through it adds nothing.
+	//
 	// IMPORTANT: this runs on the Bubble Tea Update goroutine, so the
-	// model lookup MUST NOT block. Cap the entire fetch at 5 seconds —
-	// if Ollama or the remote server is slow, fall back to whatever
-	// DiscoverModels already produced (builtin + config + env are
-	// in-process and always available).
+	// model lookup MUST NOT block. The cloudbox lister already caps its
+	// own HTTP call at 5s.
 	if strings.EqualFold(strings.TrimSpace(text), "/model") {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		var models []api.ModelInfo
-		if m.cl != nil {
-			models, _ = m.cl.ListModels(ctx)
-		} else {
-			models = api.DiscoverModels(ctx, m.app.config.Aliases, m.app.ollamaLister)
-		}
+		models := api.DiscoverEnvAndCloudbox(ctx, m.app.cloudboxLister)
 		m.modelPicker.open(m.app.Model(), models)
 		return func() tea.Msg { return repaintMsg{} }
 	}

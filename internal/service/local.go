@@ -27,6 +27,11 @@ type LocalService struct {
 	// OllamaLister queries locally available Ollama models (optional).
 	ollamaLister api.OllamaLister
 
+	// CloudboxLister queries the cloudbox-pooled /v1/models gateway (optional).
+	// When set, ListModels returns ONLY cloudbox-pooled models — see the
+	// MultiService field comment for why serve is cloudbox-only.
+	cloudboxLister api.CloudboxLister
+
 	// Per-session turn cancellation.
 	cancelMu sync.Mutex
 	cancels  map[string]context.CancelFunc
@@ -460,13 +465,19 @@ func (s *LocalService) GetStatus(ctx context.Context) (*StatusInfo, error) {
 }
 
 func (s *LocalService) ListModels(ctx context.Context) ([]api.ModelInfo, error) {
-	aliases := s.app.Config().Aliases
-	return api.DiscoverModels(ctx, aliases, s.ollamaLister), nil
+	// Cloudbox-only — same policy as MultiService.ListModels.
+	return api.DiscoverCloudboxOnly(ctx, s.cloudboxLister), nil
 }
 
 // SetOllamaLister sets the callback for discovering local Ollama models.
 func (s *LocalService) SetOllamaLister(lister api.OllamaLister) {
 	s.ollamaLister = lister
+}
+
+// SetCloudboxLister sets the callback for discovering cloudbox-pooled models.
+// When set, ListModels returns ONLY the cloudbox-pooled list.
+func (s *LocalService) SetCloudboxLister(lister api.CloudboxLister) {
+	s.cloudboxLister = lister
 }
 
 func (s *LocalService) ExecuteCommand(ctx context.Context, name string, args string) (string, error) {

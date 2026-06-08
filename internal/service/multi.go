@@ -34,6 +34,12 @@ type MultiService struct {
 
 	// OllamaLister queries locally available Ollama models (optional).
 	ollamaLister api.OllamaLister
+
+	// CloudboxLister queries the cloudbox-pooled /v1/models gateway (optional).
+	// When set, /api/models returns ONLY the cloudbox-pooled list — env-detected,
+	// builtin, config, and Ollama models are intentionally excluded from the
+	// serve-side surface.
+	cloudboxLister api.CloudboxLister
 }
 
 // NewMultiService creates a multi-session service backed by a session pool.
@@ -48,6 +54,12 @@ func NewMultiService(pool *SessionPool, b bus.Bus) *MultiService {
 // SetOllamaLister sets the callback for discovering local Ollama models.
 func (m *MultiService) SetOllamaLister(lister api.OllamaLister) {
 	m.ollamaLister = lister
+}
+
+// SetCloudboxLister sets the callback for discovering cloudbox-pooled models.
+// When set, ListModels returns ONLY the cloudbox-pooled list.
+func (m *MultiService) SetCloudboxLister(lister api.CloudboxLister) {
+	m.cloudboxLister = lister
 }
 
 func (m *MultiService) Bus() bus.Bus { return m.b }
@@ -74,6 +86,7 @@ func (m *MultiService) localService(sessionID string) (*LocalService, error) {
 	}
 	svc = NewLocalService(ms.App, m.b)
 	svc.SetOllamaLister(m.ollamaLister)
+	svc.SetCloudboxLister(m.cloudboxLister)
 	m.services[sessionID] = svc
 	return svc, nil
 }
@@ -228,16 +241,13 @@ func (m *MultiService) GetStatus(ctx context.Context) (*StatusInfo, error) {
 }
 
 func (m *MultiService) ListModels(ctx context.Context) ([]api.ModelInfo, error) {
-	// Models are global — use any session's config.
-	sessions := m.pool.List()
-	var aliases map[string]string
-	if len(sessions) > 0 {
-		ms := m.pool.Get(sessions[0].ID)
-		if ms != nil {
-			aliases = ms.App.Config().Aliases
-		}
-	}
-	return api.DiscoverModels(ctx, aliases, m.ollamaLister), nil
+	// `ycode serve` is wired cloudbox-first: the operator points at a
+	// cloudbox deployment via DHNT_BASE_URL (+ DHNT_API_KEY) and the
+	// pooled /v1/models list is the single source of truth here.
+	// builtin / config / env / Ollama entries are deliberately omitted
+	// so clients see exactly what the gateway will route — no surprise
+	// "model exists locally but the gateway can't reach it" mismatches.
+	return api.DiscoverCloudboxOnly(ctx, m.cloudboxLister), nil
 }
 
 func (m *MultiService) ExecuteCommand(ctx context.Context, name string, args string) (string, error) {

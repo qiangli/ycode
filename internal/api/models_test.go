@@ -34,7 +34,7 @@ func TestDetectProviderFromModel(t *testing.T) {
 }
 
 func TestDiscoverModels_BuiltinAliases(t *testing.T) {
-	models := DiscoverModels(context.Background(), nil, nil)
+	models := DiscoverModels(context.Background(), nil, nil, nil)
 
 	// Should include all built-in aliases.
 	aliasFound := make(map[string]bool)
@@ -57,7 +57,7 @@ func TestDiscoverModels_ConfigAliases(t *testing.T) {
 		"local":  "llama3",             // novel model → should appear
 	}
 
-	models := DiscoverModels(context.Background(), configAliases, nil)
+	models := DiscoverModels(context.Background(), configAliases, nil, nil)
 
 	// "custom" and "local" should be present as config-sourced models.
 	found := make(map[string]bool)
@@ -86,7 +86,7 @@ func TestDiscoverModels_OllamaLister(t *testing.T) {
 		}
 	}
 
-	models := DiscoverModels(context.Background(), nil, fakeLister)
+	models := DiscoverModels(context.Background(), nil, fakeLister, nil)
 
 	ollamaCount := 0
 	for _, m := range models {
@@ -100,7 +100,7 @@ func TestDiscoverModels_OllamaLister(t *testing.T) {
 }
 
 func TestDiscoverModels_NoDuplicates(t *testing.T) {
-	models := DiscoverModels(context.Background(), nil, nil)
+	models := DiscoverModels(context.Background(), nil, nil, nil)
 
 	seen := make(map[string]int)
 	for _, m := range models {
@@ -134,7 +134,7 @@ func TestDiscoverModels_EnvDetection(t *testing.T) {
 	})
 
 	t.Run("NoEnvKeys_NoEnvModels", func(t *testing.T) {
-		models := DiscoverModels(context.Background(), nil, nil)
+		models := DiscoverModels(context.Background(), nil, nil, nil)
 		for _, m := range models {
 			if m.Source == "env" {
 				t.Errorf("unexpected env model %q when no API keys set", m.ID)
@@ -146,7 +146,7 @@ func TestDiscoverModels_EnvDetection(t *testing.T) {
 		os.Setenv("ANTHROPIC_API_KEY", "test-key")
 		defer os.Unsetenv("ANTHROPIC_API_KEY")
 
-		models := DiscoverModels(context.Background(), nil, nil)
+		models := DiscoverModels(context.Background(), nil, nil, nil)
 
 		// Anthropic models from env should be deduped against builtins.
 		// Built-in aliases already cover claude-opus, sonnet, haiku — so
@@ -166,7 +166,7 @@ func TestDiscoverModels_EnvDetection(t *testing.T) {
 		os.Setenv("OPENAI_API_KEY", "test-key")
 		defer os.Unsetenv("OPENAI_API_KEY")
 
-		models := DiscoverModels(context.Background(), nil, nil)
+		models := DiscoverModels(context.Background(), nil, nil, nil)
 
 		envModels := make(map[string]bool)
 		for _, m := range models {
@@ -186,7 +186,7 @@ func TestDiscoverModels_EnvDetection(t *testing.T) {
 		os.Setenv("GEMINI_API_KEY", "test-key")
 		defer os.Unsetenv("GEMINI_API_KEY")
 
-		models := DiscoverModels(context.Background(), nil, nil)
+		models := DiscoverModels(context.Background(), nil, nil, nil)
 
 		// gemini-2.5-pro and gemini-2.5-flash are also in builtins,
 		// so they should be deduped.
@@ -205,7 +205,7 @@ func TestDiscoverModels_EnvDetection(t *testing.T) {
 		os.Setenv("XAI_API_KEY", "test-key")
 		defer os.Unsetenv("XAI_API_KEY")
 
-		models := DiscoverModels(context.Background(), nil, nil)
+		models := DiscoverModels(context.Background(), nil, nil, nil)
 
 		envModels := make(map[string]bool)
 		for _, m := range models {
@@ -228,7 +228,7 @@ func TestDiscoverModels_EnvDetection(t *testing.T) {
 			os.Unsetenv("DASHSCOPE_API_KEY")
 		}()
 
-		models := DiscoverModels(context.Background(), nil, nil)
+		models := DiscoverModels(context.Background(), nil, nil, nil)
 
 		providers := make(map[string]bool)
 		for _, m := range models {
@@ -252,7 +252,7 @@ func TestDiscoverModels_EnvDetection(t *testing.T) {
 			os.Unsetenv("GEMINI_API_KEY")
 		}()
 
-		models := DiscoverModels(context.Background(), nil, nil)
+		models := DiscoverModels(context.Background(), nil, nil, nil)
 
 		seen := make(map[string]int)
 		for _, m := range models {
@@ -275,7 +275,7 @@ func TestDiscoverModels_OllamaDeduplication(t *testing.T) {
 		}
 	}
 
-	models := DiscoverModels(context.Background(), nil, fakeLister)
+	models := DiscoverModels(context.Background(), nil, fakeLister, nil)
 
 	ollamaCount := 0
 	for _, m := range models {
@@ -309,7 +309,7 @@ func TestDiscoverModels_AllSourcesTogether(t *testing.T) {
 		}
 	}
 
-	models := DiscoverModels(context.Background(), configAliases, fakeLister)
+	models := DiscoverModels(context.Background(), configAliases, fakeLister, nil)
 
 	sources := make(map[string]int)
 	for _, m := range models {
