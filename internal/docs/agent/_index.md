@@ -16,6 +16,9 @@ to every ycode capability that exposes a verb you can call.
 - **browser** — drive a real or headless browser (live / probe / solo)
   via the `browser_*` MCP tools; recovery patterns for AUTH_REDIRECT
   and BLOCKED.
+- **tab** — drive the user's currently-open Chrome tab in live mode
+  (extract / screenshot / navigate / click / type / scroll). The
+  bridge to surfaces a headless browser can't reach.
 - **loom** — isolated git workspaces for parallel sub-agent work.
   Lease → push → merge → release lifecycle.
 - **outcomes** — taxonomy reference for the `outcome_class` field on
@@ -23,6 +26,13 @@ to every ycode capability that exposes a verb you can call.
 - **sandbox** — `yc sandbox` podman-isolated command execution.
 - **memex** — semantic memory: save / recall / list / forget.
 - **repomap** — token-budgeted repo orientation (`yc repomap`).
+- **code-exploration** — AST-aware code search and orientation:
+  `yc symbols`, `yc search-symbols`, `yc refs`, `yc repomap`. Use
+  before reaching for `grep -rn` / `find -name '*.go'` / `ctags -R`
+  on Go / Python / JS-TS / Rust / Java / C / Ruby sources.
+- **structured-output** — typed JSON envelopes for tests, LSP queries,
+  and arbitrary commands: `yc test --json`, `yc lsp <action> --json`,
+  `yc run --json`. Use when exit-code + duration are data, not text.
 
 > New entries land here as each capability earns a verb worth surfacing
 > to agents. The rule is deliberate: a topic earns a doc only when an
