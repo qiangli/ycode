@@ -237,6 +237,142 @@ func (c *Client) CreateLabel(ctx context.Context, owner, repo, name, color strin
 	return &label, nil
 }
 
+// AddIssueLabels appends labels to the given issue. Idempotent at
+// Gitea's layer — adding a label the issue already has is a no-op.
+// Returns the full label set after add.
+func (c *Client) AddIssueLabels(ctx context.Context, owner, repo string, issueNumber int64, labelIDs []int64) ([]Label, error) {
+	body := map[string]any{"labels": labelIDs}
+	var labels []Label
+	if err := c.post(ctx, fmt.Sprintf("/api/v1/repos/%s/%s/issues/%d/labels", owner, repo, issueNumber), body, &labels); err != nil {
+		return nil, err
+	}
+	return labels, nil
+}
+
+// RemoveIssueLabel removes a single label from an issue. Best-effort:
+// 404 (label not present) is not surfaced as an error.
+func (c *Client) RemoveIssueLabel(ctx context.Context, owner, repo string, issueNumber, labelID int64) error {
+	req, err := http.NewRequestWithContext(ctx, "DELETE",
+		fmt.Sprintf("%s/api/v1/repos/%s/%s/issues/%d/labels/%d", c.baseURL, owner, repo, issueNumber, labelID), nil)
+	if err != nil {
+		return err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "token "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("gitea remove issue label: %w", err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNoContent, http.StatusNotFound:
+		return nil
+	default:
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("gitea remove issue label: status %d: %s", resp.StatusCode, string(body))
+	}
+}
+
+// ReplaceIssueLabels sets the labels on an issue to exactly the given
+// set, removing any not in the list. Useful for state transitions
+// where loom owns the entire `loom:*` namespace on an issue.
+func (c *Client) ReplaceIssueLabels(ctx context.Context, owner, repo string, issueNumber int64, labelIDs []int64) ([]Label, error) {
+	body := map[string]any{"labels": labelIDs}
+	var labels []Label
+	// PUT semantics for replace; underlying helper for PUT.
+	req, err := http.NewRequestWithContext(ctx, "PUT",
+		fmt.Sprintf("%s/api/v1/repos/%s/%s/issues/%d/labels", c.baseURL, owner, repo, issueNumber), nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyJSON, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req.Body = io.NopCloser(bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "token "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("gitea replace issue labels: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("gitea replace issue labels: status %d: %s", resp.StatusCode, string(body))
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&labels); err != nil {
+		return nil, fmt.Errorf("gitea replace issue labels: decode: %w", err)
+	}
+	return labels, nil
+}
+
+// IssueComment is a Gitea issue comment.
+type IssueComment struct {
+	ID   int64  `json:"id"`
+	Body string `json:"body"`
+}
+
+// CreateIssueComment posts a comment on an issue. Used by loom to drop
+// the sticky-status comment that mirrors loom-process state inline on
+// the issue page.
+func (c *Client) CreateIssueComment(ctx context.Context, owner, repo string, issueNumber int64, body string) (*IssueComment, error) {
+	var out IssueComment
+	if err := c.post(ctx, fmt.Sprintf("/api/v1/repos/%s/%s/issues/%d/comments", owner, repo, issueNumber),
+		map[string]any{"body": body}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// EditIssueComment updates an existing comment. Used by loom to
+// in-place-update the sticky-status comment rather than spamming the
+// thread with a new comment per state transition.
+func (c *Client) EditIssueComment(ctx context.Context, owner, repo string, commentID int64, body string) (*IssueComment, error) {
+	req, err := http.NewRequestWithContext(ctx, "PATCH",
+		fmt.Sprintf("%s/api/v1/repos/%s/%s/issues/comments/%d", c.baseURL, owner, repo, commentID), nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyJSON, err := json.Marshal(map[string]any{"body": body})
+	if err != nil {
+		return nil, err
+	}
+	req.Body = io.NopCloser(bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "token "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("gitea edit issue comment: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("gitea edit issue comment: status %d: %s", resp.StatusCode, string(body))
+	}
+	var out IssueComment
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("gitea edit issue comment: decode: %w", err)
+	}
+	return &out, nil
+}
+
+// ListIssueComments lists comments on an issue. Used by the sticky-
+// comment manager to locate (or create) loom's owned comment by
+// scanning the body for the sticky marker.
+func (c *Client) ListIssueComments(ctx context.Context, owner, repo string, issueNumber int64) ([]IssueComment, error) {
+	var out []IssueComment
+	if err := c.get(ctx, fmt.Sprintf("/api/v1/repos/%s/%s/issues/%d/comments", owner, repo, issueNumber), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DeleteBranch removes a branch from a repository. Best-effort:
 // 404 (branch missing) is not surfaced as an error, mirroring how
 // CreateBranch treats 409 (already exists).
