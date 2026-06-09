@@ -121,6 +121,40 @@ type RebaseResult struct {
 	ConflictFiles []string `json:"conflict_files,omitempty"`
 }
 
+// LeaseEvent is a single state-transition record emitted by Service to
+// every Watch subscriber whose filter matches. The MCP `loom://session`
+// and `loom://project` resources are SSE transformations over this
+// stream; TUIs (`ycode weave list --watch`) consume it directly via the
+// Go API.
+type LeaseEvent struct {
+	LoomID    string         `json:"loom_id"`
+	Slug      string         `json:"slug"`
+	Branch    string         `json:"branch,omitempty"`
+	From      string         `json:"from,omitempty"`
+	To        string         `json:"to"`
+	Timestamp time.Time      `json:"ts"`
+	Extra     map[string]any `json:"extra,omitempty"`
+}
+
+// WatchFilter scopes a Watch subscriber to a single lease, a single
+// project, or (zero-value) everything. LoomID takes precedence if both
+// are set.
+type WatchFilter struct {
+	LoomID string
+	Slug   string
+}
+
+// Matches reports whether the filter accepts the given event.
+func (f WatchFilter) Matches(ev LeaseEvent) bool {
+	if f.LoomID != "" {
+		return ev.LoomID == f.LoomID
+	}
+	if f.Slug != "" {
+		return ev.Slug == f.Slug
+	}
+	return true
+}
+
 // MergeResult is the output of Service.Merge.
 type MergeResult struct {
 	PRNumber int64  `json:"pr_number"`

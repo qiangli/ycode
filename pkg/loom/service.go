@@ -55,6 +55,8 @@ type Service struct {
 	reaperDone   chan struct{}
 	seenProjects sync.Map // slug -> struct{}
 	seenCwds     sync.Map // cwd  -> struct{}
+
+	watchers *watcherSet
 }
 
 // NewService validates opts and returns a running Service. Caller must
@@ -110,6 +112,7 @@ func NewService(opts Options) (*Service, error) {
 		log:            logger,
 		now:            now,
 		reaperDone:     make(chan struct{}),
+		watchers:       newWatcherSet(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -131,7 +134,36 @@ func (s *Service) Close() error {
 		s.cancel()
 	}
 	<-s.reaperDone
+	if s.watchers != nil {
+		s.watchers.closeAll()
+	}
 	return nil
+}
+
+// Watch returns a channel of LeaseEvents filtered by the given filter.
+// The channel is closed when ctx is cancelled or Service.Close runs.
+// Slow consumers drop events rather than blocking the emitter; the
+// caller is responsible for keeping up.
+func (s *Service) Watch(ctx context.Context, filter WatchFilter) <-chan LeaseEvent {
+	ch, _ := s.watchers.subscribe(ctx, filter)
+	return ch
+}
+
+// emitEvent is the internal helper used by mutating methods to publish
+// a state transition. Safe to call with watchers nil (no-op).
+func (s *Service) emitEvent(lease Lease, from, to string, extra map[string]any) {
+	if s.watchers == nil {
+		return
+	}
+	s.watchers.emit(LeaseEvent{
+		LoomID:    lease.ID,
+		Slug:      lease.Slug,
+		Branch:    lease.Branch,
+		From:      from,
+		To:        to,
+		Timestamp: s.now(),
+		Extra:     extra,
+	})
 }
 
 // Lease provisions an isolated workspace for a sub-agent.
@@ -219,6 +251,7 @@ func (s *Service) Lease(ctx context.Context, req LeaseRequest) (Lease, error) {
 		_ = s.backend.DeleteSandbox(lease.Path)
 		return Lease{}, fmt.Errorf("loom: store lease: %w", err)
 	}
+	s.emitEvent(lease, "", StateLeased, nil)
 	return lease, nil
 }
 
@@ -335,6 +368,7 @@ func (s *Service) SubmitAndWait(ctx context.Context, req SubmitRequest) (SubmitR
 		if perr := s.store.Put(lease); perr != nil {
 			s.log.Warn("loom: persist lease PR number", "loom_id", lease.ID, "err", perr)
 		}
+		s.emitEvent(lease, StateLeased, StatePushed, map[string]any{"pr": prNumber, "sha": sha})
 	}
 
 	// 3. Block until terminal state or wait deadline.
@@ -354,6 +388,7 @@ func (s *Service) SubmitAndWait(ctx context.Context, req SubmitRequest) (SubmitR
 				}
 				switch {
 				case st.Merged:
+					s.emitEvent(lease, StatePushed, StateMerged, map[string]any{"pr": prNumber})
 					return SubmitResult{
 						State:     StateMerged,
 						PRNumber:  prNumber,
@@ -366,6 +401,7 @@ func (s *Service) SubmitAndWait(ctx context.Context, req SubmitRequest) (SubmitR
 					// surface conflict; else treat as ci_failed.
 					rb, rerr := s.backend.RebaseSandbox(ctx, lease.Path, leaseBase(lease))
 					if rerr == nil && len(rb) > 0 {
+						s.emitEvent(lease, StatePushed, StateConflict, map[string]any{"pr": prNumber, "files": rb})
 						return SubmitResult{
 							State:         StateConflict,
 							PRNumber:      prNumber,
@@ -373,6 +409,7 @@ func (s *Service) SubmitAndWait(ctx context.Context, req SubmitRequest) (SubmitR
 							ConflictFiles: rb,
 						}, nil
 					}
+					s.emitEvent(lease, StatePushed, StateCIFailed, map[string]any{"pr": prNumber})
 					return SubmitResult{
 						State:     StateCIFailed,
 						PRNumber:  prNumber,
@@ -510,6 +547,7 @@ func (s *Service) Release(ctx context.Context, req ReleaseRequest) error {
 	if err := s.store.Delete(lease.ID); err != nil {
 		return fmt.Errorf("loom: delete lease: %w", err)
 	}
+	s.emitEvent(lease, "", StateReleased, nil)
 	return nil
 }
 
@@ -571,6 +609,7 @@ func (s *Service) reapOnce(ctx context.Context) {
 			}
 		}
 		_ = s.store.Delete(lease.ID)
+		s.emitEvent(lease, "", StateReleased, map[string]any{"reaper": true})
 	}
 }
 

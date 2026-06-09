@@ -605,3 +605,75 @@ func TestService_SubmitAndWait_PendingOnDeadline(t *testing.T) {
 func (b *stubBackend) prCounterBumpLocked() {
 	b.prNumbers++
 }
+
+func TestService_Watch_EmitsLeaseAndRelease(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch := svc.Watch(ctx, WatchFilter{})
+
+	lease, err := svc.Lease(context.Background(), LeaseRequest{
+		CWD: "/host/project", SubAgentLabel: "label",
+	})
+	if err != nil {
+		t.Fatalf("Lease: %v", err)
+	}
+
+	select {
+	case ev := <-ch:
+		if ev.To != StateLeased {
+			t.Errorf("first event To=%q want %q", ev.To, StateLeased)
+		}
+		if ev.LoomID != lease.ID {
+			t.Errorf("first event LoomID=%q want %q", ev.LoomID, lease.ID)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for leased event")
+	}
+
+	if err := svc.Release(context.Background(), ReleaseRequest{LoomID: lease.ID}); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	select {
+	case ev := <-ch:
+		if ev.To != StateReleased {
+			t.Errorf("release event To=%q want %q", ev.To, StateReleased)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for released event")
+	}
+}
+
+func TestService_Watch_FilterByLoomID(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Subscribe BEFORE creating leases, with a filter for a specific
+	// loom_id we'll learn once the matching lease is created.
+	a, err := svc.Lease(context.Background(), LeaseRequest{CWD: "/p1", SubAgentLabel: "a"})
+	if err != nil {
+		t.Fatalf("Lease A: %v", err)
+	}
+	ch := svc.Watch(ctx, WatchFilter{LoomID: a.ID})
+
+	// Now create a second lease — the filtered watcher should NOT see it.
+	_, err = svc.Lease(context.Background(), LeaseRequest{CWD: "/p2", SubAgentLabel: "b"})
+	if err != nil {
+		t.Fatalf("Lease B: %v", err)
+	}
+
+	// Release A; that event MUST arrive on the filtered channel.
+	if err := svc.Release(context.Background(), ReleaseRequest{LoomID: a.ID}); err != nil {
+		t.Fatalf("Release A: %v", err)
+	}
+	select {
+	case ev := <-ch:
+		if ev.LoomID != a.ID {
+			t.Errorf("event for wrong loom_id: %q (want %q)", ev.LoomID, a.ID)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for A's release event")
+	}
+}
