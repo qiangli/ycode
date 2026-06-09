@@ -12,10 +12,14 @@ headless browser can't reach: anything behind OAuth/SSO, anything
 that depends on the user's existing cookies, anything where a
 captcha or 2FA would prompt the user mid-flow.
 
-Unlike `yc browser` (which can run probe/solo/headless modes against
-a fresh browser instance), `yc tab` always targets the **already-open
-tab** in the user's session. The hub at `127.0.0.1:58082` (override
-`YCODE_LIVE_PORT`) routes every command to that tab.
+Unlike `yc browser` (whose verbs `fetch` / `open` / `find` are HTTP
+fetch with optional probe-mode upgrade against a fresh browser
+instance), `yc tab` always targets the **already-open tab** in the
+user's live-mode session. The hub at `127.0.0.1:58082` (override
+`YCODE_LIVE_PORT`) routes every command to that tab. The full
+probe / solo / headless modes are reached through `mcp__ycode__browser_*`
+MCP tools or by setting `browser.mode` in settings.json — not via
+`yc browser`.
 
 ## When to use this
 
@@ -54,7 +58,7 @@ JSON-shaped output suitable for piping to `jq`.
 
 | Symptom | Fix |
 |---|---|
-| `connection refused` to 127.0.0.1:58082 | Live mode isn't running. Tell the user to enable it (`ycode browser` setup or `ycode serve` with live mode on). |
+| `connection refused` to 127.0.0.1:58082 | Live mode isn't running. Set `browser.mode=live` in settings.json, run `ycode browser setup live` once, then start `ycode serve` (or `ycode prompt`). |
 | `no tab connected` | The browser extension isn't talking to the hub. User needs to focus the target tab and re-enable the extension. |
 | `selector not found` | Page may have lazy-rendered; try `yc tab scroll` first, or check with `yc tab extract`. |
 | Screenshot is blank | Tab may be on `chrome://` or another protected URL; navigate first. |

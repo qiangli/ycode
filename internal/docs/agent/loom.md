@@ -27,7 +27,7 @@ available on the stdio transport.
 ## Lifecycle
 
 ```
-loom_lease   →  cwd = /tmp/loom/<id>, branch = <agent>/<task>
+loom_lease   →  cwd = <sandboxRoot>/<id>, branch = agent/agent-loom-<sub_agent_label>-<id8>/free-<rand>
   ⇣ (sub-agent does work in that cwd)
 loom_push    →  stages + commits + pushes branch upstream
   ⇣
@@ -36,6 +36,10 @@ loom_merge   →  opens PR (or returns existing PR number)
 loom_release →  tears down sandbox; safe iff no PR still open
 ```
 
+`<sandboxRoot>` is the manifest's `loom.sandboxRoot` (typically
+`~/.agents/ycode/gitea/loom/sandboxes/`); the branch pattern is the
+manifest's `loom.branchNamePattern`.
+
 States returned by `loom_status`: `leased | pushed | merging | merged
 | ci_failed | conflict`. You can call `loom_status` at any point to
 check where a lease is — pass `loom_id` for one lease, `cwd` for all
@@ -43,16 +47,22 @@ leases in a project, or no args for everything.
 
 ## Tool calls
 
-- **`loom_lease`** — Reserve a workspace. Args (per server): project
-  identifier + optional branch hint + author identity. Returns
-  `{loom_id, sandbox_path, branch}`. The sub-agent should `cd` into
-  `sandbox_path` and do its work there.
+- **`loom_lease`** — Reserve a workspace. **Required args:** `cwd`
+  (absolute project path) and `sub_agent_label` (short identifier;
+  becomes part of the branch name and the git author trailer).
+  **Optional args:** `ttl_seconds` (default 3600, max 28800) and
+  `base_branch` (default `main`). Returns `{loom_id, sandbox_path,
+  branch}`. The sub-agent should `cd` into `sandbox_path` and do its
+  work there.
 - **`loom_push`** — Stage every change in the sandbox, commit (using
   the lease's author identity), and push. Idempotent: no-op commit
-  when nothing changed; existing HEAD is still pushed.
+  when nothing changed; existing HEAD is still pushed. Optional:
+  `message` (default `loom: <sub_agent_label>`) and `force` (boolean;
+  allow non-fast-forward push).
 - **`loom_merge`** — Open a PR into main. Idempotent: if a PR is
   already open for the branch, returns its number rather than
   re-opening. The merger watches CI and auto-merges when green.
+  Optional: `title` and `body` PR fields.
 - **`loom_status`** — Inspect lease state. Argless form lists every
   active lease.
 - **`loom_release`** — Tear down. By default removes the sandbox AND
@@ -73,7 +83,7 @@ leases in a project, or no args for everything.
 
 - Start the HTTP MCP server: `ycode serve`
 - Wire a client to it: `ycode pair --tool claude-code` (or other)
-- Lease a workspace: MCP `loom_lease` with `{project, branch_hint?}`
+- Lease a workspace: MCP `loom_lease` with `{cwd, sub_agent_label, ttl_seconds?, base_branch?}`
 - Push work: MCP `loom_push` with `{loom_id}`
 - Open PR: MCP `loom_merge` with `{loom_id}`
 - Status of one lease: MCP `loom_status` with `{loom_id}`

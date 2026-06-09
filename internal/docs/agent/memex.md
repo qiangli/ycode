@@ -8,9 +8,9 @@ max_lines: 90
 
 Memex is ycode's persistent agent memory. Each entry has a `name`,
 `description`, `type` (one of: user, feedback, project, reference,
-episodic, procedural, task), and a `scope` (project or user). Memory
-survives across sessions and is searchable by RRF-fused semantic
-recall.
+episodic, procedural, task), and a `scope` (`project` | `user` |
+`global` | `team`; default `project`). Memory survives across sessions
+and is searchable by RRF-fused semantic recall.
 
 ## When to use this
 
@@ -23,7 +23,8 @@ recall.
 ## Tool surface
 
 - `memex_save` — persist or overwrite a memory by name. Required:
-  `name`, `description`, `type`, plus body content.
+  `name`, `type`, `description`, `content`. Optional: `scope` (default
+  `project`), `importance` (0.0–1.0, default 0.5), `tags` (array).
 - `memex_recall` — semantic search. Pass a query string; backend
   fuses results across stores.
 - `search_memex` — like recall but with optional backend selection +
@@ -45,15 +46,16 @@ ergonomic wrappers around save and recall respectively.
 | `unknown memory type` | Call `list_memory_types` and use one of those values. |
 | Recall returns empty | The fact may not be saved yet; or the query is too narrow. Try `memex_list` once to confirm. |
 | Save overwrites unexpectedly | `name` is the primary key; saves with an existing name overwrite. Pick a distinct name. |
-| Wrong scope | `scope=user` lives in the user's home; `scope=project` lives next to the cwd. Pick deliberately. |
+| Wrong scope | `scope=project` writes under `<cwd>/.agents/ycode/memory/`; `global`, `user`, `team` write under `~/.agents/ycode/memory/`. Pick deliberately. |
 
 ## Exact calls
 
-- Save: MCP `memex_save` with `{name, description, type, body, scope?}`.
-- Quick save from shell: `yc remember "<fact>" --name=<id> --type=project`.
-- Recall: MCP `memex_recall` with `{query, limit?}`.
+- Save: MCP `memex_save` with `{name, type, description, content, scope?, importance?, tags?}`.
+- Quick save from shell: `yc remember "<fact>" --name=<id> --type=reference`.
+- Recall: MCP `memex_recall` with `{query, max_results?, scope?}`.
 - Quick recall from shell: `yc recall "<query>" --limit=5`.
 - Read the index: MCP `memex_index` with `{}`, or just read
-  `~/.claude/projects/<project>/memory/MEMORY.md` directly when fs
+  `~/.agents/ycode/memory/MEMORY.md` (global) or
+  `<cwd>/.agents/ycode/memory/MEMORY.md` (project) directly when fs
   access is faster than MCP roundtripping.
 - Forget: MCP `memex_forget` with `{name}`.

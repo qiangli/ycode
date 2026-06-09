@@ -978,7 +978,12 @@ var versionCmd = &cobra.Command{
 
 var loopCmd = &cobra.Command{
 	Use:   "loop",
-	Short: "Run agent in continuous loop mode",
+	Short: "Run agent in continuous loop mode (requires --prompt <file>)",
+	Long: `Re-runs the agent on a fixed interval, reading a prompt from --prompt
+each iteration. The prompt file is re-read every tick — edits take effect on
+the next iteration — and Ctrl+C cancels after the current iteration completes.
+
+--prompt is required (no default); --interval defaults to 10m.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		intervalStr, _ := cmd.Flags().GetString("interval")
 		promptFile, _ := cmd.Flags().GetString("prompt")
@@ -1350,7 +1355,8 @@ func init() {
 	_ = rootCmd.PersistentFlags().MarkHidden("no-otel")
 
 	loopCmd.Flags().String("interval", "10m", "Loop interval (e.g., 5m, 1h)")
-	loopCmd.Flags().String("prompt", "", "Path to prompt file")
+	loopCmd.Flags().String("prompt", "", "Path to prompt file (required; re-read every iteration)")
+	_ = loopCmd.MarkFlagRequired("prompt")
 	doctorCmd.Flags().Bool("dry-run", false, "Quick readiness check without starting the full system")
 	rootCmd.AddCommand(promptCmd, versionCmd, doctorCmd, loopCmd, loginCmd, logoutCmd)
 

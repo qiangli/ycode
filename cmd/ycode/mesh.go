@@ -12,8 +12,10 @@ import (
 func newMeshCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mesh",
-		Short: "Manage the autonomous agent mesh",
-		Long:  "Control background agents that observe, diagnose, learn, and improve ycode.",
+		Short: "Inspect the autonomous agent mesh config (status-only; configuration is via settings.json)",
+		Long: `Read-only inspector for the mesh's DefaultMeshConfig (Enabled / Mode / agent
+roster). Today the CLI only exposes 'status' — there is no start/stop/configure
+verb. Toggle the mesh on/off by editing mesh_enabled in settings.json.`,
 	}
 
 	statusCmd := &cobra.Command{

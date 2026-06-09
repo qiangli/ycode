@@ -11,13 +11,15 @@ import (
 func newBatchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "batch",
-		Short: "Run batch processing of prompts",
-		Long:  "Execute multiple prompts from a JSONL file with checkpointing and statistics.",
+		Short: "Stub: batch prompt runner skeleton (provider not yet wired)",
+		Long: `Skeleton for a batch prompt runner. The runner + JSONL plumbing exist,
+but the per-row Execute callback returns "batch execute: not yet wired to
+provider" — every row will error until a provider is plugged in.`,
 	}
 
 	runCmd := &cobra.Command{
 		Use:   "run",
-		Short: "Run a batch of prompts",
+		Short: "Iterate the JSONL input — each row currently errors with 'not yet wired to provider'",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			input, _ := cmd.Flags().GetString("input")
 			output, _ := cmd.Flags().GetString("output")

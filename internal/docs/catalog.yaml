@@ -36,8 +36,12 @@ rows:
         - browser_keyboard_press
         - browser_cookies_get
         - browser_storage_get
+        - browser_clipboard_read
+        - browser_clipboard_write
+        - browser_perf_start
+        - browser_perf_stop
         - browser_capabilities
-    prereq: browser.mode set in settings.json; for live mode, run `ycode browser setup` once and verify with `ycode browser doctor`.
+    prereq: browser.mode set in settings.json; for live mode, run `ycode browser setup live` once and verify with `ycode browser doctor`.
     read_more: browser
 
   - task: search code symbols
@@ -45,7 +49,7 @@ rows:
       yc:  [yc symbols, yc search-symbols, yc refs]
       mcp: [list_symbols, search_symbols_by_pattern, get_supported_languages]
     prereq: language supported by treesitter (go, python, ts/js, rust, java, c, ruby).
-    read_more: symbols
+    read_more: code-exploration
 
   - task: repo orientation
     surfaces:
@@ -55,7 +59,8 @@ rows:
 
   - task: isolated command execution
     surfaces:
-      yc: [yc sandbox]
+      yc:  [yc sandbox]
+      mcp: [sandbox_exec]
     prereq: podman installed (alpine image used as the sandbox base).
     read_more: sandbox
 

@@ -43,8 +43,11 @@ Tiers:
 func newEvalContractCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "contract",
-		Short: "Run contract-tier evals (no LLM, deterministic)",
-		Long:  "Runs contract tests that verify agent machinery without calling any LLM provider.",
+		Short: "Print the go test / make eval-contract instructions for contract-tier evals",
+		Long: `Prints how to run contract-tier evaluations. The CLI itself does not run
+the scenarios — they live under internal/eval/... and are exercised via 'go test'.
+This subcommand exists so 'ycode eval contract' surfaces the correct invocation
+to operators who don't know about the build-tag-gated test packages.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println("Running contract-tier evaluations...")
 			fmt.Println()
@@ -241,15 +244,19 @@ func newEvalRunCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Run eval scenarios (smoke, behavioral, or e2e)",
-		Long: `Run evaluation scenarios against a real LLM provider.
+		Short: "Stub: prints per-tier hint to run via 'go test -tags <tier>' (no scenarios wired into the CLI runner)",
+		Long: `Skeleton evaluation runner. Provider/model resolution + report-store
+plumbing exist, but scenariosForTier() returns nil for every tier — so the
+RunE loops, prints '(no scenarios for tier X — run via go test -tags X)' once
+per requested tier, then writes an empty report.
+
+To actually run scenarios today, use 'go test':
+
+  go test -tags smoke ./internal/eval/...
+  go test -tags behavioral ./internal/eval/...
 
 Provider is selected via EVAL_PROVIDER env (ollama, anthropic, openai).
-Model is selected via EVAL_MODEL env.
-
-Examples:
-  EVAL_PROVIDER=ollama ycode eval run --tier smoke
-  EVAL_PROVIDER=anthropic ycode eval run --tier smoke --tier behavioral`,
+Model is selected via EVAL_MODEL env.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			provider, model, err := eval.ProviderFromEnv()
 			if err != nil {
@@ -343,8 +350,11 @@ func newEvalScheduleCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "schedule",
-		Short: "Schedule recurring eval runs",
-		Long: `Schedule eval runs at a recurring interval.
+		Short: "Print a recommended ycode-loop / serve-cron command for recurring evals (no scheduler is installed)",
+		Long: `Validates the interval and prints a 'ycode loop --interval ...' command
+plus a CronRegistry snippet. The subcommand itself does NOT register a timer,
+launchd job, or cron entry — it's a recommendation printer. Use one of the
+printed forms to actually schedule the run.
 
 Examples:
   ycode eval schedule --interval 24h
@@ -456,9 +466,12 @@ func buildTagForTier(tier string) string {
 func newEvalMatrixCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "matrix",
-		Short: "Run scenarios across multiple providers and compare results",
-		Long: `Execute the same eval scenarios against multiple LLM providers
-and generate a side-by-side comparison table.
+		Short: "Stub: per-provider provider-resolution + report-store skeleton (no built-in scenarios)",
+		Long: `Skeleton matrix runner. The loop walks --providers, resolves each, and
+emits a per-provider entry — but the per-provider scenario slice is empty, so
+every provider prints '(no built-in scenarios — run via go test -tags eval)'
+and the matrix report has zero comparable data. To actually compare providers,
+run 'go test -tags eval ./internal/eval/...' under each EVAL_PROVIDER value.
 
 Requires API keys for each provider in environment variables.
 

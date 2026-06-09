@@ -245,7 +245,7 @@ func newModelSearchCmd() *cobra.Command {
 	var source string
 	cmd := &cobra.Command{
 		Use:   "search <query>",
-		Short: "Search for models",
+		Short: "Search Hugging Face for GGUF models (--source=hf); --source=ollama prints the registry URL",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := args[0]

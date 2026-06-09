@@ -44,3 +44,5 @@ disposable surface.
   `yc sandbox -- sh -c 'tar tzvf incoming.tgz | head'`
 - Test isolation: `yc sandbox -- go build ./...` (will fail offline if
   module cache misses — confirm modules are pre-fetched first).
+- MCP equivalent (works on both stdio and HTTP transports):
+  `mcp__ycode__sandbox_exec` with `{command: "python3 unsafe.py"}`.

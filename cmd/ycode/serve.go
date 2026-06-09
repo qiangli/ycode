@@ -60,11 +60,23 @@ var overrideGitServerURL string
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
-	Short: "Run all ycode services (observability, API, NATS)",
-	Long: `Start all ycode services: observability stack (OTEL, Prometheus, Jaeger, dashboards),
-HTTP/WebSocket API server (for web UI and remote clients), and embedded NATS server.
+	Short: "Run the full ycode server stack (observability, API + WebSocket, NATS, Gateway, Gitea, Loom, Memos, MCP, manifest)",
+	Long: `Start the full ycode server stack: the observability bundle (OTEL,
+Prometheus, Jaeger, Perses dashboards), the HTTP + WebSocket API for web UI
+and remote clients, embedded NATS, the Gateway (Ollama + Podman socket
+proxy), embedded Gitea, the Loom workspace substrate, the Memos store, the
+Bonsai graph, the chat hub, the Pulse telemetry handler, the composite /mcp/
+endpoint, the browser hub, the lighthouse manifest, and the pprof debug
+surface.
 
-Use --no-api or --no-nats to disable specific services.`,
+Toggle individual subsystems via:
+  --no-api / --no-nats         disable HTTP+WS / NATS
+  --no-auth                    skip bearer-token auth on the API
+  --no-persona                 disable persona/skill loading
+  --mcp-permission MODE        ceiling for the /mcp/ composite (read-only / workspace-write / danger-full-access)
+  --workspace-policy POLICY    project / user / global workspace scope
+  --tools-allowlist / --tools-blocklist   gate the runtime tool registry
+  --detach                     fork into the background after startup`,
 	RunE: runServe,
 }
 
@@ -1206,7 +1218,7 @@ func loadFullServeConfig() (*config.Config, *config.ObservabilityConfig, string,
 // Each ycode CLI session auto-connects to the running collector.
 var pulseCmd = &cobra.Command{
 	Use:   "pulse",
-	Short: "Manage the Pulse observability stack (start/stop/status)",
+	Short: "Manage the Pulse observability stack (start/stop/status/dashboard/reset)",
 	Long: `Pulse is ycode's nervous system — traces, metrics, logs, dashboards, alerts,
 and MCP server for external agent access.
 

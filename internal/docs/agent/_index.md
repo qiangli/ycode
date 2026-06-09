@@ -1,10 +1,10 @@
 # ycode capabilities — agent index
 
 You are reading this because something invoked `ycode docs` (or
-`mcp__ycode__docs` with no arg). This file is the curated entry point
-to every ycode capability that exposes a verb you can call.
+`mcp__ycode__get_doc` with no `topic` arg). This file is the curated
+entry point to every ycode capability that exposes a verb you can call.
 
-**Drill into a topic:** `ycode docs <topic>` (or `mcp__ycode__docs({topic: "<topic>"})`).
+**Drill into a topic:** `ycode docs <topic>` (or `mcp__ycode__get_doc({topic: "<topic>"})`).
 **Dump everything for a system prompt:** `ycode docs --all` (one-time, not per turn).
 **Machine-readable index:** `ycode docs --list` (JSON).
 

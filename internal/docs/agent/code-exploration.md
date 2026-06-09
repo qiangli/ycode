@@ -24,7 +24,7 @@ Picking by question type:
 |---|---|
 | Enumerate the declarations in a file or directory | `yc symbols <path>` |
 | Orient in an unfamiliar repo (one call, token-budgeted) | `yc repomap [--budget=N]` |
-| Find a name across the workspace (substring or regex) | `yc search-symbols <pattern> [path]` |
+| Find a name across the workspace (case-insensitive substring) | `yc search-symbols <pattern> [path]` |
 | Find every caller / reference of a symbol | `yc refs <symbol>` |
 
 Picking by previous-instinct:
@@ -54,16 +54,21 @@ Picking by previous-instinct:
   token-budgeted file→symbol overview. `--query` ranks files by
   relevance to a text query so the top of the list is the most likely
   starting point.
-- `yc search-symbols <pattern> [path] [--json]` — name-substring or
-  regex search across declared identifiers. Pattern is matched against
-  symbol names, not source lines.
+- `yc search-symbols <pattern> [path] [--json]` —
+  **case-insensitive name-substring** search across declared
+  identifiers. Pattern is matched literally against symbol names (no
+  regex; use multiple invocations if you need alternation).
 - `yc refs <symbol> [--json]` — find references and callers of
   `<symbol>` across the workspace. Resolves through imports/aliases.
 
-All four also have MCP equivalents (`mcp__ycode__list_symbols`,
-`mcp__ycode__build_repomap`, `mcp__ycode__search_symbols_by_pattern`,
-`mcp__ycode__find_symbol_references`) when you're inside an agent that
-prefers tool calls to shell commands.
+MCP equivalents exist for the per-file primitives:
+`mcp__ycode__list_symbols` (single `file_path`),
+`mcp__ycode__search_symbols_by_pattern` (single `file_path`,
+ast-grep-style pattern like `$NAME(...)` — *not* a workspace search),
+`mcp__ycode__get_supported_languages`. The workspace-scope shell verbs
+`yc search-symbols` and `yc refs` have no direct MCP equivalent — call
+them through `agent_shell` instead. The workspace-orientation tool is
+`mcp__ycode__build_repomap`.
 
 ## Failure modes
 
@@ -90,10 +95,10 @@ yc search-symbols MyFunc        # where is it declared?
 yc refs MyFunc                  # who calls it?
 ```
 
-Find anything matching a fuzzy intent:
+Find anything matching a fuzzy intent (case-insensitive substring):
 
 ```sh
-yc search-symbols 'auth.*middleware'   # regex; matches AuthMiddleware, authedMiddleware
+yc search-symbols middleware   # matches AuthMiddleware, authedMiddleware, MiddlewareChain
 ```
 
 ## Exact calls
@@ -103,6 +108,6 @@ yc search-symbols 'auth.*middleware'   # regex; matches AuthMiddleware, authedMi
 - Repo orientation: `yc repomap --budget=4000`
 - Query-ranked orientation: `yc repomap --query="auth middleware"`
 - Substring search: `yc search-symbols Dispatch`
-- Regex search, scoped: `yc search-symbols '^run' ./cmd/`
+- Scoped substring: `yc search-symbols run ./cmd/`
 - Find callers: `yc refs DispatchEnvelope`
 - Machine-readable: append `--json` to any of the above

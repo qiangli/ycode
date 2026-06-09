@@ -55,10 +55,20 @@ func newMcpServeCmd() *cobra.Command {
 		Use:   "serve",
 		Short: "Run an MCP server over stdio (JSON-RPC + Content-Length framing)",
 		Long: "Speaks the MCP protocol on stdin/stdout. External agents connect by " +
-			"spawning `ycode mcp serve` per their .mcp.json. Today the surface is " +
-			"empty (Phase 0 — infrastructure only); Phase 1+ capability handlers " +
-			"plug in via internal/runtime/mcp.CompositeHandler.\n\n" +
-			"The default permission ceiling is danger-full-access — agents that " +
+			"spawning `ycode mcp serve` per their .mcp.json.\n\n" +
+			"Always-on stdio families: treesitter (list_symbols, " +
+			"search_symbols_by_pattern, get_supported_languages), shell " +
+			"(agent_shell), skills, docs (list_docs / get_doc / list_catalog), " +
+			"cobra runner (list_ycode_commands / run_ycode_command{,_workspace}), " +
+			"document extractor (extract_document), repomap (build_repomap, " +
+			"repomap_for_files), codegraph (graph_*), podman sandbox " +
+			"(sandbox_exec), GitHub (github_*), browser (browser_*), Ollama " +
+			"(ollama_*), and — when the memex store is reachable — memex " +
+			"(memex_*, search_memex, list_memory_types).\n\n" +
+			"Loom workspaces and observability tools (promql_*, query_logs, " +
+			"query_traces, etc.) are HTTP-only; reach them via the composite " +
+			"endpoint that `ycode serve` mounts at /mcp/.\n\n" +
+			"Default permission ceiling: danger-full-access — agents that " +
 			"intentionally configure ycode mcp serve in their settings.json have " +
 			"opted into ycode's full capability surface. Lower with " +
 			"--permission=read-only or workspace-write for sandboxed integrations.",

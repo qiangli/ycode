@@ -43,7 +43,8 @@ Reads (or mints) the server bearer token and prints a paste-ready config
 fragment for the named tool, plus the URLs the tool needs.
 
 Recognized tools: opencode, codex, gemini-cli, claude-code, ycode-tui.
-Pass --target=<other> to emit a generic snippet you can adapt.
+Passing --tool=<unrecognized-name> falls through to a generic MCP snippet
+you can adapt to the foreign tool's config schema.
 
 The token is read from ~/.agents/ycode/server.token. If that file does
 not exist, a fresh random token is generated and written there. Tokens

@@ -127,6 +127,8 @@ func knownMCPToolNames(t *testing.T) map[string]bool {
 		// Repomap — mounted on both.
 		"build_repomap",
 		"repomap_for_files",
+		// Sandbox — mounted on both (internal/container/mcpserver.go).
+		"sandbox_exec",
 	} {
 		out[name] = true
 	}

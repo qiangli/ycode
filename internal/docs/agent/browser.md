@@ -88,9 +88,9 @@ See `ycode docs outcomes` for the full classifier reference.
 ## Exact calls
 
 - Diagnose modes: `ycode browser doctor`
-- One-time setup (live extension): `ycode browser setup`
+- One-time setup (live extension): `ycode browser setup live`
 - Start Chrome for probe: `ycode browser launch`
-- Open an authenticated Chrome to log in once: `ycode browser login`
+- Open Chrome and sign in manually (the dedicated `ycode browser login` is a stub today — prints "not yet implemented"; use `launch` and sign in yourself): `ycode browser launch`
 - Navigate (any mode): MCP `browser_navigate` with `{url, max_bytes?}`
 - Read a computed style:
   `browser_eval` with `{script: "(()=>{const e=document.querySelector('.foo');return JSON.stringify(getComputedStyle(e).color);})()"}`

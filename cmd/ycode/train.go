@@ -9,13 +9,16 @@ import (
 func newTrainCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "train",
-		Short: "Training and evaluation commands",
-		Long:  "Train, evaluate, and collect data for local model improvement.",
+		Short: "Stub: training/evaluation skeleton (every subcommand currently prints TODO and exits)",
+		Long: `Skeleton tree for local-model training, trajectory collection, and per-task
+evaluation. None of the leaves are wired up yet — each prints its flags and
+'TODO: wire up <component>' then returns 0. The flags exist so the eventual
+implementation has a stable surface.`,
 	}
 
 	rlCmd := &cobra.Command{
 		Use:   "rl",
-		Short: "Run GRPO reinforcement learning",
+		Short: "Stub: prints flags and 'TODO: wire up GRPOTrainer'",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			task, _ := cmd.Flags().GetString("task")
 			model, _ := cmd.Flags().GetString("model")
@@ -31,7 +34,7 @@ func newTrainCmd() *cobra.Command {
 
 	collectCmd := &cobra.Command{
 		Use:   "collect",
-		Short: "Collect training trajectories",
+		Short: "Stub: prints flags and 'TODO: wire up TrajectoryCollector'",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			task, _ := cmd.Flags().GetString("task")
 			output, _ := cmd.Flags().GetString("output")
@@ -47,7 +50,7 @@ func newTrainCmd() *cobra.Command {
 
 	evalCmd := &cobra.Command{
 		Use:   "eval",
-		Short: "Evaluate a model on a task",
+		Short: "Stub: prints flags and 'TODO: wire up task evaluation'",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			task, _ := cmd.Flags().GetString("task")
 			model, _ := cmd.Flags().GetString("model")

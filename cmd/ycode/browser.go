@@ -258,7 +258,7 @@ instead; this command assumes the extension is already known to Chrome.`,
 func newBrowserLoginCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "login [mode]",
-		Short: "Open Chrome interactively to complete logins (probe or live)",
+		Short: "Stub: prints a 'not yet implemented' notice (Phase 2 for probe, Phase 5 for live)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := mcpservers.ModeProbe

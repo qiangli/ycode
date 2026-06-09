@@ -26,9 +26,11 @@ func newInitCmd() *cobra.Command {
 		Short: "Establish ycode in the current git repo (project + user-scope foreign-tool configs)",
 		Long: `Run ycode's self-init pass against the current directory's git repo.
 
-By default ycode runs this automatically on every invocation; the marker
-at <repo>/.agents/ycode/.init-done makes idempotent re-runs no-ops. Use this
-command to:
+ycode does NOT run selfinit automatically — the root cobra command has no
+PersistentPreRun. Invoke 'ycode init' (or the /init slash command from inside
+a session) to write <repo>/.agents/ycode/AGENTS.md and any foreign-tool
+configs. The marker at <repo>/.agents/ycode/.init-done makes idempotent
+re-runs no-ops.
 
   --refresh                   Force a regeneration even if the marker matches.
   --doctor                    Print what is/would be registered without writing.
@@ -38,9 +40,8 @@ command to:
                               OpenCode). Off by default — opt-in only.
                               Env: YCODE_SELFINIT_FOREIGN=1 has the same effect.
 
-In a fresh repo the first auto-run is enough; this command is mainly
-for explicit refreshes after manifest changes or for diagnosing why a
-foreign tool isn't seeing a particular ycode capability.`,
+Use this command for explicit refreshes after manifest changes or to
+diagnose why a foreign tool isn't seeing a particular ycode capability.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 

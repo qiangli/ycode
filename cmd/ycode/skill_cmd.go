@@ -16,7 +16,7 @@ import (
 func newSkillCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skill",
-		Short: "List, show, and inspect skills available to this ycode binary",
+		Short: "List and show skills available to this ycode binary",
 	}
 
 	cmd.AddCommand(newSkillListCmd())
