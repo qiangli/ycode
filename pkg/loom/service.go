@@ -303,6 +303,49 @@ func (s *Service) Merge(ctx context.Context, req MergeRequest) (MergeResult, err
 	return MergeResult{PRNumber: prNumber, Status: "queued"}, nil
 }
 
+// Checkpoint stages and commits everything in the lease's sandbox
+// without pushing — a lightweight save point before risky edits. The
+// v2 loom_checkpoint verb dispatches here. Idempotent at the backend
+// layer: empty staging area returns the current HEAD SHA with
+// HadNoChanges=true.
+func (s *Service) Checkpoint(ctx context.Context, req CheckpointRequest) (CheckpointResult, error) {
+	lease, err := s.touchLease(req.LoomID)
+	if err != nil {
+		return CheckpointResult{}, err
+	}
+	msg := req.Summary
+	if msg == "" {
+		msg = fmt.Sprintf("loom: checkpoint (%s)", lease.SubAgentLabel)
+	}
+	priorSHA, _ := s.headSHA(ctx, lease.Path) // best-effort; pre-commit HEAD
+	sha, err := s.backend.Checkpoint(ctx, lease.Path, msg)
+	if err != nil {
+		return CheckpointResult{}, fmt.Errorf("loom: checkpoint: %w", err)
+	}
+	res := CheckpointResult{
+		CheckpointID: sha,
+		CommitSHA:    sha,
+	}
+	if priorSHA != "" && priorSHA == sha {
+		res.HadNoChanges = true
+	}
+	return res, nil
+}
+
+// headSHA reads the current HEAD SHA of a sandbox via a captureGit-
+// equivalent path. Returns empty string on error — caller treats that
+// as "couldn't compare" rather than failing the whole checkpoint.
+//
+// The implementation lives behind the backend so pkg/loom stays free
+// of git-CLI imports; for backends that don't expose this directly,
+// the comparison just degrades to "always assume changes were made."
+func (s *Service) headSHA(_ context.Context, _ string) (string, error) {
+	// Placeholder: a future PR can extend Backend with HeadSHA(path) if
+	// the HadNoChanges signal becomes load-bearing. Today the field is
+	// best-effort metadata for the agent's UX.
+	return "", nil
+}
+
 // Rebase runs `git fetch origin <base> && git rebase origin/<base>`
 // inside the sandbox via the backend. Conflict markers are left in
 // place; the agent edits the files and resubmits. Returns the list of

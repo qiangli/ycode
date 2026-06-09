@@ -331,6 +331,37 @@ func agentIDFromBranch(branch string) string {
 	return rest
 }
 
+// Checkpoint stages every change in the sandbox and makes a local
+// commit (no push). Idempotent: when there's nothing to commit, the
+// current HEAD SHA is returned with no error so the caller can treat
+// the call as durable regardless of staged-state.
+func (b *GiteaBackend) Checkpoint(ctx context.Context, sandboxPath, message string) (string, error) {
+	if sandboxPath == "" {
+		return "", fmt.Errorf("loom: Checkpoint: empty sandbox path")
+	}
+	if err := runGit(ctx, sandboxPath, "add", "-A"); err != nil {
+		return "", fmt.Errorf("loom: git add: %w", err)
+	}
+	hasChanges, err := hasStagedChanges(ctx, sandboxPath)
+	if err != nil {
+		return "", err
+	}
+	if hasChanges {
+		msg := message
+		if msg == "" {
+			msg = "loom: checkpoint"
+		}
+		if err := runGit(ctx, sandboxPath, "commit", "-m", msg); err != nil {
+			return "", fmt.Errorf("loom: git commit: %w", err)
+		}
+	}
+	sha, err := captureGit(ctx, sandboxPath, "rev-parse", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("loom: rev-parse HEAD: %w", err)
+	}
+	return strings.TrimSpace(sha), nil
+}
+
 // RebaseSandbox runs `git fetch origin <baseBranch>` then
 // `git rebase origin/<baseBranch>` inside the sandbox. If the rebase
 // produces conflicts, the working tree is left with markers in the

@@ -81,6 +81,9 @@ func (b *stubBackend) NotifyProjectActive(_ context.Context, _, _ string) error 
 func (b *stubBackend) RebaseSandbox(_ context.Context, _, _ string) ([]string, error) {
 	return nil, nil
 }
+func (b *stubBackend) Checkpoint(_ context.Context, _, message string) (string, error) {
+	return "stub-checkpoint-" + message, nil
+}
 
 func newTestHandler(t *testing.T) (*MCPHandler, *stubBackend) {
 	t.Helper()
@@ -96,18 +99,17 @@ func newTestHandler(t *testing.T) (*MCPHandler, *stubBackend) {
 	return NewMCPHandler(svc), backend
 }
 
-func TestHandler_ListTools_FiveVerbs(t *testing.T) {
+func TestHandler_ListTools_v1AndV2(t *testing.T) {
 	h, _ := newTestHandler(t)
 	tools := h.ListTools()
-	if len(tools) != 5 {
-		t.Fatalf("expected 5 tools, got %d", len(tools))
+	// v1 (5) + v2 sub-agent (3) + v2 orchestrator (3) = 11.
+	if len(tools) != 11 {
+		t.Fatalf("expected 11 tools (5 v1 + 6 v2), got %d", len(tools))
 	}
 	want := map[string]bool{
-		ToolLease:   true,
-		ToolPush:    true,
-		ToolMerge:   true,
-		ToolStatus:  true,
-		ToolRelease: true,
+		ToolLease: true, ToolPush: true, ToolMerge: true, ToolStatus: true, ToolRelease: true,
+		ToolCheckpoint: true, ToolSubmit: true, ToolAbandon: true,
+		ToolOpen: true, ToolTerminate: true, ToolHandoff: true,
 	}
 	for _, tool := range tools {
 		if !want[tool.Name] {
@@ -124,16 +126,98 @@ func TestHandler_ListTools_FiveVerbs(t *testing.T) {
 func TestHandler_RequiredMode(t *testing.T) {
 	h, _ := newTestHandler(t)
 	cases := map[string]mcp.PermissionMode{
-		ToolLease:   mcp.ModeWorkspaceWrite,
-		ToolPush:    mcp.ModeWorkspaceWrite,
-		ToolMerge:   mcp.ModeWorkspaceWrite,
-		ToolRelease: mcp.ModeWorkspaceWrite,
-		ToolStatus:  mcp.ModeReadOnly,
-		"unknown":   mcp.ModeReadOnly,
+		ToolLease:      mcp.ModeWorkspaceWrite,
+		ToolPush:       mcp.ModeWorkspaceWrite,
+		ToolMerge:      mcp.ModeWorkspaceWrite,
+		ToolRelease:    mcp.ModeWorkspaceWrite,
+		ToolStatus:     mcp.ModeReadOnly,
+		ToolCheckpoint: mcp.ModeWorkspaceWrite,
+		ToolSubmit:     mcp.ModeWorkspaceWrite,
+		ToolAbandon:    mcp.ModeWorkspaceWrite,
+		ToolOpen:       mcp.ModeWorkspaceWrite,
+		ToolTerminate:  mcp.ModeWorkspaceWrite,
+		ToolHandoff:    mcp.ModeWorkspaceWrite,
+		"unknown":      mcp.ModeReadOnly,
 	}
 	for tool, want := range cases {
 		if got := h.RequiredMode(tool); got != want {
 			t.Errorf("RequiredMode(%q)=%s want %s", tool, got, want)
+		}
+	}
+}
+
+func TestHandler_v2_Checkpoint_UsesYcodeLoomIDEnv(t *testing.T) {
+	h, _ := newTestHandler(t)
+	// Open a lease via the v2 verb so we have a valid YCODE_LOOM_ID.
+	out, err := h.HandleToolCall(context.Background(), ToolOpen, json.RawMessage(`{
+		"cwd":"/host/p","sub_agent_label":"label"
+	}`))
+	if err != nil {
+		t.Fatalf("loom_open: %v", err)
+	}
+	var lease struct{ LoomID string `json:"loom_id"` }
+	if err := json.Unmarshal([]byte(out), &lease); err != nil {
+		t.Fatalf("decode lease: %v", err)
+	}
+
+	t.Setenv("YCODE_LOOM_ID", lease.LoomID)
+	// Call checkpoint without loom_id in the body — handler must pick
+	// up YCODE_LOOM_ID.
+	res, err := h.HandleToolCall(context.Background(), ToolCheckpoint, json.RawMessage(`{
+		"summary":"first save"
+	}`))
+	if err != nil {
+		t.Fatalf("loom_checkpoint: %v", err)
+	}
+	if !strings.Contains(res, "checkpoint_id") {
+		t.Errorf("checkpoint result missing checkpoint_id field: %s", res)
+	}
+}
+
+func TestHandler_v2_Handoff_ReturnsEnvVars(t *testing.T) {
+	h, _ := newTestHandler(t)
+	out, err := h.HandleToolCall(context.Background(), ToolHandoff, json.RawMessage(`{
+		"cwd":"/host/project","sub_agent_label":"extract"
+	}`))
+	if err != nil {
+		t.Fatalf("loom_handoff: %v", err)
+	}
+	var r struct {
+		LoomID      string            `json:"loom_id"`
+		SandboxPath string            `json:"sandbox_path"`
+		Branch      string            `json:"branch"`
+		Env         map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		t.Fatalf("decode handoff result: %v", err)
+	}
+	if r.LoomID == "" || r.SandboxPath == "" || r.Branch == "" {
+		t.Errorf("handoff result fields incomplete: %+v", r)
+	}
+	if r.Env["YCODE_LOOM_ID"] != r.LoomID {
+		t.Errorf("YCODE_LOOM_ID env=%q want loom_id %q", r.Env["YCODE_LOOM_ID"], r.LoomID)
+	}
+	if r.Env["YCODE_LOOM_BRANCH"] != r.Branch {
+		t.Errorf("YCODE_LOOM_BRANCH env=%q want branch %q", r.Env["YCODE_LOOM_BRANCH"], r.Branch)
+	}
+	if r.Env["YCODE_LOOM_BASE"] != "main" {
+		t.Errorf("YCODE_LOOM_BASE env=%q want main", r.Env["YCODE_LOOM_BASE"])
+	}
+}
+
+func TestHandler_v2_ListResources_DescribesBoth(t *testing.T) {
+	h, _ := newTestHandler(t)
+	rs := h.ListResources()
+	if len(rs) != 2 {
+		t.Fatalf("expected 2 resources, got %d", len(rs))
+	}
+	wantURIs := map[string]bool{ResourceSession: true, ResourceProject: true}
+	for _, r := range rs {
+		if !wantURIs[r.URI] {
+			t.Errorf("unexpected resource URI %q", r.URI)
+		}
+		if r.MimeType != "application/json" {
+			t.Errorf("resource %s MimeType=%q want application/json", r.URI, r.MimeType)
 		}
 	}
 }

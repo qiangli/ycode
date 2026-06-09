@@ -33,6 +33,7 @@ type stubBackend struct {
 	OpenPRFn         func(ctx context.Context, slug, branch, title, body string) (int64, error)
 	NotifyProjectFn  func(ctx context.Context, slug, cloneURL string) error
 	RebaseSandboxFn  func(ctx context.Context, sandboxPath, baseBranch string) ([]string, error)
+	CheckpointFn     func(ctx context.Context, sandboxPath, message string) (string, error)
 }
 
 func newStubBackend() *stubBackend {
@@ -154,6 +155,13 @@ func (b *stubBackend) RebaseSandbox(ctx context.Context, sandboxPath, baseBranch
 		return b.RebaseSandboxFn(ctx, sandboxPath, baseBranch)
 	}
 	return nil, nil
+}
+
+func (b *stubBackend) Checkpoint(ctx context.Context, sandboxPath, message string) (string, error) {
+	if b.CheckpointFn != nil {
+		return b.CheckpointFn(ctx, sandboxPath, message)
+	}
+	return "checkpoint-sha-" + message, nil
 }
 
 // markMerged is a test helper to flip a branch to merged state.

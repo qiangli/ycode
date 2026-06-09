@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/qiangli/ycode/internal/runtime/mcp"
@@ -30,14 +31,30 @@ var (
 	_ mcp.PermissionAware = (*MCPHandler)(nil)
 )
 
-// Tool names. Foreign tools call these; the substrate's mental model
-// is "five verbs over an opaque loom_id handle".
+// Tool names. v1 ("five verbs over an opaque loom_id handle") and v2
+// (sub-agent + orchestrator role triplets) coexist during the N+0
+// migration window. v1 verbs are deprecated; agents prefer the v2 set.
 const (
+	// v1 (deprecated; removed in N+2).
 	ToolLease   = "loom_lease"
 	ToolPush    = "loom_push"
 	ToolMerge   = "loom_merge"
 	ToolStatus  = "loom_status"
 	ToolRelease = "loom_release"
+
+	// v2 sub-agent role — active inside a workspace.
+	ToolCheckpoint = "loom_checkpoint"
+	ToolSubmit     = "loom_submit"
+	ToolAbandon    = "loom_abandon"
+
+	// v2 orchestrator role — active outside any workspace.
+	ToolOpen      = "loom_open"
+	ToolTerminate = "loom_terminate"
+	ToolHandoff   = "loom_handoff"
+
+	// v2 resources.
+	ResourceSession = "loom://session"
+	ResourceProject = "loom://project"
 )
 
 func (h *MCPHandler) ListTools() []mcp.Tool {
@@ -105,15 +122,130 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 				"required": ["loom_id"]
 			}`),
 		},
+
+		// v2 sub-agent role.
+		{
+			Name:        ToolCheckpoint,
+			Description: "Lightweight save point inside the current lease's sandbox. Stages every change and makes a local commit (no push). Idempotent: empty staging area returns the current HEAD SHA. Loom_id is read from YCODE_LOOM_ID when omitted.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"loom_id": {"type": "string", "description": "Lease handle. Omit to use YCODE_LOOM_ID."},
+					"summary": {"type": "string", "description": "Optional commit message. Defaults to 'loom: checkpoint (<sub_agent_label>)'."}
+				}
+			}`),
+		},
+		{
+			Name:        ToolSubmit,
+			Description: "Push branch, open or refresh the PR against main, and block until terminal state (merged | conflict | ci_failed) or max_wait_seconds elapses (returns pending). On conflict the sandbox is rebased in place with conflict markers preserved so the agent can edit and resubmit.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"loom_id":          {"type": "string", "description": "Lease handle. Omit to use YCODE_LOOM_ID."},
+					"title":            {"type": "string", "description": "Optional PR title."},
+					"body":             {"type": "string", "description": "Optional PR body."},
+					"message":          {"type": "string", "description": "Optional commit message."},
+					"force":            {"type": "boolean", "description": "Allow non-fast-forward push."},
+					"max_wait_seconds": {"type": "integer", "description": "How long to block waiting for terminal state (default 300)."}
+				}
+			}`),
+		},
+		{
+			Name:        ToolAbandon,
+			Description: "Tear down the current sandbox. Equivalent to loom_release, scoped to the sub-agent role. Branch retained if a PR is open.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"loom_id": {"type": "string", "description": "Lease handle. Omit to use YCODE_LOOM_ID."},
+					"reason":  {"type": "string", "description": "Optional human-readable reason for logs."}
+				}
+			}`),
+		},
+
+		// v2 orchestrator role.
+		{
+			Name:        ToolOpen,
+			Description: "Allocate a workspace for a sub-agent. Returns loom_id, sandbox path, branch, and author identity. Parent process spawns the sub-agent into this workspace.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"cwd":             {"type": "string", "description": "Absolute path of the host project (parent's caller cwd)."},
+					"sub_agent_label": {"type": "string", "description": "Short identifier; becomes part of branch name + author trailer."},
+					"ttl_seconds":     {"type": "integer", "description": "Optional. Lease lifetime (default 3600, max 28800)."},
+					"base_branch":     {"type": "string", "description": "Optional. Base branch (default main)."}
+				},
+				"required": ["cwd", "sub_agent_label"]
+			}`),
+		},
+		{
+			Name:        ToolTerminate,
+			Description: "Forcibly tear down a sub-agent's lease. Same sandbox + branch cleanup as loom_release; intended for the parent's monitoring path.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"loom_id":     {"type": "string", "description": "Lease to terminate."},
+					"keep_branch": {"type": "boolean", "description": "If true, retain the remote branch."}
+				},
+				"required": ["loom_id"]
+			}`),
+		},
+		{
+			Name:        ToolHandoff,
+			Description: "Allocate a workspace AND return the env vars + sandbox path the parent should use when spawning the sub-agent process. Like loom_open but with sub-agent-friendly env shape pre-computed. The parent is responsible for the actual exec.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"cwd":             {"type": "string", "description": "Absolute path of the host project."},
+					"sub_agent_label": {"type": "string", "description": "Short identifier."},
+					"ttl_seconds":     {"type": "integer", "description": "Optional. Lease lifetime (default 3600, max 28800)."},
+					"base_branch":     {"type": "string", "description": "Optional. Base branch (default main)."}
+				},
+				"required": ["cwd", "sub_agent_label"]
+			}`),
+		},
 	}
 }
 
 func (h *MCPHandler) ListResources() []mcp.Resource {
-	return nil
+	return []mcp.Resource{
+		{
+			URI:         ResourceSession,
+			Name:        "loom session",
+			Description: "Current state of the lease named by YCODE_LOOM_ID (or query string ?loom_id=...). Returns a JSON snapshot — clients poll for transitions. Real-time SSE streaming lands in a follow-up.",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         ResourceProject,
+			Name:        "loom project",
+			Description: "Snapshot of every active lease scoped by ?cwd=... query string (or all leases if absent). Returns JSON. Used by `ycode weave list` and the orchestrator's monitoring path.",
+			MimeType:    "application/json",
+		},
+	}
 }
 
-func (h *MCPHandler) ReadResource(_ context.Context, _ string) (string, error) {
-	return "", fmt.Errorf("loom: no resources")
+func (h *MCPHandler) ReadResource(ctx context.Context, uri string) (string, error) {
+	// Strip an optional query string for filter parameters; today the
+	// snapshot reads pkg/loom.Service.Status with the appropriate
+	// filter and renders JSON. Streaming SSE arrives in a later PR.
+	base, _, _ := strings.Cut(uri, "?")
+	switch base {
+	case ResourceSession:
+		statuses, err := h.svc.Status(ctx, loom.StatusRequest{
+			LoomID: os.Getenv("YCODE_LOOM_ID"),
+		})
+		if err != nil {
+			return "", err
+		}
+		return marshalResult(statuses)
+	case ResourceProject:
+		statuses, err := h.svc.Status(ctx, loom.StatusRequest{})
+		if err != nil {
+			return "", err
+		}
+		return marshalResult(statuses)
+	default:
+		return "", fmt.Errorf("loom: unknown resource %q", uri)
+	}
 }
 
 // RequiredMode encodes the permission tier for each tool. Read-capable
@@ -126,7 +258,9 @@ func (h *MCPHandler) RequiredMode(toolName string) mcp.PermissionMode {
 	switch toolName {
 	case ToolStatus:
 		return mcp.ModeReadOnly
-	case ToolLease, ToolPush, ToolMerge, ToolRelease:
+	case ToolLease, ToolPush, ToolMerge, ToolRelease,
+		ToolCheckpoint, ToolSubmit, ToolAbandon,
+		ToolOpen, ToolTerminate, ToolHandoff:
 		return mcp.ModeWorkspaceWrite
 	default:
 		return mcp.ModeReadOnly
@@ -135,6 +269,7 @@ func (h *MCPHandler) RequiredMode(toolName string) mcp.PermissionMode {
 
 func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json.RawMessage) (string, error) {
 	switch name {
+	// v1.
 	case ToolLease:
 		return h.handleLease(ctx, input)
 	case ToolPush:
@@ -145,6 +280,23 @@ func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json
 		return h.handleStatus(ctx, input)
 	case ToolRelease:
 		return h.handleRelease(ctx, input)
+
+	// v2 sub-agent role.
+	case ToolCheckpoint:
+		return h.handleCheckpoint(ctx, input)
+	case ToolSubmit:
+		return h.handleSubmit(ctx, input)
+	case ToolAbandon:
+		return h.handleAbandon(ctx, input)
+
+	// v2 orchestrator role.
+	case ToolOpen:
+		return h.handleOpen(ctx, input)
+	case ToolTerminate:
+		return h.handleTerminate(ctx, input)
+	case ToolHandoff:
+		return h.handleHandoff(ctx, input)
+
 	default:
 		return "", fmt.Errorf("loom: unknown tool %q", name)
 	}
@@ -217,6 +369,124 @@ func (h *MCPHandler) handleRelease(ctx context.Context, input json.RawMessage) (
 		return "", err
 	}
 	return marshalResult(map[string]any{"released": true, "loom_id": req.LoomID})
+}
+
+// resolveLoomID picks the loom_id from the request body if present, or
+// from YCODE_LOOM_ID. Sub-agent verbs accept either so the auto-attach
+// env in N0.7 carries the handle implicitly.
+func resolveLoomID(explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	return os.Getenv("YCODE_LOOM_ID")
+}
+
+func (h *MCPHandler) handleCheckpoint(ctx context.Context, input json.RawMessage) (string, error) {
+	var req loom.CheckpointRequest
+	if len(input) > 0 && string(input) != "null" {
+		if err := json.Unmarshal(input, &req); err != nil {
+			return "", fmt.Errorf("loom_checkpoint: %w", err)
+		}
+	}
+	req.LoomID = resolveLoomID(req.LoomID)
+	if req.LoomID == "" {
+		return "", fmt.Errorf("loom_checkpoint: missing loom_id (set YCODE_LOOM_ID or pass explicitly)")
+	}
+	res, err := h.svc.Checkpoint(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return marshalResult(res)
+}
+
+func (h *MCPHandler) handleSubmit(ctx context.Context, input json.RawMessage) (string, error) {
+	var req loom.SubmitRequest
+	if len(input) > 0 && string(input) != "null" {
+		if err := json.Unmarshal(input, &req); err != nil {
+			return "", fmt.Errorf("loom_submit: %w", err)
+		}
+	}
+	req.LoomID = resolveLoomID(req.LoomID)
+	if req.LoomID == "" {
+		return "", fmt.Errorf("loom_submit: missing loom_id")
+	}
+	res, err := h.svc.SubmitAndWait(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return marshalResult(res)
+}
+
+func (h *MCPHandler) handleAbandon(ctx context.Context, input json.RawMessage) (string, error) {
+	// Body shape: {loom_id?, reason?, keep_branch?}. reason is currently
+	// log-only metadata.
+	var req struct {
+		LoomID     string `json:"loom_id"`
+		Reason     string `json:"reason,omitempty"`
+		KeepBranch bool   `json:"keep_branch,omitempty"`
+	}
+	if len(input) > 0 && string(input) != "null" {
+		if err := json.Unmarshal(input, &req); err != nil {
+			return "", fmt.Errorf("loom_abandon: %w", err)
+		}
+	}
+	req.LoomID = resolveLoomID(req.LoomID)
+	if req.LoomID == "" {
+		return "", fmt.Errorf("loom_abandon: missing loom_id")
+	}
+	if err := h.svc.Release(ctx, loom.ReleaseRequest{LoomID: req.LoomID, KeepBranch: req.KeepBranch}); err != nil {
+		return "", err
+	}
+	return marshalResult(map[string]any{"abandoned": true, "loom_id": req.LoomID})
+}
+
+func (h *MCPHandler) handleOpen(ctx context.Context, input json.RawMessage) (string, error) {
+	var req loom.LeaseRequest
+	if err := json.Unmarshal(input, &req); err != nil {
+		return "", fmt.Errorf("loom_open: %w", err)
+	}
+	lease, err := h.svc.Lease(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return marshalResult(lease)
+}
+
+func (h *MCPHandler) handleTerminate(ctx context.Context, input json.RawMessage) (string, error) {
+	var req loom.ReleaseRequest
+	if err := json.Unmarshal(input, &req); err != nil {
+		return "", fmt.Errorf("loom_terminate: %w", err)
+	}
+	if err := h.svc.Release(ctx, req); err != nil {
+		return "", err
+	}
+	return marshalResult(map[string]any{"terminated": true, "loom_id": req.LoomID})
+}
+
+func (h *MCPHandler) handleHandoff(ctx context.Context, input json.RawMessage) (string, error) {
+	// Allocate via Lease, then return the env shape the parent needs to
+	// exec a sub-agent. The actual exec is the parent's responsibility;
+	// the substrate only owns the workspace.
+	var req loom.LeaseRequest
+	if err := json.Unmarshal(input, &req); err != nil {
+		return "", fmt.Errorf("loom_handoff: %w", err)
+	}
+	lease, err := h.svc.Lease(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	out := map[string]any{
+		"loom_id":      lease.ID,
+		"sandbox_path": lease.Path,
+		"branch":       lease.Branch,
+		"env": map[string]string{
+			"YCODE_LOOM_ID":     lease.ID,
+			"YCODE_LOOM_BRANCH": lease.Branch,
+			"YCODE_LOOM_BASE":   loom.DefaultBaseBranch,
+			"YCODE_LOOM_LABEL":  lease.SubAgentLabel,
+		},
+	}
+	return marshalResult(out)
 }
 
 func marshalResult(v any) (string, error) {

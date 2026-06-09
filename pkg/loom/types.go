@@ -110,6 +110,24 @@ type SubmitResult struct {
 	CISummary     string   `json:"ci_summary,omitempty"`
 }
 
+// CheckpointRequest is the input to Service.Checkpoint. A lightweight
+// local commit in the sandbox; no push.
+type CheckpointRequest struct {
+	LoomID  string `json:"loom_id"`
+	Summary string `json:"summary,omitempty"`
+}
+
+// CheckpointResult is the output of Service.Checkpoint. CommitSHA is
+// HEAD after the checkpoint (which may equal the prior HEAD when there
+// were no staged changes).
+type CheckpointResult struct {
+	CheckpointID  string `json:"checkpoint_id"`
+	CommitSHA     string `json:"commit_sha"`
+	FilesChanged  int    `json:"files_changed,omitempty"`
+	LinesChanged  int    `json:"lines_changed,omitempty"`
+	HadNoChanges  bool   `json:"had_no_changes,omitempty"`
+}
+
 // RebaseRequest is the input to Service.Rebase. Triggers a fetch +
 // rebase against the lease's base branch inside the sandbox.
 type RebaseRequest struct {

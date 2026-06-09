@@ -54,6 +54,13 @@ type Backend interface {
 	// Optional: NoOpProjectNotifier is a valid default.
 	NotifyProjectActive(ctx context.Context, slug, cloneURL string) error
 
+	// Checkpoint stages every change in sandboxPath and makes a local
+	// commit (no push). Idempotent: if there's nothing to commit, the
+	// current HEAD SHA is returned with no error. Used by the v2
+	// loom_checkpoint verb for lightweight save-points before risky
+	// edits, distinct from CommitAndPush which also pushes upstream.
+	Checkpoint(ctx context.Context, sandboxPath, message string) (commitSHA string, err error)
+
 	// RebaseSandbox runs the equivalent of `git fetch origin baseBranch`
 	// followed by `git rebase origin/baseBranch` inside the sandbox at
 	// sandboxPath. The sandbox state is preserved on conflict (markers
