@@ -45,9 +45,8 @@ func buildLoomComponent(_ context.Context, client *gitserver.Client, token, gite
 		return nil, nil, fmt.Errorf("loom: registry: %w", err)
 	}
 
-	loomDataDir := filepath.Join(giteaDataDir, "loom")
-	sandboxRoot := filepath.Join(loomDataDir, "sandboxes")
-	leasePath := filepath.Join(loomDataDir, "leases.json")
+	sandboxRoot := loompkg.DefaultSandboxRoot(giteaDataDir)
+	leasePath := loompkg.DefaultLeasePath(giteaDataDir)
 
 	store, err := loompkg.NewFileStore(leasePath)
 	if err != nil {

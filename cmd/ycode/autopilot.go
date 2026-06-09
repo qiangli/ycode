@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -128,13 +127,18 @@ func runWorker(ctx context.Context, issueNum int64, loomID, repoOverride string)
 // lookupLoomLease reads the loom lease store directly. The Worker
 // subprocess runs on the same host as the Foreman and has filesystem
 // access to the gitea data dir.
+//
+// Path derivation goes through pkg/loom helpers so the Worker and the
+// Foreman's buildLoomComponent see the same canonical path; the
+// YCODE_GITEA_DATA_DIR env var (set by the parent when spawning workers)
+// overrides the default and lets the parent point at a non-default
+// gitea data dir without the Worker having to discover it.
 func lookupLoomLease(loomID string) (loompkg.Lease, error) {
-	home, err := os.UserHomeDir()
+	giteaDataDir, err := loompkg.DefaultGiteaDataDirWithEnv()
 	if err != nil {
 		return loompkg.Lease{}, err
 	}
-	leasePath := filepath.Join(home, ".agents", "ycode", "observability", "gitea", "loom", "leases.json")
-	store, err := loompkg.NewFileStore(leasePath)
+	store, err := loompkg.NewFileStore(loompkg.DefaultLeasePath(giteaDataDir))
 	if err != nil {
 		return loompkg.Lease{}, fmt.Errorf("loom store: %w", err)
 	}
