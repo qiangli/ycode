@@ -50,10 +50,19 @@ var (
 )
 
 // Tool names. v1 ("five verbs over an opaque loom_id handle") and v2
-// (sub-agent + orchestrator role triplets) coexist during the N+0
-// migration window. v1 verbs are deprecated; agents prefer the v2 set.
+// (sub-agent + orchestrator role triplets) coexist during the N+0/N+1
+// migration window. v1 verbs are deprecated since N+2; agents
+// prefer the v2 set.
 const (
-	// v1 (deprecated; removed in N+2).
+	// v1 — DEPRECATED. v2 equivalents:
+	//   loom_lease   → loom_open
+	//   loom_push    → (folded into loom_submit)
+	//   loom_merge   → (folded into loom_submit)
+	//   loom_status  → loom://session resource / loom://project resource
+	//   loom_release → loom_abandon (sub-agent) / loom_terminate (orchestrator)
+	// Listed alongside v2 for backwards compatibility through one
+	// release cycle; will be removed in a future major version once
+	// every integrated foreign tool migrates.
 	ToolLease   = "loom_lease"
 	ToolPush    = "loom_push"
 	ToolMerge   = "loom_merge"
@@ -83,7 +92,7 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 	return []mcp.Tool{
 		{
 			Name:        ToolLease,
-			Description: "Reserve an isolated git workspace (clone+branch+author identity) for a sub-agent. Returns a loom_id handle plus the sandbox path the sub-agent should work in. The substrate guarantees N parallel leases for the same project never step on each other.",
+			Description: "DEPRECATED (v1; use loom_open). Reserve an isolated git workspace (clone+branch+author identity) for a sub-agent. Returns a loom_id handle plus the sandbox path the sub-agent should work in. The substrate guarantees N parallel leases for the same project never step on each other.",
 			InputSchema: mustJSON(`{
 				"type": "object",
 				"properties": {
@@ -97,7 +106,7 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 		},
 		{
 			Name:        ToolPush,
-			Description: "Stage and commit every change in the lease's sandbox, then push the branch upstream. Idempotent — if there are no changes, no commit is made (the existing HEAD is still pushed).",
+			Description: "DEPRECATED (v1; folded into loom_submit). Stage and commit every change in the lease's sandbox, then push the branch upstream. Idempotent — if there are no changes, no commit is made (the existing HEAD is still pushed).",
 			InputSchema: mustJSON(`{
 				"type": "object",
 				"properties": {
@@ -110,7 +119,7 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 		},
 		{
 			Name:        ToolMerge,
-			Description: "Open a PR from the lease's branch into main. The merger handles auto-merge once CI is green. Idempotent — if a PR is already open, returns its number.",
+			Description: "DEPRECATED (v1; folded into loom_submit). Open a PR from the lease's branch into main. The merger handles auto-merge once CI is green. Idempotent — if a PR is already open, returns its number.",
 			InputSchema: mustJSON(`{
 				"type": "object",
 				"properties": {
@@ -123,7 +132,7 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 		},
 		{
 			Name:        ToolStatus,
-			Description: "Report the state of one or more leases. Pass loom_id for a specific lease, cwd for all leases in a project, or neither for everything. States: leased, pushed, merging, merged, ci_failed, conflict.",
+			Description: "DEPRECATED (v1; use loom://session or loom://project resources). Report the state of one or more leases. Pass loom_id for a specific lease, cwd for all leases in a project, or neither for everything. States: leased, pushed, merging, merged, ci_failed, conflict.",
 			InputSchema: mustJSON(`{
 				"type": "object",
 				"properties": {
@@ -134,7 +143,7 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 		},
 		{
 			Name:        ToolRelease,
-			Description: "Tear down a lease. Removes the sandbox and (by default) the branch — but only if no PR is still open. Open PRs are left for the merger to finish.",
+			Description: "DEPRECATED (v1; use loom_abandon for sub-agent role or loom_terminate for orchestrator). Tear down a lease. Removes the sandbox and (by default) the branch — but only if no PR is still open. Open PRs are left for the merger to finish.",
 			InputSchema: mustJSON(`{
 				"type": "object",
 				"properties": {

@@ -1,5 +1,20 @@
 # Loom — git-workspace substrate for foreign agentic tools
 
+> **v1 — deprecated since N+2.** Loom v1's five-verb MCP surface
+> (`loom_lease` / `loom_push` / `loom_merge` / `loom_status` /
+> `loom_release`) continues to ship for backwards compatibility but
+> agents should prefer the v2 surface — see
+> [`loom-v2-plan.md`](./loom-v2-plan.md) for the design,
+> [`weave-runbook.md`](./weave-runbook.md) for the user-facing
+> walkthrough, and [`loom-v2-implementation.md`](./loom-v2-implementation.md)
+> for the implementation status. v2 collapses orchestration that v1
+> required the agent to do by hand (push → merge → poll-status →
+> conflict-recover) into a single `loom_submit` verb with auto-rebase-
+> in-place on conflict; adds the `weave_add` / `weave_prioritize`
+> collaboration verbs; and ships the `ycode weave` human/orchestrator
+> front door.
+
+
 `loom` is one of ycode's local-first services exposed to third-party
 agentic coding tools (Claude Code, OpenCode, Codex, Gemini CLI),
 alongside `podman` (sandbox), `ollama` (local inference), `otel`
