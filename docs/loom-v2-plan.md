@@ -37,12 +37,23 @@ The human-facing CLI lives under a new top-level command `ycode weave`.
 | Substrate admin / debug | `ycode loom <subverb>` | developers debugging the substrate |
 | Go package API | `pkg/loom` | internal callers (wrap, foreman, workflow) |
 
-`ycode weave` and the MCP `loom_*` surface are **two equally-valid front doors to the same Go substrate.** An orchestrator that already speaks MCP prefers the MCP path (lower latency, structured streaming, no process spawn); an orchestrator stuck on shell-only (or any tool that can `execve`) uses `ycode weave`. Both are agent-friendly by design — see [Agent-friendly CLI](#agent-friendly-cli) for the conventions.
+`ycode weave` and the MCP `loom_*` / `weave_*` surface are **two equally-valid front doors to the same Go substrate.** An orchestrator that already speaks MCP prefers the MCP path (lower latency, structured streaming, no process spawn); an orchestrator stuck on shell-only (or any tool that can `execve`) uses `ycode weave`. Both are agent-friendly by design — see [Agent-friendly CLI](#agent-friendly-cli) for the conventions.
+
+The MCP-side collaboration verbs (available to **both** sub-agent and orchestrator roles, since the natural pattern is sub-agents filing related issues mid-work):
+
+| MCP verb | CLI peer | Purpose |
+|---|---|---|
+| `weave_add(title, body?, tool?, priority?, labels?, parent_issue?)` | `weave add` | File a new issue. `parent_issue` cross-links when a sub-agent files discovered work. |
+| `weave_prioritize(rankings: [{issue, tier, rank_within_tier?}])` | `weave prio` | Bulk-update priorities. One call for an N-item ranking. |
 
 `weave` subverbs (full list):
 
 ```
-ycode weave start --issue <N> -- <tool>     # allocate workspace, launch tool inside
+ycode weave add "<title>" [--body ...] [--tool X] [--priority p0|p1|p2|p3]
+                                            # seed: file a new issue into the queue
+ycode weave start [--issue N] [-- <tool>]   # claim next (or specific) issue; allocate workspace; launch tool
+ycode weave next                            # peek: what would `start` claim?
+ycode weave prio <issue> p0|p1|p2|p3        # set a single issue's priority (or --auto for LLM rank)
 ycode weave list                            # active weaves with loom-process delta
 ycode weave pull                            # fast-forward user's main from merged work
 ycode weave abandon <issue>                 # tear down one weave
@@ -54,9 +65,16 @@ ycode weave reset                           # nuke all weaves for this project
 Common-case usage:
 
 ```
-ycode weave start --issue 123 -- claude-code
-ycode weave start --issue 124 -- opencode
-ycode weave start --issue 125 -- codex
+# Seed the queue
+ycode weave add "fix null deref in cache" --priority p0
+ycode weave add "refactor user service"
+ycode weave add "add dark mode toggle" --priority p2
+
+# Three terminals; each `start` atomically claims the top-of-queue card
+ycode weave start -- codex          # picks p0 first
+ycode weave start -- opencode       # picks next-highest
+ycode weave start -- claude-code    # picks next
+
 ycode weave list           # glance at progress
 ycode weave pull           # absorb merged work into the user's checkout
 ```
@@ -279,25 +297,107 @@ Three buckets, not one:
 ### The front door
 
 ```
-ycode weave start --issue 123 -- claude-code
-ycode weave start --issue 124 -- opencode
-ycode weave start --issue 125 -- codex
+ycode weave start -- codex          # no-arg: claims top of queue
+ycode weave start --issue 123 -- claude-code   # explicit issue
 ```
 
 `ycode weave start`:
 
-1. Looks up Gitea issue N in the embedded mirror; creates it with a minimal title if missing.
-2. Allocates a Loom workspace bound to that issue.
-3. Sets up auto-attach env.
-4. Execs the named tool with that environment, in the sandbox.
+1. If `--issue N` is provided: look up Gitea issue N in the embedded mirror; create it with a minimal title if missing.
+2. Otherwise: atomically claim the top-of-queue card (see [Priority](#priority) for the sort order). Exit 3 if the queue is empty.
+3. Resolve the tool: trailing `-- <tool>` > `--tool` > issue label `tool:X` > project default in `.ycode/loom.yaml` > hardcoded fallback (`codex`).
+4. Allocate a Loom workspace bound to the issue.
+5. Set up auto-attach env.
+6. Exec the tool in the sandbox.
 
-Three terminals × one command = three isolated workspaces. By construction they cannot clobber each other's files — they don't share a filesystem path.
+Three terminals × one no-arg command = three isolated workspaces, each claiming a different top-of-queue card. By construction they cannot clobber each other's files — they don't share a filesystem path.
 
 ### Issues are Gitea issues
 
 `--issue N` refers to **Gitea issue N** in the embedded mirror. Title, body, comments, labels all live in Gitea; the user can edit any of them through Gitea's UI and the changes flow back. ycode never duplicates the issue schema.
 
-For projects whose upstream is GitHub (or another forge), a separate `ycode weave mirror-issues` step (out of scope for v2) syncs upstream issues into the local Gitea on demand. Pending that, the user creates issues in the local Gitea directly or lets `ycode weave start --issue` mint them.
+For projects whose upstream is GitHub (or another forge), a separate `ycode weave mirror-issues` step (out of scope for v2) syncs upstream issues into the local Gitea on demand. Pending that, the user creates issues in the local Gitea directly or lets `ycode weave add` (or `weave start --issue`) mint them.
+
+### Seeding the queue
+
+Three minimum verbs cover the seed surface:
+
+| Verb | Purpose |
+|---|---|
+| `ycode weave add "<title>" [--body ...] [--tool X] [--priority p0-p3]` | File one issue into `todo` column. Returns issue number. |
+| `ycode weave add --from-file <path>` | Bulk seed from markdown (one issue per `- [ ]`) or JSON list. |
+| `ycode weave next [--json]` | Peek at what `start` would claim. Non-mutating. |
+
+Tier 1 (must ship): `add` (single + bulk-from-file), `next`. Tier 2 (follow-ups, not blocking): `add --from-todo` (scan `// TODO:` comments), `add --from-test-failures`, `add --editor` (opens `$EDITOR` with a template). Tier 3 (deferred feature): `weave mirror-issues --from github`.
+
+The Gitea web UI is the fourth seeding path — users (or anyone with the API) can create issues directly. They land in `todo` via the auto-attach handler.
+
+### Issues as a collaboration surface
+
+The seed → work loop has three actors writing to the same Gitea store:
+
+- **Humans** via `weave add` and the Gitea web UI.
+- **Orchestrator agents** via the `weave_add` MCP tool (or shelling out to `weave add` with `YCODE_AGENT=1`).
+- **Sub-agents inside a workspace** via `weave_add(parent_issue=<current>)` — the canonical pattern when an agent on #123 discovers a related bug worth filing as #126.
+
+Every newly-filed issue carries a `loom:source:*` auto-label so downstream tooling can distinguish:
+
+- `loom:source:human` — `weave add` invoked from a tty.
+- `loom:source:agent:<sub_agent_label>` — `weave_add` MCP call or `weave add` with `YCODE_AGENT=1`. Includes the sub-agent's label when filed from inside a workspace.
+
+The default Gitea label-filter URLs (`label:loom:source:agent`) give the user one click to triage everything the agents filed overnight.
+
+**Optional review gate** for cautious setups, in `.ycode/loom.yaml`:
+
+```yaml
+seeding:
+  agent_filed_default_state: todo      # or 'proposed' to require human review
+```
+
+When `proposed`: agent-filed issues land in a `proposed` column that `weave start` does not claim from. Human reviews and drags to `todo` to promote. Don't add the `proposed` column unless the gate is enabled.
+
+**Editing is free.** Title, body, labels, priority, comments, position-on-board — all already work via the Gitea web UI, the Gitea REST API, and the existing MCP `github_*` tools (which speak the GitHub API that Gitea also implements). ycode does **not** ship `weave edit`, `weave comment`, `weave relabel`. Editing is Gitea's job; one verb (`add`) for seeding, zero for editing.
+
+### Priority
+
+Two-dimensional priority, both dimensions live in Gitea so humans and agents read/write the same source of truth.
+
+**Coarse — label tier:**
+
+| Label | Color | Meaning |
+|---|---|---|
+| `loom:p0` | red | drop everything, do this next |
+| `loom:p1` | orange | important, queue near the top |
+| `loom:p2` | yellow | default; "would be good" |
+| `loom:p3` | gray | nice-to-have, may not get done |
+
+New issues default to `loom:p2`. Three real tiers (p0/p1/p2) plus a won't-do stash (p3). No `p4`/`p5`.
+
+**Fine — board position within a tier.** Drag a `p1` card above another `p1` card to make it go first. The visual ordering on the Loom project board is the fine-grained dimension.
+
+**`weave start` sort order:**
+
+1. priority_tier_value (p0=0 … p3=3; unlabeled = 2)
+2. board_position_in_column
+3. created_at
+4. issue_number (final deterministic tiebreaker)
+
+Atomic claim via `loom:working` label with optimistic-concurrency on the Gitea API; on race, retry with the next candidate.
+
+**Three paths to update priority — one source of truth.**
+
+| Path | Audience | Call |
+|---|---|---|
+| `ycode weave prio <issue> p0\|p1\|p2\|p3` | human (terminal) | quick single-issue set |
+| `ycode weave prio --auto` | human delegating to an LLM | re-ranks the whole queue |
+| `weave_prioritize` MCP tool | agent (programmatic, bulk) | one call ranks N items |
+| Gitea web UI (label dropdown + board drag) | human (browser) | click-driven |
+
+All four paths converge on Gitea labels + board card positions. No parallel priority database.
+
+**Composes with source attribution.** An agent auto-prioritizing the queue often *should* default-rank its own filed issues lower than human-filed ones — a sensible policy hint baked into the `weave_prioritize_auto` strategy. Independent dimensions; both are just labels.
+
+**Zero-setup default.** Fresh repo, no priorities set → everything is `loom:p2` → FIFO from board position (= creation order). Identical to a no-priority world until someone uses priorities. Cost of carrying the feature for non-users: zero.
 
 ### Three guarantees
 
@@ -395,10 +495,14 @@ The first `ycode weave start` in a fresh checkout:
 1. Detects it's a git repo; if not, errors with `ycode weave requires a git repository`.
 2. Mirrors the repo into the embedded Gitea as `admin/<slug>` (idempotent — checks if mirror exists first).
 3. Installs the pre-commit hook (Layer 3).
-4. Writes `.ycode/loom.yaml` (gitignored, machine-local) recording the project_id, default base branch, identity tier, and backend mode.
-5. Creates the `loom:*` label set in the mirrored repo (one per state, colored).
-6. Creates a `Loom` project board with columns: `working`, `submitted`, `ci_failed`, `conflict`, `merged`, `abandoned`.
-7. Allocates the first lease and execs the tool.
+4. Writes `.ycode/loom.yaml` (gitignored, machine-local) recording the project_id, default base branch, identity tier, backend mode, and `default_tool` (auto-detected from `package.json` / `Cargo.toml` / `go.mod` / `pyproject.toml` signals; `codex` as final fallback).
+5. Creates the `loom:*` label set in the mirrored repo:
+   - State: `loom:working`, `loom:submitted`, `loom:ci-failed`, `loom:conflict`, `loom:merged`, `loom:abandoned`.
+   - Priority: `loom:p0` (red), `loom:p1` (orange), `loom:p2` (yellow), `loom:p3` (gray).
+   - Source: `loom:source:human`, `loom:source:agent` (with per-sub-agent suffixes added on demand).
+6. Creates a `Loom` project board with columns: `todo`, `working`, `submitted`, `ci_failed`, `conflict`, `merged`, `abandoned`. (Adds a `proposed` column too if `seeding.agent_filed_default_state: proposed` is enabled.)
+7. Writes default issue templates to `.gitea/issue_template/{bug,task}.md` for legible human and agent filings.
+8. Allocates the first lease (if `weave start` triggered the bootstrap) and execs the tool.
 
 Total wall-clock: 1–3 seconds for a small repo, 30s for a large one. The user sees a single "Setting up workspace…" line, then the tool launches. Every subsequent `ycode weave start` is sub-second.
 
@@ -445,14 +549,21 @@ Every `--json` response is a single envelope with a versioned schema:
   "result": {
     "loom_id": "loom-...",
     "issue": 123,
+    "priority": "p1",
+    "priority_value": 1,
+    "board_position": 0,
+    "picked_by": "priority",
     "sandbox_path": "/.../sandboxes/ab12cd34",
     "branch": "agent/agent-loom-issue-123-.../free-...",
     "pr_url": null,
-    "tool_pid": 12345
+    "tool_pid": 12345,
+    "tool_resolved_from": "cli_trailing"
   },
   "hints": []
 }
 ```
+
+`weave list --json` adds `priority`, `priority_value`, `board_position`, and `source` (`human` | `agent:<label>`) per entry. `weave next --json` returns the candidate the algorithm would claim plus a `picked_by` field (`priority` / `board_position` / `created_at` / `issue_number`) so callers can sanity-check the sort without re-implementing it.
 
 - `schema_version` is mandatory. Bump when output shape changes. Agents pin against the version they tested.
 - `status` is one of `ok`, `error`, `partial`.
@@ -527,7 +638,10 @@ The MCP `loom_*` verbs and the `ycode weave` CLI are not competitors — they're
 
 | Action | CLI | MCP |
 |---|---|---|
-| Allocate workspace + spawn tool | `weave start --issue N --tool T` | `loom_handoff(label, spawn_command)` |
+| File a new issue (seed) | `weave add "<title>" [--priority p0]` | `weave_add(title, body?, priority?, tool?, parent_issue?)` |
+| Bulk-prioritize the queue | `weave prio --auto` / `weave prio <N> p0` | `weave_prioritize(rankings)` / `weave_prioritize_auto(strategy?)` |
+| Peek at next claim | `weave next --json` | `loom://project` resource (filter to `todo`) |
+| Allocate workspace + spawn tool | `weave start --tool T` (claims top) or `--issue N` | `loom_handoff(label, spawn_command)` |
 | Allocate workspace only | `weave start --issue N --no-spawn` | `loom_open(label)` |
 | List active leases | `weave list --json` | `loom://project` resource |
 | Watch transitions | `weave list --watch --json` | `loom://project` resource (SSE) |
@@ -556,6 +670,11 @@ Listing exclusions because the rationale matters more than the omission.
 - **Custom web dashboard.** Gitea already provides issues, PRs, project boards, activity feeds, notifications, labels, webhooks, and a full REST API. Reuse it. `ycode weave list` exists only for the loom-process delta (tool name, sandbox path, heartbeat) that has no Gitea analogue.
 - **Separate event bus / event-stream UI.** Gitea webhooks are the event bus. The `loom://session` / `loom://project` MCP resources are thin transformers over webhook payloads. No custom Kafka-shaped pipe.
 - **Custom issue schema.** Issues are Gitea issues. `--issue N` is a Gitea issue number. ycode never invents a parallel schema with its own ID space.
+- **Numeric / total-order ranking.** Resist `loom:rank:42` per-issue fields. The two-dimensional tier+position scheme is enough and self-balancing; a flat numeric rank becomes a maintenance burden (every insertion requires shuffling) and fights with humans dragging cards on the board.
+- **More than four priority tiers.** Three real tiers (p0/p1/p2) plus a won't-do stash (p3) is enough. No `p4`/`p5`. Avoid label-set scope creep.
+- **Deadline / SLA fields on issues.** ycode is not a project manager. Use Gitea milestones for the few cases that need them.
+- **Auto-degrade of stale priorities.** Don't quietly demote `p0` issues older than a day; that makes the labels lie about user intent. Humans degrade explicitly.
+- **`weave edit` / `weave comment` / `weave relabel`.** Editing is Gitea's job. One verb (`add`) for seeding; zero for editing. Existing MCP `github_*` tools and the Gitea web UI cover everything.
 
 ## Migration from v1
 
@@ -574,8 +693,13 @@ Three releases, none breaking.
 - `ycode wrap --loom=auto` becomes default-on.
 - Tier 2 identity available behind config.
 - `local` backend (reference-clone, no Gitea, no merger) ships behind config.
-- `ycode weave` top-level ships with all subverbs (`start`, `list`, `pull`, `abandon`, `shell`, `open`, `reset`) as the human-facing front door.
-- Gitea first-run bootstrapping (label set + `Loom` project board) lands as part of `ycode weave start` setup.
+- `ycode weave` top-level ships with all subverbs (`add`, `start`, `next`, `prio`, `list`, `pull`, `abandon`, `shell`, `open`, `reset`).
+- MCP collaboration verbs `weave_add` and `weave_prioritize` ship to both sub-agent and orchestrator roles.
+- Gitea first-run bootstrapping lands as part of `ycode weave start` / `weave add` setup:
+  - State + priority + source label sets.
+  - `Loom` project board with `todo` + state columns.
+  - `.gitea/issue_template/{bug,task}.md`.
+- Auto-claim algorithm (priority tier → board position → created_at) wired in `weave start`.
 - Defense-in-depth Layers 2–4 wire in.
 
 ### N+2

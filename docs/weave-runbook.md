@@ -47,12 +47,14 @@ ycode init
 
 This registers ycode's MCP servers and the `weave`-aware launch hooks into `~/.config/claude-code/`, `~/.config/codex/`, `~/.config/opencode/`. Each tool, after restart, knows to behave correctly under auto-attach (refuse to run unmanaged, read `YCODE_LOOM_ISSUE_BODY`, etc.). Skip this step if your tools don't support MCP — `weave` still works, you'll just feed prompts manually in Phase 2.
 
-## Phase 1 — First-run mirror & label setup (one-time, ~3 seconds)
+## Phase 1 — Seed the queue (and trigger first-run setup)
 
-The first `ycode weave start` in this repo bootstraps everything. You don't run a separate setup command; it just happens. You'll see:
+You file issues into the queue with `ycode weave add`. The very first `weave add` in this repo bootstraps the whole Gitea side; subsequent ones are sub-second.
+
+### 1.1 First `add` (first-run setup happens implicitly)
 
 ```bash
-ycode weave start --issue 123 --title "fix null deref in cache" -- codex
+ycode weave add "fix null deref in cache" --priority p0 --body "Stack trace in #log/2026-06-09.log; reproduces on cold cache."
 ```
 
 Expected output (first run only):
@@ -60,61 +62,125 @@ Expected output (first run only):
 ```
 weave: first run in this project — setting up
   ✓ mirror   admin/myapp into local Gitea
-  ✓ labels   loom:working, loom:submitted, loom:ci-failed, loom:conflict, loom:merged, loom:abandoned
-  ✓ board    Loom (6 columns)
+  ✓ labels   loom:working/submitted/ci-failed/conflict/merged/abandoned
+             loom:p0/p1/p2/p3
+             loom:source:human, loom:source:agent
+  ✓ board    Loom (7 columns: todo, working, submitted, ci_failed, conflict, merged, abandoned)
+  ✓ templates  .gitea/issue_template/{bug,task}.md
   ✓ hook     pre-commit installed in .git/hooks/
-  ✓ config   wrote .ycode/loom.yaml (backend: forge, identity: ephemeral)
-weave: issue #123 created in local Gitea
-weave: sandbox at ~/.agents/ycode/gitea/loom/sandboxes/ab12cd34/
-weave: launching codex...
+  ✓ config   wrote .ycode/loom.yaml (backend: forge, identity: ephemeral, default_tool: codex)
+weave add: issue #123 created (priority p0, source human) → todo column
 ```
 
-Codex starts inside the sandbox. From here on, every subsequent `weave start` skips the setup block and lands sub-second.
+### 1.2 Add the rest
 
-If you want to inspect the Gitea board now:
+```bash
+ycode weave add "refactor user service for testability"
+ycode weave add "add dark mode toggle" --priority p2
+```
+
+```
+weave add: issue #124 created (priority p2, source human) → todo column
+weave add: issue #125 created (priority p2, source human) → todo column
+```
+
+Three issues now sit in `todo`, sorted by priority: #123 (p0) is top, then #124 and #125 by board position (creation order).
+
+### 1.3 (Optional) Let an agent rank the queue
+
+If you'd rather hand the prioritization to an LLM:
+
+```bash
+ycode weave prio --auto
+```
+
+```
+weave prio --auto: re-ranked 3 issues
+  #123  p0 (was p0)  "fix null deref in cache"
+  #124  p1 (was p2)  "refactor user service for testability"
+  #125  p2 (was p2)  "add dark mode toggle"
+```
+
+Or set one explicitly:
+
+```bash
+ycode weave prio 124 p1
+```
+
+### 1.4 (Optional) Inspect the board
 
 ```bash
 ycode weave open --board
 # opens http://127.0.0.1:5743/gitea/admin/myapp/projects/1 in your browser
 ```
 
-You'll see a kanban with `working / submitted / ci_failed / conflict / merged / abandoned` columns and one card for issue #123.
+You'll see the kanban with three cards in `todo`, colored by priority. Drag-reorder within a tier if you want to fine-tune; nothing else is needed.
 
-## Phase 2 — Start the other two weaves
+To preview what the next `weave start` will claim:
 
-Open two more terminals. One command each.
+```bash
+ycode weave next
+# → #123  p0  "fix null deref in cache"  (picked_by: priority)
+```
 
-### Terminal 2 — OpenCode on #124
+## Phase 2 — Start three weaves, one per terminal
+
+Open three terminals. One command each. **No `--issue` flag** — `weave start` claims the top of the queue atomically.
+
+### Terminal 1 — Codex picks #123 (the p0)
 
 ```bash
 cd ~/projects/myapp
-ycode weave start --issue 124 --title "refactor user service for testability" -- opencode
+ycode weave start -- codex
 ```
 
 Expected output:
 
 ```
-weave: issue #124 created in local Gitea
+weave: claimed issue #123 "fix null deref in cache" (p0, top of todo)
+weave: sandbox at ~/.agents/ycode/gitea/loom/sandboxes/ab12cd34/
+weave: launching codex...
+```
+
+### Terminal 2 — OpenCode picks #124 (the p1)
+
+```bash
+cd ~/projects/myapp
+ycode weave start -- opencode
+```
+
+```
+weave: claimed issue #124 "refactor user service for testability" (p1, top of todo)
 weave: sandbox at ~/.agents/ycode/gitea/loom/sandboxes/ef56gh78/
 weave: launching opencode...
 ```
 
-OpenCode starts.
-
-### Terminal 3 — Claude Code on #125
+### Terminal 3 — Claude Code picks #125 (the p2)
 
 ```bash
 cd ~/projects/myapp
-ycode weave start --issue 125 --title "add dark mode toggle" -- claude-code
+ycode weave start -- claude-code
 ```
 
 ```
-weave: issue #125 created in local Gitea
+weave: claimed issue #125 "add dark mode toggle" (p2, top of todo)
 weave: sandbox at ~/.agents/ycode/gitea/loom/sandboxes/ij90kl12/
 weave: launching claude-code...
 ```
 
-Three agents now run in three isolated sandboxes. None can see the others' files, branches, stashes, hooks, or in-progress commits (per the sandbox-isolation invariant in the plan doc).
+Three agents now run in three isolated sandboxes. The atomic-claim guarantee meant each `weave start` picked a different card even though the calls were near-simultaneous. None of the sandboxes can see the others' files, branches, stashes, hooks, or in-progress commits (per the sandbox-isolation invariant in the plan doc).
+
+### Even simpler: omit the tool too
+
+If you don't pass `-- <tool>`, `weave start` resolves the tool from the issue's `tool:X` label (if any), then from `default_tool` in `.ycode/loom.yaml`. So if every issue should go to `codex`:
+
+```bash
+ycode weave start              # claims top of todo, uses default_tool
+ycode weave start              # claims next, same tool
+ycode weave start              # claims next, same tool
+```
+
+Three terminals × one bare command. This is the minimum-friction shape.
 
 ### What each agent sees
 
@@ -151,10 +217,10 @@ ycode weave list --watch
 Live-updating TUI:
 
 ```
-ISSUE  TOOL          STATE          SANDBOX                       HEARTBEAT  ACTION
-#123   codex         working        .../sandboxes/ab12cd34        2s         editing
-#124   opencode      submitted      .../sandboxes/ef56gh78        4m         CI running
-#125   claude-code   working        .../sandboxes/ij90kl12        1s         editing
+ISSUE  PRIO  SOURCE  TOOL          STATE          SANDBOX                       HEARTBEAT  ACTION
+#123   p0    human   codex         working        .../sandboxes/ab12cd34        2s         editing
+#124   p1    human   opencode      submitted      .../sandboxes/ef56gh78        4m         CI running
+#125   p2    human   claude-code   working        .../sandboxes/ij90kl12        1s         editing
 ```
 
 `--watch` streams state transitions over the `loom://project` MCP resource — no polling.
@@ -237,10 +303,10 @@ ycode weave list
 ```
 
 ```
-ISSUE  TOOL          STATE     PR           MERGED AT
-#123   codex         merged    !1           2 min ago
-#124   opencode      merged    !2           1 min ago
-#125   claude-code   merged    !3           30s ago
+ISSUE  PRIO  TOOL          STATE     PR    MERGED AT
+#123   p0    codex         merged    !1    2 min ago
+#124   p1    opencode      merged    !2    1 min ago
+#125   p2    claude-code   merged    !3    30s ago
 ```
 
 All green. (If anything is still `working` or `conflict`, address it before pulling.)
@@ -385,6 +451,33 @@ PRs then wait in `submitted` state until you approve them in Gitea (or via `ycod
 
 Nothing stops you. After Phase 5.2 (whether one PR or three have merged), `git push origin main` works normally. The local Gitea is just a staging area; GitHub is the truth-source.
 
+### An agent discovers related work while fixing something else
+
+Codex, fixing #123, notices a separate race condition in the eviction path. Inside its sandbox, it calls `weave_add` via MCP:
+
+```
+weave_add(
+  title="race in cache eviction path",
+  body="...",
+  priority="p1",
+  parent_issue=123
+)
+```
+
+A new issue #126 appears on the board, labeled `loom:source:agent:codex` and linked back to #123 in the comment thread. The next free `weave start` will pick it up (or the human can review and re-prioritize first if `agent_filed_default_state: proposed` is enabled).
+
+### Let an agent rank everything for me
+
+```bash
+ycode weave prio --auto
+```
+
+LLM reads all `todo` issues, ranks them by impact, and applies `loom:p0`–`loom:p3` labels. You can override any single one afterward:
+
+```bash
+ycode weave prio 127 p0   # I disagree, this one's urgent
+```
+
 ### You closed all three terminals and walked away
 
 Heartbeats stopped. After 30 min idle (default), the reaper:
@@ -414,23 +507,25 @@ If you're an orchestrator agent instead of a human at a keyboard, the same workf
 ```bash
 export YCODE_AGENT=1     # forces --json, no prompts, no colors
 
-# Phase 1+2 — start three weaves and capture the loom_ids
-for issue in 123 124 125; do
-  ycode weave start --issue $issue --tool codex --no-spawn --json \
-    | jq -r '.result.loom_id'
-done
+# Phase 1 — seed the queue from a planning step (LLM emitted tasks.json)
+ycode weave add --from-file tasks.json --json
 
-# Then spawn each tool yourself via loom_handoff (MCP) or shell-out,
-# attached to the respective YCODE_LOOM_ID.
+# (Optional) Re-rank everything via the orchestrator's own LLM strategy.
+# Equivalent to a single weave_prioritize MCP call.
+ycode weave prio --auto --json
+
+# Phase 2 — spawn N workers. Each weave start atomically claims top-of-queue.
+for i in 1 2 3; do
+  ycode weave start --tool codex --json &
+done
+wait
 
 # Phase 3 — watch transitions as NDJSON
 ycode weave list --watch --json &
 WATCH_PID=$!
 
-# ... do other work ...
-
-# Phase 4 wait — block until all three are terminal
-ycode weave wait --issue 123 --issue 124 --issue 125 --timeout 1h --json
+# Phase 4 wait — block until everything claimed-and-started is terminal
+ycode weave wait --all --timeout 1h --json
 
 # Phase 5 — pull
 ycode weave pull --json
