@@ -65,11 +65,10 @@ weave: first run in this project — setting up
   ✓ labels   loom:working/submitted/ci-failed/conflict/merged/abandoned
              loom:p0/p1/p2/p3
              loom:source:human, loom:source:agent
-  ✓ board    Loom (7 columns: todo, working, submitted, ci_failed, conflict, merged, abandoned)
   ✓ templates  .gitea/issue_template/{bug,task}.md
   ✓ hook     pre-commit installed in .git/hooks/
   ✓ config   wrote .ycode/loom.yaml (backend: forge, identity: ephemeral, default_tool: codex)
-weave add: issue #123 created (priority p0, source human) → todo column
+weave add: issue #123 created (priority p0, source human, label loom:todo)
 ```
 
 ### 1.2 Add the rest
@@ -80,11 +79,11 @@ ycode weave add "add dark mode toggle" --priority p2
 ```
 
 ```
-weave add: issue #124 created (priority p2, source human) → todo column
-weave add: issue #125 created (priority p2, source human) → todo column
+weave add: issue #124 created (priority p2, source human, label loom:todo)
+weave add: issue #125 created (priority p2, source human, label loom:todo)
 ```
 
-Three issues now sit in `todo`, sorted by priority: #123 (p0) is top, then #124 and #125 by board position (creation order).
+Three issues are now queued (each carrying `loom:todo`), sorted by priority: #123 (p0) is top, then #124 and #125 FIFO by creation time within p2.
 
 ### 1.3 (Optional) Let an agent rank the queue
 
@@ -107,14 +106,16 @@ Or set one explicitly:
 ycode weave prio 124 p1
 ```
 
-### 1.4 (Optional) Inspect the board
+### 1.4 (Optional) Inspect the queue
 
 ```bash
-ycode weave open --board
-# opens http://127.0.0.1:5743/gitea/admin/myapp/projects/1 in your browser
+ycode weave open --issues
+# opens http://127.0.0.1:5743/gitea/admin/myapp/issues?labels=loom:todo&state=open
 ```
 
-You'll see the kanban with three cards in `todo`, colored by priority. Drag-reorder within a tier if you want to fine-tune; nothing else is needed.
+You'll see all three issues in Gitea's list view, color-coded by priority label. Filter further by clicking labels in the sidebar; the URL bar carries the filter state if you want to bookmark a particular view.
+
+If you prefer a kanban: run `ycode weave init-board` once (it's a separate, opt-in setup that creates a Gitea project board via the web routes). Loom does not auto-sync card positions, so if you go that route you'll drag cards manually. For most workflows the filtered list view is enough.
 
 To preview what the next `weave start` will claim:
 
@@ -225,13 +226,13 @@ ISSUE  PRIO  SOURCE  TOOL          STATE          SANDBOX                       
 
 `--watch` streams state transitions over the `loom://project` MCP resource — no polling.
 
-### Option B — Browser: Gitea project board
+### Option B — Browser: Gitea filtered issue list
 
 ```bash
-ycode weave open --board
+ycode weave open --issues
 ```
 
-The kanban shows three cards moving through columns as state transitions fire. Click any card → standard Gitea issue page with comments, PR link, CI status, sticky loom comment showing sandbox path and heartbeat.
+Gitea's issue list shows the three issues with their current state labels (`loom:working` / `loom:submitted` / etc.) color-coded. Refresh as work progresses; click any issue → standard Gitea issue page with comments, PR link, CI status, sticky loom comment showing sandbox path and heartbeat. Filter URLs (`?labels=loom:working`, `?labels=loom:p0`) carry the bookmark state.
 
 For programmatic monitoring (e.g., from a script or higher-level orchestrator):
 
@@ -249,7 +250,7 @@ As each agent finishes its work, it calls `loom_submit`. (If a tool exits cleanl
 What happens behind the scenes for each:
 
 1. Branch pushed to local Gitea.
-2. PR opened against `main`. Card moves to `submitted` column.
+2. PR opened against `main`. Issue label flips `loom:todo` → `loom:submitted`.
 3. Merger picks up the PR, rebases onto current `main`.
 4. CI runs (whatever's in `.ycode/loom.yaml` `ci_command`, or auto-detected from your project — `make test`, `npm test`, etc.).
 5. Green CI → fast-forward merge into local Gitea's `main`. Card moves to `merged`. Issue auto-closes via `Fixes #N` trailer.
@@ -263,7 +264,7 @@ Suppose #123 and #124 both touch `internal/cache/cache.go`. The merger:
 1. Merges #123 first (it arrived first).
 2. Tries to rebase #124 → conflict.
 3. Rebases #124's branch onto new `main` in the sandbox, leaves conflict markers in `cache.go`.
-4. PR card moves to `conflict` column.
+4. Issue label flips to `loom:conflict`.
 5. `loom_submit` returns `{state: conflict, files: ["internal/cache/cache.go"]}` to the agent.
 6. Agent edits the conflicted file using its normal tools, calls `loom_submit` again.
 7. Loop until green.
@@ -370,13 +371,13 @@ Done. Three issues' worth of work, three different agents, one push.
 The reaper handles most of it:
 
 - Merged leases are torn down within the grace window. Sandbox directories removed. Branches preserved in Gitea for audit (deletable later via `ycode loom prune` if you care about disk).
-- The Loom project board keeps the cards in `merged` column as history; they auto-archive after 30 days.
+- Closed (merged) issues remain in Gitea with their `loom:merged` label as history; Gitea's default issue list filter hides closed by default but they're a click away.
 
 If you want to nuke everything for this project explicitly:
 
 ```bash
 ycode weave reset
-# Confirm: remove 3 leases, 3 branches, 0 sandboxes (all reaped), preserve labels and project board? [y/N]
+# Confirm: remove 3 leases, 3 branches, 0 sandboxes (all reaped), preserve labels and issues? [y/N]
 ```
 
 ## Common situations cheat sheet
@@ -415,7 +416,7 @@ Kill it cleanly:
 ycode weave abandon 124 --reason "going to redo with different prompt"
 ```
 
-Sandbox removed, branch removed (since no PR open), lease closed, card moves to `abandoned` column in Gitea. Start fresh:
+Sandbox removed, branch removed (since no PR open), lease closed, issue label flips to `loom:abandoned`. Start fresh:
 
 ```bash
 ycode weave start --issue 124 -- codex      # try a different tool
@@ -464,7 +465,7 @@ weave_add(
 )
 ```
 
-A new issue #126 appears on the board, labeled `loom:source:agent:codex` and linked back to #123 in the comment thread. The next free `weave start` will pick it up (or the human can review and re-prioritize first if `agent_filed_default_state: proposed` is enabled).
+A new issue #126 appears in the queue, labeled `loom:source:agent:codex` and `loom:todo`, linked back to #123 in the comment thread. The next free `weave start` will pick it up (or the human can review and re-prioritize first if `agent_filed_default_state: proposed` is enabled — agent-filed items then carry `loom:proposed` and are excluded from claims until promoted).
 
 ### Let an agent rank everything for me
 
@@ -496,7 +497,7 @@ When you come back: `ycode weave list` shows what's still active. `ycode weave l
 - Manage sandbox lifetimes or TTLs.
 - Coordinate the three agents to avoid stepping on each other.
 - Resolve a merge conflict in your working tree (the merger handles it in the sandboxes).
-- Touch the Gitea UI for anything other than glancing at the board.
+- Touch the Gitea UI for anything other than glancing at the filtered issue list.
 
 The contract was: three terminals, one command per, walk away, pull, push. Everything else is the substrate's problem.
 

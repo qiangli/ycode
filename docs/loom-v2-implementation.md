@@ -12,41 +12,33 @@ This plan turns the design into a sequenced PR backlog with explicit dependencie
 | **N+1** — Front door | `ycode weave` CLI, auto-attach default-on, Gitea bootstrap, full UX | Everything in the design | 10–14 |
 | **N+2** — Cleanup | Remove deprecated v1 verbs, doc pass | API hygiene only | 2–3 |
 
-## Three early spikes (before any phase work)
+## Three early spikes — outcomes
 
-Three unknowns block confident scoping. Each is ~half a day. Doing all three before committing to N+1 saves rework.
+All three were executed before N+0 work. Outcomes recorded here drive the PR sizing below.
 
-### Spike 1 — Gitea project-board API
+### Spike 1 — Gitea project-board API → **YELLOW (path)**
 
-**Question:** Do Gitea's kanban project-board REST endpoints support card position read/write reliably across the embedded version we ship?
+**Investigated:** Whether Gitea 1.26.1 (embedded) exposes kanban project-board read/write via REST.
 
-**Approach:** Stand up `ycode serve`, create a project board with columns via API, add issues as cards, query card positions, move a card via API, re-query, observe order. Repeat with concurrent moves.
+**Finding:** Project boards have **no v1 REST API**. Confirmed by reading `external/gitea/routers/api/v1/api.go` and `templates/swagger/v1_input.json` — no `/projects/*` routes. The web UI drives boards via HTML routes under `/<owner>/<repo>/projects/*` (`external/gitea/routers/web/web.go:1505-1530`): `POST /new`, `POST /columns/new`, `POST /{id}/{columnID}/move`, `POST /issues/{index}/projects/column`. These require **session-cookie auth and CSRF tokens**, and use HTML form encoding — usable but brittle.
 
-**Acceptance:** Positions are stable, ordered, and updatable via REST without race-induced corruption.
+**Resolution:** Project board becomes opt-in via `ycode weave init-board` (one-time, web-route based, will accept CSRF + session complexity once). Loom does **not** auto-sync cards on state changes — labels are the source of truth, and the default dashboard is the label-filtered issue list (which uses only the stable v1 REST API). Drag-to-reorder within a tier is dropped as a priority dimension; coarse tier (p0/p1/p2/p3) plus FIFO is enough.
 
-**Fallback if red:** Switch the "fine-grained priority within tier" dimension from board position to a `loom:rank:N` label. Update the design doc's excluded-features list to remove the "no numeric ranking" exclusion.
+### Spike 2 — Optimistic-concurrency for atomic claim → **GREEN (in-process mutex)**
 
-### Spike 2 — Optimistic-concurrency for atomic claim
+**Investigated:** Whether Gitea provides ETag / If-Match / CAS on label set, and whether the `AddIssueLabels` endpoint is concurrency-safe.
 
-**Question:** Can two near-simultaneous `weave start` calls atomically claim different cards without racing?
+**Finding:** `POST /repos/{owner}/{repo}/issues/{index}/labels` (`external/gitea/routers/api/v1/repo/issue_label.go:68`) is idempotent and returns the full label set after add; no ETag, no `If-Match`, no CAS primitive. `issue_service.AddLabels` dedupes inserts but doesn't surface "I added it" vs "it was already there" to the caller.
 
-**Approach:** Two goroutines try to apply `loom:working` to the same issue concurrently via Gitea label API. Observe whether Gitea returns ETag on issue GET, supports `If-Match` on PATCH, or has any CAS-style label-set primitive. Test with 10× concurrent attempts to detect any silent overwrite.
+**Resolution:** No external lock store needed. All `weave start` callers route through one `ycode serve` Service instance via MCP, so an in-process **`sync.Mutex`** (per-project, via `sync.Map[projectID]*Mutex`) is sufficient for cross-client atomicity. Service restart recovery reads existing `loom:working` labels from Gitea (durable) and excludes already-claimed candidates. SQLite-backed claim lock — considered as the original fallback — explicitly rejected as unnecessary moving part.
 
-**Acceptance:** First writer wins deterministically; second observes the existing label and can retry against the next candidate.
+### Spike 3 — Reference clone inside embedded Gitea → **GREEN**
 
-**Fallback if red:** Add a SQLite-backed claim lock in `pkg/loom` that mediates between Service callers. Less elegant (extra moving part) but bulletproof. Affects the design's "Gitea is the source of truth" purity but not the user-visible behavior.
+**Investigated:** Whether `git clone --reference <bare> <url>` yields per-clone refs/index/stash with shared object store.
 
-### Spike 3 — Reference clone inside embedded Gitea
+**Finding:** Empirically verified on a local bare + two reference children. `alternates` file points correctly at parent's `objects` dir; per-clone refs/HEAD/index/stash/reflog all isolated; child commits stay private until pushed (parent's `cat-file` returns "could not get object info" for a child-only SHA); child `.git/objects` directory is ~16K (essentially empty alternates pointer file). Sandbox-isolation invariant fully achievable.
 
-**Question:** Does `git clone --reference <gitea-bare-on-disk> <gitea-http-url>` produce a working tree with shared object store and per-clone refs/index/stash/reflog, on the embedded Gitea's on-disk layout?
-
-**Approach:** Locate a bare repo on disk under Gitea's data dir; do a reference clone via HTTP URL; verify `.git/objects/info/alternates` is populated, refs are per-clone, two reference clones don't share branch namespaces, basic edit-commit-push works end-to-end.
-
-**Acceptance:** Reference clone works; sandbox-isolation invariant holds (no shared refs/index/stash/reflog between siblings).
-
-**Fallback if red:** Fall back to plain `git clone` (no `--reference`). Disk cost grows by the full object store per lease — fine for small repos, painful for monorepos. Worth confirming exactly because the design relies on this for cost-efficient isolation in the large-repo case.
-
-**Edge:** what happens if Gitea pack-gc runs while a reference clone is alive? Spike 3 also probes this — Loom must coordinate to never gc the parent while children exist.
+**Known constraint:** Never `git gc` the parent bare while children are alive — child-only objects could be pruned if they were referenced only via alternates. Mitigation: Loom tracks active leases and either delays gc or disables auto-gc on the parent. Documented as operational constraint for N1.D1.
 
 ## N+0 — Foundation
 
@@ -72,9 +64,9 @@ Five groups; intra-group sequential, inter-group partially parallel.
 
 | # | PR | Depends on |
 |---|---|---|
-| N1.A1 | **Gitea API helper package** (`internal/gitserver/weaveapi/`). Wrappers around label set/clear, project-board column ops, issue create/update, sticky-comment auto-update. | Spike 1, 2 |
-| N1.A2 | **First-run setup orchestrator.** Idempotent function that brings a project to v2-ready state: mirror, label sets (state + priority + source), project board with `todo` column, issue templates, pre-commit hook, `.ycode/loom.yaml` with auto-detected defaults. Tracks completion in the yaml so a retry skips done steps. | N1.A1 |
-| N1.A3 | **Atomic-claim algorithm.** Implements the (priority_tier, board_position, created_at, issue_number) sort and the optimistic-concurrency claim. Lives in `pkg/loom`. | N1.A1, Spike 2 outcome |
+| N1.A1 | **Gitea API helper package** (`internal/gitserver/weaveapi/`). Wrappers around label set/clear, issue create/update, sticky-comment auto-update — all v1 REST. Smaller scope than originally planned (no project-board helpers; those go to N1.G1). | Spike 1 |
+| N1.A2 | **First-run setup orchestrator.** Idempotent function that brings a project to v2-ready state: mirror, label sets (state + priority + source), issue templates, pre-commit hook, `.ycode/loom.yaml` with auto-detected defaults. Tracks completion in the yaml so a retry skips done steps. Does **not** create a project board. | N1.A1 |
+| N1.A3 | **Atomic-claim with Service mutex.** Per-project `sync.Mutex` (via `sync.Map[projectID]`) in `pkg/loom.Service`. Sort: (priority_tier, created_at, issue_number). Apply `loom:working` label inside the lock. Recovery on restart: read existing `loom:working` labels and exclude from candidates. No external store. | N1.A1 |
 
 ### Group B — CLI scaffolding (after N1.A1)
 
@@ -113,7 +105,13 @@ Five groups; intra-group sequential, inter-group partially parallel.
 |---|---|---|
 | N1.F1 | **`ycode wrap --loom=auto` becomes default.** Flip the flag default to on. Remove the `experimental` warning. Ship `local` backend behind config (or defer to N+1.5 if it grows beyond a single PR). | All of N+1 prior |
 
-**End-of-N+1 state:** the full design ships and matches the runbook.
+### Group G — Opt-in kanban (after F, fully optional)
+
+| # | PR | Depends on |
+|---|---|---|
+| N1.G1 | **`ycode weave init-board`.** Web-route-based one-time kanban bootstrap. Mints a session cookie via `/user/login` POST, extracts CSRF token, creates project + columns via `POST /<repo>/projects/new` and `POST /<repo>/projects/{id}/columns/new`. Encapsulated in a dedicated `internal/gitserver/weaveboard/` package so the CSRF/session complexity is contained. Loom does **not** auto-sync cards after this; cards drift unless the user manually moves them. | N1.A2 |
+
+**End-of-N+1 state:** the full design ships and matches the runbook. Kanban is opt-in via G1.
 
 ## N+2 — Cleanup
 
