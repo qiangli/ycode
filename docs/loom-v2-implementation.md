@@ -144,6 +144,47 @@ Five groups; intra-group sequential, inter-group partially parallel.
 3. **N+1 Group A → B/C/D/E in parallel → F.** A is foundational; everything else fans out off A; F is the cap.
 4. **N+2 after a real-world shakedown** of N+1 in someone's daily workflow. Don't rush the deprecation.
 
+## Shipped status (running log)
+
+Captured here for reference. Each line is the PR commit + a sentence.
+
+**N+0 — Foundation (complete):**
+
+- `00211c0` N0.1 — Lease-store path unification via `pkg/loom.DefaultLeasePath` helpers.
+- `21be522` N0.2 — `Service.SubmitAndWait` + `Service.Rebase` (block-with-deadline + auto-rebase contract).
+- `0c38534` N0.3 — `Service.Watch` event channel with drop-on-overflow pub-sub.
+- `c43d537` N0.4 — `PolicyLoom` wiring in `internal/service/workspace.go` via pluggable `LoomLeaser`.
+- `009d5e5` N0.5+6 — six v2 MCP verbs (loom_checkpoint/submit/abandon + open/terminate/handoff) + `loom://session`/`project` resources.
+- `c30cb12` N0.7 — `internal/runtime/wrap.LoomLeaser` seam for `--loom=auto` auto-attach.
+
+**N+1 — Front door (Groups A–G complete except G1's CSRF flow):**
+
+- `9f49699` N1.A1 — `internal/gitserver/weaveapi`: label namespace (state/priority/source) + sticky-comment ops, 6 new Gitea client methods.
+- `b4a15fc` N1.A2 — `internal/gitserver/weavesetup`: idempotent first-run orchestrator (mirror + labels + hook + config).
+- `785841e` N1.A3 — Atomic claim via per-project `sync.Mutex` + `Backend.ClaimNextIssue` (priority-tier sort).
+- `1da4465` N1.B1+B2 — `ycode weave` cobra skeleton with 11 subverbs + `internal/cli/weavecli` envelope/exit-code/agent-mode infra.
+- `8ab3f22` N1.C1 — `weave_add` + `weave_prioritize` MCP collab verbs.
+- `3af3563` N1.D1 — Reference-clone sandbox seam (opt-in `UseReferenceClone` config).
+- `7e89f58` N1.E2+E3+F1 — `IsLoomManaged`/`IsAttached` defense helpers; merger committer-allowlist guard; `wrap --loom` default-on.
+- `040e7a3` N1.G1 — `internal/gitserver/weaveboard.Bootstrap` scaffold (CSRF/session flow deferred to a focused follow-up PR).
+
+**N+2 — Cleanup:**
+
+- `040e7a3` N2.1 — v1 MCP verb descriptions prefixed `DEPRECATED (v1; use <v2>)`; backwards-compat preserved this release.
+- `040e7a3` N2.2 — `docs/loom.md` banner cross-linking the three v2 docs, body preserved as historical reference.
+- (pending) N2.3 — Optional `local` backend GA. `internal/gitserver/loomlocal` package shape lands as scaffold; production logic deferred to a focused follow-up when a real user requests it.
+
+### Body-shipped delegation summary (Group B subverbs)
+
+`ycode weave` registers the 11 subverbs and the agent-friendly envelope conventions per N1.B1+B2. The subverb RunE bodies in `cmd/ycode/weave_subverbs.go` are stubs that emit `precondition_failed` envelopes citing the relevant N+1 PR. Each stub will be activated as its substrate dependency lands; the contract for foreign-agent consumers (envelope shape, exit codes, hint stream) is stable and testable today.
+
+### What's load-bearing for "ready to actually use":
+
+- Forge backend (default) — wired end-to-end via N+0 + N+1 Groups A/C/D/E/F. ✅
+- `weave start` subverb body — needs to chain `Service.Claim` → `Service.Lease` → `wrap.Run(LoomLeaser)`. Substrate seams present (N1.A3 + N0.7); orchestration body is the open piece.
+- `weave init-board` web-route POST flow — N1.G1 scaffold present; production impl deferred.
+- `local` backend production logic — N2.3 scaffold present; deferred.
+
 ## References
 
 - [`loom-v2-plan.md`](./loom-v2-plan.md) — design and rationale.
