@@ -83,6 +83,22 @@ type ResolveHint struct {
 	Owner string
 }
 
+// LoomLeaser is the abstraction WorkspaceResolver uses to satisfy
+// PolicyLoom without taking a hard dependency on pkg/loom. The
+// concrete adapter lives at cmd/ycode (where the Service is
+// constructed during serve startup) and wraps loom.Service.Lease.
+//
+// Returning errors from LeaseForOwner is fine — they propagate to the
+// client as a session-create failure, which is the right shape: a
+// user whose loom subsystem is mid-failure gets a clear error rather
+// than a silent fall-through to the server's cwd.
+type LoomLeaser interface {
+	// LeaseForOwner allocates (or reattaches) a loom workspace for the
+	// given authenticated owner. Returns the lease's stable ID (used
+	// as Workspace.ID) and absolute sandbox path.
+	LeaseForOwner(owner string) (id string, path string, err error)
+}
+
 // WorkspaceResolver decides what working directory a new session
 // attaches to, based on policy + per-request hints. It also owns the
 // list / delete surface over the on-disk workspace tree.
@@ -90,6 +106,7 @@ type WorkspaceResolver struct {
 	policy WorkspacePolicy
 	root   string // ~/.agents/ycode/workspaces
 	cwd    string // captured at startup; used for PolicyCWD
+	leaser LoomLeaser
 	mu     sync.Mutex
 }
 
@@ -111,6 +128,18 @@ func NewWorkspaceResolver(policy WorkspacePolicy, root, cwd string) *WorkspaceRe
 
 // Policy returns the configured policy (read-only).
 func (r *WorkspaceResolver) Policy() WorkspacePolicy { return r.policy }
+
+// WithLoomLeaser installs the loom adapter that satisfies PolicyLoom.
+// Fluent-style so the serve wiring reads as one chain:
+//
+//	NewWorkspaceResolver(policy, root, cwd).WithLoomLeaser(adapter)
+//
+// Without a leaser installed, PolicyLoom returns a clear error rather
+// than falling through to per-session or cwd.
+func (r *WorkspaceResolver) WithLoomLeaser(l LoomLeaser) *WorkspaceResolver {
+	r.leaser = l
+	return r
+}
 
 // Resolve returns a Workspace for a new (or reattaching) session.
 func (r *WorkspaceResolver) Resolve(hint ResolveHint) (Workspace, error) {
@@ -167,11 +196,19 @@ func (r *WorkspaceResolver) Resolve(hint ResolveHint) (Workspace, error) {
 	case PolicyPerSession:
 		return r.allocate(owner)
 	case PolicyLoom:
-		// Loom integration lands in a follow-up task. For now this
-		// path is reachable only when the operator explicitly sets
-		// --workspace-policy=loom AND nothing has wired in the loom
-		// service; returning an error here is informative.
-		return Workspace{}, fmt.Errorf("loom policy not yet wired; pass workspace_id or explicit work_dir")
+		if r.leaser == nil {
+			return Workspace{}, fmt.Errorf("loom policy: no loom leaser configured (server started without loom subsystem); pass workspace_id or explicit work_dir")
+		}
+		id, path, err := r.leaser.LeaseForOwner(owner)
+		if err != nil {
+			return Workspace{}, fmt.Errorf("loom lease for %q: %w", owner, err)
+		}
+		return Workspace{
+			ID:        id,
+			Owner:     owner,
+			Path:      path,
+			CreatedAt: time.Now(),
+		}, nil
 	default:
 		return Workspace{}, fmt.Errorf("unknown workspace policy: %q", r.policy)
 	}

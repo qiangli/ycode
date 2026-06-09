@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -223,6 +224,54 @@ func TestResolve_LoomNotWired(t *testing.T) {
 	r := NewWorkspaceResolver(PolicyLoom, filepath.Join(tmp, "ws"), tmp)
 	_, err := r.Resolve(ResolveHint{Owner: "alice@example.com"})
 	if err == nil {
-		t.Errorf("expected loom policy to error until wired")
+		t.Errorf("expected loom policy to error when no leaser configured")
+	}
+}
+
+// fakeLeaser is a deterministic LoomLeaser used by the wiring tests.
+type fakeLeaser struct {
+	calls []string
+	id    string
+	path  string
+	err   error
+}
+
+func (f *fakeLeaser) LeaseForOwner(owner string) (string, string, error) {
+	f.calls = append(f.calls, owner)
+	if f.err != nil {
+		return "", "", f.err
+	}
+	return f.id, f.path, nil
+}
+
+func TestResolve_LoomWired_ReturnsLeaserOutput(t *testing.T) {
+	tmp := t.TempDir()
+	leaser := &fakeLeaser{id: "loom-abc", path: filepath.Join(tmp, "sandbox-abc")}
+	r := NewWorkspaceResolver(PolicyLoom, filepath.Join(tmp, "ws"), tmp).WithLoomLeaser(leaser)
+	ws, err := r.Resolve(ResolveHint{Owner: "alice@example.com"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if ws.ID != "loom-abc" {
+		t.Errorf("ws.ID=%q want loom-abc", ws.ID)
+	}
+	if ws.Path != filepath.Join(tmp, "sandbox-abc") {
+		t.Errorf("ws.Path=%q want sandbox-abc path", ws.Path)
+	}
+	if len(leaser.calls) != 1 || leaser.calls[0] != "alice@example.com" {
+		t.Errorf("leaser calls=%v", leaser.calls)
+	}
+}
+
+func TestResolve_LoomWired_PropagatesError(t *testing.T) {
+	tmp := t.TempDir()
+	leaser := &fakeLeaser{err: fmt.Errorf("backend down")}
+	r := NewWorkspaceResolver(PolicyLoom, filepath.Join(tmp, "ws"), tmp).WithLoomLeaser(leaser)
+	_, err := r.Resolve(ResolveHint{Owner: "alice@example.com"})
+	if err == nil {
+		t.Fatal("expected error from leaser to propagate")
+	}
+	if !strings.Contains(err.Error(), "backend down") {
+		t.Errorf("error %v does not wrap leaser error", err)
 	}
 }
