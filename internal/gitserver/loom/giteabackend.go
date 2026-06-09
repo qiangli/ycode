@@ -331,6 +331,68 @@ func agentIDFromBranch(branch string) string {
 	return rest
 }
 
+// RebaseSandbox runs `git fetch origin <baseBranch>` then
+// `git rebase origin/<baseBranch>` inside the sandbox. If the rebase
+// produces conflicts, the working tree is left with markers in the
+// conflicted files (no `git rebase --abort`) so the foreign agent can
+// resolve and resubmit.
+//
+// Returns the list of conflicted files (those reported by `git diff
+// --name-only --diff-filter=U`). Empty list + nil error means the
+// rebase landed cleanly.
+func (b *GiteaBackend) RebaseSandbox(ctx context.Context, sandboxPath, baseBranch string) ([]string, error) {
+	if sandboxPath == "" || baseBranch == "" {
+		return nil, fmt.Errorf("loom: RebaseSandbox: empty sandbox or baseBranch")
+	}
+
+	// Fetch first; rebase is local-only after a successful fetch.
+	if err := runGit(ctx, sandboxPath, "fetch", "origin", baseBranch); err != nil {
+		return nil, fmt.Errorf("loom: fetch origin %s: %w", baseBranch, err)
+	}
+
+	// Rebase. A non-zero exit indicates either a real failure or a
+	// conflict; we distinguish by inspecting `git diff` afterward
+	// rather than parsing exit codes (clearer and stable).
+	rebaseCmd := exec.CommandContext(ctx, "git", "rebase", "origin/"+baseBranch)
+	rebaseCmd.Dir = sandboxPath
+	rebaseOut, rebaseErr := rebaseCmd.CombinedOutput()
+
+	// Probe for conflicts regardless of rebase exit status.
+	conflicts, err := captureGit(ctx, sandboxPath, "diff", "--name-only", "--diff-filter=U")
+	if err != nil {
+		// If even `git diff` fails the sandbox is in a weird state;
+		// surface the original rebase error if any.
+		if rebaseErr != nil {
+			return nil, fmt.Errorf("loom: rebase: %w: %s", rebaseErr, strings.TrimSpace(string(rebaseOut)))
+		}
+		return nil, fmt.Errorf("loom: detect rebase conflicts: %w", err)
+	}
+	files := splitConflictFiles(conflicts)
+	if len(files) > 0 {
+		// Conflicts present — return them; rebase exit is expected non-zero.
+		return files, nil
+	}
+	if rebaseErr != nil {
+		// Non-zero exit with no conflict files means a real failure.
+		return nil, fmt.Errorf("loom: rebase origin/%s: %w: %s", baseBranch, rebaseErr, strings.TrimSpace(string(rebaseOut)))
+	}
+	return nil, nil
+}
+
+// splitConflictFiles tokenizes `git diff --name-only` output (newline-
+// separated) and returns a clean string slice, trimming any blank lines.
+func splitConflictFiles(out string) []string {
+	var files []string
+	for line := range strings.SplitSeq(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		files = append(files, line)
+	}
+	return files
+}
+
 // runGit executes a git subcommand in dir, discarding stdout. Returns
 // any stderr in the error.
 func runGit(ctx context.Context, dir string, args ...string) error {

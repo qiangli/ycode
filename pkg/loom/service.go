@@ -193,6 +193,10 @@ func (s *Service) Lease(ctx context.Context, req LeaseRequest) (Lease, error) {
 		ttl = s.maxTTL
 	}
 
+	baseBranch := req.BaseBranch
+	if baseBranch == "" {
+		baseBranch = DefaultBaseBranch
+	}
 	now := s.now()
 	id := newLoomID()
 	lease := Lease{
@@ -206,6 +210,7 @@ func (s *Service) Lease(ctx context.Context, req LeaseRequest) (Lease, error) {
 		Slug:          slug,
 		SubAgentLabel: req.SubAgentLabel,
 		AgentID:       agentID,
+		BaseBranch:    baseBranch,
 		CreatedAt:     now,
 		LastSeenAt:    now,
 	}
@@ -263,6 +268,150 @@ func (s *Service) Merge(ctx context.Context, req MergeRequest) (MergeResult, err
 		s.log.Warn("loom: persist lease PR number", "loom_id", lease.ID, "err", err)
 	}
 	return MergeResult{PRNumber: prNumber, Status: "queued"}, nil
+}
+
+// Rebase runs `git fetch origin <base> && git rebase origin/<base>`
+// inside the sandbox via the backend. Conflict markers are left in
+// place; the agent edits the files and resubmits. Returns the list of
+// conflicted files (empty on clean rebase).
+func (s *Service) Rebase(ctx context.Context, req RebaseRequest) (RebaseResult, error) {
+	lease, err := s.touchLease(req.LoomID)
+	if err != nil {
+		return RebaseResult{}, err
+	}
+	base := lease.BaseBranch
+	if base == "" {
+		base = DefaultBaseBranch
+	}
+	files, err := s.backend.RebaseSandbox(ctx, lease.Path, base)
+	if err != nil {
+		return RebaseResult{}, fmt.Errorf("loom: rebase: %w", err)
+	}
+	return RebaseResult{ConflictFiles: files}, nil
+}
+
+// SubmitAndWait is the v2 sub-agent submit verb. Push + open/refresh PR
+// + block until terminal state, automatically rebasing-in-place if the
+// merger detects a conflict. The single call replaces the v1
+// push → merge → poll-status orchestration the sub-agent used to do
+// by hand.
+//
+// Terminal states returned:
+//   - StateMerged     — PR merged; lease's work is on main.
+//   - StateConflict   — rebase produced conflicts; ConflictFiles is set.
+//   - StateCIFailed   — PR closed unmerged with no conflict files.
+//   - StatePending    — wait deadline hit before terminal; caller may
+//                       resubmit to keep waiting.
+//
+// Idempotent on PR creation: if the lease already has a PR open, that
+// PR is reused (CommitAndPush still runs to push any new commits).
+func (s *Service) SubmitAndWait(ctx context.Context, req SubmitRequest) (SubmitResult, error) {
+	lease, err := s.touchLease(req.LoomID)
+	if err != nil {
+		return SubmitResult{}, err
+	}
+
+	// 1. Commit (if staged changes exist) and push.
+	msg := req.Message
+	if msg == "" {
+		msg = fmt.Sprintf("loom: %s", lease.SubAgentLabel)
+	}
+	sha, err := s.backend.CommitAndPush(ctx, lease.Path, lease.Slug, lease.Branch, msg, req.Force)
+	if err != nil {
+		return SubmitResult{}, fmt.Errorf("loom: commit and push: %w", err)
+	}
+
+	// 2. Open PR (or reuse existing).
+	if err := s.backend.EnsureRemoteBranch(ctx, lease.Slug, lease.Branch); err != nil {
+		return SubmitResult{}, fmt.Errorf("loom: ensure remote branch: %w", err)
+	}
+	prNumber := lease.PRNumber
+	if prNumber == 0 {
+		prNumber, err = s.backend.OpenPR(ctx, lease.Slug, lease.Branch, req.Title, req.Body)
+		if err != nil {
+			return SubmitResult{}, fmt.Errorf("loom: open PR: %w", err)
+		}
+		lease.PRNumber = prNumber
+		if perr := s.store.Put(lease); perr != nil {
+			s.log.Warn("loom: persist lease PR number", "loom_id", lease.ID, "err", perr)
+		}
+	}
+
+	// 3. Block until terminal state or wait deadline.
+	wait := time.Duration(req.MaxWaitSeconds) * time.Second
+	if wait <= 0 {
+		wait = DefaultSubmitMaxWait
+	}
+	deadline := s.now().Add(wait)
+	poll := DefaultSubmitPollInterval
+
+	for {
+		states, perr := s.backend.ListPRStates(ctx, lease.Slug, lease.Branch)
+		if perr == nil {
+			for _, st := range states {
+				if st.HeadRef != lease.Branch {
+					continue
+				}
+				switch {
+				case st.Merged:
+					return SubmitResult{
+						State:     StateMerged,
+						PRNumber:  prNumber,
+						CommitSHA: sha,
+					}, nil
+				case st.State == "closed":
+					// Closed without merge — either CI failure or
+					// unresolvable conflict. Probe with a rebase to
+					// distinguish: if rebase yields conflict files,
+					// surface conflict; else treat as ci_failed.
+					rb, rerr := s.backend.RebaseSandbox(ctx, lease.Path, leaseBase(lease))
+					if rerr == nil && len(rb) > 0 {
+						return SubmitResult{
+							State:         StateConflict,
+							PRNumber:      prNumber,
+							CommitSHA:     sha,
+							ConflictFiles: rb,
+						}, nil
+					}
+					return SubmitResult{
+						State:     StateCIFailed,
+						PRNumber:  prNumber,
+						CommitSHA: sha,
+					}, nil
+				}
+			}
+		} else {
+			s.log.Warn("loom: submit poll: ListPRStates", "loom_id", lease.ID, "err", perr)
+		}
+
+		// Not yet terminal — check deadline, then sleep.
+		if !s.now().Before(deadline) {
+			return SubmitResult{
+				State:     StatePending,
+				PRNumber:  prNumber,
+				CommitSHA: sha,
+			}, nil
+		}
+		select {
+		case <-ctx.Done():
+			return SubmitResult{
+				State:     StatePending,
+				PRNumber:  prNumber,
+				CommitSHA: sha,
+			}, ctx.Err()
+		case <-time.After(poll):
+		}
+	}
+}
+
+// leaseBase returns the lease's base branch with a sensible fallback,
+// used by SubmitAndWait when it needs to invoke rebase without a
+// separate Service.Rebase call (skips the touchLease bookkeeping).
+func leaseBase(lease Lease) string {
+	if lease.BaseBranch != "" {
+		return lease.BaseBranch
+	}
+	return DefaultBaseBranch
 }
 
 // Status reports the state of zero or more leases.

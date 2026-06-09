@@ -53,6 +53,18 @@ type Backend interface {
 	// to lazily start per-project services (e.g. a merger goroutine).
 	// Optional: NoOpProjectNotifier is a valid default.
 	NotifyProjectActive(ctx context.Context, slug, cloneURL string) error
+
+	// RebaseSandbox runs the equivalent of `git fetch origin baseBranch`
+	// followed by `git rebase origin/baseBranch` inside the sandbox at
+	// sandboxPath. The sandbox state is preserved on conflict (markers
+	// remain in conflicted files; the agent resolves and resubmits via
+	// the same loom_submit verb).
+	//
+	// Returns the list of files with unresolved conflict markers (empty
+	// if rebase succeeded cleanly). A non-nil error is returned only on
+	// IO/git failures unrelated to merge conflicts — conflicts are a
+	// normal terminal state, not an error.
+	RebaseSandbox(ctx context.Context, sandboxPath, baseBranch string) (conflictFiles []string, err error)
 }
 
 // BackendPRState mirrors the part of a PR loom needs to report status.

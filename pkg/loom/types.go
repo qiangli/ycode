@@ -25,6 +25,10 @@ type LeaseRequest struct {
 	BaseBranch string `json:"base_branch,omitempty"`
 }
 
+// DefaultBaseBranch is the fallback target/source branch when a lease
+// or submit request omits BaseBranch. v2 keeps "main" as the convention.
+const DefaultBaseBranch = "main"
+
 // Lease is the handle returned by Service.Lease.
 //
 // The foreign tool passes ID back as loom_id on subsequent calls; the
@@ -50,6 +54,11 @@ type Lease struct {
 	CreatedAt     time.Time `json:"created_at"`
 	LastSeenAt    time.Time `json:"last_seen_at"`
 	PRNumber      int64     `json:"pr_number,omitempty"`
+
+	// BaseBranch is the branch this lease is rebased/merged against
+	// (default DefaultBaseBranch). Persisted so SubmitAndWait / Rebase
+	// don't need the caller to redundantly supply it.
+	BaseBranch string `json:"base_branch,omitempty"`
 }
 
 // PushRequest is the input to Service.Push.
@@ -71,6 +80,45 @@ type MergeRequest struct {
 	LoomID string `json:"loom_id"`
 	Title  string `json:"title,omitempty"`
 	Body   string `json:"body,omitempty"`
+}
+
+// SubmitRequest is the input to Service.SubmitAndWait. Combines push +
+// PR open + block-until-terminal so a sub-agent issues one call instead
+// of orchestrating push/merge/status itself. The v2 sub-agent verb
+// `loom_submit` dispatches to SubmitAndWait directly.
+type SubmitRequest struct {
+	LoomID  string `json:"loom_id"`
+	Title   string `json:"title,omitempty"`
+	Body    string `json:"body,omitempty"`
+	Message string `json:"message,omitempty"`
+	Force   bool   `json:"force,omitempty"`
+
+	// MaxWaitSeconds caps how long SubmitAndWait blocks waiting for
+	// terminal state. Zero (default) uses DefaultSubmitMaxWait.
+	MaxWaitSeconds int `json:"max_wait_seconds,omitempty"`
+}
+
+// SubmitResult is the output of Service.SubmitAndWait. State is one of
+// the State* constants below plus "pending" (wait deadline hit, terminal
+// state not yet reached). ConflictFiles is populated only when State ==
+// StateConflict; the sub-agent edits these files and re-submits.
+type SubmitResult struct {
+	State         string   `json:"state"`
+	PRNumber      int64    `json:"pr_number,omitempty"`
+	CommitSHA     string   `json:"commit_sha,omitempty"`
+	ConflictFiles []string `json:"conflict_files,omitempty"`
+	CISummary     string   `json:"ci_summary,omitempty"`
+}
+
+// RebaseRequest is the input to Service.Rebase. Triggers a fetch +
+// rebase against the lease's base branch inside the sandbox.
+type RebaseRequest struct {
+	LoomID string `json:"loom_id"`
+}
+
+// RebaseResult is the output of Service.Rebase.
+type RebaseResult struct {
+	ConflictFiles []string `json:"conflict_files,omitempty"`
 }
 
 // MergeResult is the output of Service.Merge.
@@ -122,4 +170,19 @@ const (
 	DefaultReaperTick  = time.Minute
 	MinTTL             = time.Minute
 	SubAgentIDPrefix   = "loom"
+
+	// DefaultSubmitMaxWait is the deadline applied to SubmitAndWait
+	// when SubmitRequest.MaxWaitSeconds is zero. Five minutes is short
+	// enough to keep an agent loop responsive yet long enough for a CI
+	// run on most projects.
+	DefaultSubmitMaxWait = 5 * time.Minute
+
+	// DefaultSubmitPollInterval is how often SubmitAndWait polls the
+	// backend for PR state transitions while blocking.
+	DefaultSubmitPollInterval = 2 * time.Second
+
+	// StatePending is a non-terminal state returned by SubmitAndWait
+	// when the wait deadline is hit before the PR reaches a terminal
+	// state. The caller may resubmit to continue waiting.
+	StatePending = "pending"
 )

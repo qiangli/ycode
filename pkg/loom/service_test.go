@@ -32,6 +32,7 @@ type stubBackend struct {
 	CommitAndPushFn  func(ctx context.Context, path, slug, branch, message string, force bool) (string, error)
 	OpenPRFn         func(ctx context.Context, slug, branch, title, body string) (int64, error)
 	NotifyProjectFn  func(ctx context.Context, slug, cloneURL string) error
+	RebaseSandboxFn  func(ctx context.Context, sandboxPath, baseBranch string) ([]string, error)
 }
 
 func newStubBackend() *stubBackend {
@@ -146,6 +147,13 @@ func (b *stubBackend) NotifyProjectActive(ctx context.Context, slug, cloneURL st
 	b.notifyCalls = append(b.notifyCalls, slug)
 	b.mu.Unlock()
 	return nil
+}
+
+func (b *stubBackend) RebaseSandbox(ctx context.Context, sandboxPath, baseBranch string) ([]string, error) {
+	if b.RebaseSandboxFn != nil {
+		return b.RebaseSandboxFn(ctx, sandboxPath, baseBranch)
+	}
+	return nil, nil
 }
 
 // markMerged is a test helper to flip a branch to merged state.
@@ -474,4 +482,126 @@ func (c *mockClock) advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.t = c.t.Add(d)
+}
+
+func TestService_Lease_PersistsBaseBranch(t *testing.T) {
+	svc, _ := newTestService(t)
+	lease, err := svc.Lease(context.Background(), LeaseRequest{
+		CWD:           "/host/project",
+		SubAgentLabel: "label",
+		BaseBranch:    "release-1.0",
+	})
+	if err != nil {
+		t.Fatalf("Lease: %v", err)
+	}
+	if lease.BaseBranch != "release-1.0" {
+		t.Errorf("BaseBranch=%q want release-1.0", lease.BaseBranch)
+	}
+
+	lease2, err := svc.Lease(context.Background(), LeaseRequest{
+		CWD:           "/host/project",
+		SubAgentLabel: "label2",
+	})
+	if err != nil {
+		t.Fatalf("Lease (default base): %v", err)
+	}
+	if lease2.BaseBranch != DefaultBaseBranch {
+		t.Errorf("BaseBranch=%q want %q", lease2.BaseBranch, DefaultBaseBranch)
+	}
+}
+
+func TestService_Rebase_DelegatesToBackend(t *testing.T) {
+	svc, backend := newTestService(t)
+	lease, err := svc.Lease(context.Background(), LeaseRequest{
+		CWD: "/p", SubAgentLabel: "label",
+	})
+	if err != nil {
+		t.Fatalf("Lease: %v", err)
+	}
+
+	var gotBase, gotPath string
+	backend.RebaseSandboxFn = func(_ context.Context, sandboxPath, baseBranch string) ([]string, error) {
+		gotPath = sandboxPath
+		gotBase = baseBranch
+		return []string{"conflicted.go", "also/conflicted.go"}, nil
+	}
+
+	res, err := svc.Rebase(context.Background(), RebaseRequest{LoomID: lease.ID})
+	if err != nil {
+		t.Fatalf("Rebase: %v", err)
+	}
+	if gotBase != DefaultBaseBranch {
+		t.Errorf("backend got base=%q want %q", gotBase, DefaultBaseBranch)
+	}
+	if gotPath != lease.Path {
+		t.Errorf("backend got path=%q want %q", gotPath, lease.Path)
+	}
+	if len(res.ConflictFiles) != 2 || res.ConflictFiles[0] != "conflicted.go" {
+		t.Errorf("ConflictFiles=%v", res.ConflictFiles)
+	}
+}
+
+func TestService_SubmitAndWait_MergedHappyPath(t *testing.T) {
+	svc, backend := newTestService(t)
+	lease, err := svc.Lease(context.Background(), LeaseRequest{
+		CWD: "/host/project", SubAgentLabel: "label",
+	})
+	if err != nil {
+		t.Fatalf("Lease: %v", err)
+	}
+	// Stub merges as soon as the PR opens.
+	backend.OpenPRFn = func(_ context.Context, slug, branch, _, _ string) (int64, error) {
+		backend.mu.Lock()
+		backend.prCounterBumpLocked()
+		n := backend.prNumbers
+		backend.prs[slug+":"+branch] = n
+		backend.prStates[slug+":"+branch] = "closed"
+		backend.merged[slug+":"+branch] = true
+		backend.mu.Unlock()
+		return n, nil
+	}
+
+	res, err := svc.SubmitAndWait(context.Background(), SubmitRequest{
+		LoomID:         lease.ID,
+		MaxWaitSeconds: 2,
+	})
+	if err != nil {
+		t.Fatalf("SubmitAndWait: %v", err)
+	}
+	if res.State != StateMerged {
+		t.Errorf("State=%q want %q", res.State, StateMerged)
+	}
+	if res.PRNumber == 0 {
+		t.Errorf("PRNumber unset")
+	}
+}
+
+func TestService_SubmitAndWait_PendingOnDeadline(t *testing.T) {
+	svc, backend := newTestService(t)
+	lease, err := svc.Lease(context.Background(), LeaseRequest{
+		CWD: "/host/project", SubAgentLabel: "label",
+	})
+	if err != nil {
+		t.Fatalf("Lease: %v", err)
+	}
+	// Backend never transitions the PR to closed/merged — caller hits
+	// the wait deadline and returns pending.
+	_ = backend
+	res, err := svc.SubmitAndWait(context.Background(), SubmitRequest{
+		LoomID:         lease.ID,
+		MaxWaitSeconds: 1,
+	})
+	if err != nil {
+		t.Fatalf("SubmitAndWait: %v", err)
+	}
+	if res.State != StatePending {
+		t.Errorf("State=%q want %q", res.State, StatePending)
+	}
+}
+
+// prCounterBumpLocked is a test helper to increment prNumbers under the
+// caller's lock. Exposed so OpenPRFn overrides can mint sequential PR
+// numbers without re-acquiring the mutex.
+func (b *stubBackend) prCounterBumpLocked() {
+	b.prNumbers++
 }

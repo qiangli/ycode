@@ -78,6 +78,9 @@ func (b *stubBackend) ListPRStates(_ context.Context, slug, branchPrefix string)
 func (b *stubBackend) DeleteSandbox(_ string) error                             { return nil }
 func (b *stubBackend) DeleteBranch(_ context.Context, _, _ string) error        { return nil }
 func (b *stubBackend) NotifyProjectActive(_ context.Context, _, _ string) error { return nil }
+func (b *stubBackend) RebaseSandbox(_ context.Context, _, _ string) ([]string, error) {
+	return nil, nil
+}
 
 func newTestHandler(t *testing.T) (*MCPHandler, *stubBackend) {
 	t.Helper()
