@@ -17,4 +17,10 @@ var (
 	// ErrInvalidRequest covers missing required fields (CWD,
 	// SubAgentLabel, LoomID) and other input validation failures.
 	ErrInvalidRequest = errors.New("loom: invalid request")
+
+	// ErrQueueEmpty is returned by Service.Claim / Backend.ClaimNextIssue
+	// when no candidate issue is available for the project. Callers
+	// surface this as exit-3 ("nothing queued") in the v2 weave start
+	// CLI per the agent-friendly conventions.
+	ErrQueueEmpty = errors.New("loom: queue empty")
 )

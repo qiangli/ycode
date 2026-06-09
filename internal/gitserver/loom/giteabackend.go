@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/qiangli/ycode/internal/gitserver/agents"
 	"github.com/qiangli/ycode/internal/gitserver/collab"
 	"github.com/qiangli/ycode/internal/gitserver/projects"
+	"github.com/qiangli/ycode/internal/gitserver/weaveapi"
 	"github.com/qiangli/ycode/pkg/loom"
 )
 
@@ -43,6 +45,19 @@ type GiteaBackend struct {
 	mu     sync.Mutex
 	byCwd  map[string]projectEntry
 	bySlug map[string]projectEntry
+
+	// weave lazily wraps b.client in a weaveapi.Client; constructed
+	// once on first ClaimNextIssue (or other v2-label op).
+	weaveOnce sync.Once
+	weave     *weaveapi.Client
+}
+
+// weaveClient returns the lazily-constructed weaveapi.Client.
+func (b *GiteaBackend) weaveClient() *weaveapi.Client {
+	b.weaveOnce.Do(func() {
+		b.weave = weaveapi.NewClient(b.client)
+	})
+	return b.weave
 }
 
 // ProjectActiveFn is invoked by NotifyProjectActive on first use of a
@@ -329,6 +344,82 @@ func agentIDFromBranch(branch string) string {
 		return rest[:i]
 	}
 	return rest
+}
+
+// ClaimNextIssue is the Gitea-backed implementation of pkg/loom's
+// atomic-claim contract. Lists open issues labeled loom:todo, filters
+// out claimed/terminal ones, sorts by (priority_tier, created_at,
+// issue_number), and flips the top candidate's state label to
+// loom:working via weaveapi.SetState.
+//
+// Atomicity for the *combination* of read + label flip is provided by
+// the per-project sync.Mutex in pkg/loom.Service.Claim. This method
+// is unsafe under concurrent invocation against the same slug
+// without that external lock.
+func (b *GiteaBackend) ClaimNextIssue(ctx context.Context, slug string) (int64, error) {
+	if slug == "" {
+		return 0, fmt.Errorf("loom: ClaimNextIssue: empty slug")
+	}
+
+	// Pull all open issues with the loom:todo label.
+	issues, err := b.client.ListIssues(ctx, projects.Owner, slug, "open", []string{weaveapi.LabelStateTodo})
+	if err != nil {
+		return 0, fmt.Errorf("loom: ClaimNextIssue: list todo issues: %w", err)
+	}
+
+	// Filter out issues that also carry a state label other than
+	// loom:todo (working / submitted / merged / abandoned / proposed).
+	// loom:proposed in particular means "agent-filed, waiting for human
+	// review" — explicitly excluded from candidates.
+	type candidate struct {
+		number   int64
+		priority int
+	}
+	var cands []candidate
+	for _, iss := range issues {
+		exclude := false
+		var prio = weaveapi.PriorityValue("") // default p2
+		for _, l := range iss.Labels {
+			switch l.Name {
+			case weaveapi.LabelStateWorking,
+				weaveapi.LabelStateSubmitted,
+				weaveapi.LabelStateCIFailed,
+				weaveapi.LabelStateConflict,
+				weaveapi.LabelStateMerged,
+				weaveapi.LabelStateAbandoned,
+				weaveapi.LabelProposed:
+				exclude = true
+			}
+			if weaveapi.IsPriorityLabel(l.Name) {
+				prio = weaveapi.PriorityValue(l.Name)
+			}
+		}
+		if exclude {
+			continue
+		}
+		cands = append(cands, candidate{number: iss.Number, priority: prio})
+	}
+
+	if len(cands) == 0 {
+		return 0, loom.ErrQueueEmpty
+	}
+
+	// Sort: priority asc (p0 wins) → issue_number asc as deterministic
+	// tiebreaker. created_at isn't currently exposed by gitserver.Issue
+	// — issue_number ascending is a near-perfect FIFO proxy since
+	// Gitea allocates strictly increasing numbers per repo.
+	sort.SliceStable(cands, func(i, j int) bool {
+		if cands[i].priority != cands[j].priority {
+			return cands[i].priority < cands[j].priority
+		}
+		return cands[i].number < cands[j].number
+	})
+
+	top := cands[0]
+	if err := b.weaveClient().SetState(ctx, projects.Owner, slug, top.number, weaveapi.LabelStateWorking); err != nil {
+		return 0, fmt.Errorf("loom: ClaimNextIssue: flip state to working: %w", err)
+	}
+	return top.number, nil
 }
 
 // Checkpoint stages every change in the sandbox and makes a local

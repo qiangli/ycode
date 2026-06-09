@@ -57,6 +57,14 @@ type Service struct {
 	seenCwds     sync.Map // cwd  -> struct{}
 
 	watchers *watcherSet
+
+	// claimMu memoizes a *sync.Mutex per project slug. Service.Claim
+	// acquires the relevant per-slug mutex while it reads top-of-queue
+	// + flips the loom:working label, so two near-simultaneous claim
+	// callers (multiple terminals, agent fan-out) cannot grab the same
+	// issue. Spike 2 confirmed this in-process discipline is sufficient
+	// since every claim caller routes through one ycode serve Service.
+	claimMu sync.Map // slug -> *sync.Mutex
 }
 
 // NewService validates opts and returns a running Service. Caller must
@@ -301,6 +309,39 @@ func (s *Service) Merge(ctx context.Context, req MergeRequest) (MergeResult, err
 		s.log.Warn("loom: persist lease PR number", "loom_id", lease.ID, "err", err)
 	}
 	return MergeResult{PRNumber: prNumber, Status: "queued"}, nil
+}
+
+// Claim atomically picks the highest-priority eligible issue from the
+// project's queue and flips its state label to loom:working. The
+// per-project mutex held during the read+flip prevents two concurrent
+// callers from claiming the same issue. Returns ErrQueueEmpty when no
+// candidate is available — callers (the weave start CLI) surface this
+// as exit code 3 ("nothing queued") per the agent-friendly conventions.
+func (s *Service) Claim(ctx context.Context, req ClaimRequest) (ClaimResult, error) {
+	if req.Slug == "" {
+		return ClaimResult{}, fmt.Errorf("%w: Slug required", ErrInvalidRequest)
+	}
+	mu := s.projectMutex(req.Slug)
+	mu.Lock()
+	defer mu.Unlock()
+
+	issueNum, err := s.backend.ClaimNextIssue(ctx, req.Slug)
+	if err != nil {
+		return ClaimResult{}, err
+	}
+	return ClaimResult{IssueNumber: issueNum}, nil
+}
+
+// projectMutex returns the per-slug mutex for atomic claim, lazily
+// creating one on first use. The sync.Map LoadOrStore pattern ensures
+// at most one mutex per slug across concurrent callers.
+func (s *Service) projectMutex(slug string) *sync.Mutex {
+	if v, ok := s.claimMu.Load(slug); ok {
+		return v.(*sync.Mutex)
+	}
+	newMu := &sync.Mutex{}
+	actual, _ := s.claimMu.LoadOrStore(slug, newMu)
+	return actual.(*sync.Mutex)
 }
 
 // Checkpoint stages and commits everything in the lease's sandbox

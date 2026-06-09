@@ -54,6 +54,25 @@ type Backend interface {
 	// Optional: NoOpProjectNotifier is a valid default.
 	NotifyProjectActive(ctx context.Context, slug, cloneURL string) error
 
+	// ClaimNextIssue atomically picks the highest-priority eligible
+	// issue from the project's queue, flips its state label to
+	// loom:working, and returns its number. "Eligible" means:
+	//
+	//   - state=open
+	//   - has loom:todo label
+	//   - does NOT have loom:working, loom:proposed, loom:merged, or
+	//     loom:abandoned labels
+	//
+	// Sort order: priority_tier_value (p0=0 … p3=3; unlabeled=2) →
+	// created_at ascending → issue_number ascending (deterministic
+	// tiebreaker).
+	//
+	// Returns ErrQueueEmpty when no candidate exists. Atomicity at the
+	// backend layer is handled by the caller's per-project mutex in
+	// pkg/loom.Service; the backend's job is the sort + label flip,
+	// not the lock.
+	ClaimNextIssue(ctx context.Context, slug string) (issueNumber int64, err error)
+
 	// Checkpoint stages every change in sandboxPath and makes a local
 	// commit (no push). Idempotent: if there's nothing to commit, the
 	// current HEAD SHA is returned with no error. Used by the v2

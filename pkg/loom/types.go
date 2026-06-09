@@ -110,6 +110,19 @@ type SubmitResult struct {
 	CISummary     string   `json:"ci_summary,omitempty"`
 }
 
+// ClaimRequest is the input to Service.Claim. The Service mediates
+// atomic claim against the project's queue with a per-project mutex
+// so two concurrent weave start callers cannot claim the same issue.
+type ClaimRequest struct {
+	Slug string `json:"slug"`
+}
+
+// ClaimResult is the output of Service.Claim. IssueNumber identifies
+// the Gitea issue now labeled loom:working.
+type ClaimResult struct {
+	IssueNumber int64 `json:"issue_number"`
+}
+
 // CheckpointRequest is the input to Service.Checkpoint. A lightweight
 // local commit in the sandbox; no push.
 type CheckpointRequest struct {

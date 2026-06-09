@@ -3,6 +3,7 @@ package loom
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -34,6 +35,7 @@ type stubBackend struct {
 	NotifyProjectFn  func(ctx context.Context, slug, cloneURL string) error
 	RebaseSandboxFn  func(ctx context.Context, sandboxPath, baseBranch string) ([]string, error)
 	CheckpointFn     func(ctx context.Context, sandboxPath, message string) (string, error)
+	ClaimNextIssueFn func(ctx context.Context, slug string) (int64, error)
 }
 
 func newStubBackend() *stubBackend {
@@ -162,6 +164,13 @@ func (b *stubBackend) Checkpoint(ctx context.Context, sandboxPath, message strin
 		return b.CheckpointFn(ctx, sandboxPath, message)
 	}
 	return "checkpoint-sha-" + message, nil
+}
+
+func (b *stubBackend) ClaimNextIssue(ctx context.Context, slug string) (int64, error) {
+	if b.ClaimNextIssueFn != nil {
+		return b.ClaimNextIssueFn(ctx, slug)
+	}
+	return 0, ErrQueueEmpty
 }
 
 // markMerged is a test helper to flip a branch to merged state.
@@ -650,6 +659,73 @@ func TestService_Watch_EmitsLeaseAndRelease(t *testing.T) {
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("timed out waiting for released event")
+	}
+}
+
+func TestService_Claim_EmptyQueue(t *testing.T) {
+	svc, backend := newTestService(t)
+	backend.ClaimNextIssueFn = func(_ context.Context, _ string) (int64, error) {
+		return 0, ErrQueueEmpty
+	}
+	_, err := svc.Claim(context.Background(), ClaimRequest{Slug: "myapp"})
+	if !errors.Is(err, ErrQueueEmpty) {
+		t.Errorf("expected ErrQueueEmpty, got %v", err)
+	}
+}
+
+func TestService_Claim_RequiresSlug(t *testing.T) {
+	svc, _ := newTestService(t)
+	_, err := svc.Claim(context.Background(), ClaimRequest{})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Errorf("expected ErrInvalidRequest, got %v", err)
+	}
+}
+
+func TestService_Claim_SerializesConcurrentCalls(t *testing.T) {
+	svc, backend := newTestService(t)
+
+	// Hand out issue numbers 1, 2, 3 in order, asserting that the
+	// backend is never called twice in parallel by gating on a strict
+	// mutex inside the stub. If Service.Claim's per-slug mutex works
+	// correctly, the stub's in-flight count never exceeds 1.
+	var inFlight int32
+	var counter int64
+	backend.ClaimNextIssueFn = func(_ context.Context, _ string) (int64, error) {
+		n := atomic.AddInt32(&inFlight, 1)
+		defer atomic.AddInt32(&inFlight, -1)
+		if n > 1 {
+			t.Errorf("ClaimNextIssue called concurrently: in-flight=%d", n)
+		}
+		// Small delay to make a missing lock actually fail.
+		time.Sleep(10 * time.Millisecond)
+		return atomic.AddInt64(&counter, 1), nil
+	}
+
+	const N = 8
+	var wg sync.WaitGroup
+	results := make([]int64, N)
+	for i := range N {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			res, err := svc.Claim(context.Background(), ClaimRequest{Slug: "myapp"})
+			if err != nil {
+				t.Errorf("Claim: %v", err)
+				return
+			}
+			results[idx] = res.IssueNumber
+		}(i)
+	}
+	wg.Wait()
+
+	// Every issue number must be distinct (1..N), confirming each
+	// concurrent caller got a different one.
+	seen := map[int64]bool{}
+	for _, n := range results {
+		if seen[n] {
+			t.Errorf("duplicate issue %d claimed", n)
+		}
+		seen[n] = true
 	}
 }
 

@@ -84,6 +84,9 @@ func (b *stubBackend) RebaseSandbox(_ context.Context, _, _ string) ([]string, e
 func (b *stubBackend) Checkpoint(_ context.Context, _, message string) (string, error) {
 	return "stub-checkpoint-" + message, nil
 }
+func (b *stubBackend) ClaimNextIssue(_ context.Context, _ string) (int64, error) {
+	return 0, loom.ErrQueueEmpty
+}
 
 func newTestHandler(t *testing.T) (*MCPHandler, *stubBackend) {
 	t.Helper()
