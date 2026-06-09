@@ -45,3 +45,25 @@ func DefaultGiteaDataDirWithEnv() (string, error) {
 	}
 	return DefaultGiteaDataDir()
 }
+
+// BareRepoPath returns the on-disk path of the bare repo Gitea hosts
+// at admin/<slug>.git under the standard repositories layout
+// (<giteaDataDir>/gitea-repositories/admin/<slug>.git). Used by the
+// reference-clone sandbox path so children can share the parent's
+// object store via .git/objects/info/alternates instead of paying a
+// full clone per lease.
+//
+// Spike 3 (docs/loom-v2-implementation.md "Three early spikes")
+// validated empirically that:
+//   - alternates correctly points at parent's objects dir,
+//   - per-clone refs / index / stash / reflog stay isolated,
+//   - child commits stay private until pushed (parent's cat-file
+//     returns "could not get object info" for a child-only SHA),
+//   - sandbox-isolation invariant fully holds.
+//
+// Operational constraint: Loom must NOT git-gc the parent bare while
+// any reference-clone child is alive. The lease store doubles as the
+// liveness tracker for this guard.
+func BareRepoPath(giteaDataDir, slug string) string {
+	return filepath.Join(giteaDataDir, "gitea-repositories", "admin", slug+".git")
+}

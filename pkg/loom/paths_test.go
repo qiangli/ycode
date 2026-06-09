@@ -32,6 +32,14 @@ func TestDefaultGiteaDataDir(t *testing.T) {
 	}
 }
 
+func TestBareRepoPath(t *testing.T) {
+	got := BareRepoPath("/tmp/gitea", "myapp")
+	want := filepath.Join("/tmp", "gitea", "gitea-repositories", "admin", "myapp.git")
+	if got != want {
+		t.Errorf("BareRepoPath: got %q want %q", got, want)
+	}
+}
+
 func TestDefaultGiteaDataDirWithEnv(t *testing.T) {
 	t.Setenv("YCODE_GITEA_DATA_DIR", "/custom/gitea/path")
 	got, err := DefaultGiteaDataDirWithEnv()

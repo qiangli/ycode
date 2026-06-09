@@ -50,6 +50,10 @@ type GiteaBackend struct {
 	// once on first ClaimNextIssue (or other v2-label op).
 	weaveOnce sync.Once
 	weave     *weaveapi.Client
+
+	// Reference-clone sandbox config; see GiteaBackendOptions.
+	giteaDataDir      string
+	useReferenceClone bool
 }
 
 // weaveClient returns the lazily-constructed weaveapi.Client.
@@ -90,6 +94,23 @@ type GiteaBackendOptions struct {
 	// Logger is required by callers but defaulted to slog.Default()
 	// when nil.
 	Logger *slog.Logger
+
+	// GiteaDataDir is the on-disk root Gitea's bare repos live under
+	// (typically ~/.agents/ycode/observability/gitea). Required only
+	// when UseReferenceClone is true; otherwise ignored.
+	GiteaDataDir string
+
+	// UseReferenceClone, when true, switches PrepareSandbox to
+	// `git clone --reference <bare-on-disk> <gitea-http-url>`. Spike
+	// 3 validated the per-clone-refs / shared-object-store property
+	// empirically (docs/loom-v2-implementation.md). Default false —
+	// behavior unchanged until operators opt in via .ycode/loom.yaml
+	// backend.use_reference_clone: true.
+	//
+	// Operational constraint: the substrate must NOT git-gc the
+	// parent bare while any reference-clone child is alive. The lease
+	// store doubles as the liveness tracker for this guard.
+	UseReferenceClone bool
 }
 
 // NewGiteaBackend constructs a Backend wired to ycode's embedded Gitea.
@@ -107,14 +128,19 @@ func NewGiteaBackend(opts GiteaBackendOptions) (*GiteaBackend, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if opts.UseReferenceClone && opts.GiteaDataDir == "" {
+		return nil, errors.New("loom: UseReferenceClone requires GiteaDataDir")
+	}
 	return &GiteaBackend{
-		client:          opts.Client,
-		registry:        opts.Registry,
-		token:           opts.Token,
-		log:             logger,
-		onProjectActive: opts.OnProjectActive,
-		byCwd:           map[string]projectEntry{},
-		bySlug:          map[string]projectEntry{},
+		client:            opts.Client,
+		registry:          opts.Registry,
+		token:             opts.Token,
+		log:               logger,
+		onProjectActive:   opts.OnProjectActive,
+		byCwd:             map[string]projectEntry{},
+		bySlug:            map[string]projectEntry{},
+		giteaDataDir:      opts.GiteaDataDir,
+		useReferenceClone: opts.UseReferenceClone,
 	}, nil
 }
 
@@ -161,6 +187,31 @@ func (b *GiteaBackend) EnsureProject(ctx context.Context, cwd string) (string, s
 // free-form (issueNo=0) naming convention.
 func (b *GiteaBackend) PrepareSandbox(ctx context.Context, sandboxRoot, slug, branch, agentID, name, email, cloneURL string) (string, error) {
 	a := &agents.Agent{ID: agentID, Name: name}
+
+	// Reference-clone seam (v2, opt-in). When enabled, skip the
+	// collab full-clone path and lay out a sandbox whose .git/objects
+	// shares with the bare repo via `git clone --reference`. Spike 3
+	// validated the per-clone-refs / shared-objects property. The
+	// fallback (UseReferenceClone=false) preserves v1's behavior
+	// byte-for-byte.
+	if b.useReferenceClone {
+		path, err := prepareReferenceCloneSandbox(ctx, sandboxRoot, b.giteaDataDir, slug, branch, agentID, cloneURL, b.token)
+		if err != nil {
+			return "", err
+		}
+		if name != "" {
+			if err := runGit(ctx, path, "config", "user.name", name); err != nil {
+				return "", fmt.Errorf("loom: set user.name: %w", err)
+			}
+		}
+		if email != "" {
+			if err := runGit(ctx, path, "config", "user.email", email); err != nil {
+				return "", fmt.Errorf("loom: set user.email: %w", err)
+			}
+		}
+		return path, nil
+	}
+
 	// collab.PrepareSandbox places sandboxes at <root>/<agentID>/issue-<N>;
 	// loom uses issueNo=0, yielding <root>/<agentID>/issue-0.
 	path, err := collab.PrepareSandbox(ctx, sandboxRoot, cloneURL, b.token, a, 0, branch)
