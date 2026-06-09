@@ -100,8 +100,13 @@ func newWrapCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&permission, "permission", "",
 		"Permission ceiling for the wrapped agent: read-only | workspace-write | danger-full-access (default: profile or danger-full-access)")
-	cmd.Flags().StringVar(&loom, "loom", "off",
-		"Loom workspace mode: off (default) | auto | on (Phase 2 — currently warns and runs in cwd)")
+	// N+1 F1: default flipped from 'off' to 'auto'. Auto resolves to
+	// off when no LoomLeaser is configured (cleanly logged), so this
+	// is a no-op for environments without v2 wired in. With a leaser
+	// configured, the wrap auto-attaches per docs/loom-v2-plan.md
+	// "Auto-attach (the load-bearing UX)".
+	cmd.Flags().StringVar(&loom, "loom", "auto",
+		"Loom workspace mode: auto (default) | on | off")
 	cmd.Flags().StringSliceVar(&allowedDirs, "allow-dir", nil,
 		"Additional directories the wrapped agent may write to (reserved for Phase 2 VFS boundary)")
 	cmd.Flags().StringSliceVar(&extraShims, "shim", nil,

@@ -64,6 +64,14 @@ type Config struct {
 	// git remote to clone from; nil in production.
 	FetchMainSHAFn func(ctx context.Context, prNumber int64) (string, error)
 
+	// AllowedCommitterEmails, when non-empty, gates auto-merge to PRs
+	// whose head commit committer email matches one of the listed
+	// patterns (substring match against email — e.g. "@ycode.local"
+	// allows every agent identity; specific labels narrow further).
+	// Empty disables the guard (v1 behavior — auto-merge anyone).
+	// Defense Layer 4 from docs/loom-v2-plan.md "Defense in depth".
+	AllowedCommitterEmails []string
+
 	// Logger is required.
 	Logger *slog.Logger
 }
@@ -153,6 +161,27 @@ func (m *Merger) Tick(ctx context.Context) error {
 
 func (m *Merger) processPR(ctx context.Context, pr gitserver.PullRequest) TickResult {
 	res := TickResult{PRNumber: pr.Number}
+
+	// Defense Layer 4 (loom v2): committer-allowlist guard. Refuses to
+	// fast-forward main past a head commit whose committer is not in
+	// the per-project allowlist. When no allowlist is configured the
+	// guard is a no-op (preserves v1 behavior).
+	if len(m.cfg.AllowedCommitterEmails) > 0 {
+		ok, reason, err := m.committerAllowed(ctx, pr)
+		if err != nil {
+			m.cfg.Logger.Warn("merger: committer-check failed", "pr", pr.Number, "err", err)
+			// Fail-closed: on lookup error, refuse the merge rather
+			// than letting an unknown commit through.
+			res.Status = "blocked"
+			res.Detail = fmt.Sprintf("committer-allowlist check error: %v", err)
+			return res
+		}
+		if !ok {
+			res.Status = "blocked"
+			res.Detail = reason
+			return res
+		}
+	}
 
 	// Run CI (skipped if no command configured — auto-merge unconditionally).
 	if m.cfg.CICommand != "" {
