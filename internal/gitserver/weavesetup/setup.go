@@ -50,12 +50,12 @@ type Options struct {
 // Result describes what setup did, for logging and for surfacing to
 // the user via the first-run banner.
 type Result struct {
-	Slug             string
-	CloneURL         string
-	LabelsCreated    int
-	HookInstalled    bool
-	ConfigWritten    bool
-	AlreadySetUp     bool
+	Slug          string
+	CloneURL      string
+	LabelsCreated int
+	HookInstalled bool
+	ConfigWritten bool
+	AlreadySetUp  bool
 }
 
 // Run is the idempotent first-run entry point. Safe to call multiple

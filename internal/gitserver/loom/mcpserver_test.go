@@ -159,7 +159,9 @@ func TestHandler_v2_Checkpoint_UsesYcodeLoomIDEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loom_open: %v", err)
 	}
-	var lease struct{ LoomID string `json:"loom_id"` }
+	var lease struct {
+		LoomID string `json:"loom_id"`
+	}
 	if err := json.Unmarshal([]byte(out), &lease); err != nil {
 		t.Fatalf("decode lease: %v", err)
 	}

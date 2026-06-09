@@ -57,7 +57,8 @@ var ErrNotYetImplemented = errors.New("weaveboard: bootstrap not yet implemented
 // canonical column layout matching the loom:* state labels.
 //
 // Column layout (matches docs/loom-v2-plan.md "First-run setup"):
-//   todo · working · submitted · ci_failed · conflict · merged · abandoned
+//
+//	todo · working · submitted · ci_failed · conflict · merged · abandoned
 //
 // Implementation flow (planned):
 //  1. GET /user/login → extract CSRF token from the HTML form.

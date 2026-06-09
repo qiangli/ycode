@@ -3,10 +3,10 @@ package loom
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )

@@ -134,11 +134,11 @@ type CheckpointRequest struct {
 // HEAD after the checkpoint (which may equal the prior HEAD when there
 // were no staged changes).
 type CheckpointResult struct {
-	CheckpointID  string `json:"checkpoint_id"`
-	CommitSHA     string `json:"commit_sha"`
-	FilesChanged  int    `json:"files_changed,omitempty"`
-	LinesChanged  int    `json:"lines_changed,omitempty"`
-	HadNoChanges  bool   `json:"had_no_changes,omitempty"`
+	CheckpointID string `json:"checkpoint_id"`
+	CommitSHA    string `json:"commit_sha"`
+	FilesChanged int    `json:"files_changed,omitempty"`
+	LinesChanged int    `json:"lines_changed,omitempty"`
+	HadNoChanges bool   `json:"had_no_changes,omitempty"`
 }
 
 // RebaseRequest is the input to Service.Rebase. Triggers a fetch +

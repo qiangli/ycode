@@ -25,8 +25,8 @@ import (
 // that only exercise the lease-lifecycle verbs.
 type MCPHandler struct {
 	svc   *loom.Service
-	weave *weaveapi.Client    // optional; powers weave_add / weave_prioritize
-	git   *gitserver.Client   // optional; powers weave_add issue creation
+	weave *weaveapi.Client  // optional; powers weave_add / weave_prioritize
+	git   *gitserver.Client // optional; powers weave_add issue creation
 }
 
 // NewMCPHandler wraps a loom.Service in an mcp.ServerHandler. The

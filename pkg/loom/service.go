@@ -424,7 +424,7 @@ func (s *Service) Rebase(ctx context.Context, req RebaseRequest) (RebaseResult, 
 //   - StateConflict   — rebase produced conflicts; ConflictFiles is set.
 //   - StateCIFailed   — PR closed unmerged with no conflict files.
 //   - StatePending    — wait deadline hit before terminal; caller may
-//                       resubmit to keep waiting.
+//     resubmit to keep waiting.
 //
 // Idempotent on PR creation: if the lease already has a PR open, that
 // PR is reused (CommitAndPush still runs to push any new commits).
