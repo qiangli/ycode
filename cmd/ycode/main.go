@@ -1437,6 +1437,10 @@ func init() {
 	// Self-bootstrap protocol — Boss → Foreman → Worker. See docs/backlog.md.
 	rootCmd.AddCommand(newBacklogCmd())
 	rootCmd.AddCommand(newAutopilotCmd())
+
+	// `ycode weave` — v2 human/orchestrator front door for Loom workspaces.
+	// See docs/loom-v2-plan.md (design) and docs/weave-runbook.md (UX).
+	rootCmd.AddCommand(newWeaveCmd())
 	rootCmd.AddCommand(newForemanCmd())
 
 	// Multi-agent collaboration orchestrator. See docs/agent-collab.md.
