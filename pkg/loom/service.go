@@ -130,6 +130,12 @@ func NewService(opts Options) (*Service, error) {
 	return s, nil
 }
 
+// Backend exposes the Service's Backend for internal callers (the v2
+// MCP weave_add / weave_prioritize handlers in internal/gitserver/
+// loom that need EnsureProject without round-tripping through the
+// substrate's lease API). Read-only — callers must not mutate.
+func (s *Service) Backend() Backend { return s.backend }
+
 // ReapNow runs one immediate reaper pass. Useful at startup to reclaim
 // leases that outlived a previous `ycode serve`. Safe to call any time.
 func (s *Service) ReapNow(ctx context.Context) {

@@ -105,14 +105,15 @@ func newTestHandler(t *testing.T) (*MCPHandler, *stubBackend) {
 func TestHandler_ListTools_v1AndV2(t *testing.T) {
 	h, _ := newTestHandler(t)
 	tools := h.ListTools()
-	// v1 (5) + v2 sub-agent (3) + v2 orchestrator (3) = 11.
-	if len(tools) != 11 {
-		t.Fatalf("expected 11 tools (5 v1 + 6 v2), got %d", len(tools))
+	// v1 (5) + v2 sub-agent (3) + v2 orchestrator (3) + v2 collab (2) = 13.
+	if len(tools) != 13 {
+		t.Fatalf("expected 13 tools (5 v1 + 6 v2 + 2 collab), got %d", len(tools))
 	}
 	want := map[string]bool{
 		ToolLease: true, ToolPush: true, ToolMerge: true, ToolStatus: true, ToolRelease: true,
 		ToolCheckpoint: true, ToolSubmit: true, ToolAbandon: true,
 		ToolOpen: true, ToolTerminate: true, ToolHandoff: true,
+		ToolWeaveAdd: true, ToolWeavePrioritize: true,
 	}
 	for _, tool := range tools {
 		if !want[tool.Name] {

@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/qiangli/ycode/internal/gitserver"
+	"github.com/qiangli/ycode/internal/gitserver/weaveapi"
 	"github.com/qiangli/ycode/internal/runtime/mcp"
 	"github.com/qiangli/ycode/pkg/loom"
 )
@@ -16,13 +18,29 @@ import (
 // adapter that unmarshals tool arguments into pkg/loom request DTOs,
 // dispatches to a Service, and renders the result as a single text
 // block.
+//
+// The optional weave + git fields enable the v2 collaboration verbs
+// (weave_add, weave_prioritize). When nil, those verbs return a clean
+// "not configured" error so the handler still works in test contexts
+// that only exercise the lease-lifecycle verbs.
 type MCPHandler struct {
-	svc *loom.Service
+	svc   *loom.Service
+	weave *weaveapi.Client    // optional; powers weave_add / weave_prioritize
+	git   *gitserver.Client   // optional; powers weave_add issue creation
 }
 
-// NewMCPHandler wraps a loom.Service in an mcp.ServerHandler.
+// NewMCPHandler wraps a loom.Service in an mcp.ServerHandler. The
+// weave-collab verbs are disabled — use NewMCPHandlerWithWeave when
+// the cmd/ycode runtime has a live gitserver client to share.
 func NewMCPHandler(svc *loom.Service) *MCPHandler {
 	return &MCPHandler{svc: svc}
+}
+
+// NewMCPHandlerWithWeave constructs the handler with the v2 collab
+// verbs (weave_add, weave_prioritize) enabled. git provides the issue-
+// creation surface; weave provides the label / sticky-comment ops.
+func NewMCPHandlerWithWeave(svc *loom.Service, git *gitserver.Client, weave *weaveapi.Client) *MCPHandler {
+	return &MCPHandler{svc: svc, weave: weave, git: git}
 }
 
 // Compile-time assertions: MCPHandler satisfies both interfaces.
@@ -51,6 +69,10 @@ const (
 	ToolOpen      = "loom_open"
 	ToolTerminate = "loom_terminate"
 	ToolHandoff   = "loom_handoff"
+
+	// v2 collaboration verbs — available to both roles.
+	ToolWeaveAdd        = "weave_add"
+	ToolWeavePrioritize = "weave_prioritize"
 
 	// v2 resources.
 	ResourceSession = "loom://session"
@@ -203,6 +225,46 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 				"required": ["cwd", "sub_agent_label"]
 			}`),
 		},
+
+		// v2 collaboration verbs (both roles).
+		{
+			Name:        ToolWeaveAdd,
+			Description: "File a new issue into the loom queue. Applies loom:todo state, the requested loom:p* priority (default p2), and loom:source:agent attribution. Returns the issue number so callers can cross-reference.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"cwd":          {"type": "string", "description": "Absolute path of the host project."},
+					"title":        {"type": "string", "description": "Issue title."},
+					"body":         {"type": "string", "description": "Optional issue body."},
+					"priority":     {"type": "string", "description": "Optional. One of p0/p1/p2/p3. Default p2."},
+					"tool":         {"type": "string", "description": "Optional. Pin a specific tool via tool:<X> label."},
+					"parent_issue": {"type": "integer", "description": "Optional. Cross-link as a child of an existing issue."}
+				},
+				"required": ["cwd", "title"]
+			}`),
+		},
+		{
+			Name:        ToolWeavePrioritize,
+			Description: "Bulk-update priority tiers on N issues with one call. Pass {rankings: [{issue, tier: 'p0'|'p1'|'p2'|'p3'}, ...]}; loom flips each issue's priority label accordingly.",
+			InputSchema: mustJSON(`{
+				"type": "object",
+				"properties": {
+					"cwd": {"type": "string", "description": "Absolute path of the host project."},
+					"rankings": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"issue": {"type": "integer"},
+								"tier":  {"type": "string", "description": "p0|p1|p2|p3"}
+							},
+							"required": ["issue", "tier"]
+						}
+					}
+				},
+				"required": ["cwd", "rankings"]
+			}`),
+		},
 	}
 }
 
@@ -260,7 +322,8 @@ func (h *MCPHandler) RequiredMode(toolName string) mcp.PermissionMode {
 		return mcp.ModeReadOnly
 	case ToolLease, ToolPush, ToolMerge, ToolRelease,
 		ToolCheckpoint, ToolSubmit, ToolAbandon,
-		ToolOpen, ToolTerminate, ToolHandoff:
+		ToolOpen, ToolTerminate, ToolHandoff,
+		ToolWeaveAdd, ToolWeavePrioritize:
 		return mcp.ModeWorkspaceWrite
 	default:
 		return mcp.ModeReadOnly
@@ -296,6 +359,12 @@ func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json
 		return h.handleTerminate(ctx, input)
 	case ToolHandoff:
 		return h.handleHandoff(ctx, input)
+
+	// v2 collaboration verbs.
+	case ToolWeaveAdd:
+		return h.handleWeaveAdd(ctx, input)
+	case ToolWeavePrioritize:
+		return h.handleWeavePrioritize(ctx, input)
 
 	default:
 		return "", fmt.Errorf("loom: unknown tool %q", name)
