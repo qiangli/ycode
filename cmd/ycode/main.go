@@ -872,6 +872,10 @@ var rootCmd = &cobra.Command{
 	Short: "ycode – autonomous agent harness for software development",
 	Long: "ycode is a CLI agent harness that provides 50+ tools, MCP/LSP integration, a plugin system, permission enforcement, and session management.\n\n" +
 		"Agent-facing capability prompts: `ycode docs` (curated for LLMs; complement to this human-facing help).",
+	// Hide cobra's auto-generated `completion` subcommand from the top-level
+	// help — operators who want it can still call `ycode completion <shell>`,
+	// it's just not surfaced in the `ycode --help` listing.
+	CompletionOptions: cobra.CompletionOptions{HiddenDefaultCmd: true},
 	// No PersistentPreRun: ycode does not auto-modify a repo on first
 	// invocation. To establish ycode in a repo (write
 	// <repo>/.agents/ycode/AGENTS.md), run `ycode init` explicitly.
@@ -1192,8 +1196,9 @@ var doctorCmd = &cobra.Command{
 }
 
 var loginCmd = &cobra.Command{
-	Use:   "login",
-	Short: "Authenticate with Claude via OAuth",
+	Use:    "login",
+	Short:  "Authenticate with Claude via OAuth",
+	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		flow := oauth.NewPKCEFlow()
 
@@ -1246,8 +1251,9 @@ var loginCmd = &cobra.Command{
 }
 
 var logoutCmd = &cobra.Command{
-	Use:   "logout",
-	Short: "Remove stored OAuth credentials",
+	Use:    "logout",
+	Short:  "Remove stored OAuth credentials",
+	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := oauth.ClearCredentials(); err != nil {
 			return fmt.Errorf("clear credentials: %w", err)
