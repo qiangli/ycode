@@ -148,8 +148,8 @@ capabilities:
 
   - id: loom
     summary: ephemeral git workspaces with auto-merge
-    audience: [agent]
-    cli: []
+    audience: [agent, human]
+    cli: [weave]
     mcp: [loom_lease, loom_push, loom_merge, loom_status, loom_release]
     http: ["/mcp/"]
     config: []
