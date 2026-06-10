@@ -19,8 +19,14 @@ entry point to every ycode capability that exposes a verb you can call.
 - **tab** — drive the user's currently-open Chrome tab in live mode
   (extract / screenshot / navigate / click / type / scroll). The
   bridge to surfaces a headless browser can't reach.
-- **loom** — isolated git workspaces for parallel sub-agent work.
-  Lease → push → merge → release lifecycle.
+- **weave** — orchestrate parallel agentic subagents (codex,
+  claude-code, opencode, …) via a local queue + git worktrees.
+  Add issues → background `start`s → `wait --all` → `pull`. Two
+  exact-call patterns: parallel-impl-only and parallel-impl +
+  judge-validation. Default backend; no `ycode serve` needed.
+- **loom** — v1 substrate underneath weave: per-call MCP verbs
+  for lease / push / merge / release. Most orchestrators want
+  the weave CLI above instead.
 - **outcomes** — taxonomy reference for the `outcome_class` field on
   every browser_* result.
 - **sandbox** — `yc sandbox` podman-isolated command execution.

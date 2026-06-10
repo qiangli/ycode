@@ -3,7 +3,7 @@ topic: weave
 summary: orchestrate parallel subagents via a queue + worktrees
 when: you (as orchestrator) want to file issues, fan out subagent CLIs against them, then merge results back
 audience: agent
-max_lines: 140
+max_lines: 200
 ---
 
 `ycode weave` is the v2 front door over the loom substrate, designed
@@ -41,14 +41,35 @@ TTY on stdin/stdout/stderr.
 If you genuinely want pipe semantics (subagent isn't a TUI), pass
 `--pty=never`.
 
-## The MVP orchestrator flow
+## Orchestrator patterns
 
-`add` → background N `start`s → `wait --all` → `pull`. Each `start`
-blocks until its subagent exits, so background them with `&`.
-ycode auto-`setsid`s when stdin is non-TTY, so they survive the
-launching shell's exit without `nohup`/`disown`. `wait` exit codes:
-0 ok / 3 timeout / 2 invalid_arg. After `pull` you're on main with
-the merge commits; the final `make test` / `git push` is yours.
+Two shapes cover almost every workflow. Pick by whether you need a
+post-merge validation gate.
+
+**(A) Parallel implementation only.** Independent issues, no
+gate. `add` → background N `start`s → `wait --all` → `pull`. Done.
+
+**(B) Parallel implementation + judge validation.** A separate
+agent (typically opencode) validates the merged state and either
+signs off or commits a diagnosis. The validation issue MUST be
+added *after* `pull`, not at the start — otherwise its worktree
+branches off a stale main and validates the wrong tree.
+
+Why a judge agent rather than self-validation in each implementer:
+the implementer only sees its own branch, so cross-branch breakage
+(impl A and impl B merge clean but conflict semantically) ships
+to main. The judge sees the integrated state. Also, agents
+grading their own work tend to narrow tests when stuck. Keep
+self-validation for unit tests inside the prompt; use a judge
+agent for the e2e gate.
+
+`weave` has no dependency-tracking field today; you express the
+DAG by sequencing phases in your orchestration script. `wait` is
+the synchronization primitive.
+
+Each `start` blocks until its subagent exits, so background them
+with `&`. ycode auto-`setsid`s when stdin is non-TTY, so they
+survive the launching shell's exit without `nohup`/`disown`.
 
 ## States
 
@@ -108,26 +129,64 @@ Stable exit codes: 0 ok / 2 invalid_arg / 3 precondition_failed /
 
 ## Exact calls
 
+### Pattern A — parallel impl only
+
 ```bash
-# Plan
-ycode weave add "fix null deref" --priority p0 --json
-ycode weave add --from-file backlog.md --priority p2 --json
+ycode weave add "fix #1" --priority p0 --json
+ycode weave add "fix #2" --priority p0 --json
 
-# Fan out (background each; auto-PTY + auto-setsid mean they
-# survive your launching shell and render correctly even with
-# pipe-based stdio).
-ycode weave start --issue 1 -- codex "fix #1" &
+ycode weave start --issue 1 -- codex       "fix #1" &
 ycode weave start --issue 2 -- claude-code "fix #2" &
-ycode weave start --issue 3 -- opencode "validate + run e2e" &
 
-# Wait until every working/todo item reaches a terminal state.
+ycode weave wait --all --timeout 30m --json
+ycode weave pull --json
+# you're on main with both merge commits; `make test && git push` is yours
+```
+
+### Pattern B — parallel impl + judge validation
+
+```bash
+# Phase 1: file + run the implementers in parallel.
+ycode weave add "fix #1" --priority p0 --json
+ycode weave add "fix #2" --priority p0 --json
+ycode weave start --issue 1 -- codex       "fix #1" &
+ycode weave start --issue 2 -- claude-code "fix #2" &
 ycode weave wait --all --timeout 30m --json
 
-# Merge submitted branches into main.
+# Phase 2: inspect failures BEFORE merging. weave pull skips
+# state=failed branches, but you usually want a decision (abandon
+# + re-file, or `start --resume --issue N` after fixing the prompt)
+# rather than a silent skip.
+ycode weave list --history --json
+# … decide / re-file / re-start as needed …
+
+# Phase 3: merge clean branches.
 ycode weave pull --json
 
-# Inspect / clean up.
-ycode weave list --history --json
-ycode weave abandon 4 --reason "blocked" --json
-ycode weave reset --yes --json
+# Phase 4: NOW file the validation issue (after pull, so the
+# judge's worktree branches off the merged main).
+ycode weave add "validate + run e2e" --priority p1 --json
+# capture the new ID from the envelope; assume it's 3.
+
+# Phase 5: run the judge against the merged state. Foreground is
+# fine here (only one thing running) or background + wait.
+ycode weave start --issue 3 -- opencode "$(cat <<'EOF'
+Run the full e2e suite against main. If everything passes, commit
+an empty marker file ./.judge-pass and exit 0. If anything fails,
+write your diagnosis to ./.judge-report.md, commit it, exit 0.
+Either way your branch will be merged so the orchestrator can
+read the marker / report.
+EOF
+)"
+
+# Phase 6: merge the judge's commit (carries pass-marker OR
+# diagnosis — both are useful in history).
+ycode weave pull --json
+# Inspect ./.judge-pass / ./.judge-report.md on main; proceed
+# to `make test && git push` only if the gate signals green.
 ```
+
+If the judge reports failures, file new fix issues, re-run the
+phases. weave's queue persists across orchestrator turns — a
+follow-up `weave add` lands at the next NextID, and the prior
+items keep their state for history.
