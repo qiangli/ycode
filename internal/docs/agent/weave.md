@@ -16,7 +16,7 @@ The whole surface is a local-only backend: queue.json under
 `$HOME/.agents/ycode/weave/<repo-tag>/`, one **full git clone** per
 issue (each sandbox has its own `.git/` — refs cannot cross the
 boundary, the user's repo is untouched until you `weave pull`),
-plain `git merge --no-ff` for convergence. No Gitea, no `ycode
+plain `git merge --no-ff` for convergence. No forge server, no `ycode
 serve` needed.
 
 ## When to use this
@@ -130,7 +130,7 @@ the normal path when subagents have finished cleanly.
 - `shell <issue>` — drop into `$SHELL` inside the worktree (in
   agent mode returns the sandbox path as JSON instead).
 - `reset [--yes]` — tear down every weave + clear queue.
-- `open`, `init-board` — Gitea-backed; emit `dependency_unhealthy`
+- `open`, `init-board` — forge-backed; emit `dependency_unhealthy`
   on the local-only backend.
 
 ## Envelope contract

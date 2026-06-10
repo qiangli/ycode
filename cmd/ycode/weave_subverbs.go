@@ -28,7 +28,7 @@ func newWeaveAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   `add "<title>"`,
 		Short: "Seed an issue into the loom queue",
-		Long: `Files a new issue into the local Gitea, tags it loom:todo, and
+		Long: `Files a new issue into the local queue, tags it loom:todo, and
 applies priority + source labels. The next 'weave start' picks it up
 according to the priority sort order.`,
 		Args: cobra.MaximumNArgs(1),
@@ -252,7 +252,7 @@ func newWeavePullCmd() *cobra.Command {
 	var watch bool
 	cmd := &cobra.Command{
 		Use:   "pull",
-		Short: "Fast-forward your local main from the local Gitea's main",
+		Short: "Fast-forward your local main with the merged agent branches",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = watch
 			return runWeavePull(cmd, &flags)
@@ -347,7 +347,7 @@ func newWeaveOpenCmd() *cobra.Command {
 	var prFlag bool
 	cmd := &cobra.Command{
 		Use:   "open [--issues | --issue N | --pr | --board]",
-		Short: "Open the relevant Gitea page in a browser",
+		Short: "Open the relevant forge page in a browser",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWeaveOpen(cmd, issues, board, prFlag, issue, &flags)
 		},
@@ -412,16 +412,16 @@ func newWeaveInitBoardCmd() *cobra.Command {
 	var flags weaveOutputFlags
 	cmd := &cobra.Command{
 		Use:   "init-board",
-		Short: "(Optional) Create a Loom kanban project board in Gitea",
-		Long: `init-board is an opt-in one-time bootstrap that creates a Gitea
+		Short: "(Optional) Create a Loom kanban project board on the forge",
+		Long: `init-board is an opt-in one-time bootstrap that creates a forge
 project board with state-mapped columns. The default dashboard is
 the label-filtered issue list; the board is decoration, not load-
 bearing — loom does not auto-sync card positions.
 
-Implementation note: Gitea 1.26's kanban routes are HTML web-routes
-with CSRF + session-cookie auth (not v1 REST). This subverb pulls
-those in only when invoked; everything else in 'weave' speaks
-stable v1 REST.
+Implementation note: the embedded forge's kanban routes are HTML
+web-routes with CSRF + session-cookie auth (not v1 REST). This
+subverb pulls those in only when invoked; everything else in
+'weave' speaks stable v1 REST.
 
 In the local-only backend (no ` + "`" + `ycode serve` + "`" + ` running), this command
 emits a precondition_failed envelope explaining the dependency.`,

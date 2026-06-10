@@ -40,7 +40,7 @@ Common-case usage:
   ycode weave pull                           # absorb merged work
 
 The kanban project board is opt-in via 'ycode weave init-board';
-the default dashboard is Gitea's label-filtered issue list view.
+the default dashboard is the forge's label-filtered issue list view.
 See docs/loom-v2-plan.md for the full design.`,
 	}
 

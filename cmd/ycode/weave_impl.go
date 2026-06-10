@@ -1271,7 +1271,7 @@ func runWeavePrio(cmd *cobra.Command, id int64, tier string, auto bool, flags *w
 	mode := flags.mode()
 	if auto {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave prio",
-			weavecli.ExitDepUnhealthy, fmt.Errorf("--auto requires an LLM provider; not available in the local backend (run via `ycode serve` + Gitea for full v2)")))
+			weavecli.ExitDepUnhealthy, fmt.Errorf("--auto requires an LLM provider; not available in the local backend (run `ycode serve` for the forge backend)")))
 	}
 	if !isValidPriority(tier) {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave prio",
@@ -1478,9 +1478,9 @@ func runWeaveOpen(cmd *cobra.Command, issuesFlag, boardFlag, prFlag bool, issueI
 				return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave open", map[string]any{
 					"issue":       it.ID,
 					"sandbox_url": fileURL,
-					"gitea_url":   nil,
+					"forge_url":   nil,
 					"backend":     "local",
-					"note":        "Gitea-backed pages require `ycode serve`; surfacing sandbox path only.",
+					"note":        "forge-backed pages require `ycode serve`; surfacing sandbox path only.",
 				}))
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "weave open: issue #%d sandbox %s\n", it.ID, fileURL)
@@ -1489,7 +1489,7 @@ func runWeaveOpen(cmd *cobra.Command, issuesFlag, boardFlag, prFlag bool, issueI
 	}
 	_, _, _ = issuesFlag, boardFlag, prFlag
 	return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave open",
-		weavecli.ExitDepUnhealthy, fmt.Errorf("requires Gitea backend (run `ycode serve` first); local backend has no Gitea pages to open")))
+		weavecli.ExitDepUnhealthy, fmt.Errorf("requires the forge backend (run `ycode serve` first); the local backend has no web pages to open")))
 }
 
 // runWeaveInitBoard would create a Gitea kanban project board, but
@@ -1498,7 +1498,7 @@ func runWeaveOpen(cmd *cobra.Command, issuesFlag, boardFlag, prFlag bool, issueI
 func runWeaveInitBoard(cmd *cobra.Command, flags *weaveOutputFlags) error {
 	mode := flags.mode()
 	return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave init-board",
-		weavecli.ExitDepUnhealthy, fmt.Errorf("requires Gitea backend (run `ycode serve` first); local backend has no board to initialize")))
+		weavecli.ExitDepUnhealthy, fmt.Errorf("requires the forge backend (run `ycode serve` first); the local backend has no board to initialize")))
 }
 
 // addFromFile parses a markdown checklist or a JSON list and bulk-
