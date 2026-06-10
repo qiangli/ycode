@@ -90,15 +90,16 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{RepoRoot: repoRoot, OptedOut: true}, nil
 	}
 
-	// User-global Foreman skill — universal protocol, same body for
-	// every repo. Run unconditionally (before the marker-skip below)
-	// so a deleted user-global skill is restored on next init in any
-	// repo. Idempotent via writeFileIfChanged.
+	// User-global skill lane — every skill embedded in the binary,
+	// same bodies for every repo. Run unconditionally (before the
+	// marker-skip below) so deleted or stale user-global skills are
+	// restored on next init in any repo. Idempotent via
+	// writeFileIfChanged.
 	var userGlobalFiles []string
-	if userSkillPath, err := WriteForemanUserSkill(home); err != nil {
-		logger.Warn("selfinit: write user-global foreman skill", "err", err)
+	if paths, err := WriteUserSkills(home); err != nil {
+		logger.Warn("selfinit: write user-global skills", "err", err)
 	} else {
-		userGlobalFiles = append(userGlobalFiles, userSkillPath)
+		userGlobalFiles = append(userGlobalFiles, paths...)
 	}
 
 	caps := LoadCapabilities(home, opts.DefaultPort)

@@ -21,6 +21,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/runtime/mcp"
 	"github.com/qiangli/ycode/internal/selfinit"
+	skillsembed "github.com/qiangli/ycode/skills"
 )
 
 // MCPHandler implements mcp.ServerHandler, exposing ycode's universal
@@ -170,10 +171,9 @@ func ResolveSkillBody(name string) (body, source string, err error) {
 		}
 	}
 
-	// 3. embedded fallback. Currently only /foreman is embedded.
-	switch name {
-	case "foreman":
-		return selfinit.ForemanSkillBody(), "embedded", nil
+	// 3. embedded fallback — every skill in the binary's skills/ lane.
+	if body, ok := skillsembed.Body(dirName); ok {
+		return body, "embedded", nil
 	}
 
 	return "", "", fmt.Errorf("skill not found: %q", name)

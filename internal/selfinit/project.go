@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/qiangli/ycode/skills"
 )
 
 // WriteProjectFiles writes ycode's foreign-agent breadcrumb to
@@ -50,24 +52,34 @@ agentic infrastructure. Capability descriptions live at
 regenerate that file after updates.`
 }
 
-// WriteForemanUserSkill writes the canonical /foreman skill body to
-// ~/.config/ycode/skills/ycode-foreman/skill.md. The skill is universal
-// — same body for every repo — so it lives at the user-global level
-// rather than being copied into each project. The binary embeds the
-// canonical source; this function ensures it's also available on disk
-// for any agent that prefers to read a file. Idempotent.
+// WriteUserSkills installs every skill embedded in the binary (the
+// top-level skills/ package) to ~/.config/ycode/skills/<name>/skill.md.
+// The lane is managed: writeFileIfChanged re-syncs a file whenever the
+// binary's embedded content differs, so upgrades propagate. Users who
+// want a customized copy put it in a shadowing overlay
+// (.agents/ycode/skills/ per-repo, or ~/.agents/ycode/skills/
+// user-wide) — those always win over the managed lane. Idempotent.
 //
 // Resolution order at runtime: cwd-local → project (.agents/ycode/) →
-// user (~/.config/ycode/) → embedded. First match wins.
-func WriteForemanUserSkill(home string) (string, error) {
+// user overlay (~/.agents/ycode/) → managed (~/.config/ycode/) →
+// embedded. First match wins.
+func WriteUserSkills(home string) ([]string, error) {
 	if home == "" {
-		return "", fmt.Errorf("selfinit: empty home")
+		return nil, fmt.Errorf("selfinit: empty home")
 	}
-	skillPath := filepath.Join(home, ".config", "ycode", "skills", "ycode-foreman", "skill.md")
-	if err := writeFileIfChanged(skillPath, foremanSkillMD); err != nil {
-		return "", fmt.Errorf("write %s: %w", skillPath, err)
+	var written []string
+	for _, name := range skills.Names() {
+		body, ok := skills.Body(name)
+		if !ok {
+			continue
+		}
+		skillPath := filepath.Join(home, ".config", "ycode", "skills", name, "skill.md")
+		if err := writeFileIfChanged(skillPath, body); err != nil {
+			return written, fmt.Errorf("write %s: %w", skillPath, err)
+		}
+		written = append(written, skillPath)
 	}
-	return skillPath, nil
+	return written, nil
 }
 
 // writeFileIfChanged writes content atomically if the on-disk content

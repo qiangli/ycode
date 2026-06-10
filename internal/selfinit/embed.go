@@ -1,19 +1,19 @@
 package selfinit
 
-import _ "embed"
+import "github.com/qiangli/ycode/skills"
 
-// Foreman skill body embedded in the binary. The canonical source is
-// internal/selfinit/embed/foreman_skill.md. Written to the user-global
-// location (~/.config/ycode/skills/ycode-foreman/skill.md) by
-// WriteForemanUserSkill — never into a repo.
-
-//go:embed embed/foreman_skill.md
-var foremanSkillMD string
+// The skill bodies shipped with the binary live in the top-level
+// skills/ package (skills/ycode-<name>/skill.md, embedded via
+// go:embed). WriteUserSkills installs editable copies under
+// ~/.config/ycode/skills/ — never into a repo.
 
 // ForemanSkillBody returns the embedded /foreman skill body. Useful
 // to callers that want to inject the skill into a runtime registry
 // without touching the filesystem.
-func ForemanSkillBody() string { return foremanSkillMD }
+func ForemanSkillBody() string {
+	body, _ := skills.Body("ycode-foreman")
+	return body
+}
 
 // SkillInventoryEntry is one row in the "Skills available via ycode"
 // table that gets rendered into .agents/ycode/AGENTS.md by every
@@ -30,15 +30,28 @@ type SkillInventoryEntry struct {
 
 // SkillInventory is the registry of universal ycode skills surfaced
 // to foreign agents via .agents/ycode/AGENTS.md. Append entries as
-// new universal skills land. Project-specific ycode skills (those
-// that only make sense inside the ycode source tree, e.g. /build,
-// /deploy, /eval, /analyze) are NOT listed here — they stay scoped
-// to ycode's own .agents/ycode/skills/.
+// new universal skills land. ALL embedded skills are installed
+// user-globally by WriteUserSkills; this curated list is the subset
+// worth advertising to foreign agents (deep ycode-development skills
+// like /build or /deploy are installed too but only matter inside
+// the ycode source tree).
 var SkillInventory = []SkillInventoryEntry{
 	{
 		Name:     "/foreman",
 		Summary:  "Boss → Foreman → Worker autonomous task loop",
 		BodyPath: "~/.config/ycode/skills/ycode-foreman/skill.md",
 		When:     "you start a session with no specific user task; pick up the next prioritized item from the project backlog (`ycode backlog list`) and ship it",
+	},
+	{
+		Name:     "/weave",
+		Summary:  "Orchestrate parallel subagent CLIs against a queue of issues",
+		BodyPath: "~/.config/ycode/skills/ycode-weave/skill.md",
+		When:     "you have N independent tasks to fan out to peer agent CLIs (codex, claude, opencode) in isolated sandboxes and merge verified work back",
+	},
+	{
+		Name:     "/autopilot",
+		Summary:  "Autonomously execute a development task through a research-plan-build-test-fix-commit loop",
+		BodyPath: "~/.config/ycode/skills/ycode-autopilot/skill.md",
+		When:     "a single development task should run end-to-end without approval stops",
 	},
 }

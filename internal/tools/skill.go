@@ -11,6 +11,7 @@ import (
 
 	"github.com/dhnt/dhnt/catalog"
 	"github.com/qiangli/ycode/internal/runtime/builtin"
+	skillsembed "github.com/qiangli/ycode/skills"
 )
 
 // RegisterSkillHandler registers the Skill and skill_list tool handlers.
@@ -184,6 +185,21 @@ func ListLocalSkillMeta() []LocalSkillMeta {
 			}
 		}
 	}
+	for _, name := range skillsembed.Names() {
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		body, ok := skillsembed.Body(name)
+		if !ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, LocalSkillMeta{
+			Name:        name,
+			Description: frontmatterDescription(body),
+			Path:        "embedded",
+		})
+	}
 	return out
 }
 
@@ -196,7 +212,12 @@ func readFrontmatterDescription(path string) string {
 	if err != nil {
 		return ""
 	}
-	text := string(data)
+	return frontmatterDescription(string(data))
+}
+
+// frontmatterDescription is the content form of
+// readFrontmatterDescription, used for embedded skill bodies.
+func frontmatterDescription(text string) string {
 	const marker = "---\n"
 	if !strings.HasPrefix(text, marker) {
 		return ""
@@ -227,6 +248,16 @@ func listLocalSkills() []string {
 	dirs := skillSearchDirs()
 	seen := make(map[string]struct{})
 	var skills []string
+	defer func() {
+		// Embedded lane last: anything shipped in the binary that no
+		// on-disk overlay shadows is still listed/completable.
+		for _, name := range skillsembed.Names() {
+			if _, ok := seen[name]; !ok {
+				seen[name] = struct{}{}
+				skills = append(skills, name)
+			}
+		}
+	}()
 
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
@@ -286,6 +317,12 @@ func discoverSkill(name string) (string, error) {
 		}
 	}
 
+	// Embedded fallback: the binary's skills/ lane works even when
+	// nothing has been installed on disk (bare binary, no `ycode init`).
+	if body, ok := skillsembed.Body(skillName); ok {
+		return body, nil
+	}
+
 	return "", fmt.Errorf("skill %q not found", name)
 }
 
@@ -313,10 +350,14 @@ func skillSearchDirs() []string {
 		}
 	}
 
-	// Home directory.
+	// Home directory: the user's hand-written overlay first, then the
+	// managed lane that `ycode init` materializes from the binary's
+	// embedded skills/ package (overlay edits win; managed files are
+	// re-synced on upgrade).
 	home, err := os.UserHomeDir()
 	if err == nil {
 		dirs = append(dirs, filepath.Join(home, ".agents", "ycode", "skills"))
+		dirs = append(dirs, filepath.Join(home, ".config", "ycode", "skills"))
 	}
 
 	// Environment variable.
