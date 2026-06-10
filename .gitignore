@@ -58,7 +58,12 @@ evals/results/
 #
 .gfy-out/
 #
-.agents/
+# .agents is local agent scratch — ignored, EXCEPT the tracked
+# contributor-skill lane at .agents/ycode/skills/ (see its README).
+.agents/*
+!.agents/ycode/
+.agents/ycode/*
+!.agents/ycode/skills/
 
 
 # ycode local artifacts
