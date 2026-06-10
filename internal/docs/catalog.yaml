@@ -70,10 +70,26 @@ rows:
       mcp: [memex_save, memex_recall, memex_list, memex_forget, memex_index, search_memex, list_memory_types]
     read_more: memex
 
-  - task: multi-branch coordination (loom)
+  - task: orchestrate parallel agentic subagents (weave v2)
+    surfaces:
+      cli:
+        - ycode weave add
+        - ycode weave start
+        - ycode weave wait
+        - ycode weave pull
+        - ycode weave list
+        - ycode weave abandon
+        - ycode weave reset
+        - ycode weave shell
+        - ycode weave prio
+        - ycode weave next
+    prereq: "git repo as cwd; subagent CLIs (codex, claude-code, opencode, …) on $PATH. Local-only backend — no `ycode serve` required."
+    read_more: weave
+
+  - task: multi-branch coordination (loom v1)
     surfaces:
       mcp: [loom_lease, loom_push, loom_merge, loom_status, loom_release]
-    prereq: "`ycode serve` running — loom is HTTP-MCP only."
+    prereq: "`ycode serve` running — loom is HTTP-MCP only. New work should use `weave` (above)."
     read_more: loom
 
   - task: MCP transport orientation

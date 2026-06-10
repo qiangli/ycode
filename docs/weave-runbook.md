@@ -1,5 +1,29 @@
 # `ycode weave` runbook — three agents, three issues, end to end
 
+> **Status (2026-06-10):** the MVP flow described here works **today**
+> against the local backend (`queue.json` + `git worktree` + `git
+> merge --no-ff` — no Gitea, no `ycode serve` needed). The
+> Gitea/mirror/merger/sticky-comment surface this runbook also
+> describes is the deferred v2.1 design from
+> [`loom-v2-plan.md`](./loom-v2-plan.md); use it as the target
+> roadmap, not as the current behavior.
+>
+> For an MVP-flow quick-reference an agent can `get_doc` at
+> runtime, see [`internal/docs/agent/weave.md`](../internal/docs/agent/weave.md).
+> Key MVP guarantees, all e2e-tested:
+>
+> - Subagent runs inside a freshly-allocated PTY by default (so
+>   claude-code / codex / opencode / aider render correctly).
+> - When parent stdin isn't a TTY (orchestrator pipe, backgrounded
+>   via `&`), PTY output is captured to a per-issue log file and
+>   the path is in the result envelope.
+> - Backgrounded `weave start` auto-`setsid`s, surviving the
+>   launching shell's exit without `nohup`/`disown`.
+> - State transitions on tool exit: `submitted` (rc=0) or `failed`
+>   (rc≠0) with `exit_code` + `log_path` persisted.
+> - `weave wait [--issue N | --all] [--timeout DUR]` blocks until
+>   target reaches terminal state; pairs cleanly with `weave pull`.
+
 Worked example: one human user, three issues, three different agentic CLIs, parallel execution, converged result pushed to GitHub. Use this as the canonical walk-through when teaching the feature or testing it end-to-end.
 
 See [`loom-v2-plan.md`](./loom-v2-plan.md) for the design rationale behind every step below.

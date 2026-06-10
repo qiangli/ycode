@@ -31,14 +31,30 @@ type weaveQueue struct {
 }
 
 type weaveItem struct {
-	ID       int64     `json:"id"`
-	Title    string    `json:"title"`
-	Body     string    `json:"body,omitempty"`
-	Priority string    `json:"priority,omitempty"`
-	State    string    `json:"state"`
-	Sandbox  string    `json:"sandbox,omitempty"`
-	Branch   string    `json:"branch,omitempty"`
-	Created  time.Time `json:"created"`
+	ID         int64     `json:"id"`
+	Title      string    `json:"title"`
+	Body       string    `json:"body,omitempty"`
+	Priority   string    `json:"priority,omitempty"`
+	State      string    `json:"state"`
+	Sandbox    string    `json:"sandbox,omitempty"`
+	Branch     string    `json:"branch,omitempty"`
+	Created    time.Time `json:"created"`
+	FinishedAt time.Time `json:"finished_at,omitempty"`
+	ExitCode   *int      `json:"exit_code,omitempty"`
+	LogPath    string    `json:"log_path,omitempty"`
+}
+
+// Terminal states for queue items — used by `weave wait` and similar
+// orchestrator-side polling. "submitted" means the subagent exited
+// cleanly and its branch is ready to be merged by `weave pull`.
+// "failed" means the subagent exited non-zero; the branch is left
+// alone (no merge) and the user can inspect the log to decide.
+func isTerminalState(s string) bool {
+	switch s {
+	case "submitted", "failed", "done", "abandoned":
+		return true
+	}
+	return false
 }
 
 func weaveRepoRoot(cwd string) (string, error) {
@@ -283,10 +299,24 @@ func runWeaveNext(cmd *cobra.Command, flags *weaveOutputFlags) error {
 // exec. resume reattaches to an existing "working" sandbox without
 // rebuilding the worktree — useful when an agent crashed and the
 // user wants to re-launch it inside the same sandbox without losing
-// in-progress changes.
+// in-progress changes. pty controls TTY allocation for the subagent
+// (auto = on, always = on, never = inherit FDs).
 type weaveStartOptions struct {
 	noSpawn bool
 	resume  bool
+	pty     string // "auto" (default), "always", "never"
+}
+
+// weavePTYMode returns the normalized PTY mode for runWeaveStart.
+func (o weaveStartOptions) ptyMode() string {
+	switch o.pty {
+	case "always", "never", "auto":
+		return o.pty
+	case "":
+		return "auto"
+	default:
+		return "auto"
+	}
 }
 
 func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs []string, opts weaveStartOptions, flags *weaveOutputFlags) error {
@@ -369,11 +399,23 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 		} {
 			_ = exec.Command("git", "-C", sandbox, "config", kv[0], kv[1]).Run()
 		}
-		it.State = "working"
-		it.Sandbox = sandbox
-		it.Branch = branch
-		if err := saveWeaveQueue(dir, q); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "weave start: queue write failed (continuing): %v\n", err)
+		// Lock around the state=working transition so concurrent
+		// `weave start --issue N` invocations targeting different
+		// issues don't race on the queue.json write (last-write-
+		// wins would silently strand one of the items).
+		lockErr := withWeaveQueueLock(dir, func(freshQ *weaveQueue) error {
+			freshIt := findWeaveItem(freshQ, it.ID)
+			if freshIt == nil {
+				return fmt.Errorf("queue lock: issue #%d disappeared", it.ID)
+			}
+			freshIt.State = "working"
+			freshIt.Sandbox = sandbox
+			freshIt.Branch = branch
+			it = freshIt
+			return nil
+		})
+		if lockErr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "weave start: queue write failed (continuing): %v\n", lockErr)
 		}
 	}
 	if mode != weavecli.OutputJSON {
@@ -408,23 +450,127 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 	tool := exec.Command(toolArgs[0], toolArgs[1:]...)
 	tool.Dir = sandbox
 	tool.Env = env
-	tool.Stdin = os.Stdin
-	tool.Stdout = os.Stdout
-	tool.Stderr = os.Stderr
-	if err := tool.Run(); err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
+
+	// PTY allocation policy:
+	//   - never:        inherit FDs (legacy, breaks TUI subagents).
+	//   - always|auto:  allocate a PTY. When parent stdin is a TTY,
+	//                   pass-through interactively (raw mode). When
+	//                   parent stdin is NOT a TTY (orchestrator pipe
+	//                   or backgrounded by shell &), route subagent
+	//                   PTY output to a per-issue log file under the
+	//                   queue dir so the subagent renders correctly
+	//                   AND we don't pump its TUI output back into
+	//                   the orchestrator's pipe (the OOM footgun the
+	//                   original incident exposed).
+	ptyMode := opts.ptyMode()
+	parentStdinTTY := weaveStdinIsTTY()
+	useLogFile := ptyMode != "never" && !parentStdinTTY
+	var logFile *os.File
+	var logPath string
+	if useLogFile {
+		logsDir := filepath.Join(dir, "logs")
+		if err := os.MkdirAll(logsDir, 0o755); err != nil {
 			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
-				weavecli.ExitGenericFail, fmt.Errorf("tool exited with %d", exit.ExitCode())))
+				weavecli.ExitGenericFail, fmt.Errorf("create log dir: %w", err)))
 		}
+		logPath = filepath.Join(logsDir, fmt.Sprintf("issue-%d.log", it.ID))
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		if err != nil {
+			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
+				weavecli.ExitGenericFail, fmt.Errorf("open log: %w", err)))
+		}
+		logFile = f
+	}
+	if mode != weavecli.OutputJSON && useLogFile {
+		fmt.Fprintf(cmd.OutOrStdout(), "weave start: PTY → %s\n", logPath)
+	}
+
+	// Auto-detach from the parent shell's session when invoked
+	// non-interactively. Without this, a backgrounded ycode (e.g.
+	// `ycode weave start ... &` from a script) receives SIGHUP when
+	// the launching shell exits, killing the subagent partway
+	// through its work. Setsid puts us in a new session so we
+	// outlive the launcher. Only safe when stdin is non-TTY — a
+	// user at a terminal expects to be able to ^C their own
+	// invocation, which Setsid would break.
+	weaveMaybeSetsid(parentStdinTTY)
+
+	var (
+		exitCode int
+		runErr   error
+	)
+	if ptyMode == "never" {
+		tool.Stdin = os.Stdin
+		tool.Stdout = os.Stdout
+		tool.Stderr = os.Stderr
+		runErr = tool.Run()
+		if runErr != nil {
+			if ee, ok := runErr.(*exec.ExitError); ok {
+				exitCode = ee.ExitCode()
+				runErr = nil
+			} else {
+				exitCode = 1
+			}
+		}
+	} else {
+		if useLogFile {
+			// Subagent stdio: PTY ↔ log file. stdin is the PTY slave
+			// (no user input source); stdout/stderr go to the PTY
+			// master which we copy to logFile.
+			exitCode, runErr = runWeaveToolPTY(tool, logFile)
+			_ = logFile.Close()
+		} else {
+			// Interactive TTY pass-through.
+			exitCode, runErr = runWeaveToolPTY(tool, nil)
+		}
+	}
+
+	// Persist the outcome regardless of envelope mode — `weave wait`
+	// and `weave pull` read the queue, not stdout. Take the queue
+	// lock for the final read-modify-write so concurrent
+	// `weave start` calls (the orchestrator's parallel-agent
+	// pattern) don't clobber each other's terminal-state updates.
+	// We re-load inside the lock to pick up any updates that
+	// landed while the tool was running.
+	finishedAt := time.Now().UTC()
+	lockErr := withWeaveQueueLock(dir, func(freshQ *weaveQueue) error {
+		freshIt := findWeaveItem(freshQ, it.ID)
+		if freshIt == nil {
+			return fmt.Errorf("queue lock: issue #%d disappeared", it.ID)
+		}
+		freshIt.FinishedAt = finishedAt
+		freshIt.ExitCode = &exitCode
+		if logPath != "" {
+			freshIt.LogPath = logPath
+		}
+		if exitCode == 0 && runErr == nil {
+			freshIt.State = "submitted"
+		} else {
+			freshIt.State = "failed"
+		}
+		it = freshIt
+		return nil
+	})
+	if lockErr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "weave start: queue write failed after tool exit: %v\n", lockErr)
+	}
+
+	if runErr != nil {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
-			weavecli.ExitGenericFail, err))
+			weavecli.ExitGenericFail, runErr))
+	}
+	if exitCode != 0 {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
+			weavecli.ExitGenericFail, fmt.Errorf("tool exited with %d", exitCode)))
 	}
 	if mode == weavecli.OutputJSON {
 		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave start", map[string]any{
-			"issue":   it.ID,
-			"sandbox": sandbox,
-			"branch":  branch,
-			"state":   "working",
+			"issue":     it.ID,
+			"sandbox":   sandbox,
+			"branch":    branch,
+			"state":     it.State,
+			"exit_code": exitCode,
+			"log_path":  logPath,
 		}))
 	}
 	return nil
@@ -453,7 +599,12 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags) error {
 	var results []result
 	dirty := false
 	for _, it := range q.Items {
-		if it.State != "working" {
+		// Merge any branch belonging to an item that's either still
+		// running (working — predates state transitions) or that
+		// finished cleanly (submitted). Items in "failed", "done",
+		// or "abandoned" are skipped: failed shouldn't auto-merge,
+		// done is already merged, abandoned was torn down.
+		if it.State != "working" && it.State != "submitted" {
 			continue
 		}
 		cnt, err := gitOut(root, "rev-list", "--count", fmt.Sprintf("HEAD..%s", it.Branch))
@@ -1049,4 +1200,103 @@ func stdinIsTTY() bool {
 		return false
 	}
 	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// runWeaveWait blocks until issue(s) reach a terminal state
+// (submitted, failed, done, abandoned). With --issue N, waits on
+// one issue; with --all, waits until no working items remain.
+// Times out after timeout (default 1h); on timeout, emits
+// precondition_failed and returns ExitPrecondFail so the
+// orchestrator can react.
+func runWeaveWait(cmd *cobra.Command, issueID int64, all bool, timeout time.Duration, flags *weaveOutputFlags) error {
+	mode := flags.mode()
+	if !all && issueID <= 0 {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave wait",
+			weavecli.ExitInvalidArg, fmt.Errorf("provide --issue N or --all")))
+	}
+	if all && issueID > 0 {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave wait",
+			weavecli.ExitInvalidArg, fmt.Errorf("--issue and --all are mutually exclusive")))
+	}
+	if timeout <= 0 {
+		timeout = time.Hour
+	}
+	cwd, _ := os.Getwd()
+	root, err := weaveRepoRoot(cwd)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave wait",
+			weavecli.ExitPrecondFail, err))
+	}
+	dir, _ := weaveQueueDir(root)
+
+	type readyItem struct {
+		ID       int64  `json:"id"`
+		State    string `json:"state"`
+		ExitCode *int   `json:"exit_code,omitempty"`
+		LogPath  string `json:"log_path,omitempty"`
+	}
+	deadline := time.Now().Add(timeout)
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	for {
+		q, err := loadWeaveQueue(dir)
+		if err != nil {
+			// queue.json may be momentarily absent if reset just ran;
+			// surface as ok-empty rather than fail the wait.
+			q = &weaveQueue{}
+		}
+		if issueID > 0 {
+			it := findWeaveItem(q, issueID)
+			if it == nil {
+				return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave wait",
+					weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found", issueID)))
+			}
+			if isTerminalState(it.State) {
+				return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave wait", map[string]any{
+					"ready": []readyItem{{ID: it.ID, State: it.State, ExitCode: it.ExitCode, LogPath: it.LogPath}},
+				}))
+			}
+		} else {
+			// --all: ready when every non-terminal item is gone.
+			// We count both `todo` and `working` as pending so the
+			// orchestrator pattern "add N issues → background N
+			// `weave start` calls → `weave wait --all`" doesn't
+			// race: the wait survives until each todo has been
+			// claimed (transitioned through working) and reached
+			// a terminal state. If the user has unintended todos
+			// that no `start` will ever claim, wait blocks until
+			// --timeout — surfacing the gap explicitly rather
+			// than silently returning early.
+			var ready []readyItem
+			pending := 0
+			for _, it := range q.Items {
+				switch it.State {
+				case "todo", "working":
+					pending++
+				default:
+					if isTerminalState(it.State) {
+						ready = append(ready, readyItem{ID: it.ID, State: it.State, ExitCode: it.ExitCode, LogPath: it.LogPath})
+					}
+				}
+			}
+			if pending == 0 {
+				return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave wait", map[string]any{
+					"ready": ready,
+				}))
+			}
+		}
+		if time.Now().After(deadline) {
+			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave wait",
+				weavecli.ExitPrecondFail, fmt.Errorf("timeout after %s", timeout)))
+		}
+		select {
+		case <-ctx.Done():
+			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave wait",
+				weavecli.ExitGenericFail, fmt.Errorf("cancelled")))
+		case <-time.After(time.Second):
+		}
+	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -55,6 +56,7 @@ func newWeaveStartCmd() *cobra.Command {
 	var tool string
 	var resume bool
 	var noSpawn bool
+	var ptyMode string
 	cmd := &cobra.Command{
 		Use:   "start [-- <tool> [args...]]",
 		Short: "Allocate a workspace and launch an agentic tool",
@@ -63,12 +65,24 @@ issue specified with --issue), allocates a sandbox, and launches the
 named tool inside it with YCODE_LOOM_* env vars set.
 
 The trailing '-- <tool>' form is the human-natural shape; --tool is
-the programmatic alternative. If neither is given, the project's
-default_tool from .ycode/loom.yaml is used.`,
+the programmatic alternative.
+
+PTY: by default the subagent runs inside a freshly-allocated PTY
+(claude-code, codex, opencode and similar TUIs need one to render).
+When stdout is a terminal the PTY passes through interactively;
+when it isn't (orchestrator pipe / backgrounded by shell &) the
+PTY output goes to a per-issue log file under the queue dir and
+the file path appears in the result envelope.
+
+On exit, the queue item's state becomes "submitted" (exit 0) or
+"failed" (non-zero), with exit_code and finished_at persisted.
+"weave pull" picks up submitted branches; "weave wait --issue N"
+blocks until N reaches a terminal state.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWeaveStart(cmd, issue, tool, args, weaveStartOptions{
 				noSpawn: noSpawn,
 				resume:  resume,
+				pty:     ptyMode,
 			}, &flags)
 		},
 	}
@@ -77,6 +91,7 @@ default_tool from .ycode/loom.yaml is used.`,
 	cmd.Flags().StringVar(&tool, "tool", "", "Tool name (alternative to trailing -- <tool>)")
 	cmd.Flags().BoolVar(&resume, "resume", false, "Reattach to an existing lease for the given issue")
 	cmd.Flags().BoolVar(&noSpawn, "no-spawn", false, "Allocate the workspace but do not exec the tool")
+	cmd.Flags().StringVar(&ptyMode, "pty", "auto", "PTY allocation: auto (default) | always | never")
 	return cmd
 }
 
@@ -230,6 +245,39 @@ func newWeaveResetCmd() *cobra.Command {
 	}
 	flags.attach(cmd)
 	cmd.Flags().BoolVar(&yes, "yes", false, "Skip the confirm prompt")
+	return cmd
+}
+
+func newWeaveWaitCmd() *cobra.Command {
+	var flags weaveOutputFlags
+	var issue int64
+	var all bool
+	var timeout time.Duration
+	cmd := &cobra.Command{
+		Use:   "wait [--issue N | --all]",
+		Short: "Block until issue(s) reach a terminal state",
+		Long: `wait polls the queue every 1s until the target reaches a terminal
+state (submitted, failed, done, or abandoned). Use --issue N to wait
+on one issue or --all to wait until no working items remain.
+
+Pairs with --detach-style backgrounding (` + "`ycode weave start ... &`" + `).
+A typical orchestrator flow:
+
+  ycode weave start --issue 1 -- codex 'fix #1' &
+  ycode weave start --issue 2 -- claude-code 'fix #2' &
+  ycode weave wait --all --timeout 30m
+  ycode weave pull
+
+Default timeout is 1h. On timeout, exits with precondition_failed
+(exit code 3) so the caller can react.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runWeaveWait(cmd, issue, all, timeout, &flags)
+		},
+	}
+	flags.attach(cmd)
+	cmd.Flags().Int64Var(&issue, "issue", 0, "Wait on a specific issue ID")
+	cmd.Flags().BoolVar(&all, "all", false, "Wait until no `working` items remain")
+	cmd.Flags().DurationVar(&timeout, "timeout", time.Hour, "Maximum wait duration (e.g. 30m, 1h)")
 	return cmd
 }
 

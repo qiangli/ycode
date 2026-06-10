@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // E2E tests for the `ycode weave` subverb tree. Each test drives the
@@ -296,7 +297,7 @@ func TestWeaveE2E_Start_NoSpawn(t *testing.T) {
 	}
 }
 
-func TestWeaveE2E_Start_WithTool(t *testing.T) {
+func TestWeaveE2E_Start_WithTool_SubmittedOnSuccess(t *testing.T) {
 	if testing.Short() {
 		t.Skip("e2e skipped in -short")
 	}
@@ -304,16 +305,122 @@ func TestWeaveE2E_Start_WithTool(t *testing.T) {
 	if _, ee := runWeave(t, repo, home, "add", "with tool"); envExitCode(ee) != 0 {
 		t.Fatalf("add failed")
 	}
-	// Use a tiny non-interactive tool (`bash -c "true"`) so the test
-	// completes deterministically without needing a real agent CLI.
-	// The tool runs inside the sandbox and exits 0.
+	// `bash -c "true"` exits 0 → state should advance to "submitted"
+	// after Wait, with exit_code=0 and a log path populated (since
+	// the test runs in non-TTY mode and the PTY output goes to a
+	// per-issue log file).
 	out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", "true")
 	if got := envExitCode(ee); got != 0 {
 		t.Fatalf("start exited %d; out=%s", got, out)
 	}
 	res := parseEnvelope(t, out)["result"].(map[string]any)
-	if res["state"] != "working" {
-		t.Fatalf("expected state=working after start, got %v", res["state"])
+	if res["state"] != "submitted" {
+		t.Fatalf("expected state=submitted after success, got %v", res["state"])
+	}
+	if int(res["exit_code"].(float64)) != 0 {
+		t.Fatalf("expected exit_code=0, got %v", res["exit_code"])
+	}
+	logPath, _ := res["log_path"].(string)
+	if logPath == "" {
+		t.Fatalf("expected log_path to be populated in non-TTY mode; res=%v", res)
+	}
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("log file missing: %v", err)
+	}
+	// And the queue confirms the state via `list`.
+	out, _ = runWeave(t, repo, home, "list", "--history")
+	items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+	if items[0].(map[string]any)["state"] != "submitted" {
+		t.Fatalf("list does not reflect submitted: %v", items[0])
+	}
+}
+
+func TestWeaveE2E_Start_FailedOnNonZero(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "failing tool"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// `bash -c "exit 7"` exits 7 → start should return exit 1 (its
+	// own envelope reports generic_failure) but the queue item
+	// must record state=failed with exit_code=7 so the orchestrator
+	// can decide whether to retry, surface the log, or abandon.
+	out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", "exit 7")
+	if got := envExitCode(ee); got == 0 {
+		t.Fatalf("expected non-zero exit when tool fails; got=%d; out=%s", got, out)
+	}
+	// State must be reflected on disk even though the envelope was
+	// an error. Read via `list --history` to confirm.
+	out2, _ := runWeave(t, repo, home, "list", "--history")
+	items := parseEnvelope(t, out2)["result"].(map[string]any)["items"].([]any)
+	item := items[0].(map[string]any)
+	if item["state"] != "failed" {
+		t.Fatalf("expected state=failed after non-zero exit, got %v", item["state"])
+	}
+	if int(item["exit_code"].(float64)) != 7 {
+		t.Fatalf("expected exit_code=7, got %v", item["exit_code"])
+	}
+}
+
+// TestWeaveE2E_PTY_SubagentSeesTTY confirms the headline MVP fix:
+// even when ycode itself is launched with no TTY (orchestrator pipe
+// / backgrounded by shell &), the subagent inside the worktree
+// receives a real PTY. Verified by having bash check `[[ -t 0 ]]`
+// and writing the answer to a file inside the worktree.
+func TestWeaveE2E_PTY_SubagentSeesTTY(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "tty check"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// bash writes "TTY" or "NOTTY" inside the sandbox depending on
+	// whether stdin is a terminal. With weave's default PTY auto
+	// mode, the file must contain "TTY".
+	script := `if [ -t 0 ]; then echo TTY > pty-check; else echo NOTTY > pty-check; fi`
+	if _, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script); envExitCode(ee) != 0 {
+		t.Fatalf("start with tty-check failed")
+	}
+	out, _ := runWeave(t, repo, home, "list", "--history")
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	sandbox := item["sandbox"].(string)
+	if sandbox == "" {
+		t.Fatalf("expected sandbox path on item; got %v", item)
+	}
+	got, err := os.ReadFile(filepath.Join(sandbox, "pty-check"))
+	if err != nil {
+		t.Fatalf("read pty-check: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != "TTY" {
+		t.Fatalf("subagent did NOT see a TTY: pty-check=%q (PTY allocation broken?)", got)
+	}
+}
+
+func TestWeaveE2E_PTY_Never_FallsBackToInheritedFDs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "no-pty"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// With --pty=never, the inherited (non-TTY) stdin reaches bash —
+	// bash should report NOTTY in the sandbox file.
+	script := `if [ -t 0 ]; then echo TTY > pty-check; else echo NOTTY > pty-check; fi`
+	if _, ee := runWeave(t, repo, home, "start", "--issue", "1", "--pty", "never", "--", "bash", "-c", script); envExitCode(ee) != 0 {
+		t.Fatalf("start --pty=never failed")
+	}
+	out, _ := runWeave(t, repo, home, "list", "--history")
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	got, err := os.ReadFile(filepath.Join(item["sandbox"].(string), "pty-check"))
+	if err != nil {
+		t.Fatalf("read pty-check: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != "NOTTY" {
+		t.Fatalf("expected NOTTY with --pty=never, got %q", got)
 	}
 }
 
@@ -630,5 +737,185 @@ func TestWeaveE2E_NoSpawn_RequiresGitRepo(t *testing.T) {
 	out, ee := runWeave(t, non, home, "start", "--no-spawn", "--issue", "1")
 	if got := envExitCode(ee); got != 3 {
 		t.Fatalf("expected exit=3 (precondition_failed) outside git, got %d; out=%s", got, out)
+	}
+}
+
+// startWeaveAsync launches `ycode weave <args...>` in the background
+// without waiting; returns the *exec.Cmd so the caller can later
+// Wait or Kill. Used by the wait-subverb tests that need a real
+// long-running `weave start` to wait on.
+func startWeaveAsync(t *testing.T, repo, home string, args ...string) *exec.Cmd {
+	t.Helper()
+	binAbs, err := filepath.Abs(weaveE2EBinary)
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
+	full := append([]string{"weave"}, args...)
+	cmd := exec.Command(binAbs, full...)
+	cmd.Dir = repo
+	cmd.Env = append(os.Environ(),
+		"HOME="+home,
+		"TERM=dumb",
+		"YCODE_NO_SERVER=1",
+		"ANTHROPIC_API_KEY=",
+		"OPENAI_API_KEY=",
+		"YCODE_AGENT=1",
+	)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start async weave: %v", err)
+	}
+	return cmd
+}
+
+func TestWeaveE2E_Wait_Issue_BlocksUntilSubmitted(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "sleeping tool"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// Subagent takes ~2s to complete, in the background. wait
+	// --issue 1 must return ok once state flips to "submitted".
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", "sleep 2; exit 0")
+	defer bg.Wait()
+
+	start := time.Now()
+	out, ee := runWeave(t, repo, home, "wait", "--issue", "1", "--timeout", "10s")
+	elapsed := time.Since(start)
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("wait --issue 1 exited %d after %s; out=%s", got, elapsed, out)
+	}
+	if elapsed < 1500*time.Millisecond {
+		t.Fatalf("wait returned too early (%s); should have blocked for ~2s", elapsed)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("wait took too long (%s); subagent should have finished in ~2s", elapsed)
+	}
+	ready := parseEnvelope(t, out)["result"].(map[string]any)["ready"].([]any)
+	if len(ready) != 1 {
+		t.Fatalf("expected 1 ready item, got %v", ready)
+	}
+	if ready[0].(map[string]any)["state"] != "submitted" {
+		t.Fatalf("expected state=submitted, got %v", ready[0])
+	}
+}
+
+func TestWeaveE2E_Wait_All_BlocksUntilQueueDrains(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "first"); envExitCode(ee) != 0 {
+		t.Fatalf("add 1 failed")
+	}
+	if _, ee := runWeave(t, repo, home, "add", "second"); envExitCode(ee) != 0 {
+		t.Fatalf("add 2 failed")
+	}
+	bg1 := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", "sleep 1; exit 0")
+	defer bg1.Wait()
+	bg2 := startWeaveAsync(t, repo, home, "start", "--issue", "2", "--", "bash", "-c", "sleep 2; exit 0")
+	defer bg2.Wait()
+
+	out, ee := runWeave(t, repo, home, "wait", "--all", "--timeout", "10s")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("wait --all exited %d; out=%s", got, out)
+	}
+	ready := parseEnvelope(t, out)["result"].(map[string]any)["ready"].([]any)
+	if len(ready) != 2 {
+		t.Fatalf("expected 2 ready items, got %d (%v)", len(ready), ready)
+	}
+	for _, r := range ready {
+		if r.(map[string]any)["state"] != "submitted" {
+			t.Fatalf("expected all submitted, got %v", r)
+		}
+	}
+}
+
+func TestWeaveE2E_Wait_TimesOutWhenNeverCompletes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "never finishes"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// Long sleep we'll kill below; --no-spawn keeps state=working
+	// without blocking the test so wait has something to wait on.
+	if _, ee := runWeave(t, repo, home, "start", "--no-spawn", "--issue", "1"); envExitCode(ee) != 0 {
+		t.Fatalf("start --no-spawn failed")
+	}
+	out, ee := runWeave(t, repo, home, "wait", "--issue", "1", "--timeout", "1s")
+	if got := envExitCode(ee); got != 3 {
+		t.Fatalf("expected exit=3 (precondition_failed) on timeout, got %d; out=%s", got, out)
+	}
+	errObj := parseEnvelope(t, out)["error"].(map[string]any)
+	if errObj["code"] != "precondition_failed" {
+		t.Fatalf("expected precondition_failed, got %v", errObj)
+	}
+	if !strings.Contains(errObj["message"].(string), "timeout") {
+		t.Fatalf("expected 'timeout' in message, got %v", errObj["message"])
+	}
+}
+
+func TestWeaveE2E_Wait_RequiresIssueOrAll(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	out, ee := runWeave(t, repo, home, "wait")
+	if got := envExitCode(ee); got != 2 {
+		t.Fatalf("expected exit=2 (invalid_arg) without --issue/--all, got %d; out=%s", got, out)
+	}
+}
+
+// TestWeaveE2E_OrchestratorFlow exercises the full MVP scenario:
+// orchestrator backgrounds two subagents, waits for both, pulls
+// their work into main, and verifies both commits are merged.
+// This is the headline test — if this passes, the documented
+// orchestrator pattern actually works.
+func TestWeaveE2E_OrchestratorFlow(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "add alpha"); envExitCode(ee) != 0 {
+		t.Fatalf("add 1 failed")
+	}
+	if _, ee := runWeave(t, repo, home, "add", "add beta"); envExitCode(ee) != 0 {
+		t.Fatalf("add 2 failed")
+	}
+	// Two subagents in parallel: each touches a distinct file and
+	// commits inside its own worktree.
+	script1 := `set -e; echo a > alpha.txt; git add alpha.txt; git commit -qm "feat: alpha"; sleep 1`
+	script2 := `set -e; echo b > beta.txt; git add beta.txt; git commit -qm "feat: beta"; sleep 1`
+	bg1 := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script1)
+	bg2 := startWeaveAsync(t, repo, home, "start", "--issue", "2", "--", "bash", "-c", script2)
+	defer bg1.Wait()
+	defer bg2.Wait()
+
+	out, ee := runWeave(t, repo, home, "wait", "--all", "--timeout", "15s")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("wait --all exited %d; out=%s", got, out)
+	}
+	out, ee = runWeave(t, repo, home, "pull")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("pull exited %d; out=%s", got, out)
+	}
+	results := parseEnvelope(t, out)["result"].(map[string]any)["results"].([]any)
+	mergedCount := 0
+	for _, r := range results {
+		if r.(map[string]any)["status"] == "merged" {
+			mergedCount++
+		}
+	}
+	if mergedCount != 2 {
+		t.Fatalf("expected 2 merged branches, got %d (%v)", mergedCount, results)
+	}
+	// Both commits should be on main.
+	for _, f := range []string{"alpha.txt", "beta.txt"} {
+		if _, err := os.Stat(filepath.Join(repo, f)); err != nil {
+			t.Fatalf("expected %s on main: %v", f, err)
+		}
 	}
 }
