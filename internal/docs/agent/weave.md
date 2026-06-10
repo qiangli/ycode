@@ -107,6 +107,14 @@ the normal path when subagents have finished cleanly.
   buffer in non-interactive modes (`claude -p`) leave the capture
   empty until exit — empty under `-f` means "nothing emitted", not
   "nothing happening".
+- `say <issue> "<text>"` — inject one line into a RUNNING subagent's
+  PTY (typed keystrokes + Enter, via the wrapper's per-issue control
+  socket). Use for mid-run steering: `weave say 4 "/btw status?"`,
+  `weave say 4 "stop exploring, commit what passes"`. Requires
+  state=working + a live wrapper that allocated a PTY; tools that
+  ignore terminal input in non-interactive modes (`claude -p`) won't
+  react — launch claude with a streaming/TUI mode when you plan to
+  steer. Watch the reaction with `weave log <issue> -f`.
 - `wait [--issue N | --all] [--timeout DUR]` — block until target
   reaches terminal state.
 - `pull` — merge every working/submitted branch with commits ahead.

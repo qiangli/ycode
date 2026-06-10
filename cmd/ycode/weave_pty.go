@@ -3,10 +3,12 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -200,6 +202,40 @@ func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, guards weaveGuards) (int,
 				}
 			}
 		}()
+	}
+
+	// Control socket for `weave say`: every line received becomes
+	// keystrokes on the PTY master (trailing \r = Enter, which the
+	// TUI's line discipline reads as submit). Serving it in both
+	// the captured and pass-through paths costs nothing; writes to
+	// *os.File are serialized by the kernel for these small sizes.
+	if guards.ctlSock != "" {
+		_ = os.Remove(guards.ctlSock)
+		if ln, lnErr := net.Listen("unix", guards.ctlSock); lnErr == nil {
+			defer func() {
+				_ = ln.Close()
+				_ = os.Remove(guards.ctlSock)
+			}()
+			go func() {
+				for {
+					conn, acceptErr := ln.Accept()
+					if acceptErr != nil {
+						return // listener closed at tool exit
+					}
+					go func(c net.Conn) {
+						defer c.Close()
+						sc := bufio.NewScanner(c)
+						for sc.Scan() {
+							if line := sc.Text(); line != "" {
+								_, _ = ptmx.WriteString(line + "\r")
+							}
+						}
+					}(conn)
+				}
+			}()
+		} else {
+			slog.Warn("weave: control socket unavailable; `weave say` disabled for this run", "path", guards.ctlSock, "err", lnErr)
+		}
 	}
 
 	parentTTY := term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))

@@ -268,6 +268,16 @@ ycode weave log 123 -n 100      # just the last 100 lines
 
 The capture is recorded whenever the `weave start` parent wasn't a TTY (orchestrator pipe, `&`); it persists after the run as the post-mortem artifact. Tools that buffer in non-interactive modes (`claude -p`) leave it empty until exit.
 
+You can also steer a running subagent — `weave say` types a line into its PTY (keystrokes + Enter, via the wrapper's control socket):
+
+```bash
+ycode weave say 123 "/btw what's your status? summarize in one line"
+ycode weave say 123 "stop exploring; commit what passes and exit"
+ycode weave log 123 -f          # watch the reaction
+```
+
+One say = one submitted line. The issue must be `working` with a live wrapper; tools that ignore terminal input in their non-interactive modes (`claude -p`) receive but ignore the keystrokes — use a TUI/streaming mode for steerable runs.
+
 ### Option B — Browser: Gitea filtered issue list
 
 ```bash

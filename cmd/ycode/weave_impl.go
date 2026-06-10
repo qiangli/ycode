@@ -12,7 +12,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,6 +57,24 @@ type weaveItem struct {
 	// is no longer alive — the wrapper crashed or was killed
 	// outside weave's control. Resume or abandon the item.
 	Stale bool `json:"stale,omitempty"`
+	// CtlSock is the wrapper's per-issue control socket while the
+	// subagent runs (PTY mode only). `weave say` connects here to
+	// inject a line into the subagent's stdin. Set at claim time,
+	// cleared on terminal state.
+	CtlSock string `json:"ctl_sock,omitempty"`
+}
+
+// weaveCtlSockPath returns the per-issue control socket path,
+// falling back to the temp dir when the queue-dir path would
+// exceed the unix socket path limit (104 bytes on darwin).
+func weaveCtlSockPath(dir string, id int64) string {
+	p := filepath.Join(dir, "ctl", fmt.Sprintf("issue-%d.sock", id))
+	if len(p) <= 100 {
+		return p
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(dir))
+	return filepath.Join(os.TempDir(), fmt.Sprintf("ycode-weave-%x-issue-%d.sock", h.Sum32(), id))
 }
 
 // Terminal states for queue items — used by `weave wait` and similar
@@ -356,6 +376,11 @@ type weaveGuards struct {
 	idleTimeout   time.Duration
 	maxRuntime    time.Duration
 	memLimitBytes int64
+	// ctlSock, when non-empty, is the unix socket runWeaveToolPTY
+	// serves for `weave say`: each line received is written to the
+	// PTY master with a trailing \r — keystrokes, as far as the
+	// subagent can tell.
+	ctlSock string
 }
 
 // errWeaveWrapperLive is returned from inside the queue-lock callback
@@ -464,6 +489,12 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 	base := weaveBaseBranch(root)
 	sandbox := filepath.Join(dir, "sandboxes", fmt.Sprintf("issue-%d", it.ID))
 	branch := fmt.Sprintf("agent/weave-issue-%d", it.ID)
+	// Control socket for `weave say` — only meaningful when the
+	// subagent gets a PTY and we're actually spawning it.
+	ctlSock := ""
+	if opts.ptyMode() != "never" && !opts.noSpawn {
+		ctlSock = weaveCtlSockPath(dir, it.ID)
+	}
 	if opts.resume {
 		sandbox = it.Sandbox
 		branch = it.Branch
@@ -491,6 +522,7 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			freshIt.State = "working"
 			freshIt.ExitCode = nil
 			freshIt.FinishedAt = time.Time{}
+			freshIt.CtlSock = ctlSock
 			it = freshIt
 			return nil
 		})
@@ -562,6 +594,7 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			freshIt.Sandbox = sandbox
 			freshIt.Branch = branch
 			freshIt.WrapperPid = os.Getpid()
+			freshIt.CtlSock = ctlSock
 			it = freshIt
 			return nil
 		})
@@ -626,6 +659,13 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 		idleTimeout:   opts.idleTimeout,
 		maxRuntime:    opts.maxRuntime,
 		memLimitBytes: memLimitBytes,
+		ctlSock:       ctlSock,
+	}
+	if ctlSock != "" {
+		if err := os.MkdirAll(filepath.Dir(ctlSock), 0o755); err != nil {
+			// Non-fatal: `weave say` degrades to state_conflict.
+			guards.ctlSock = ""
+		}
 	}
 	ptyMode := opts.ptyMode()
 	parentStdinTTY := weaveStdinIsTTY()
@@ -706,6 +746,7 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 		freshIt.FinishedAt = finishedAt
 		freshIt.ExitCode = &exitCode
 		freshIt.WrapperPid = 0
+		freshIt.CtlSock = ""
 		if logPath != "" {
 			freshIt.LogPath = logPath
 		}
@@ -739,6 +780,59 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			"log_path":  logPath,
 		}))
 	}
+	return nil
+}
+
+// runWeaveSay injects one line into a running subagent's PTY via
+// the wrapper's per-issue control socket. The wrapper appends \r,
+// so the TUI treats it as a submitted message.
+func runWeaveSay(cmd *cobra.Command, id int64, text string, flags *weaveOutputFlags) error {
+	mode := flags.mode()
+	cwd, _ := os.Getwd()
+	root, err := weaveRepoRoot(cwd)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave say",
+			weavecli.ExitPrecondFail, err))
+	}
+	dir, _ := weaveQueueDir(root)
+	q, err := loadWeaveQueue(dir)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave say",
+			weavecli.ExitGenericFail, err))
+	}
+	it := findWeaveItem(q, id)
+	if it == nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave say",
+			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found", id)))
+	}
+	if it.State != "working" || it.WrapperPid == 0 || !pidAlive(it.WrapperPid) {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave say",
+			weavecli.ExitStateConflict, fmt.Errorf("issue #%d has no live subagent (state=%q)", it.ID, it.State)))
+	}
+	if it.CtlSock == "" {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave say",
+			weavecli.ExitStateConflict, fmt.Errorf("issue #%d has no control socket — its wrapper predates `weave say` or ran with --pty=never", it.ID)))
+	}
+	conn, err := net.DialTimeout("unix", it.CtlSock, 3*time.Second)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave say",
+			weavecli.ExitDepUnhealthy, fmt.Errorf("control socket dial: %w", err)))
+	}
+	defer conn.Close()
+	// Strip newlines so one say = one injected line; the wrapper
+	// adds the terminating \r itself.
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r", " "), "\n", " ")
+	if _, err := fmt.Fprintln(conn, text); err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave say",
+			weavecli.ExitGenericFail, fmt.Errorf("control socket write: %w", err)))
+	}
+	if mode == weavecli.OutputJSON {
+		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave say", map[string]any{
+			"issue": it.ID,
+			"sent":  text,
+		}))
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "weave say: sent to issue #%d — watch `weave log %d -f`\n", it.ID, it.ID)
 	return nil
 }
 

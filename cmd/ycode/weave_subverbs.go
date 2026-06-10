@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -209,6 +210,40 @@ callers read the file themselves.`,
 	flags.attach(cmd)
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Stream appended output until the issue reaches a terminal state")
 	cmd.Flags().IntVarP(&tailN, "tail", "n", -1, "Print only the last N lines (0 = none, useful with -f; -1 = whole file)")
+	return cmd
+}
+
+func newWeaveSayCmd() *cobra.Command {
+	var flags weaveOutputFlags
+	cmd := &cobra.Command{
+		Use:   `say <issue> "<text>"`,
+		Short: "Inject a line into a running subagent's terminal",
+		Long: `say connects to the running wrapper's per-issue control socket and
+types the text into the subagent's PTY, followed by Enter. To the
+subagent it is indistinguishable from a human typing into its TUI —
+so mid-run steering works the way you'd expect:
+
+  ycode weave say 4 "/btw what is the status? reply in the log"
+  ycode weave say 4 "stop exploring; commit what passes and exit"
+
+Anyone on the host (a peer agent, a human in another terminal) can
+inject; watch the reaction with 'weave log <issue> -f'.
+
+Caveats: the issue must be state=working with a live wrapper that
+allocated a PTY. Tools that don't read terminal input in their
+non-interactive modes (e.g. 'claude -p') receive the keystrokes but
+ignore them — use a TUI/streaming mode when you plan to steer.
+Wrappers started by an older ycode have no control socket.`,
+		Args: cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("issue must be an integer: %q", args[0])
+			}
+			return runWeaveSay(cmd, id, strings.Join(args[1:], " "), &flags)
+		},
+	}
+	flags.attach(cmd)
 	return cmd
 }
 

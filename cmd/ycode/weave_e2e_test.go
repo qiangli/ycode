@@ -1441,3 +1441,85 @@ exit 0`
 		}
 	}
 }
+
+// TestWeaveE2E_Say_InjectsIntoSubagentPTY: `weave say` writes a line
+// into the running subagent's PTY via the wrapper's control socket.
+// The subagent is a bash script that blocks on `read` — the injected
+// text arrives as keystrokes, the script echoes it back, and the
+// echo lands in the PTY capture.
+func TestWeaveE2E_Say_InjectsIntoSubagentPTY(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "say check"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	script := `echo ready
+read -r line
+echo "received:$line"
+exit 0`
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script)
+
+	// Wait until the wrapper records its control socket.
+	deadline := time.Now().Add(15 * time.Second)
+	ready := false
+	for time.Now().Before(deadline) {
+		out, _ := runWeave(t, repo, home, "list", "--json")
+		items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+		if len(items) > 0 {
+			item := items[0].(map[string]any)
+			sock, _ := item["ctl_sock"].(string)
+			if pidF, ok := item["wrapper_pid"].(float64); ok && pidF > 0 && sock != "" {
+				if _, err := os.Stat(sock); err == nil {
+					ready = true
+					break
+				}
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !ready {
+		_ = bg.Process.Kill()
+		bg.Wait()
+		t.Fatalf("control socket never appeared in queue")
+	}
+
+	if out, ee := runWeave(t, repo, home, "say", "1", "hello", "from", "the", "outside"); envExitCode(ee) != 0 {
+		_ = bg.Process.Kill()
+		bg.Wait()
+		t.Fatalf("say failed: %s", out)
+	}
+	_ = bg.Wait()
+
+	// The echo must be in the capture, and the run must have ended
+	// submitted (read returned, script exited 0).
+	out, _ := runWeave(t, repo, home, "list", "--json")
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if item["state"] != "submitted" {
+		t.Fatalf("expected submitted after say-unblocked exit, got %v", item["state"])
+	}
+	b, err := os.ReadFile(item["log_path"].(string))
+	if err != nil {
+		t.Fatalf("read capture: %v", err)
+	}
+	if !strings.Contains(string(b), "received:hello from the outside") {
+		t.Fatalf("injected line never echoed back; capture=%q", b)
+	}
+}
+
+// TestWeaveE2E_Say_RequiresLiveSubagent: say against a never-started
+// issue is a state_conflict, not a hang or crash.
+func TestWeaveE2E_Say_RequiresLiveSubagent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "nobody home"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	out, ee := runWeave(t, repo, home, "say", "1", "anyone there?")
+	if got := envExitCode(ee); got != 4 {
+		t.Fatalf("expected state_conflict (4), got %d; out=%s", got, out)
+	}
+}
