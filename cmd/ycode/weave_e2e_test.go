@@ -1381,3 +1381,35 @@ func TestWeaveE2E_Sandbox_OriginRemoved(t *testing.T) {
 		t.Fatalf("sandbox still has remotes (escape hatch open): %q", remotes)
 	}
 }
+
+// TestWeaveE2E_Resume_AfterFailedRun: a non-zero tool exit leaves
+// state=failed with the sandbox preserved — the documented retry
+// path (`weave kill` → `weave start --resume`) must accept it.
+func TestWeaveE2E_Resume_AfterFailedRun(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "retry path"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// First run fails (exit 7) → state=failed, sandbox kept.
+	if out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", "echo partial > work.txt; exit 7"); envExitCode(ee) == 0 {
+		t.Fatalf("expected non-zero wrapper exit; out=%s", out)
+	}
+	// Resume in the same sandbox: prior partial work is still there,
+	// the retry commits it and exits 0 → state=submitted.
+	script := `test -f work.txt || exit 9
+git add work.txt
+git -c user.name=r -c user.email=r@r commit -qm retry
+exit 0`
+	out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--resume", "--", "bash", "-c", script)
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("resume after failed exited %d; out=%s", got, out)
+	}
+	out, _ = runWeave(t, repo, home, "list")
+	items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+	if state := items[0].(map[string]any)["state"]; state != "submitted" {
+		t.Fatalf("expected state=submitted after resumed retry, got %v", state)
+	}
+}

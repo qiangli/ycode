@@ -447,9 +447,14 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			weavecli.ExitStateConflict, fmt.Errorf("issue #%d state is %q", it.ID, it.State)))
 	}
 	if opts.resume {
-		if it.State != "working" || it.Sandbox == "" {
+		// Any state with a preserved sandbox is resumable: "working"
+		// (wrapper died), "failed" (weave kill / watchdog kill — the
+		// retry path the kill docs promise), "submitted" (tool exited
+		// but the branch was kicked back, e.g. merge conflict). done
+		// and abandoned were rejected above; their sandboxes are gone.
+		if it.Sandbox == "" {
 			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
-				weavecli.ExitStateConflict, fmt.Errorf("--resume: issue #%d has no live sandbox (state=%q)", it.ID, it.State)))
+				weavecli.ExitStateConflict, fmt.Errorf("--resume: issue #%d has no sandbox to reattach (state=%q)", it.ID, it.State)))
 		}
 		if _, err := os.Stat(it.Sandbox); err != nil {
 			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
