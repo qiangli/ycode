@@ -283,10 +283,16 @@ func TestWeaveE2E_Start_NoSpawn(t *testing.T) {
 	if _, err := os.Stat(sandbox); err != nil {
 		t.Fatalf("sandbox dir missing on disk: %v", err)
 	}
-	// Branch should exist in the repo.
-	branchOut, err := exec.Command("git", "-C", repo, "branch", "--list", "agent/weave-issue-1").CombinedOutput()
-	if err != nil || !strings.Contains(string(branchOut), "agent/weave-issue-1") {
-		t.Fatalf("expected branch agent/weave-issue-1 to exist; got %q (err=%v)", branchOut, err)
+	// The agent's branch lives in the sandbox clone, NOT in the
+	// user's repo. This is the new isolation guarantee: the user's
+	// repo refs are untouched until `weave pull` fetches.
+	userBranchOut, _ := exec.Command("git", "-C", repo, "branch", "--list", "agent/weave-issue-1").CombinedOutput()
+	if strings.Contains(string(userBranchOut), "agent/weave-issue-1") {
+		t.Fatalf("isolation violation: agent branch leaked into user repo; got %q", userBranchOut)
+	}
+	sandboxBranchOut, err := exec.Command("git", "-C", sandbox, "branch", "--show-current").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(sandboxBranchOut)) != "agent/weave-issue-1" {
+		t.Fatalf("expected sandbox checked out on agent/weave-issue-1; got %q (err=%v)", sandboxBranchOut, err)
 	}
 
 	// list should now show state=working.
@@ -294,6 +300,47 @@ func TestWeaveE2E_Start_NoSpawn(t *testing.T) {
 	items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
 	if items[0].(map[string]any)["state"] != "working" {
 		t.Fatalf("expected list to show state=working, got %v", items[0])
+	}
+}
+
+// TestWeaveE2E_SandboxIsolation_CannotMutateUserRepoRefs is the
+// load-bearing test for the worktree → clone refactor. An agent
+// inside the sandbox runs `git update-ref refs/heads/main HEAD`
+// inside its own clone — that must NOT touch the user's repo
+// ref. With the old `git worktree add` model, that command would
+// mutate the SHARED ref and silently move main.
+func TestWeaveE2E_SandboxIsolation_CannotMutateUserRepoRefs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "isolation check"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// Get the user repo's main commit before the agent runs.
+	userMainBefore, err := exec.Command("git", "-C", repo, "rev-parse", "main").CombinedOutput()
+	if err != nil {
+		t.Fatalf("rev-parse main: %v", err)
+	}
+	// Subagent makes a commit then attempts to force-overwrite the
+	// "main" ref to its own HEAD. In the new model that update-ref
+	// happens in the sandbox's .git, NOT the user's.
+	script := `set -e
+echo poison > poison.txt
+git add poison.txt
+git commit -qm "agent: trying to overwrite main"
+git update-ref refs/heads/main HEAD
+echo done`
+	if _, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script); envExitCode(ee) != 0 {
+		t.Fatalf("start with poison script failed")
+	}
+	userMainAfter, err := exec.Command("git", "-C", repo, "rev-parse", "main").CombinedOutput()
+	if err != nil {
+		t.Fatalf("rev-parse main after: %v", err)
+	}
+	if strings.TrimSpace(string(userMainBefore)) != strings.TrimSpace(string(userMainAfter)) {
+		t.Fatalf("isolation violation: user repo main moved from %s to %s",
+			strings.TrimSpace(string(userMainBefore)), strings.TrimSpace(string(userMainAfter)))
 	}
 }
 
@@ -725,6 +772,88 @@ func TestWeaveE2E_Pull_MergesCommittedWork(t *testing.T) {
 	items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
 	if items[0].(map[string]any)["state"] != "done" {
 		t.Fatalf("expected state=done after pull, got %v", items[0])
+	}
+}
+
+// TestWeaveE2E_Kill stops a running subagent precisely without
+// removing its sandbox or branch, then verifies the partial work
+// is preserved for later inspection / resume.
+func TestWeaveE2E_Kill(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "long-running thing"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// Subagent commits a partial file then sleeps a long time —
+	// simulates the "stuck mid-edit" case the dogfood found.
+	script := `set -e
+echo partial > partial.txt
+git add partial.txt
+git commit -qm "partial work"
+sleep 600`
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script)
+
+	// Wait for the wrapper PID to land in the queue.
+	deadline := time.Now().Add(15 * time.Second)
+	var wrapperPid int
+	for time.Now().Before(deadline) {
+		out, _ := runWeave(t, repo, home, "list", "--json")
+		items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+		if len(items) > 0 {
+			if pidF, ok := items[0].(map[string]any)["wrapper_pid"].(float64); ok && pidF > 0 {
+				wrapperPid = int(pidF)
+				break
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if wrapperPid == 0 {
+		_ = bg.Process.Kill()
+		bg.Wait()
+		t.Fatalf("wrapper_pid never landed in queue")
+	}
+
+	out, ee := runWeave(t, repo, home, "kill", "1", "--reason", "test-kill")
+	if got := envExitCode(ee); got != 0 {
+		_ = bg.Process.Kill()
+		bg.Wait()
+		t.Fatalf("kill exited %d; out=%s", got, out)
+	}
+	res := parseEnvelope(t, out)["result"].(map[string]any)
+	if res["state"] != "failed" {
+		t.Fatalf("expected state=failed after kill, got %v", res["state"])
+	}
+	if int(res["wrapper_pid"].(float64)) != wrapperPid {
+		t.Fatalf("kill envelope reports wrong wrapper_pid: %v vs %d", res["wrapper_pid"], wrapperPid)
+	}
+
+	// Reap the bg process so the test doesn't dangle.
+	_ = bg.Wait()
+
+	// Sandbox + partial commit must still be there.
+	out, _ = runWeave(t, repo, home, "list", "--history")
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	sandbox := item["sandbox"].(string)
+	if _, err := os.Stat(filepath.Join(sandbox, "partial.txt")); err != nil {
+		t.Fatalf("partial work lost after kill: %v", err)
+	}
+}
+
+// TestWeaveE2E_Kill_RequiresWorking refuses if the item isn't
+// currently working.
+func TestWeaveE2E_Kill_RequiresWorking(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "x"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	out, ee := runWeave(t, repo, home, "kill", "1")
+	if got := envExitCode(ee); got != 4 {
+		t.Fatalf("expected exit=4 (state_conflict) for kill on non-working, got %d; out=%s", got, out)
 	}
 }
 

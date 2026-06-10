@@ -42,6 +42,13 @@ type weaveItem struct {
 	FinishedAt time.Time `json:"finished_at,omitempty"`
 	ExitCode   *int      `json:"exit_code,omitempty"`
 	LogPath    string    `json:"log_path,omitempty"`
+	// WrapperPid is the PID of the `ycode weave start` process
+	// supervising this item (NOT the subagent's PID — the wrapper
+	// is the session leader after auto-setsid and signals propagate
+	// from there to the whole subagent process group). Set when
+	// state flips to working; cleared on terminal state. Used by
+	// `weave abandon` for precise SIGTERM instead of pkill-by-name.
+	WrapperPid int `json:"wrapper_pid,omitempty"`
 }
 
 // Terminal states for queue items — used by `weave wait` and similar
@@ -300,11 +307,16 @@ func runWeaveNext(cmd *cobra.Command, flags *weaveOutputFlags) error {
 // rebuilding the worktree — useful when an agent crashed and the
 // user wants to re-launch it inside the same sandbox without losing
 // in-progress changes. pty controls TTY allocation for the subagent
-// (auto = on, always = on, never = inherit FDs).
+// (auto = on, always = on, never = inherit FDs). idleTimeout, when
+// > 0, sends SIGTERM to the subagent if no PTY output appears for
+// that long — the dogfood found that some TUI agents (claude TUI,
+// when launched without -p) never exit on their own and need a
+// heuristic kill on idle.
 type weaveStartOptions struct {
-	noSpawn bool
-	resume  bool
-	pty     string // "auto" (default), "always", "never"
+	noSpawn     bool
+	resume      bool
+	pty         string // "auto" (default), "always", "never"
+	idleTimeout time.Duration
 }
 
 // weavePTYMode returns the normalized PTY mode for runWeaveStart.
@@ -385,12 +397,28 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 				return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
 					weavecli.ExitGenericFail, err))
 			}
-			gw := exec.Command("git", "-C", root, "worktree", "add", "-b", branch, sandbox, base)
+			// Sandbox isolation: a full local clone, NOT a worktree.
+			// git worktree shares `.git/objects` and `.git/refs` with
+			// the source repo — an agent that wandered out of its
+			// sandbox cwd (cd to the source checkout, or `git
+			// update-ref`) could mutate the source's branches. With a
+			// clone, the sandbox has its own `.git`; refs and HEAD
+			// can't cross the boundary, and a wandering agent hits a
+			// different git repo entirely.
+			gw := exec.Command("git", "clone", "--local", "--branch", base, root, sandbox)
 			gw.Stdout = cmd.OutOrStdout()
 			gw.Stderr = cmd.ErrOrStderr()
 			if err := gw.Run(); err != nil {
 				return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
-					weavecli.ExitGenericFail, fmt.Errorf("git worktree add: %w", err)))
+					weavecli.ExitGenericFail, fmt.Errorf("git clone --local: %w", err)))
+			}
+			// Check out the per-issue agent branch in the clone.
+			ck := exec.Command("git", "-C", sandbox, "checkout", "-b", branch)
+			ck.Stdout = cmd.OutOrStdout()
+			ck.Stderr = cmd.ErrOrStderr()
+			if err := ck.Run(); err != nil {
+				return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
+					weavecli.ExitGenericFail, fmt.Errorf("git checkout -b %s: %w", branch, err)))
 			}
 		}
 		for _, kv := range [][2]string{
@@ -411,6 +439,7 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			freshIt.State = "working"
 			freshIt.Sandbox = sandbox
 			freshIt.Branch = branch
+			freshIt.WrapperPid = os.Getpid()
 			it = freshIt
 			return nil
 		})
@@ -517,11 +546,11 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			// Subagent stdio: PTY ↔ log file. stdin is the PTY slave
 			// (no user input source); stdout/stderr go to the PTY
 			// master which we copy to logFile.
-			exitCode, runErr = runWeaveToolPTY(tool, logFile)
+			exitCode, runErr = runWeaveToolPTY(tool, logFile, opts.idleTimeout)
 			_ = logFile.Close()
 		} else {
 			// Interactive TTY pass-through.
-			exitCode, runErr = runWeaveToolPTY(tool, nil)
+			exitCode, runErr = runWeaveToolPTY(tool, nil, opts.idleTimeout)
 		}
 	}
 
@@ -540,6 +569,7 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 		}
 		freshIt.FinishedAt = finishedAt
 		freshIt.ExitCode = &exitCode
+		freshIt.WrapperPid = 0
 		if logPath != "" {
 			freshIt.LogPath = logPath
 		}
@@ -605,6 +635,23 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags) error {
 		// or "abandoned" are skipped: failed shouldn't auto-merge,
 		// done is already merged, abandoned was torn down.
 		if it.State != "working" && it.State != "submitted" {
+			continue
+		}
+		// The agent's branch lives in the sandbox clone, not the
+		// user's repo. Fetch it across (idempotent — already-present
+		// commits are skipped). If the sandbox is gone (abandoned
+		// mid-pull, disk wiped) we record a skip with the reason.
+		if it.Sandbox == "" {
+			results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "skipped", Detail: "no sandbox recorded"})
+			continue
+		}
+		if _, err := os.Stat(it.Sandbox); err != nil {
+			results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "skipped", Detail: fmt.Sprintf("sandbox missing: %v", err)})
+			continue
+		}
+		fetchSpec := fmt.Sprintf("%s:%s", it.Branch, it.Branch)
+		if _, err := gitOut(root, "fetch", "--no-tags", it.Sandbox, fetchSpec); err != nil {
+			results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "skipped", Detail: fmt.Sprintf("fetch from sandbox: %v", err)})
 			continue
 		}
 		cnt, err := gitOut(root, "rev-list", "--count", fmt.Sprintf("HEAD..%s", it.Branch))
@@ -677,14 +724,32 @@ func runWeaveAbandon(cmd *cobra.Command, id int64, reason string, flags *weaveOu
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave abandon",
 			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found", id)))
 	}
+	// If a wrapper PID is recorded and the item is still working,
+	// signal precisely — SIGTERM the recorded PID, wait briefly,
+	// escalate to SIGKILL. The wrapper is its own session leader
+	// (auto-setsid on non-TTY), so SIGTERM reaches the subagent's
+	// process group cleanly. This is the supported way to stop a
+	// running weave; the dogfood found that `pkill -f` would also
+	// catch peer ycode/claude sessions belonging to other agents,
+	// which is dangerous in a shared agentic environment.
+	if it.State == "working" && it.WrapperPid > 0 {
+		weaveStopWrapper(it.WrapperPid)
+	}
+	// Sandbox is a real git clone now (not a worktree); delete the
+	// directory tree. The agent's branch lives inside that clone —
+	// no separate `git branch -D` against the user's repo because
+	// the branch doesn't exist there unless `weave pull` fetched it.
 	if it.Sandbox != "" {
-		_ = exec.Command("git", "-C", root, "worktree", "remove", "--force", it.Sandbox).Run()
+		_ = os.RemoveAll(it.Sandbox)
 	}
 	if it.Branch != "" {
+		// Best-effort: drop the branch from the user's repo too, in
+		// case `weave pull` fetched it earlier.
 		_ = exec.Command("git", "-C", root, "branch", "-D", it.Branch).Run()
 	}
 	it.State = "abandoned"
 	it.Sandbox = ""
+	it.WrapperPid = 0
 	if err := saveWeaveQueue(dir, q); err != nil {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave abandon",
 			weavecli.ExitGenericFail, err))
@@ -864,13 +929,22 @@ func runWeaveReset(cmd *cobra.Command, yes bool, flags *weaveOutputFlags) error 
 	}
 	var teardowns []tear
 	for _, it := range q.Items {
-		if it.Sandbox == "" && it.Branch == "" {
+		if it.Sandbox == "" && it.Branch == "" && it.WrapperPid == 0 {
 			continue
 		}
+		// Stop any still-running wrapper precisely (PID + setsid
+		// group). Reset is a destructive batch op — we want
+		// everything torn down cleanly.
+		if it.WrapperPid > 0 {
+			weaveStopWrapper(it.WrapperPid)
+		}
+		// Sandboxes are independent git clones — rm -rf is right.
 		if it.Sandbox != "" {
-			_ = exec.Command("git", "-C", root, "worktree", "remove", "--force", it.Sandbox).Run()
+			_ = os.RemoveAll(it.Sandbox)
 		}
 		if it.Branch != "" {
+			// Best-effort: drop the branch from the user's repo if
+			// `weave pull` fetched it earlier.
 			_ = exec.Command("git", "-C", root, "branch", "-D", it.Branch).Run()
 		}
 		teardowns = append(teardowns, tear{Issue: it.ID, Branch: it.Branch, Sandbox: it.Sandbox})
@@ -878,8 +952,8 @@ func runWeaveReset(cmd *cobra.Command, yes bool, flags *weaveOutputFlags) error 
 	// Remove the queue file itself; on next add it gets recreated.
 	queuePath := filepath.Join(dir, "queue.json")
 	_ = os.Remove(queuePath)
-	// Best-effort: also remove the sandboxes/ tree in case worktree
-	// remove left empty dirs behind.
+	// Best-effort: also remove the sandboxes/ tree in case the
+	// individual removals left empty dirs behind.
 	_ = os.RemoveAll(filepath.Join(dir, "sandboxes"))
 	if mode == weavecli.OutputJSON {
 		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave reset", map[string]any{
@@ -1200,6 +1274,83 @@ func stdinIsTTY() bool {
 		return false
 	}
 	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// runWeaveKill stops the running wrapper for an issue WITHOUT
+// tearing down its sandbox or branch. Use when a subagent has gone
+// stuck (no output for a long time, runaway iteration, etc.) and
+// the orchestrator wants the partial work preserved for inspection
+// or for a `weave start --resume` retry.
+//
+// The orchestrator-safe shape: orchestrators MUST NOT shell out to
+// pkill / killall / kill -9 — those match by name and will catch
+// peer ycode/claude/codex sessions belonging to OTHER agents in
+// the same machine. `weave kill <issue>` reads the recorded
+// wrapper PID from the queue and signals only that process group,
+// then flips the queue item to `failed` with a "killed by
+// orchestrator" marker.
+func runWeaveKill(cmd *cobra.Command, id int64, reason string, flags *weaveOutputFlags) error {
+	mode := flags.mode()
+	cwd, _ := os.Getwd()
+	root, err := weaveRepoRoot(cwd)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave kill",
+			weavecli.ExitPrecondFail, err))
+	}
+	dir, _ := weaveQueueDir(root)
+	var killed bool
+	var wrapperPid int
+	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
+		it := findWeaveItem(q, id)
+		if it == nil {
+			return fmt.Errorf("issue #%d not found", id)
+		}
+		if it.State != "working" {
+			return fmt.Errorf("issue #%d state is %q (kill requires working)", id, it.State)
+		}
+		wrapperPid = it.WrapperPid
+		if wrapperPid > 0 {
+			weaveStopWrapper(wrapperPid)
+			killed = true
+		}
+		it.State = "failed"
+		killCode := -1
+		it.ExitCode = &killCode
+		it.FinishedAt = time.Now().UTC()
+		it.WrapperPid = 0
+		// Stash the kill reason in the Body so `weave list` shows
+		// it (Body isn't load-bearing once the subagent has
+		// started — the prompt's already been consumed).
+		if reason != "" {
+			it.Body = "[killed by orchestrator: " + reason + "]\n\n" + it.Body
+		} else {
+			it.Body = "[killed by orchestrator]\n\n" + it.Body
+		}
+		return nil
+	})
+	if lockErr != nil {
+		if strings.Contains(lockErr.Error(), "not found") {
+			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave kill",
+				weavecli.ExitInvalidArg, lockErr))
+		}
+		if strings.Contains(lockErr.Error(), "kill requires working") {
+			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave kill",
+				weavecli.ExitStateConflict, lockErr))
+		}
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave kill",
+			weavecli.ExitGenericFail, lockErr))
+	}
+	if mode == weavecli.OutputJSON {
+		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave kill", map[string]any{
+			"issue":       id,
+			"state":       "failed",
+			"wrapper_pid": wrapperPid,
+			"killed":      killed,
+			"reason":      reason,
+		}))
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "weave kill: issue #%d wrapper_pid=%d killed=%v state=failed\n", id, wrapperPid, killed)
+	return nil
 }
 
 // runWeaveWait blocks until issue(s) reach a terminal state

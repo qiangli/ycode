@@ -13,7 +13,9 @@ per issue inside an isolated git worktree, wait for them to finish,
 then merge the converged work back into main.
 
 The whole surface is a local-only backend: queue.json under
-`$HOME/.agents/ycode/weave/<repo-tag>/`, one git worktree per issue,
+`$HOME/.agents/ycode/weave/<repo-tag>/`, one **full git clone** per
+issue (each sandbox has its own `.git/` — refs cannot cross the
+boundary, the user's repo is untouched until you `weave pull`),
 plain `git merge --no-ff` for convergence. No Gitea, no `ycode
 serve` needed.
 
@@ -43,33 +45,22 @@ If you genuinely want pipe semantics (subagent isn't a TUI), pass
 
 ## Orchestrator patterns
 
-Two shapes cover almost every workflow. Pick by whether you need a
-post-merge validation gate.
+Two shapes; pick by whether you need a post-merge validation gate.
 
-**(A) Parallel implementation only.** Independent issues, no
-gate. `add` → background N `start`s → `wait --all` → `pull`. Done.
+**(A) Parallel impl only.** `add` → background N `start`s →
+`wait --all` → `pull`.
 
-**(B) Parallel implementation + judge validation.** A separate
-agent (typically opencode) validates the merged state and either
-signs off or commits a diagnosis. The validation issue MUST be
-added *after* `pull`, not at the start — otherwise its worktree
-branches off a stale main and validates the wrong tree.
+**(B) Parallel impl + judge validation.** A separate agent
+(typically opencode) validates the merged state and either signs
+off or commits a diagnosis. The validation issue MUST be added
+*after* `pull` — otherwise its sandbox clones a stale main. Use a
+judge agent rather than per-implementer self-validation because the
+implementer only sees its own branch and agents grading their own
+work tend to narrow tests when stuck.
 
-Why a judge agent rather than self-validation in each implementer:
-the implementer only sees its own branch, so cross-branch breakage
-(impl A and impl B merge clean but conflict semantically) ships
-to main. The judge sees the integrated state. Also, agents
-grading their own work tend to narrow tests when stuck. Keep
-self-validation for unit tests inside the prompt; use a judge
-agent for the e2e gate.
-
-`weave` has no dependency-tracking field today; you express the
-DAG by sequencing phases in your orchestration script. `wait` is
-the synchronization primitive.
-
-Each `start` blocks until its subagent exits, so background them
-with `&`. ycode auto-`setsid`s when stdin is non-TTY, so they
-survive the launching shell's exit without `nohup`/`disown`.
+`weave` has no `--depends-on` today; express the DAG via `wait`.
+Each `start` blocks; background with `&` (ycode auto-`setsid`s so
+they survive the shell's exit).
 
 ## States
 
@@ -96,13 +87,24 @@ the normal path when subagents have finished cleanly.
 - `next` — peek at top-of-queue without claiming.
 - `prio <issue> <p0|p1|p2|p3>` — change priority.
 - `start [--issue N | top-of-queue] [--no-spawn] [--resume]
-  [--pty=auto|always|never] -- <tool> [args...]` — claim, allocate
-  worktree, exec tool. On exit: state = submitted (rc=0) or
-  failed (rc≠0).
+  [--pty=auto|always|never] [--idle-timeout DUR] -- <tool> [args...]` —
+  claim, allocate sandbox clone, exec tool. On exit: state =
+  submitted (rc=0) or failed (rc≠0). `--idle-timeout` SIGTERMs the
+  subagent if no PTY output appears for that long (e.g. `5m`);
+  default off. Useful for TUI agents that have no built-in auto-
+  exit and can hang silently mid-task.
 - `wait [--issue N | --all] [--timeout DUR]` — block until target
   reaches terminal state.
 - `pull` — merge every working/submitted branch with commits ahead.
-- `abandon <issue> [--reason]` — tear down worktree + branch.
+- `abandon <issue> [--reason]` — stop running wrapper + tear down
+  sandbox + branch. Use when giving up entirely.
+- `kill <issue> [--reason]` — stop the running wrapper PRECISELY
+  via its recorded PID + setsid process group, keep sandbox +
+  branch + partial commits. Use when the subagent is stuck and
+  you want to inspect / resume. NEVER use `pkill` / `killall` /
+  `kill -9` to stop a subagent — pattern matchers also catch peer
+  ycode / claude / codex sessions belonging to other agents on the
+  same machine.
 - `shell <issue>` — drop into `$SHELL` inside the worktree (in
   agent mode returns the sandbox path as JSON instead).
 - `reset [--yes]` — tear down every weave + clear queue.

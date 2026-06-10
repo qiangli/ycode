@@ -57,6 +57,7 @@ func newWeaveStartCmd() *cobra.Command {
 	var resume bool
 	var noSpawn bool
 	var ptyMode string
+	var idleTimeout time.Duration
 	cmd := &cobra.Command{
 		Use:   "start [-- <tool> [args...]]",
 		Short: "Allocate a workspace and launch an agentic tool",
@@ -80,9 +81,10 @@ On exit, the queue item's state becomes "submitted" (exit 0) or
 blocks until N reaches a terminal state.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWeaveStart(cmd, issue, tool, args, weaveStartOptions{
-				noSpawn: noSpawn,
-				resume:  resume,
-				pty:     ptyMode,
+				noSpawn:     noSpawn,
+				resume:      resume,
+				pty:         ptyMode,
+				idleTimeout: idleTimeout,
 			}, &flags)
 		},
 	}
@@ -92,6 +94,7 @@ blocks until N reaches a terminal state.`,
 	cmd.Flags().BoolVar(&resume, "resume", false, "Reattach to an existing lease for the given issue")
 	cmd.Flags().BoolVar(&noSpawn, "no-spawn", false, "Allocate the workspace but do not exec the tool")
 	cmd.Flags().StringVar(&ptyMode, "pty", "auto", "PTY allocation: auto (default) | always | never")
+	cmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 0, "SIGTERM the subagent if no PTY output for this long (e.g. 5m); default off — caught the claude-TUI stuck case in the dogfood")
 	return cmd
 }
 
@@ -180,8 +183,13 @@ func newWeaveAbandonCmd() *cobra.Command {
 	var reason string
 	cmd := &cobra.Command{
 		Use:   "abandon <issue>",
-		Short: "Tear down a weave (sandbox + branch if no open PR)",
-		Args:  cobra.MinimumNArgs(1),
+		Short: "Tear down a weave (sandbox + branch + any running wrapper)",
+		Long: `abandon stops the running wrapper (if any) AND removes the sandbox
++ branch. Use this when giving up on an issue entirely.
+
+For "stop the runaway but keep the partial work for inspection",
+use ` + "`weave kill`" + ` instead.`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
@@ -192,6 +200,40 @@ func newWeaveAbandonCmd() *cobra.Command {
 	}
 	flags.attach(cmd)
 	cmd.Flags().StringVar(&reason, "reason", "", "Optional human-readable reason for logs")
+	return cmd
+}
+
+func newWeaveKillCmd() *cobra.Command {
+	var flags weaveOutputFlags
+	var reason string
+	cmd := &cobra.Command{
+		Use:   "kill <issue>",
+		Short: "Stop the running wrapper precisely, preserve sandbox + branch",
+		Long: `kill SIGTERMs the recorded wrapper PID for the issue and flips the
+queue item to state=failed. The sandbox + branch + any commits the
+subagent already made are preserved — the orchestrator can:
+
+  - ` + "`weave shell <issue>`" + ` to inspect the partial work
+  - ` + "`weave start --resume --issue N -- <tool>`" + ` to retry inside the same sandbox
+  - ` + "`weave abandon <issue>`" + ` to throw it all away
+
+IMPORTANT for orchestrator agents: never shell out to ` + "`pkill`" + ` /
+` + "`killall`" + ` / ` + "`kill -9`" + ` to stop a stuck subagent. Pattern matchers
+also catch peer ycode / claude / codex sessions belonging to OTHER
+agents on the same machine. ` + "`weave kill`" + ` reads the recorded
+wrapper PID and signals only that process group — safe in shared
+agentic environments.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("issue must be an integer: %q", args[0])
+			}
+			return runWeaveKill(cmd, id, reason, &flags)
+		},
+	}
+	flags.attach(cmd)
+	cmd.Flags().StringVar(&reason, "reason", "", "Optional human-readable reason for the failure record")
 	return cmd
 }
 

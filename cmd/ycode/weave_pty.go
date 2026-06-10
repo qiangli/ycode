@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty/v2"
 	"golang.org/x/term"
@@ -29,15 +32,49 @@ import (
 //     a controlling terminal even though no human is attached.
 //
 // logSink is only used in the non-TTY path; pass nil for the TTY
-// pass-through case. Returns the subagent's exit code (or 128+N
-// when it was killed by signal N, matching the wrap helper).
-func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer) (int, error) {
+// pass-through case. When idleTimeout > 0 we SIGTERM the subagent
+// if no PTY output appears for that long — caught the claude-TUI
+// stuck-mid-edit case in the dogfood. Returns the subagent's exit
+// code (or 128+N when killed by signal N, matching the wrap helper).
+func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, idleTimeout time.Duration) (int, error) {
 	rows, cols := weavePTYSize()
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
 	if err != nil {
 		return 127, fmt.Errorf("pty.Start: %w", err)
 	}
 	defer ptmx.Close()
+
+	// Idle-timeout watchdog: tracks the time of the most recent PTY
+	// write. A background goroutine SIGTERMs the subagent process
+	// group if that timestamp stalls past idleTimeout. The watchdog
+	// reads `idleDeadline` via atomic load; the copy loop bumps it
+	// on every write.
+	var lastWriteUnixNs atomic.Int64
+	lastWriteUnixNs.Store(time.Now().UnixNano())
+	watchdogStop := make(chan struct{})
+	defer close(watchdogStop)
+	if idleTimeout > 0 {
+		go func() {
+			ticker := time.NewTicker(idleTimeout / 4)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-watchdogStop:
+					return
+				case <-ticker.C:
+					last := time.Unix(0, lastWriteUnixNs.Load())
+					if time.Since(last) >= idleTimeout {
+						if cmd.Process != nil {
+							slog.Warn("weave: subagent idle past --idle-timeout; sending SIGTERM",
+								"pid", cmd.Process.Pid, "idle", time.Since(last), "timeout", idleTimeout)
+							_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+						}
+						return
+					}
+				}
+			}
+		}()
+	}
 
 	parentTTY := term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 
@@ -72,6 +109,16 @@ func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer) (int, error) {
 	}
 	defer restore()
 
+	// activityTap wraps an io.Writer and bumps lastWriteUnixNs on
+	// every successful write. The idle-timeout watchdog reads that
+	// timestamp.
+	bump := func(n int) {
+		if n > 0 {
+			lastWriteUnixNs.Store(time.Now().UnixNano())
+		}
+	}
+	tap := func(w io.Writer) io.Writer { return &activityTap{w: w, bump: bump} }
+
 	if parentTTY {
 		// Raw mode so the user's keystrokes go straight to the
 		// subagent's TTY. Goroutine for stdin→PTY (os.Stdin reads
@@ -82,7 +129,7 @@ func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer) (int, error) {
 			fmt.Fprintf(os.Stderr, "weave: term.MakeRaw: %v\n", err)
 		}
 		go func() { _, _ = io.Copy(ptmx, os.Stdin) }()
-		_, _ = io.Copy(os.Stdout, ptmx)
+		_, _ = io.Copy(tap(os.Stdout), ptmx)
 	} else {
 		// Non-TTY parent (orchestrator pipe / backgrounded by `cmd &`).
 		// Subagent gets a PTY but stdin is closed; PTY output is
@@ -94,7 +141,7 @@ func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer) (int, error) {
 		if logSink == nil {
 			logSink = io.Discard
 		}
-		_, _ = io.Copy(logSink, ptmx)
+		_, _ = io.Copy(tap(logSink), ptmx)
 	}
 
 	waitErr := cmd.Wait()
@@ -117,6 +164,21 @@ func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer) (int, error) {
 		}
 		return 1, waitErr
 	}
+}
+
+// activityTap wraps an io.Writer and calls bump(n) on each write,
+// so the watchdog goroutine can detect a stalled subagent. The
+// goroutine uses sync/atomic on the timestamp; the writer itself
+// stays lock-free.
+type activityTap struct {
+	w    io.Writer
+	bump func(int)
+}
+
+func (a *activityTap) Write(p []byte) (int, error) {
+	n, err := a.w.Write(p)
+	a.bump(n)
+	return n, err
 }
 
 // weavePTYSize returns the controlling terminal's size, or 24x80 as
