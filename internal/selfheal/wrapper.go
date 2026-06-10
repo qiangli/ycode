@@ -2,6 +2,7 @@ package selfheal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -10,6 +11,19 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 )
+
+// extractExitCode unwraps err looking for any error type that
+// implements an `ExitCode() int` method (e.g. cmd/ycode's
+// *exitCodeError). Returns (code, true) when found, (0, false)
+// otherwise. Lets call sites pass through caller-chosen exit codes
+// without coupling to the cmd/ycode package.
+func extractExitCode(err error) (int, bool) {
+	var ec interface{ ExitCode() int }
+	if errors.As(err, &ec) {
+		return ec.ExitCode(), true
+	}
+	return 0, false
+}
 
 // panicHooks are invoked synchronously before the panic recovery path
 // proceeds, so subsystems with buffered exporters (OTEL batch log/span
@@ -120,6 +134,14 @@ func WrapMainWithOptions(mainFn MainFunc, opts *WrapMainOptions) int {
 	// Those ceremony lines were the user-visible noise on every podman
 	// build failure when no AI provider is wired up.
 	if !healer.CanHeal(err) {
+		// Honor errors that carry their own exit code (e.g. weavecli's
+		// stable exit-code constants surfaced via *exitCodeError). Those
+		// errors already had their human/structured output emitted by
+		// the subverb; suppress the duplicate "Error: ..." line and
+		// pass the code through cleanly.
+		if code, ok := extractExitCode(err); ok {
+			return code
+		}
 		switch ClassifyError(err) {
 		case FailureTypeNotInstalled:
 			// Verbatim message; the error already tells the user to

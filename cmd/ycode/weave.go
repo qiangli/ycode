@@ -18,6 +18,13 @@ func newWeaveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "weave",
 		Short: "Run agentic tools in isolated, convergent workspaces (v2)",
+		// Every weave subverb emits its own structured envelope (or
+		// human line) and propagates an *exitCodeError carrying a
+		// stable weavecli exit code. cobra's default "Error: ..." +
+		// usage dump would double-print on top of the envelope, so we
+		// silence both at the parent level — subverbs inherit.
+		SilenceErrors: true,
+		SilenceUsage:  true,
 		Long: `weave is the v2 human/orchestrator front door over the Loom
 substrate. Use it to seed a queue of issues, fan agentic tools out
 across them in parallel without clobbering each other, and pull

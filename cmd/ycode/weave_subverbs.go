@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/spf13/cobra"
 )
@@ -33,19 +34,18 @@ according to the priority sort order.`,
 			if len(args) == 1 {
 				title = args[0]
 			}
-			_ = title
-			_ = body
 			_ = tool
-			_ = priority
-			_ = fromFile
-			return unimplementedStub("weave add", &flags)(cmd, args)
+			if fromFile != "" {
+				return runWeaveAddFromFile(cmd, fromFile, priority, &flags)
+			}
+			return runWeaveAdd(cmd, title, body, priority, &flags)
 		},
 	}
 	flags.attach(cmd)
 	cmd.Flags().StringVar(&body, "body", "", "Issue body (optional)")
 	cmd.Flags().StringVar(&tool, "tool", "", "Pin a specific agentic tool for this issue (label tool:X)")
 	cmd.Flags().StringVar(&priority, "priority", "", "Priority tier: p0|p1|p2|p3 (default p2)")
-	cmd.Flags().StringVar(&fromFile, "from-file", "", "Bulk seed: markdown (one per `- [ ]`) or JSON list")
+	cmd.Flags().StringVar(&fromFile, "from-file", "", "Bulk seed: markdown (`- [ ] title`) or JSON list of {title,body,priority}")
 	return cmd
 }
 
@@ -66,11 +66,10 @@ The trailing '-- <tool>' form is the human-natural shape; --tool is
 the programmatic alternative. If neither is given, the project's
 default_tool from .ycode/loom.yaml is used.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = issue
-			_ = tool
-			_ = resume
-			_ = noSpawn
-			return unimplementedStub("weave start", &flags)(cmd, args)
+			return runWeaveStart(cmd, issue, tool, args, weaveStartOptions{
+				noSpawn: noSpawn,
+				resume:  resume,
+			}, &flags)
 		},
 	}
 	flags.attach(cmd)
@@ -87,7 +86,7 @@ func newWeaveNextCmd() *cobra.Command {
 		Use:   "next",
 		Short: "Peek at the next issue 'weave start' would claim (non-mutating)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return unimplementedStub("weave next", &flags)(cmd, args)
+			return runWeaveNext(cmd, &flags)
 		},
 	}
 	flags.attach(cmd)
@@ -110,8 +109,14 @@ func newWeavePrioCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = auto
-			return unimplementedStub("weave prio", &flags)(cmd, args)
+			if auto {
+				return runWeavePrio(cmd, 0, "", true, &flags)
+			}
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("issue must be an integer: %q", args[0])
+			}
+			return runWeavePrio(cmd, id, args[1], false, &flags)
 		},
 	}
 	flags.attach(cmd)
@@ -127,9 +132,10 @@ func newWeaveListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "Show active weaves (or --watch for live state-transition stream)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = watch
-			_ = history
-			return unimplementedStub("weave list", &flags)(cmd, args)
+			if watch {
+				return runWeaveListWatch(cmd, history, &flags)
+			}
+			return runWeaveList(cmd, history, &flags)
 		},
 	}
 	flags.attach(cmd)
@@ -146,7 +152,7 @@ func newWeavePullCmd() *cobra.Command {
 		Short: "Fast-forward your local main from the local Gitea's main",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = watch
-			return unimplementedStub("weave pull", &flags)(cmd, args)
+			return runWeavePull(cmd, &flags)
 		},
 	}
 	flags.attach(cmd)
@@ -162,8 +168,11 @@ func newWeaveAbandonCmd() *cobra.Command {
 		Short: "Tear down a weave (sandbox + branch if no open PR)",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = reason
-			return unimplementedStub("weave abandon", &flags)(cmd, args)
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("issue must be an integer: %q", args[0])
+			}
+			return runWeaveAbandon(cmd, id, reason, &flags)
 		},
 	}
 	flags.attach(cmd)
@@ -178,7 +187,11 @@ func newWeaveShellCmd() *cobra.Command {
 		Short: "Drop into a shell inside the issue's sandbox",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return unimplementedStub("weave shell", &flags)(cmd, args)
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("issue must be an integer: %q", args[0])
+			}
+			return runWeaveShell(cmd, id, &flags)
 		},
 	}
 	flags.attach(cmd)
@@ -194,16 +207,12 @@ func newWeaveOpenCmd() *cobra.Command {
 		Use:   "open [--issues | --issue N | --pr | --board]",
 		Short: "Open the relevant Gitea page in a browser",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = issues
-			_ = board
-			_ = issue
-			_ = prFlag
-			return unimplementedStub("weave open", &flags)(cmd, args)
+			return runWeaveOpen(cmd, issues, board, prFlag, issue, &flags)
 		},
 	}
 	flags.attach(cmd)
 	cmd.Flags().BoolVar(&issues, "issues", false, "Open the label-filtered issue list (default dashboard)")
-	cmd.Flags().Int64Var(&issue, "issue", 0, "Open a specific issue page")
+	cmd.Flags().Int64Var(&issue, "issue", 0, "Open a specific issue page (or, in the local backend, surface the sandbox file:// URL)")
 	cmd.Flags().BoolVar(&prFlag, "pr", false, "Open the PR for the issue named in --issue")
 	cmd.Flags().BoolVar(&board, "board", false, "Open the kanban (requires 'weave init-board' first)")
 	return cmd
@@ -216,8 +225,7 @@ func newWeaveResetCmd() *cobra.Command {
 		Use:   "reset",
 		Short: "Tear down every weave for this project (preserves labels + issues)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = yes
-			return unimplementedStub("weave reset", &flags)(cmd, args)
+			return runWeaveReset(cmd, yes, &flags)
 		},
 	}
 	flags.attach(cmd)
@@ -238,9 +246,12 @@ bearing — loom does not auto-sync card positions.
 Implementation note: Gitea 1.26's kanban routes are HTML web-routes
 with CSRF + session-cookie auth (not v1 REST). This subverb pulls
 those in only when invoked; everything else in 'weave' speaks
-stable v1 REST.`,
+stable v1 REST.
+
+In the local-only backend (no `+"`"+`ycode serve`+"`"+` running), this command
+emits a precondition_failed envelope explaining the dependency.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return unimplementedStub("weave init-board", &flags)(cmd, args)
+			return runWeaveInitBoard(cmd, &flags)
 		},
 	}
 	flags.attach(cmd)

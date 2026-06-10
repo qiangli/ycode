@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -112,6 +113,16 @@ func main() {
 
 	// Standard execution without self-healing
 	if err := realMain(); err != nil {
+		// Honor errors that carry a specific exit code (e.g.
+		// weavecli's stable exit-code constants surfaced through
+		// *exitCodeError). cobra already printed any envelope to
+		// stderr, and the error's Error() text is just "exit N",
+		// so suppress the duplicate "Error: exit N" line and pass
+		// the code through cleanly.
+		var ec interface{ ExitCode() int }
+		if errors.As(err, &ec) {
+			os.Exit(ec.ExitCode())
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
