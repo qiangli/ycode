@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/qiangli/ycode/internal/bus"
+	"github.com/qiangli/ycode/internal/memwatch"
 	"github.com/qiangli/ycode/internal/service"
 	"github.com/qiangli/ycode/internal/web"
 	"github.com/qiangli/ycode/pkg/ycode/actor"
@@ -55,7 +56,10 @@ type Server struct {
 	// OTEL instrumentation (optional).
 	otelCfg     *OTELConfig
 	otelMetrics *otelMetrics
-	tracer      trace.Tracer
+
+	// Stops the memwatch sampler goroutine on Stop().
+	memwatchCancel context.CancelFunc
+	tracer         trace.Tracer
 }
 
 // embeddingProvider matches embedding.Provider but is kept local so the
@@ -131,11 +135,31 @@ func (s *Server) Start() error {
 			s.logger.Error("server error", "error", err)
 		}
 	}()
+
+	// Self-instrumentation: once a minute, sample own RSS/heap plus
+	// bus and WebSocket counters. Quiet (Debug) when healthy; Warn/
+	// Error when the process balloons — the post-mortem trail the
+	// 2026-06 OOM incidents lacked.
+	mwCtx, cancel := context.WithCancel(context.Background())
+	s.memwatchCancel = cancel
+	var lastPublished uint64
+	memwatch.Start(mwCtx, "ycode-serve", s.logger, func() []any {
+		attrs := []any{"ws_conns", s.ConnCount()}
+		if mb, ok := s.service.Bus().(*bus.MemoryBus); ok {
+			cur := mb.Published()
+			attrs = append(attrs, "bus_events_1m", cur-lastPublished, "bus_events_total", cur)
+			lastPublished = cur
+		}
+		return attrs
+	})
 	return nil
 }
 
 // Stop gracefully shuts down the server.
 func (s *Server) Stop(ctx context.Context) error {
+	if s.memwatchCancel != nil {
+		s.memwatchCancel()
+	}
 	// Close all WebSocket connections.
 	s.wsMu.Lock()
 	for conn := range s.wsConns {

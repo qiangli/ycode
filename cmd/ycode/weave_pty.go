@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -66,6 +67,15 @@ func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, guards weaveGuards) (int,
 			slog.Warn("weave: terminating subagent tree", "pid", pid, "reason", reason)
 			if logSink != nil {
 				fmt.Fprintf(logSink, "\r\n[weave] terminating subagent: %s\r\n", reason)
+				// Forensic snapshot while `ps` still works: the
+				// 2026-06 OOM post-mortems had no record of which
+				// process actually held the memory. Tree-local AND
+				// system-wide, so a culprit outside the subagent
+				// tree is still named.
+				if tree, system := weaveForensicSnapshot(pid); tree != "" {
+					fmt.Fprintf(logSink, "[weave] top tree procs:   %s\r\n", tree)
+					fmt.Fprintf(logSink, "[weave] top system procs: %s\r\n", system)
+				}
 			}
 			pids := weaveProcTreePids(pid)
 			_ = syscall.Kill(-pid, syscall.SIGTERM)
@@ -158,6 +168,12 @@ func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, guards weaveGuards) (int,
 		go func() {
 			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
+			// Growth trail: log to the issue log each time the tree's
+			// RSS doubles past 256MB. If a runaway dodges the limit
+			// (or the machine dies before a kill lands), the log
+			// still shows when the ballooning started and how fast
+			// it grew.
+			var lastLogged int64 = 256 << 20
 			for {
 				select {
 				case <-watchdogStop:
@@ -171,6 +187,15 @@ func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, guards weaveGuards) (int,
 						killTree(fmt.Sprintf("process-tree RSS %dMB exceeds --mem-limit %dMB",
 							rss>>20, guards.memLimitBytes>>20), 10*time.Second)
 						return
+					}
+					if rss >= lastLogged*2 {
+						lastLogged = rss
+						slog.Warn("weave: subagent tree RSS growing", "pid", cmd.Process.Pid, "rss_mb", rss>>20)
+						if logSink != nil {
+							tree, system := weaveForensicSnapshot(cmd.Process.Pid)
+							fmt.Fprintf(logSink, "\r\n[weave] tree RSS %dMB (limit %dMB) — top tree: %s | top system: %s\r\n",
+								rss>>20, guards.memLimitBytes>>20, tree, system)
+						}
 					}
 				}
 			}
@@ -297,20 +322,21 @@ func weaveStdinIsTTY() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
-// weaveProcSnapshot returns the child-map and RSS (bytes) per PID
-// from one `ps` pass. Shelling out to ps is deliberate: it's
-// portable across macOS and Linux (no /proc on darwin), and the
+// weaveProcSnapshot returns the child-map, RSS (bytes), and command
+// name per PID from one `ps` pass. Shelling out to ps is deliberate:
+// it's portable across macOS and Linux (no /proc on darwin), and the
 // watchdogs poll at multi-second intervals where a fork is noise.
-func weaveProcSnapshot() (children map[int][]int, rss map[int]int64) {
-	out, err := exec.Command("ps", "-axo", "pid=,ppid=,rss=").Output()
+func weaveProcSnapshot() (children map[int][]int, rss map[int]int64, comm map[int]string) {
+	out, err := exec.Command("ps", "-axo", "pid=,ppid=,rss=,comm=").Output()
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	children = make(map[int][]int)
 	rss = make(map[int]int64)
+	comm = make(map[int]string)
 	for _, line := range strings.Split(string(out), "\n") {
 		f := strings.Fields(line)
-		if len(f) != 3 {
+		if len(f) < 4 {
 			continue
 		}
 		pid, err1 := strconv.Atoi(f[0])
@@ -321,8 +347,47 @@ func weaveProcSnapshot() (children map[int][]int, rss map[int]int64) {
 		}
 		children[ppid] = append(children[ppid], pid)
 		rss[pid] = kb << 10
+		comm[pid] = strings.Join(f[3:], " ")
 	}
-	return children, rss
+	return children, rss, comm
+}
+
+// weaveTopProcs formats the n highest-RSS processes among pids as
+// one log-friendly line: "pid:comm=rssMB pid:comm=rssMB ...".
+func weaveTopProcs(pids []int, rss map[int]int64, comm map[int]string, n int) string {
+	sorted := append([]int(nil), pids...)
+	sort.Slice(sorted, func(i, j int) bool { return rss[sorted[i]] > rss[sorted[j]] })
+	if len(sorted) > n {
+		sorted = sorted[:n]
+	}
+	parts := make([]string, 0, len(sorted))
+	for _, p := range sorted {
+		name := comm[p]
+		if i := strings.LastIndexByte(name, '/'); i >= 0 {
+			name = name[i+1:]
+		}
+		parts = append(parts, fmt.Sprintf("%d:%s=%dMB", p, name, rss[p]>>20))
+	}
+	return strings.Join(parts, " ")
+}
+
+// weaveForensicSnapshot returns two lines for the issue log: the
+// top-RSS processes inside the subagent tree, and system-wide. The
+// system-wide line is the one that catches a culprit OUTSIDE the
+// tree (the 2026-06 OOMs were attributed to a VSCode process while
+// per-process stats in Activity Monitor were already unreadable —
+// this snapshot is taken while `ps` still works).
+func weaveForensicSnapshot(root int) (tree string, system string) {
+	children, rss, comm := weaveProcSnapshot()
+	if children == nil {
+		return "", ""
+	}
+	all := make([]int, 0, len(rss))
+	for p := range rss {
+		all = append(all, p)
+	}
+	return weaveTopProcs(weaveDescend(root, children), rss, comm, 5),
+		weaveTopProcs(all, rss, comm, 5)
 }
 
 // weaveDescend walks the snapshot from root, breadth-first, and
@@ -346,7 +411,7 @@ func weaveDescend(root int, children map[int][]int) []int {
 // the tree (they also escape the process group; nothing short of
 // cgroups catches those, and macOS has none).
 func weaveProcTreePids(root int) []int {
-	children, _ := weaveProcSnapshot()
+	children, _, _ := weaveProcSnapshot()
 	if children == nil {
 		return []int{root}
 	}
@@ -356,7 +421,7 @@ func weaveProcTreePids(root int) []int {
 // weaveProcTreeRSSBytes sums resident memory across the subagent's
 // process tree.
 func weaveProcTreeRSSBytes(root int) int64 {
-	children, rss := weaveProcSnapshot()
+	children, rss, _ := weaveProcSnapshot()
 	if children == nil {
 		return 0
 	}

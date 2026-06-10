@@ -1276,6 +1276,9 @@ sleep 600`
 		if !strings.Contains(string(b), "mem-limit") {
 			t.Fatalf("expected mem-limit kill reason in log %s", logPath)
 		}
+		if !strings.Contains(string(b), "top system procs") {
+			t.Fatalf("expected forensic top-procs snapshot in log %s", logPath)
+		}
 	}
 	_ = bg.Wait()
 }

@@ -114,6 +114,16 @@ func (b *MemoryBus) Subscribe(filter ...EventType) (<-chan Event, func()) {
 	return sub.ch, unsubscribe
 }
 
+// Published returns the total number of events published since the
+// bus was created. Monotonic — samplers (memwatch) diff successive
+// reads to derive event rates, the forensic for "which firehose
+// inflated a subscriber" in the OOM post-mortems.
+func (b *MemoryBus) Published() uint64 {
+	b.ringMu.RLock()
+	defer b.ringMu.RUnlock()
+	return uint64(b.ringIdx)
+}
+
 // Replay returns events from the ring buffer with ID > afterID.
 // Useful for reconnecting clients that missed events.
 func (b *MemoryBus) Replay(afterID uint64) []Event {

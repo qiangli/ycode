@@ -15,6 +15,7 @@ import (
 	"github.com/qiangli/ycode/internal/docs"
 	"github.com/qiangli/ycode/internal/extractmcp"
 	"github.com/qiangli/ycode/internal/inference"
+	"github.com/qiangli/ycode/internal/memwatch"
 	"github.com/qiangli/ycode/internal/runtime/codegraph"
 	gh "github.com/qiangli/ycode/internal/runtime/github"
 	"github.com/qiangli/ycode/internal/runtime/mcp"
@@ -76,6 +77,12 @@ func newMcpServeCmd() *cobra.Command {
 			origin.SetAgentTool(origin.ToolMCPServe)
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
+
+			// Self-instrumentation: agent harnesses spawn one of
+			// these per session (~150MB resident each); the sampler
+			// makes a ballooning instance name itself in the logs
+			// instead of silently joining the next OOM pile-up.
+			memwatch.Start(ctx, "ycode-mcp-serve", nil, nil)
 
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

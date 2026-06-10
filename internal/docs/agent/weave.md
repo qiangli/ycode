@@ -91,19 +91,13 @@ the normal path when subagents have finished cleanly.
   [--mem-limit SIZE] -- <tool> [args...]` —
   claim, allocate sandbox clone, exec tool. On exit: state =
   submitted (rc=0) or failed (rc≠0). Refuses (state-conflict) when
-  the issue already has a live wrapper, so two agents can never
-  race in one sandbox. Three independent watchdogs, each killing
-  the subagent's whole process tree:
-  - `--idle-timeout DUR` — no PTY output for DUR (e.g. `5m`);
-    default off. Catches silently-hung TUIs, but NOT a runaway one
-    whose spinner keeps emitting output.
-  - `--max-runtime DUR` — hard wall-clock ceiling (e.g. `30m`);
-    default off. Cannot be reset by output activity; always set it
-    when orchestrating unattended.
-  - `--mem-limit SIZE` — total RSS of the subagent tree (e.g.
-    `16g`, `512m`; `0` disables); default `16g`. The OOM backstop:
-    whatever leaks, the agent dies at its budget instead of taking
-    the machine down. The kill reason lands in the issue log.
+  the issue already has a live wrapper. Three watchdogs, each
+  killing the subagent's whole process tree: `--idle-timeout` (no
+  PTY output for DUR; default off; can NOT catch a runaway TUI —
+  its spinner keeps emitting), `--max-runtime` (hard wall-clock
+  ceiling, immune to output; always set it when unattended),
+  `--mem-limit` (subagent-tree RSS, default `16g`, `0` disables —
+  the OOM backstop; kill reason + forensics → issue log).
 - `wait [--issue N | --all] [--timeout DUR]` — block until target
   reaches terminal state.
 - `pull` — merge every working/submitted branch with commits ahead.
