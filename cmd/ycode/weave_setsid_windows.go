@@ -8,6 +8,11 @@ package main
 // guarantees vs. its launching console.
 func weaveMaybeSetsid(parentStdinTTY bool) {}
 
+// pidAlive on Windows always reports false — the weave wrapper
+// lifecycle (setsid, PTY, process groups) is unix-only, so the
+// duplicate-wrapper guard degrades to "assume not running".
+func pidAlive(pid int) bool { return false }
+
 // weaveStopWrapper on Windows is unimplemented for the MVP — the
 // rest of the weave PTY/setsid path is unix-only too. Adding job-
 // object based termination here would let `weave abandon` work on

@@ -49,6 +49,11 @@ type weaveItem struct {
 	// state flips to working; cleared on terminal state. Used by
 	// `weave abandon` for precise SIGTERM instead of pkill-by-name.
 	WrapperPid int `json:"wrapper_pid,omitempty"`
+	// Stale is computed at read time by `weave list` (never
+	// persisted): state is "working" but the recorded wrapper PID
+	// is no longer alive — the wrapper crashed or was killed
+	// outside weave's control. Resume or abandon the item.
+	Stale bool `json:"stale,omitempty"`
 }
 
 // Terminal states for queue items — used by `weave wait` and similar
@@ -246,9 +251,18 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 			weavecli.ExitGenericFail, err))
 	}
 	var items []*weaveItem
+	anyStale := false
 	for _, it := range q.Items {
 		if !includeHistory && (it.State == "done" || it.State == "abandoned") {
 			continue
+		}
+		// Computed, never persisted: a "working" item whose wrapper
+		// died without reaching the terminal-state write (crash,
+		// SIGKILL, machine OOM) would otherwise claim to be working
+		// forever and silently block `weave wait --all`.
+		if it.State == "working" && it.WrapperPid > 0 && !pidAlive(it.WrapperPid) {
+			it.Stale = true
+			anyStale = true
 		}
 		items = append(items, it)
 	}
@@ -267,7 +281,14 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 		if len(title) > 40 {
 			title = title[:37] + "..."
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "%-4d %-4s %-10s %-40s %s\n", it.ID, it.Priority, it.State, title, it.Sandbox)
+		state := it.State
+		if it.Stale {
+			state = it.State + "*"
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%-4d %-4s %-10s %-40s %s\n", it.ID, it.Priority, state, title, it.Sandbox)
+	}
+	if anyStale {
+		fmt.Fprintln(cmd.OutOrStdout(), "* wrapper process is dead — re-attach with `weave start --resume --issue N` or `weave abandon N`")
 	}
 	return nil
 }
@@ -317,6 +338,56 @@ type weaveStartOptions struct {
 	resume      bool
 	pty         string // "auto" (default), "always", "never"
 	idleTimeout time.Duration
+	maxRuntime  time.Duration
+	memLimit    string // e.g. "16g"; "0" disables
+}
+
+// weaveGuards bundles the subagent watchdog limits threaded into
+// runWeaveToolPTY. Three independent tripwires, each SIGTERMing the
+// subagent's process tree:
+//   - idleTimeout: no PTY output for this long (stuck-TUI heuristic;
+//     useless against a runaway TUI, whose spinner keeps emitting).
+//   - maxRuntime: hard wall-clock ceiling, immune to spinner output.
+//   - memLimitBytes: total RSS of the subagent's process tree. This
+//     is the OOM backstop — whatever the leak mechanism, the agent
+//     dies at the budget instead of taking the machine down.
+type weaveGuards struct {
+	idleTimeout   time.Duration
+	maxRuntime    time.Duration
+	memLimitBytes int64
+}
+
+// errWeaveWrapperLive is returned from inside the queue-lock callback
+// when the issue already has a live wrapper process; runWeaveStart
+// translates it into an ExitStateConflict envelope instead of the
+// generic "queue write failed (continuing)" path.
+var errWeaveWrapperLive = errors.New("wrapper already running")
+
+// parseWeaveMemLimit parses a human byte size ("16g", "512m",
+// "1024k", plain bytes). Empty or "0" disables the limit.
+func parseWeaveMemLimit(s string) (int64, error) {
+	orig := s
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" || s == "0" {
+		return 0, nil
+	}
+	s = strings.TrimSuffix(s, "b")
+	mult := int64(1)
+	if len(s) > 0 {
+		switch s[len(s)-1] {
+		case 'k':
+			mult, s = 1<<10, s[:len(s)-1]
+		case 'm':
+			mult, s = 1<<20, s[:len(s)-1]
+		case 'g':
+			mult, s = 1<<30, s[:len(s)-1]
+		}
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("invalid --mem-limit %q (want e.g. 16g, 512m, 0 to disable)", orig)
+	}
+	return n * mult, nil
 }
 
 // weavePTYMode returns the normalized PTY mode for runWeaveStart.
@@ -390,6 +461,33 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 	if opts.resume {
 		sandbox = it.Sandbox
 		branch = it.Branch
+		// Re-claim the issue under the queue lock: refuse when a
+		// previous wrapper is still alive (two wrappers in one
+		// sandbox = two agents fighting over the same checkout —
+		// the dogfood OOM had a stale wrapper_pid precisely
+		// because resume skipped this bookkeeping), and record
+		// OUR pid so `weave kill` / `weave abandon` signal the
+		// process that is actually running, not a long-dead one.
+		lockErr := withWeaveQueueLock(dir, func(freshQ *weaveQueue) error {
+			freshIt := findWeaveItem(freshQ, it.ID)
+			if freshIt == nil {
+				return fmt.Errorf("queue lock: issue #%d disappeared", it.ID)
+			}
+			if freshIt.WrapperPid > 0 && freshIt.WrapperPid != os.Getpid() && pidAlive(freshIt.WrapperPid) {
+				return fmt.Errorf("issue #%d already has a live wrapper (pid %d); run `ycode weave kill --issue %d` first: %w",
+					it.ID, freshIt.WrapperPid, it.ID, errWeaveWrapperLive)
+			}
+			freshIt.WrapperPid = os.Getpid()
+			it = freshIt
+			return nil
+		})
+		if lockErr != nil {
+			code := weavecli.ExitGenericFail
+			if errors.Is(lockErr, errWeaveWrapperLive) {
+				code = weavecli.ExitStateConflict
+			}
+			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start", code, lockErr))
+		}
 	}
 	if !opts.resume {
 		if _, err := os.Stat(sandbox); err != nil {
@@ -436,6 +534,10 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			if freshIt == nil {
 				return fmt.Errorf("queue lock: issue #%d disappeared", it.ID)
 			}
+			if freshIt.WrapperPid > 0 && freshIt.WrapperPid != os.Getpid() && pidAlive(freshIt.WrapperPid) {
+				return fmt.Errorf("issue #%d already has a live wrapper (pid %d); run `ycode weave kill --issue %d` first: %w",
+					it.ID, freshIt.WrapperPid, it.ID, errWeaveWrapperLive)
+			}
 			freshIt.State = "working"
 			freshIt.Sandbox = sandbox
 			freshIt.Branch = branch
@@ -444,6 +546,10 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			return nil
 		})
 		if lockErr != nil {
+			if errors.Is(lockErr, errWeaveWrapperLive) {
+				return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
+					weavecli.ExitStateConflict, lockErr))
+			}
 			fmt.Fprintf(cmd.ErrOrStderr(), "weave start: queue write failed (continuing): %v\n", lockErr)
 		}
 	}
@@ -491,6 +597,16 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 	//                   AND we don't pump its TUI output back into
 	//                   the orchestrator's pipe (the OOM footgun the
 	//                   original incident exposed).
+	memLimitBytes, err := parseWeaveMemLimit(opts.memLimit)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
+			weavecli.ExitInvalidArg, err))
+	}
+	guards := weaveGuards{
+		idleTimeout:   opts.idleTimeout,
+		maxRuntime:    opts.maxRuntime,
+		memLimitBytes: memLimitBytes,
+	}
 	ptyMode := opts.ptyMode()
 	parentStdinTTY := weaveStdinIsTTY()
 	useLogFile := ptyMode != "never" && !parentStdinTTY
@@ -546,11 +662,11 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			// Subagent stdio: PTY ↔ log file. stdin is the PTY slave
 			// (no user input source); stdout/stderr go to the PTY
 			// master which we copy to logFile.
-			exitCode, runErr = runWeaveToolPTY(tool, logFile, opts.idleTimeout)
+			exitCode, runErr = runWeaveToolPTY(tool, logFile, guards)
 			_ = logFile.Close()
 		} else {
 			// Interactive TTY pass-through.
-			exitCode, runErr = runWeaveToolPTY(tool, nil, opts.idleTimeout)
+			exitCode, runErr = runWeaveToolPTY(tool, nil, guards)
 		}
 	}
 

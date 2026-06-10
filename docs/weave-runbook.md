@@ -23,6 +23,15 @@
 >   (rc≠0) with `exit_code` + `log_path` persisted.
 > - `weave wait [--issue N | --all] [--timeout DUR]` blocks until
 >   target reaches terminal state; pairs cleanly with `weave pull`.
+> - Watchdogs on `weave start`: `--idle-timeout` (no PTY output),
+>   `--max-runtime` (hard wall-clock cap, immune to spinner
+>   output), `--mem-limit` (subagent-tree RSS budget, default
+>   `16g` — the OOM backstop). All three kill the subagent's whole
+>   process tree, and the wrapper forwards SIGTERM/SIGINT/SIGHUP
+>   to the tree, so `weave kill`/`abandon` can't orphan a subagent.
+> - `weave start` refuses an issue whose previous wrapper is still
+>   alive; `weave list` flags `working` items whose wrapper died
+>   (`stale` in JSON, `*` in the table).
 
 Worked example: one human user, three issues, three different agentic CLIs, parallel execution, converged result pushed to GitHub. Use this as the canonical walk-through when teaching the feature or testing it end-to-end.
 

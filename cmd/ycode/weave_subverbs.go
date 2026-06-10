@@ -58,6 +58,8 @@ func newWeaveStartCmd() *cobra.Command {
 	var noSpawn bool
 	var ptyMode string
 	var idleTimeout time.Duration
+	var maxRuntime time.Duration
+	var memLimit string
 	cmd := &cobra.Command{
 		Use:   "start [-- <tool> [args...]]",
 		Short: "Allocate a workspace and launch an agentic tool",
@@ -85,6 +87,8 @@ blocks until N reaches a terminal state.`,
 				resume:      resume,
 				pty:         ptyMode,
 				idleTimeout: idleTimeout,
+				maxRuntime:  maxRuntime,
+				memLimit:    memLimit,
 			}, &flags)
 		},
 	}
@@ -94,7 +98,9 @@ blocks until N reaches a terminal state.`,
 	cmd.Flags().BoolVar(&resume, "resume", false, "Reattach to an existing lease for the given issue")
 	cmd.Flags().BoolVar(&noSpawn, "no-spawn", false, "Allocate the workspace but do not exec the tool")
 	cmd.Flags().StringVar(&ptyMode, "pty", "auto", "PTY allocation: auto (default) | always | never")
-	cmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 0, "SIGTERM the subagent if no PTY output for this long (e.g. 5m); default off — caught the claude-TUI stuck case in the dogfood")
+	cmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 0, "Kill the subagent tree if no PTY output for this long (e.g. 5m); default off — caught the claude-TUI stuck case in the dogfood")
+	cmd.Flags().DurationVar(&maxRuntime, "max-runtime", 0, "Hard wall-clock ceiling for the subagent (e.g. 30m); unlike --idle-timeout it cannot be reset by spinner output; default off")
+	cmd.Flags().StringVar(&memLimit, "mem-limit", "16g", "Kill the subagent tree when its total RSS exceeds this (e.g. 16g, 512m); 0 disables — the OOM backstop")
 	return cmd
 }
 

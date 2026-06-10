@@ -87,12 +87,23 @@ the normal path when subagents have finished cleanly.
 - `next` — peek at top-of-queue without claiming.
 - `prio <issue> <p0|p1|p2|p3>` — change priority.
 - `start [--issue N | top-of-queue] [--no-spawn] [--resume]
-  [--pty=auto|always|never] [--idle-timeout DUR] -- <tool> [args...]` —
+  [--pty=auto|always|never] [--idle-timeout DUR] [--max-runtime DUR]
+  [--mem-limit SIZE] -- <tool> [args...]` —
   claim, allocate sandbox clone, exec tool. On exit: state =
-  submitted (rc=0) or failed (rc≠0). `--idle-timeout` SIGTERMs the
-  subagent if no PTY output appears for that long (e.g. `5m`);
-  default off. Useful for TUI agents that have no built-in auto-
-  exit and can hang silently mid-task.
+  submitted (rc=0) or failed (rc≠0). Refuses (state-conflict) when
+  the issue already has a live wrapper, so two agents can never
+  race in one sandbox. Three independent watchdogs, each killing
+  the subagent's whole process tree:
+  - `--idle-timeout DUR` — no PTY output for DUR (e.g. `5m`);
+    default off. Catches silently-hung TUIs, but NOT a runaway one
+    whose spinner keeps emitting output.
+  - `--max-runtime DUR` — hard wall-clock ceiling (e.g. `30m`);
+    default off. Cannot be reset by output activity; always set it
+    when orchestrating unattended.
+  - `--mem-limit SIZE` — total RSS of the subagent tree (e.g.
+    `16g`, `512m`; `0` disables); default `16g`. The OOM backstop:
+    whatever leaks, the agent dies at its budget instead of taking
+    the machine down. The kill reason lands in the issue log.
 - `wait [--issue N | --all] [--timeout DUR]` — block until target
   reaches terminal state.
 - `pull` — merge every working/submitted branch with commits ahead.

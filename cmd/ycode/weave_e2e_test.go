@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1047,4 +1048,234 @@ func TestWeaveE2E_OrchestratorFlow(t *testing.T) {
 			t.Fatalf("expected %s on main: %v", f, err)
 		}
 	}
+}
+
+// ─── Watchdog / guard tests (post-OOM hardening) ──────────────────
+//
+// Background: the 2026-06-10 dogfood OOM. A weave-launched claude
+// TUI survived `weave abandon` because the wrapper died on SIGTERM
+// without forwarding it to the subagent (its own session, courtesy
+// of pty.Start), and a `--resume` retry recorded no fresh
+// wrapper_pid, so `weave kill` aimed at a dead PID. These tests pin
+// the four fixes: signal forwarding kills the whole subagent tree,
+// duplicate wrappers are refused, stale "working" items are flagged,
+// and the wall-clock + memory watchdogs fire.
+
+// waitIssueWrapperPid polls `weave list --json` until issue 1 has a
+// non-zero wrapper_pid, returning it (0 on timeout).
+func waitIssueWrapperPid(t *testing.T, repo, home string) int {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		out, _ := runWeave(t, repo, home, "list", "--json")
+		items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+		if len(items) > 0 {
+			if pidF, ok := items[0].(map[string]any)["wrapper_pid"].(float64); ok && pidF > 0 {
+				return int(pidF)
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return 0
+}
+
+// pidGone reports whether the pid no longer exists (signal-0 probe
+// via the kill binary, keeping this file syscall-free).
+func pidGone(pid int) bool {
+	return exec.Command("kill", "-0", strconv.Itoa(pid)).Run() != nil
+}
+
+// issueSandbox returns issue 1's sandbox path from the queue.
+func issueSandbox(t *testing.T, repo, home string) string {
+	t.Helper()
+	out, _ := runWeave(t, repo, home, "list", "--json")
+	items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+	if len(items) == 0 {
+		t.Fatalf("no items in queue")
+	}
+	sb, _ := items[0].(map[string]any)["sandbox"].(string)
+	return sb
+}
+
+// TestWeaveE2E_Kill_TerminatesSubagentTree asserts `weave kill`
+// reaches the subagent AND its children — not just the wrapper. The
+// subagent records its own PID and a background child's PID into the
+// sandbox; after kill, both must be gone.
+func TestWeaveE2E_Kill_TerminatesSubagentTree(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "tree-kill target"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	script := `echo $$ > pid.txt
+sleep 600 &
+echo $! > childpid.txt
+wait`
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script)
+	defer func() { _ = bg.Process.Kill(); _ = bg.Wait() }()
+
+	if pid := waitIssueWrapperPid(t, repo, home); pid == 0 {
+		t.Fatalf("wrapper_pid never landed in queue")
+	}
+	sandbox := issueSandbox(t, repo, home)
+
+	// Wait for the subagent to write both PID files.
+	var toolPid, childPid int
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		b1, err1 := os.ReadFile(filepath.Join(sandbox, "pid.txt"))
+		b2, err2 := os.ReadFile(filepath.Join(sandbox, "childpid.txt"))
+		if err1 == nil && err2 == nil {
+			toolPid, _ = strconv.Atoi(strings.TrimSpace(string(b1)))
+			childPid, _ = strconv.Atoi(strings.TrimSpace(string(b2)))
+			if toolPid > 0 && childPid > 0 {
+				break
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if toolPid == 0 || childPid == 0 {
+		t.Fatalf("subagent never wrote pid files")
+	}
+
+	if out, ee := runWeave(t, repo, home, "kill", "1", "--reason", "tree-kill test"); envExitCode(ee) != 0 {
+		t.Fatalf("kill failed: %s", out)
+	}
+
+	deadline = time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if pidGone(toolPid) && pidGone(childPid) {
+			_ = bg.Wait()
+			return
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	t.Fatalf("subagent tree survived kill: tool(%d) gone=%v child(%d) gone=%v",
+		toolPid, pidGone(toolPid), childPid, pidGone(childPid))
+}
+
+// TestWeaveE2E_Start_RefusesLiveDuplicateWrapper pins the resume
+// guard: while a wrapper is alive on an issue, a second
+// `weave start --resume` for the same issue must refuse with a
+// state-conflict instead of racing two agents in one sandbox.
+func TestWeaveE2E_Start_RefusesLiveDuplicateWrapper(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "dup guard"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", "sleep 600")
+	defer func() { _ = bg.Process.Kill(); _ = bg.Wait() }()
+
+	if pid := waitIssueWrapperPid(t, repo, home); pid == 0 {
+		t.Fatalf("wrapper_pid never landed in queue")
+	}
+	out, ee := runWeave(t, repo, home, "start", "--resume", "--issue", "1", "--", "bash", "-c", "true")
+	if got := envExitCode(ee); got != 4 {
+		t.Fatalf("expected exit=4 (state_conflict) for duplicate start, got %d; out=%s", got, out)
+	}
+	if !strings.Contains(out, "live wrapper") {
+		t.Fatalf("expected 'live wrapper' in error, got: %s", out)
+	}
+	if _, ee := runWeave(t, repo, home, "kill", "1", "--reason", "cleanup"); envExitCode(ee) != 0 {
+		t.Fatalf("cleanup kill failed")
+	}
+	_ = bg.Wait()
+}
+
+// TestWeaveE2E_List_MarksStaleWorking: a "working" item whose
+// wrapper is dead (here: --no-spawn, whose wrapper exits
+// immediately) must carry stale=true so orchestrators can tell a
+// crashed agent from a live one.
+func TestWeaveE2E_List_MarksStaleWorking(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "stale detect"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	if out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--no-spawn"); envExitCode(ee) != 0 {
+		t.Fatalf("no-spawn start failed: %s", out)
+	}
+	out, _ := runWeave(t, repo, home, "list", "--json")
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if item["state"] != "working" {
+		t.Fatalf("expected state=working, got %v", item["state"])
+	}
+	if stale, _ := item["stale"].(bool); !stale {
+		t.Fatalf("expected stale=true for working item with dead wrapper; item=%v", item)
+	}
+}
+
+// TestWeaveE2E_MaxRuntime_KillsSpinningSubagent: --idle-timeout is
+// useless against a runaway TUI whose spinner keeps emitting output
+// (the dogfood OOM ran 16 minutes under --idle-timeout 7m).
+// --max-runtime must kill it regardless of output activity.
+func TestWeaveE2E_MaxRuntime_KillsSpinningSubagent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "spinner"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--max-runtime", "3s",
+		"--", "bash", "-c", "while :; do echo spin; sleep 0.1; done")
+	defer func() { _ = bg.Process.Kill(); _ = bg.Wait() }()
+
+	out, ee := runWeave(t, repo, home, "wait", "--issue", "1", "--timeout", "60s", "--json")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("wait exited %d; out=%s", got, out)
+	}
+	ready := parseEnvelope(t, out)["result"].(map[string]any)["ready"].([]any)[0].(map[string]any)
+	if ready["state"] != "failed" {
+		t.Fatalf("expected state=failed after max-runtime kill, got %v", ready["state"])
+	}
+	_ = bg.Wait()
+}
+
+// TestWeaveE2E_MemLimit_KillsRunawaySubagent: the OOM backstop. A
+// subagent that balloons past --mem-limit must die with the reason
+// recorded in its log, instead of eating the machine.
+func TestWeaveE2E_MemLimit_KillsRunawaySubagent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "memory hog"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// 1MB seed doubled 9 times ≈ 512MB resident, then hold. Bounded
+	// by construction — even if the watchdog were broken, the test
+	// costs ~0.5GB, not the machine.
+	hog := `x=$(head -c 1000000 /dev/zero | tr '\0' a)
+for i in 1 2 3 4 5 6 7 8 9; do x="$x$x"; done
+sleep 600`
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--mem-limit", "64m",
+		"--", "bash", "-c", hog)
+	defer func() { _ = bg.Process.Kill(); _ = bg.Wait() }()
+
+	out, ee := runWeave(t, repo, home, "wait", "--issue", "1", "--timeout", "60s", "--json")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("wait exited %d; out=%s", got, out)
+	}
+	ready := parseEnvelope(t, out)["result"].(map[string]any)["ready"].([]any)[0].(map[string]any)
+	if ready["state"] != "failed" {
+		t.Fatalf("expected state=failed after mem-limit kill, got %v", ready["state"])
+	}
+	if logPath, _ := ready["log_path"].(string); logPath != "" {
+		b, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatalf("read log: %v", err)
+		}
+		if !strings.Contains(string(b), "mem-limit") {
+			t.Fatalf("expected mem-limit kill reason in log %s", logPath)
+		}
+	}
+	_ = bg.Wait()
 }

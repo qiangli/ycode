@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"time"
 )
 
 // runWeaveToolPTY is a Unix-only feature; on Windows we surface a
@@ -14,7 +13,7 @@ import (
 // host APIs differ enough (and the agentic CLIs targeted by weave
 // are macOS/Linux-first) that supporting PTY on Windows isn't
 // load-bearing for the MVP.
-func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, idleTimeout time.Duration) (int, error) {
+func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, guards weaveGuards) (int, error) {
 	return 127, fmt.Errorf("weave: PTY not supported on Windows; pass --pty=never or run inside WSL")
 }
 

@@ -30,6 +30,21 @@ func weaveMaybeSetsid(parentStdinTTY bool) {
 	}
 }
 
+// pidAlive reports whether a process with the given PID currently
+// exists (signal 0 probe). Subject to PID reuse — callers use it as
+// a conservative "maybe still running" check, never as proof of
+// identity.
+func pidAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
+}
+
 // weaveStopWrapper precisely terminates the wrapper process whose
 // PID is recorded on a queue item. The wrapper auto-setsid'd at
 // startup, so signalling the negative PID hits the whole subagent

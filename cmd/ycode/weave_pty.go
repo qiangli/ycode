@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -32,11 +34,11 @@ import (
 //     a controlling terminal even though no human is attached.
 //
 // logSink is only used in the non-TTY path; pass nil for the TTY
-// pass-through case. When idleTimeout > 0 we SIGTERM the subagent
-// if no PTY output appears for that long — caught the claude-TUI
-// stuck-mid-edit case in the dogfood. Returns the subagent's exit
-// code (or 128+N when killed by signal N, matching the wrap helper).
-func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, idleTimeout time.Duration) (int, error) {
+// pass-through case. guards carries the three watchdog tripwires
+// (idle, wall-clock, memory) — see weaveGuards. Returns the
+// subagent's exit code (or 128+N when killed by signal N, matching
+// the wrap helper).
+func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, guards weaveGuards) (int, error) {
 	rows, cols := weavePTYSize()
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
 	if err != nil {
@@ -44,18 +46,79 @@ func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, idleTimeout time.Duration
 	}
 	defer ptmx.Close()
 
+	// killTree terminates the subagent and every transitive child.
+	// pty.Start put the subagent in its own session (it must be a
+	// session leader to own the PTY), so the wrapper's process
+	// group does NOT contain it — and the subagent's descendants
+	// (claude's MCP servers, shell shims) may setpgid themselves
+	// out of the subagent's group. Signalling only -pid therefore
+	// strands grandchildren; the dogfood OOM left an orphaned
+	// claude tree running for 15+ minutes after `weave abandon`.
+	// We signal the group AND each descendant from a `ps` snapshot,
+	// then escalate to SIGKILL after a grace window.
+	var killOnce sync.Once
+	killTree := func(reason string, grace time.Duration) {
+		killOnce.Do(func() {
+			if cmd.Process == nil {
+				return
+			}
+			pid := cmd.Process.Pid
+			slog.Warn("weave: terminating subagent tree", "pid", pid, "reason", reason)
+			if logSink != nil {
+				fmt.Fprintf(logSink, "\r\n[weave] terminating subagent: %s\r\n", reason)
+			}
+			pids := weaveProcTreePids(pid)
+			_ = syscall.Kill(-pid, syscall.SIGTERM)
+			for _, p := range pids {
+				_ = syscall.Kill(p, syscall.SIGTERM)
+			}
+			go func() {
+				time.Sleep(grace)
+				if syscall.Kill(pid, 0) != nil {
+					return // leader reaped; Wait() unblocks
+				}
+				_ = syscall.Kill(-pid, syscall.SIGKILL)
+				for _, p := range weaveProcTreePids(pid) {
+					_ = syscall.Kill(p, syscall.SIGKILL)
+				}
+			}()
+		})
+	}
+
+	// Forward termination signals from the wrapper to the subagent
+	// tree. Without this, SIGTERM kills the wrapper instantly
+	// (default disposition) and the subagent — in its own session —
+	// survives as an orphan that `weave kill`/`abandon` can never
+	// reach again. Short grace: weaveStopWrapper SIGKILLs the
+	// wrapper 5s after its SIGTERM, and our escalation goroutine
+	// must fire before we die.
+	termSigs := make(chan os.Signal, 1)
+	signal.Notify(termSigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	go func() {
+		for s := range termSigs {
+			killTree(fmt.Sprintf("signal %v forwarded from wrapper", s), 2*time.Second)
+		}
+	}()
+	defer func() {
+		// Stop must precede close — the signal package does a
+		// non-blocking send to registered channels, and a send on
+		// a closed channel panics.
+		signal.Stop(termSigs)
+		close(termSigs)
+	}()
+
 	// Idle-timeout watchdog: tracks the time of the most recent PTY
-	// write. A background goroutine SIGTERMs the subagent process
-	// group if that timestamp stalls past idleTimeout. The watchdog
-	// reads `idleDeadline` via atomic load; the copy loop bumps it
-	// on every write.
+	// write. A background goroutine kills the subagent tree if that
+	// timestamp stalls past idleTimeout. The watchdog reads the
+	// timestamp via atomic load; the copy loop bumps it on every
+	// write.
 	var lastWriteUnixNs atomic.Int64
 	lastWriteUnixNs.Store(time.Now().UnixNano())
 	watchdogStop := make(chan struct{})
 	defer close(watchdogStop)
-	if idleTimeout > 0 {
+	if guards.idleTimeout > 0 {
 		go func() {
-			ticker := time.NewTicker(idleTimeout / 4)
+			ticker := time.NewTicker(guards.idleTimeout / 4)
 			defer ticker.Stop()
 			for {
 				select {
@@ -63,12 +126,50 @@ func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, idleTimeout time.Duration
 					return
 				case <-ticker.C:
 					last := time.Unix(0, lastWriteUnixNs.Load())
-					if time.Since(last) >= idleTimeout {
-						if cmd.Process != nil {
-							slog.Warn("weave: subagent idle past --idle-timeout; sending SIGTERM",
-								"pid", cmd.Process.Pid, "idle", time.Since(last), "timeout", idleTimeout)
-							_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-						}
+					if time.Since(last) >= guards.idleTimeout {
+						killTree(fmt.Sprintf("idle %s exceeds --idle-timeout %s",
+							time.Since(last).Round(time.Second), guards.idleTimeout), 10*time.Second)
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	// Wall-clock watchdog: --idle-timeout is useless against a
+	// runaway TUI whose spinner keeps emitting output; this one
+	// cannot be reset by activity.
+	if guards.maxRuntime > 0 {
+		go func() {
+			select {
+			case <-watchdogStop:
+			case <-time.After(guards.maxRuntime):
+				killTree(fmt.Sprintf("runtime exceeds --max-runtime %s", guards.maxRuntime), 10*time.Second)
+			}
+		}()
+	}
+
+	// Memory watchdog: sums RSS across the subagent's process tree
+	// every poll and kills the tree over budget. This is the OOM
+	// backstop — whatever leaks (orphan storms, runaway builds, a
+	// buggy interpreter under test), the agent dies at its budget
+	// instead of taking down the machine.
+	if guards.memLimitBytes > 0 {
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-watchdogStop:
+					return
+				case <-ticker.C:
+					if cmd.Process == nil {
+						continue
+					}
+					rss := weaveProcTreeRSSBytes(cmd.Process.Pid)
+					if rss > guards.memLimitBytes {
+						killTree(fmt.Sprintf("process-tree RSS %dMB exceeds --mem-limit %dMB",
+							rss>>20, guards.memLimitBytes>>20), 10*time.Second)
 						return
 					}
 				}
@@ -194,4 +295,74 @@ func weavePTYSize() (uint16, uint16) {
 // real terminal. Used to gate the auto-setsid + auto-log-file paths.
 func weaveStdinIsTTY() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// weaveProcSnapshot returns the child-map and RSS (bytes) per PID
+// from one `ps` pass. Shelling out to ps is deliberate: it's
+// portable across macOS and Linux (no /proc on darwin), and the
+// watchdogs poll at multi-second intervals where a fork is noise.
+func weaveProcSnapshot() (children map[int][]int, rss map[int]int64) {
+	out, err := exec.Command("ps", "-axo", "pid=,ppid=,rss=").Output()
+	if err != nil {
+		return nil, nil
+	}
+	children = make(map[int][]int)
+	rss = make(map[int]int64)
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 3 {
+			continue
+		}
+		pid, err1 := strconv.Atoi(f[0])
+		ppid, err2 := strconv.Atoi(f[1])
+		kb, err3 := strconv.ParseInt(f[2], 10, 64)
+		if err1 != nil || err2 != nil || err3 != nil {
+			continue
+		}
+		children[ppid] = append(children[ppid], pid)
+		rss[pid] = kb << 10
+	}
+	return children, rss
+}
+
+// weaveDescend walks the snapshot from root, breadth-first, and
+// returns root plus every transitive descendant.
+func weaveDescend(root int, children map[int][]int) []int {
+	pids := []int{root}
+	seen := map[int]bool{root: true}
+	for i := 0; i < len(pids); i++ {
+		for _, c := range children[pids[i]] {
+			if !seen[c] {
+				seen[c] = true
+				pids = append(pids, c)
+			}
+		}
+	}
+	return pids
+}
+
+// weaveProcTreePids returns root + all transitive children. Best
+// effort: processes that double-fork and reparent to init escape
+// the tree (they also escape the process group; nothing short of
+// cgroups catches those, and macOS has none).
+func weaveProcTreePids(root int) []int {
+	children, _ := weaveProcSnapshot()
+	if children == nil {
+		return []int{root}
+	}
+	return weaveDescend(root, children)
+}
+
+// weaveProcTreeRSSBytes sums resident memory across the subagent's
+// process tree.
+func weaveProcTreeRSSBytes(root int) int64 {
+	children, rss := weaveProcSnapshot()
+	if children == nil {
+		return 0
+	}
+	var total int64
+	for _, p := range weaveDescend(root, children) {
+		total += rss[p]
+	}
+	return total
 }
