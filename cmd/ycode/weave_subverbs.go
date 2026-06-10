@@ -296,7 +296,7 @@ with CSRF + session-cookie auth (not v1 REST). This subverb pulls
 those in only when invoked; everything else in 'weave' speaks
 stable v1 REST.
 
-In the local-only backend (no `+"`"+`ycode serve`+"`"+` running), this command
+In the local-only backend (no ` + "`" + `ycode serve` + "`" + ` running), this command
 emits a precondition_failed envelope explaining the dependency.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWeaveInitBoard(cmd, &flags)

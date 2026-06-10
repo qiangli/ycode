@@ -748,10 +748,10 @@ func runWeavePrio(cmd *cobra.Command, id int64, tier string, auto bool, flags *w
 	}
 	if mode == weavecli.OutputJSON {
 		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave prio", map[string]any{
-			"issue":         it.ID,
-			"priority":      it.Priority,
-			"previous":      prev,
-			"title":         it.Title,
+			"issue":    it.ID,
+			"priority": it.Priority,
+			"previous": prev,
+			"title":    it.Title,
 		}))
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "weave prio: issue #%d %s → %s\n", it.ID, prev, it.Priority)
@@ -913,11 +913,11 @@ func runWeaveOpen(cmd *cobra.Command, issuesFlag, boardFlag, prFlag bool, issueI
 			fileURL := "file://" + it.Sandbox
 			if mode == weavecli.OutputJSON {
 				return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave open", map[string]any{
-					"issue":              it.ID,
-					"sandbox_url":        fileURL,
-					"gitea_url":          nil,
-					"backend":            "local",
-					"note":               "Gitea-backed pages require `ycode serve`; surfacing sandbox path only.",
+					"issue":       it.ID,
+					"sandbox_url": fileURL,
+					"gitea_url":   nil,
+					"backend":     "local",
+					"note":        "Gitea-backed pages require `ycode serve`; surfacing sandbox path only.",
 				}))
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "weave open: issue #%d sandbox %s\n", it.ID, fileURL)
@@ -943,8 +943,8 @@ func runWeaveInitBoard(cmd *cobra.Command, flags *weaveOutputFlags) error {
 //
 // Markdown shape (each line, ignoring leading/trailing whitespace):
 //
-//	- [ ] title goes here
-//	- [ ] another title
+//   - [ ] title goes here
+//   - [ ] another title
 //
 // JSON shape: an array of objects with at minimum a `title` field;
 // optional `body`, `priority`, `tool` overrides:
