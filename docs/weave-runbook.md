@@ -259,6 +259,15 @@ ISSUE  PRIO  SOURCE  TOOL          STATE          SANDBOX                       
 
 `--watch` streams state transitions over the `loom://project` MCP resource — no polling.
 
+To watch what a specific subagent is printing (any number of watchers, human or agent):
+
+```bash
+ycode weave log 123 -f          # stream issue #123's PTY capture live
+ycode weave log 123 -n 100      # just the last 100 lines
+```
+
+The capture is recorded whenever the `weave start` parent wasn't a TTY (orchestrator pipe, `&`); it persists after the run as the post-mortem artifact. Tools that buffer in non-interactive modes (`claude -p`) leave it empty until exit.
+
 ### Option B — Browser: Gitea filtered issue list
 
 ```bash

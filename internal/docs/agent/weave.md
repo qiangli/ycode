@@ -98,6 +98,15 @@ the normal path when subagents have finished cleanly.
   ceiling, immune to output; always set it when unattended),
   `--mem-limit` (subagent-tree RSS, default `16g`, `0` disables —
   the OOM backstop; kill reason + forensics → issue log).
+- `log <issue> [-f|--follow] [-n|--tail N]` — print the issue's PTY
+  capture (everything the subagent wrote to its terminal). `-f`
+  streams until the issue reaches a terminal state; `-n 0 -f` means
+  "new output only". Raw ANSI byte stream — pipe `less -R`. With
+  `--json` returns `{log_path, size_bytes, state, exit_code}`
+  instead of the stream; read the file yourself. Caveat: tools that
+  buffer in non-interactive modes (`claude -p`) leave the capture
+  empty until exit — empty under `-f` means "nothing emitted", not
+  "nothing happening".
 - `wait [--issue N | --all] [--timeout DUR]` — block until target
   reaches terminal state.
 - `pull` — merge every working/submitted branch with commits ahead.

@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestParseWeaveMemLimit(t *testing.T) {
 	cases := []struct {
@@ -36,5 +39,47 @@ func TestParseWeaveMemLimit(t *testing.T) {
 		if got != c.want {
 			t.Errorf("parseWeaveMemLimit(%q) = %d, want %d", c.in, got, c.want)
 		}
+	}
+}
+
+func TestTailOffset(t *testing.T) {
+	write := func(content string) *os.File {
+		t.Helper()
+		f, err := os.CreateTemp(t.TempDir(), "tail")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString(content); err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	cases := []struct {
+		name    string
+		content string
+		n       int
+		want    string // expected substring from offset to EOF
+	}{
+		{"whole file when n exceeds lines", "a\nb\nc\n", 10, "a\nb\nc\n"},
+		{"last two lines", "a\nb\nc\n", 2, "b\nc\n"},
+		{"last line with trailing newline", "a\nb\nc\n", 1, "c\n"},
+		{"last line without trailing newline", "a\nb\nc", 1, "c"},
+		{"zero lines returns end", "a\nb\n", 0, ""},
+		{"empty file", "", 3, ""},
+		{"single line no newline", "abc", 1, "abc"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := write(c.content)
+			defer f.Close()
+			off, err := tailOffset(f, c.n)
+			if err != nil {
+				t.Fatalf("tailOffset: %v", err)
+			}
+			got := c.content[off:]
+			if got != c.want {
+				t.Errorf("tailOffset(%q, %d): got %q, want %q", c.content, c.n, got, c.want)
+			}
+		})
 	}
 }

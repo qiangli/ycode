@@ -168,6 +168,50 @@ func newWeaveListCmd() *cobra.Command {
 	return cmd
 }
 
+func newWeaveLogCmd() *cobra.Command {
+	var flags weaveOutputFlags
+	var follow bool
+	var tailN int
+	cmd := &cobra.Command{
+		Use:   "log <issue>",
+		Short: "Print (or --follow) the captured PTY log of an issue's subagent",
+		Long: `log prints the per-issue PTY capture file — everything the subagent
+wrote to its terminal. The capture exists whenever 'weave start' ran
+non-interactively (orchestrator pipe, backgrounded with &); a start
+from a real terminal passes the PTY through instead, so there is
+nothing to print.
+
+  ycode weave log 4              # whole log so far
+  ycode weave log 4 -n 100       # last 100 lines
+  ycode weave log 4 -f           # stream live; exits when the issue
+                                 # reaches a terminal state
+  ycode weave log 4 -f -n 0      # follow, new output only
+
+Output is the raw PTY byte stream (ANSI escapes included) — pipe
+through 'less -R' for paging. Anyone on the host can watch a running
+subagent this way; the file persists after the run as the post-
+mortem artifact.
+
+NOTE: some tools buffer in non-interactive modes (e.g. 'claude -p'
+holds all output until exit) — an empty log under -f means "nothing
+emitted yet", not "nothing happening". With --json, emits the log
+metadata (path, size, state) instead of the raw stream — agent
+callers read the file themselves.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("issue must be an integer: %q", args[0])
+			}
+			return runWeaveLog(cmd, id, follow, tailN, &flags)
+		},
+	}
+	flags.attach(cmd)
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Stream appended output until the issue reaches a terminal state")
+	cmd.Flags().IntVarP(&tailN, "tail", "n", -1, "Print only the last N lines (0 = none, useful with -f; -1 = whole file)")
+	return cmd
+}
+
 func newWeavePullCmd() *cobra.Command {
 	var flags weaveOutputFlags
 	var watch bool

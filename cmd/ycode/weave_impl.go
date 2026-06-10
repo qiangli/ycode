@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -518,6 +519,13 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 				return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
 					weavecli.ExitGenericFail, fmt.Errorf("git checkout -b %s: %w", branch, err)))
 			}
+			// Remove `origin` from the clone: it points at the user's
+			// real checkout, and in dogfooding a subagent followed it
+			// (`git remote -v`) to escape the sandbox and commit to the
+			// origin repo's master directly. Nothing in the weave flow
+			// needs the remote — `weave pull` fetches FROM the sandbox
+			// path into the user's repo, never the other way around.
+			_ = exec.Command("git", "-C", sandbox, "remote", "remove", "origin").Run()
 		}
 		for _, kv := range [][2]string{
 			{"user.name", fmt.Sprintf("agent-weave-issue-%d", it.ID)},
@@ -720,6 +728,157 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 		}))
 	}
 	return nil
+}
+
+// runWeaveLog prints the captured PTY log for an issue, optionally
+// following appended output until the issue reaches a terminal
+// state. The capture file only exists when the subagent ran with a
+// captured PTY (non-TTY parent); interactive passthrough sessions
+// have nothing recorded.
+func runWeaveLog(cmd *cobra.Command, id int64, follow bool, tailN int, flags *weaveOutputFlags) error {
+	mode := flags.mode()
+	cwd, _ := os.Getwd()
+	root, err := weaveRepoRoot(cwd)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave log",
+			weavecli.ExitPrecondFail, err))
+	}
+	dir, _ := weaveQueueDir(root)
+	q, err := loadWeaveQueue(dir)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave log",
+			weavecli.ExitGenericFail, err))
+	}
+	it := findWeaveItem(q, id)
+	if it == nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave log",
+			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found", id)))
+	}
+	logPath := it.LogPath
+	if logPath == "" {
+		// The queue persists log_path on exit; while the subagent is
+		// still running, fall back to the conventional capture path —
+		// watching a LIVE issue is this subverb's main use case.
+		conventional := filepath.Join(dir, "logs", fmt.Sprintf("issue-%d.log", it.ID))
+		if _, err := os.Stat(conventional); err == nil {
+			logPath = conventional
+		}
+	}
+	if logPath == "" {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave log",
+			weavecli.ExitStateConflict, fmt.Errorf("issue #%d has no PTY capture (state=%q) — it either hasn't started or ran interactively (PTY passthrough)", it.ID, it.State)))
+	}
+	f, err := os.Open(logPath)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave log",
+			weavecli.ExitStateConflict, fmt.Errorf("log missing on disk: %s", logPath)))
+	}
+	defer f.Close()
+	if mode == weavecli.OutputJSON {
+		// Agent mode: the raw PTY stream isn't envelope-safe; return
+		// the metadata and let the caller read/tail the file itself.
+		st, statErr := f.Stat()
+		var size int64
+		if statErr == nil {
+			size = st.Size()
+		}
+		res := map[string]any{
+			"issue":      it.ID,
+			"state":      it.State,
+			"log_path":   logPath,
+			"size_bytes": size,
+		}
+		if it.ExitCode != nil {
+			res["exit_code"] = *it.ExitCode
+		}
+		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave log", res))
+	}
+	if tailN >= 0 {
+		off, err := tailOffset(f, tailN)
+		if err != nil {
+			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave log",
+				weavecli.ExitGenericFail, err))
+		}
+		if _, err := f.Seek(off, io.SeekStart); err != nil {
+			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave log",
+				weavecli.ExitGenericFail, err))
+		}
+	}
+	out := cmd.OutOrStdout()
+	if _, err := io.Copy(out, f); err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave log",
+			weavecli.ExitGenericFail, err))
+	}
+	if !follow {
+		return nil
+	}
+	// Follow: poll for appended bytes (regular files don't support
+	// blocking reads past EOF). Stop once the issue is terminal AND
+	// the file is drained — terminal-then-drain, not drain-then-
+	// terminal, so the final flush after exit is never truncated.
+	for {
+		time.Sleep(500 * time.Millisecond)
+		n, err := io.Copy(out, f)
+		if err != nil {
+			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave log",
+				weavecli.ExitGenericFail, err))
+		}
+		if n > 0 {
+			continue
+		}
+		q2, err := loadWeaveQueue(dir)
+		if err != nil {
+			continue // transient queue read race; keep following
+		}
+		it2 := findWeaveItem(q2, id)
+		if it2 == nil || isTerminalState(it2.State) {
+			return nil
+		}
+	}
+}
+
+// tailOffset returns the byte offset where the last n lines of f
+// begin, with tail(1) semantics: a trailing newline terminates the
+// final line rather than starting an empty one. n<=0 returns the
+// end offset (print nothing; with -f that means "new output only").
+func tailOffset(f *os.File, n int) (int64, error) {
+	st, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	size := st.Size()
+	if n <= 0 || size == 0 {
+		return size, nil
+	}
+	end := size
+	one := make([]byte, 1)
+	if _, err := f.ReadAt(one, size-1); err == nil && one[0] == '\n' {
+		end = size - 1
+	}
+	const chunk = 32 * 1024
+	buf := make([]byte, chunk)
+	count := 0
+	pos := end
+	for pos > 0 {
+		readSize := int64(chunk)
+		if pos < readSize {
+			readSize = pos
+		}
+		pos -= readSize
+		m, err := f.ReadAt(buf[:readSize], pos)
+		if err != nil && m <= 0 {
+			return 0, err
+		}
+		for i := m - 1; i >= 0; i-- {
+			if buf[i] == '\n' {
+				count++
+				if count == n {
+					return pos + int64(i) + 1, nil
+				}
+			}
+		}
+	}
+	return 0, nil
 }
 
 func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags) error {

@@ -1282,3 +1282,102 @@ sleep 600`
 	}
 	_ = bg.Wait()
 }
+
+// TestWeaveE2E_Log_PrintsAndTailsCapture: `weave log` prints the
+// PTY capture recorded by a non-interactive start, honors --tail,
+// and returns metadata (not the raw stream) in agent/JSON mode.
+func TestWeaveE2E_Log_PrintsAndTailsCapture(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "log capture check"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// Non-TTY parent → PTY output captured to the per-issue log.
+	script := `for i in 1 2 3 4 5; do echo "line-$i"; done`
+	if out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script); envExitCode(ee) != 0 {
+		t.Fatalf("start failed: %s", out)
+	}
+	// JSON mode (YCODE_AGENT=1 in runWeave env) → metadata envelope.
+	out, ee := runWeave(t, repo, home, "log", "1")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("log exited %d; out=%s", got, out)
+	}
+	res := parseEnvelope(t, out)["result"].(map[string]any)
+	logPath, _ := res["log_path"].(string)
+	if logPath == "" {
+		t.Fatalf("expected log_path in result; got %v", res)
+	}
+	if size, _ := res["size_bytes"].(float64); size <= 0 {
+		t.Fatalf("expected non-empty capture; got %v", res)
+	}
+	b, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read capture: %v", err)
+	}
+	for _, want := range []string{"line-1", "line-5"} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("capture missing %q: %q", want, b)
+		}
+	}
+	// Human mode → raw stream on stdout, --tail limits it. Run the
+	// binary directly: YCODE_AGENT=1 (set by runWeave) forces JSON
+	// regardless of flags, so this leg needs a clean env.
+	binAbs, err := filepath.Abs(weaveE2EBinary)
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
+	raw := exec.Command(binAbs, "weave", "log", "1", "--plain", "-n", "2")
+	raw.Dir = repo
+	raw.Env = append(os.Environ(), "HOME="+home, "TERM=dumb", "YCODE_NO_SERVER=1", "YCODE_AGENT=")
+	rawOut, err := raw.CombinedOutput()
+	if err != nil {
+		t.Fatalf("log --plain: %v\n%s", err, rawOut)
+	}
+	if strings.Contains(string(rawOut), "line-1") || !strings.Contains(string(rawOut), "line-5") {
+		t.Fatalf("tail window wrong; out=%q", rawOut)
+	}
+}
+
+// TestWeaveE2E_Log_NoCapture: an issue that never started has no
+// log_path → state_conflict, not a crash.
+func TestWeaveE2E_Log_NoCapture(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "never started"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	out, ee := runWeave(t, repo, home, "log", "1")
+	if got := envExitCode(ee); got != 4 {
+		t.Fatalf("expected state_conflict (4), got %d; out=%s", got, out)
+	}
+}
+
+// TestWeaveE2E_Sandbox_OriginRemoved: the sandbox clone must not
+// carry a usable `origin` remote — in dogfooding a subagent followed
+// origin's URL back to the user's checkout and committed to its
+// master directly. Escape-hatch closed = `git remote` empty.
+func TestWeaveE2E_Sandbox_OriginRemoved(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "origin removal check"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	out, ee := runWeave(t, repo, home, "start", "--no-spawn", "--issue", "1")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("start --no-spawn exited %d; out=%s", got, out)
+	}
+	sandbox, _ := parseEnvelope(t, out)["result"].(map[string]any)["sandbox"].(string)
+	remotes, err := exec.Command("git", "-C", sandbox, "remote").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git remote: %v", err)
+	}
+	if strings.TrimSpace(string(remotes)) != "" {
+		t.Fatalf("sandbox still has remotes (escape hatch open): %q", remotes)
+	}
+}
