@@ -297,11 +297,13 @@ func Run(ctx context.Context, opts Options) (int, error) {
 	// we aggregate and log per-minute rates + a session summary.
 	// Fail-open — telemetry must never block the session.
 	eventsSock := ""
-	if listener, evErr := startSpawnEventListener(sessionDir); evErr != nil {
+	spawnEvents, evErr := startSpawnEventListener(sessionDir)
+	if evErr != nil {
 		slog.Warn("wrap: spawn-event listener unavailable; continuing without spawn telemetry", "err", evErr)
-	} else if listener != nil {
-		eventsSock = listener.sockPath
-		defer listener.stop()
+		spawnEvents = nil
+	} else if spawnEvents != nil {
+		eventsSock = spawnEvents.sockPath
+		defer spawnEvents.stop()
 	}
 
 	bin := opts.AgentArgs[0]
@@ -313,6 +315,11 @@ func Run(ctx context.Context, opts Options) (int, error) {
 	// internal-shell-trace`) will nest under this one, producing a
 	// single tree per wrap invocation.
 	telCtx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeWrappedAgent, bin, args)
+	if spawnEvents != nil {
+		// Exit events from span-mode shims (YCODE_WRAP_SPAWN_TRACE=1)
+		// become retroactive child spans of the session span.
+		spawnEvents.enableSpans(telCtx)
+	}
 
 	env := opts.Env
 	if env == nil {

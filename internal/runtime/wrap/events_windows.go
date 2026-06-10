@@ -2,6 +2,8 @@
 
 package wrap
 
+import "context"
+
 // spawnListener / startSpawnEventListener are unix-only (unixgram
 // sockets); on Windows the wrap session runs without spawn telemetry.
 // The shim side (spawncore.EmitSpawn) no-ops when the env var is
@@ -9,6 +11,8 @@ package wrap
 type spawnListener struct{ sockPath string }
 
 func (l *spawnListener) stop() {}
+
+func (l *spawnListener) enableSpans(ctx context.Context) {}
 
 func startSpawnEventListener(sessionDir string) (*spawnListener, error) {
 	return nil, nil

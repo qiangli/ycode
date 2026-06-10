@@ -3,6 +3,7 @@
 package wrap
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net"
@@ -12,6 +13,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/qiangli/ycode/internal/runtime/spawncore"
 )
@@ -78,6 +83,13 @@ type spawnListener struct {
 	stats    *spawnStats
 	done     chan struct{}
 	stopOnce sync.Once
+
+	// Span recording for "exit" events (shims in YCODE_WRAP_SPAWN_TRACE
+	// fork-and-wait mode). Set via enableSpans after the wrap parent
+	// opens its session span; nil until then, so early events degrade
+	// to stats-only.
+	spanMu  sync.Mutex
+	spanCtx context.Context
 }
 
 // startSpawnEventListener opens the per-session event socket under
@@ -114,10 +126,56 @@ func (l *spawnListener) readLoop() {
 			return // conn closed by stop
 		}
 		var ev spawncore.SpawnEvent
-		if json.Unmarshal(buf[:n], &ev) == nil && ev.Ev == "spawn" {
+		if json.Unmarshal(buf[:n], &ev) != nil {
+			continue
+		}
+		switch ev.Ev {
+		case "spawn":
 			l.stats.add(ev)
+		case "exit":
+			l.recordSpawnSpan(ev)
 		}
 	}
+}
+
+// enableSpans arms exit-event span recording, nesting every spawned-
+// tool span under the wrap session span carried by ctx. Called by Run
+// once the session span exists.
+func (l *spawnListener) enableSpans(ctx context.Context) {
+	l.spanMu.Lock()
+	l.spanCtx = ctx
+	l.spanMu.Unlock()
+}
+
+// recordSpawnSpan reconstructs a retroactive OTel span from a span-
+// mode shim's "exit" event: the shim observed start/duration/exit
+// code as the child's parent (the only process that can, on unix) and
+// shipped them here, where a real tracer provider exists. Timestamps
+// are back-dated via trace.WithTimestamp so the span covers the
+// command's actual lifetime.
+func (l *spawnListener) recordSpawnSpan(ev spawncore.SpawnEvent) {
+	l.spanMu.Lock()
+	ctx := l.spanCtx
+	l.spanMu.Unlock()
+	if ctx == nil {
+		return
+	}
+	end := time.Now()
+	start := end.Add(-time.Duration(ev.DurMs) * time.Millisecond)
+	exitCode := 0
+	if ev.ExitCode != nil {
+		exitCode = *ev.ExitCode
+	}
+	_, span := otel.Tracer("ycode.wrap.spawn").Start(ctx, "ycode.exec.spawned_tool",
+		trace.WithTimestamp(start),
+		trace.WithAttributes(
+			attribute.String("exec.tool", ev.Tool),
+			attribute.Int("exec.depth", ev.Depth),
+			attribute.Int("exec.exit_code", exitCode),
+			attribute.Int("exec.pid", ev.PID),
+			attribute.Int64("exec.duration_ms", ev.DurMs),
+		))
+	span.End(trace.WithTimestamp(end))
 }
 
 func (l *spawnListener) summaryLoop() {

@@ -116,7 +116,7 @@ func newWrapCmd() *cobra.Command {
 	cmd.Flags().StringVar(&runtimeHooks, "runtime-hooks", "auto",
 		"Language runtime hooks to install in the wrapped process: auto (default, follows profile) | off | comma-separated list (python,node)")
 	cmd.Flags().StringVar(&otelExport, "otel-export", "file",
-		"OTel exporter mode: file (default — ~/.agents/ycode/otel/instances/wrap-<pid>/) | console (file plus stderr JSON) | off (no provider). YCODE_WRAP_OTEL_EXPORT env wins when set.")
+		"OTel exporter mode: file (default — ~/.agents/ycode/otel/instances/wrap-<pid>/) | console (file plus stderr JSON) | off (no provider). YCODE_WRAP_OTEL_EXPORT env wins when set. Per-spawned-tool spans (one per shimmed git/bash/... with exit code + duration) are opt-in via YCODE_WRAP_SPAWN_TRACE=1 — they keep a ~2MB shim resident per in-flight command; the default exec(2) dispatch records spawn counts only.")
 	cmd.Flags().StringVar(&ptyMode, "pty", "auto",
 		"PTY allocation: auto (default — when stdin & stdout are terminals) | always (force PTY) | never (inherit stdio). Interactive TUIs (claude, opencode) need a PTY to render correctly.")
 	cmd.Flags().StringVar(&logLevel, "log-level", "",

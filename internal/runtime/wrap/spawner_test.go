@@ -3,6 +3,7 @@
 package wrap
 
 import (
+	"context"
 	"net"
 	"os"
 	"os/exec"
@@ -10,6 +11,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/qiangli/ycode/internal/runtime/spawncore"
 	"github.com/qiangli/ycode/internal/runtime/wrap/spawn_embed"
@@ -147,4 +152,62 @@ func TestSpawnListener_AggregatesAndStops(t *testing.T) {
 
 	listener.stop()
 	listener.stop() // idempotent
+}
+
+// TestSpawnListener_ExitEventRecordsSpan: an "exit" datagram from a
+// span-mode shim becomes a real, back-dated OTel span carrying tool /
+// exit-code / duration attributes.
+func TestSpawnListener_ExitEventRecordsSpan(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	defer otel.SetTracerProvider(prev)
+
+	sessionDir, err := os.MkdirTemp("/tmp", "wrapev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(sessionDir)
+	listener, err := startSpawnEventListener(sessionDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.stop()
+	listener.enableSpans(context.Background())
+
+	conn, err := net.Dial("unixgram", listener.sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte(`{"ev":"exit","tool":"git","pid":42,"ppid":1,"depth":1,"exit_code":3,"dur_ms":250}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		spans := exporter.GetSpans()
+		if len(spans) == 1 {
+			sp := spans[0]
+			if sp.Name != "ycode.exec.spawned_tool" {
+				t.Fatalf("span name = %q", sp.Name)
+			}
+			attrs := map[string]any{}
+			for _, kv := range sp.Attributes {
+				attrs[string(kv.Key)] = kv.Value.AsInterface()
+			}
+			if attrs["exec.tool"] != "git" || attrs["exec.exit_code"] != int64(3) || attrs["exec.duration_ms"] != int64(250) {
+				t.Fatalf("span attrs = %v", attrs)
+			}
+			if d := sp.EndTime.Sub(sp.StartTime); d < 200*time.Millisecond || d > time.Second {
+				t.Fatalf("span duration = %v, want ~250ms (back-dated start)", d)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("span never exported (have %d)", len(exporter.GetSpans()))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
