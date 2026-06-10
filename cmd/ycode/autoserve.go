@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,9 +20,15 @@ import (
 )
 
 const (
-	serverHealthTimeout  = 500 * time.Millisecond
-	serverStartupTimeout = 10 * time.Second
+	serverHealthTimeout = 500 * time.Millisecond
 )
+
+// ErrServerNotRunning is returned by ensureServer when no `ycode serve`
+// process is reachable. The TUI catches this and falls back to in-process
+// mode; the piped-input path catches it and runs the prompt in-process.
+// The bare CLI does not start a server on its own — that is the user's
+// responsibility (or a system service / launchd job in the future).
+var ErrServerNotRunning = fmt.Errorf("ycode serve is not running; start it from another terminal: `ycode serve` (or install it as a system service)")
 
 // detectServer checks whether a ycode server is already running.
 // It uses dual verification: PID file existence + HTTP health check.
@@ -77,40 +82,25 @@ func detectServer() (baseURL string, ok bool) {
 	return baseURL, true
 }
 
-// ensureServer guarantees a ycode server is running, starting one if necessary.
+// ensureServer returns the base URL of a reachable ycode server, or
+// ErrServerNotRunning if none is reachable. It never spawns a server —
+// the bare CLI used to auto-fork `ycode serve --auto` here, but that left
+// orphaned daemons accumulating across sessions (and, in the companion
+// VSCode extension, leaked stderr into the extension-host heap). Callers
+// must handle ErrServerNotRunning by either degrading to in-process mode
+// or surfacing a clear message to the user.
 func ensureServer() (string, error) {
-	// Already running?
 	if baseURL, ok := detectServer(); ok {
 		return baseURL, nil
 	}
-
-	// Use the default port (same as ycode serve default).
-	port := resolveServerPort()
-
-	// Start a new server in detached mode with --auto flag.
-	if err := startAutoServer(port); err != nil {
-		return "", fmt.Errorf("auto-start server: %w", err)
-	}
-
-	// Wait for server to become healthy.
-	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-
-	deadline := time.Now().Add(serverStartupTimeout)
-	delay := 50 * time.Millisecond
-	for time.Now().Before(deadline) {
-		time.Sleep(delay)
-		if healthCheck(baseURL) {
-			return baseURL, nil
-		}
-		// Exponential backoff: 50, 100, 200, 400, 800, 1000, 1000...
-		delay = min(delay*2, time.Second)
-	}
-
-	return "", fmt.Errorf("server did not become healthy within %v", serverStartupTimeout)
+	return "", ErrServerNotRunning
 }
 
-// runThinTUIAsync shows the TUI instantly and connects to the server in the background.
-// The server is detected or started asynchronously — the TUI is responsive immediately.
+// runThinTUIAsync shows the TUI instantly and connects to an already-running
+// `ycode serve` in the background. Callers must verify the server is running
+// (via detectServer) before invoking this — runThinTUIAsync no longer starts
+// one itself, and a missing server means the lazy client will surface an
+// ErrServerNotRunning on first use.
 func runThinTUIAsync() error {
 	cwd, _ := os.Getwd()
 	app, err := cli.NewThinApp(version, cwd)
@@ -153,44 +143,6 @@ func runThinTUIAsync() error {
 	lazyClient.ConnectAsync()
 
 	return app.RunInteractiveWithClient(context.Background(), lazyClient)
-}
-
-// startAutoServer spawns a detached ycode server with the --auto flag on the given port.
-func startAutoServer(port int) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("find executable: %w", err)
-	}
-
-	home, _ := os.UserHomeDir()
-	logDir := filepath.Join(home, ".agents", "ycode", "observability")
-	_ = os.MkdirAll(logDir, 0o755)
-	logFile, err := os.OpenFile(filepath.Join(logDir, "serve.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return fmt.Errorf("open log file: %w", err)
-	}
-
-	// --detach=false: the bare `ycode serve` default is now to fork into
-	// the background. We're already forking here, so the child must stay
-	// attached or it will fork again and exit, leaving no live server.
-	args := []string{filepath.Base(exe), "serve", "--detach=false", "--auto", "--port", strconv.Itoa(port)}
-
-	attr := &os.ProcAttr{
-		Dir:   ".",
-		Files: []*os.File{os.Stdin, logFile, logFile},
-		Sys:   &syscall.SysProcAttr{Setsid: true},
-	}
-
-	proc, err := os.StartProcess(exe, args, attr)
-	if err != nil {
-		logFile.Close()
-		return err
-	}
-	logFile.Close()
-
-	slog.Debug("auto-started server", "pid", proc.Pid, "port", port)
-	_ = proc.Release()
-	return nil
 }
 
 // healthCheck performs a quick HTTP health check against the server.

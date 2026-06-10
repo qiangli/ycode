@@ -921,10 +921,13 @@ var rootCmd = &cobra.Command{
 			if prompt == "" {
 				return fmt.Errorf("empty input from stdin")
 			}
-			// Use server (start one if needed).
+			// Prefer an already-running server; otherwise fall through to
+			// in-process. ycode no longer auto-spawns `ycode serve`.
 			if os.Getenv("YCODE_NO_SERVER") == "" {
 				if baseURL, err := ensureServer(); err == nil {
 					return runServerPrompt(baseURL, prompt)
+				} else {
+					fmt.Fprintf(os.Stderr, "ycode: %s; running in-process (some server-mode features unavailable)\n", err)
 				}
 			}
 			app, err := newApp()
@@ -938,12 +941,18 @@ var rootCmd = &cobra.Command{
 			return app.RunPrompt(context.Background(), prompt)
 		}
 
-		// Client-server mode: show TUI instantly, connect to server in background.
+		// Client-server mode if a server is already running; otherwise
+		// fall through to in-process. ycode does not auto-spawn the
+		// server — that is the user's responsibility (run `ycode serve`
+		// in another terminal, or install it as a system service).
 		if os.Getenv("YCODE_NO_SERVER") == "" {
-			return runThinTUIAsync()
+			if _, ok := detectServer(); ok {
+				return runThinTUIAsync()
+			}
+			fmt.Fprintf(os.Stderr, "ycode: %s; running in-process (some server-mode features unavailable)\n", ErrServerNotRunning)
 		}
 
-		// Fallback: full in-process initialization (YCODE_NO_SERVER=1).
+		// In-process mode: full feature set, self-contained TUI.
 		app, err := newApp()
 		if err != nil {
 			return err
