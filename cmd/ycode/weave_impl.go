@@ -82,6 +82,7 @@ type weaveItem struct {
 	Sandbox    string    `json:"sandbox,omitempty"`
 	Branch     string    `json:"branch,omitempty"`
 	Created    time.Time `json:"created"`
+	StartedAt  time.Time `json:"started_at,omitempty"`
 	FinishedAt time.Time `json:"finished_at,omitempty"`
 	ExitCode   *int      `json:"exit_code,omitempty"`
 	LogPath    string    `json:"log_path,omitempty"`
@@ -202,6 +203,49 @@ func saveWeaveQueue(dir string, q *weaveQueue) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// weaveStartedCol renders the subagent's start time for the list
+// table: clock time for today, date for older, "-" when the item
+// never started (or predates the started_at field).
+func weaveStartedCol(it *weaveItem) string {
+	if it.StartedAt.IsZero() {
+		return "-"
+	}
+	t := it.StartedAt.Local()
+	now := time.Now()
+	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
+		return t.Format("15:04:05")
+	}
+	return t.Format("Jan02")
+}
+
+// weaveDurationCol renders elapsed run time: live (now-started) for
+// working items, started→finished for terminal ones, "-" otherwise.
+func weaveDurationCol(it *weaveItem) string {
+	if it.StartedAt.IsZero() {
+		return "-"
+	}
+	var d time.Duration
+	switch {
+	case it.State == "working":
+		d = time.Since(it.StartedAt)
+	case !it.FinishedAt.IsZero():
+		d = it.FinishedAt.Sub(it.StartedAt)
+	default:
+		return "-"
+	}
+	if d < 0 {
+		return "-"
+	}
+	d = d.Round(time.Second)
+	if d >= time.Hour {
+		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	if d >= time.Minute {
+		return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%ds", int(d.Seconds()))
 }
 
 func findWeaveItem(q *weaveQueue, id int64) *weaveItem {
@@ -357,7 +401,7 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 		}
 		return nil
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "%-4s %-4s %-10s %-40s %s\n", "ID", "PRIO", "STATE", "TITLE", "SANDBOX")
+	fmt.Fprintf(cmd.OutOrStdout(), "%-4s %-4s %-10s %-8s %-8s %-40s %s\n", "ID", "PRIO", "STATE", "STARTED", "DUR", "TITLE", "SANDBOX")
 	for _, it := range items {
 		title := it.Title
 		if len(title) > 40 {
@@ -367,7 +411,8 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 		if it.Stale {
 			state = it.State + "*"
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "%-4d %-4s %-10s %-40s %s\n", it.ID, it.Priority, state, title, it.Sandbox)
+		fmt.Fprintf(cmd.OutOrStdout(), "%-4d %-4s %-10s %-8s %-8s %-40s %s\n",
+			it.ID, it.Priority, state, weaveStartedCol(it), weaveDurationCol(it), title, it.Sandbox)
 	}
 	if anyStale {
 		fmt.Fprintln(cmd.OutOrStdout(), "* wrapper process is dead — re-attach with `weave start --resume --issue N` or `weave abandon N`")
@@ -582,6 +627,7 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			// immediately on the old terminal state.
 			freshIt.State = "working"
 			freshIt.ExitCode = nil
+			freshIt.StartedAt = time.Now().UTC()
 			freshIt.FinishedAt = time.Time{}
 			freshIt.CtlSock = ctlSock
 			it = freshIt
@@ -656,6 +702,7 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			freshIt.Branch = branch
 			freshIt.WrapperPid = os.Getpid()
 			freshIt.CtlSock = ctlSock
+			freshIt.StartedAt = time.Now().UTC()
 			it = freshIt
 			return nil
 		})

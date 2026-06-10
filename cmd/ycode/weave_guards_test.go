@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestParseWeaveMemLimit(t *testing.T) {
@@ -81,5 +82,32 @@ func TestTailOffset(t *testing.T) {
 				t.Errorf("tailOffset(%q, %d): got %q, want %q", c.content, c.n, got, c.want)
 			}
 		})
+	}
+}
+
+func TestWeaveDurationCol(t *testing.T) {
+	now := time.Now().UTC()
+	cases := []struct {
+		name string
+		it   weaveItem
+		want string
+	}{
+		{"never started", weaveItem{State: "todo"}, "-"},
+		{"finished seconds", weaveItem{State: "submitted", StartedAt: now.Add(-90 * time.Second), FinishedAt: now.Add(-48 * time.Second)}, "42s"},
+		{"finished minutes", weaveItem{State: "done", StartedAt: now.Add(-10 * time.Minute), FinishedAt: now.Add(-7*time.Minute - 55*time.Second)}, "2m05s"},
+		{"finished hours", weaveItem{State: "failed", StartedAt: now.Add(-3 * time.Hour), FinishedAt: now.Add(-95 * time.Minute)}, "1h25m"},
+		{"started but no finish, not working", weaveItem{State: "submitted", StartedAt: now.Add(-time.Minute)}, "-"},
+		{"clock skew negative", weaveItem{State: "done", StartedAt: now, FinishedAt: now.Add(-time.Minute)}, "-"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := weaveDurationCol(&c.it); got != c.want {
+				t.Errorf("weaveDurationCol(%s) = %q, want %q", c.name, got, c.want)
+			}
+		})
+	}
+	w := weaveItem{State: "working", StartedAt: now.Add(-5 * time.Second)}
+	if got := weaveDurationCol(&w); got == "-" || got == "0s" {
+		t.Errorf("working item should show live duration, got %q", got)
 	}
 }
