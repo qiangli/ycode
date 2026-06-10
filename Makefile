@@ -45,7 +45,7 @@ comma := ,
 #                                  Linux where podman uses its native
 #                                  socket directly). Added automatically
 #                                  when the gz exists.
-TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata$(if $(wildcard internal/inference/runner_embed/ycode-runner.gz),$(comma)embed_runner)$(if $(wildcard internal/container/vfkit_embed/vfkit.gz),$(comma)embed_vfkit)$(if $(wildcard internal/container/podman_embed/podman.gz),$(comma)embed_podman)$(if $(wildcard internal/container/gvproxy_embed/gvproxy.gz),$(comma)embed_gvproxy)
+TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata$(if $(wildcard internal/runtime/wrap/spawn_embed/ycode-spawn.gz),$(comma)embed_spawn)$(if $(wildcard internal/inference/runner_embed/ycode-runner.gz),$(comma)embed_runner)$(if $(wildcard internal/container/vfkit_embed/vfkit.gz),$(comma)embed_vfkit)$(if $(wildcard internal/container/podman_embed/podman.gz),$(comma)embed_podman)$(if $(wildcard internal/container/gvproxy_embed/gvproxy.gz),$(comma)embed_gvproxy)
 TAGS := -tags "$(TAG_LIST)"
 PACKAGES := $(shell go list ./... | grep -v '/priorart/')
 
@@ -64,7 +64,7 @@ ifeq ($(shell uname),Darwin)
 export CGO_LDFLAGS += -Wl,-no_warn_duplicate_libraries
 endif
 
-.PHONY: help init sync priorart-list priorart-sync compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-release-smoke test-all vet tidy clean all chrome-extension cross runner-build runner-build-thin runner-build-if-missing runner-check podman-embed podman-embed-if-missing vfkit-embed vfkit-embed-if-darwin gvproxy-embed gvproxy-embed-if-applicable ensure-embeds _compile-inner build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
+.PHONY: help init sync priorart-list priorart-sync spawn-embed compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-release-smoke test-all vet tidy clean all chrome-extension cross runner-build runner-build-thin runner-build-if-missing runner-check podman-embed podman-embed-if-missing vfkit-embed vfkit-embed-if-darwin gvproxy-embed gvproxy-embed-if-applicable ensure-embeds _compile-inner build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
 
 .DEFAULT_GOAL := help
 
@@ -96,7 +96,13 @@ priorart-sync: ## Pull latest changes for all priorart repos
 
 # ─── Build ──────────────────────────────────────────────────────────────────
 
-ensure-embeds: vfkit-embed-if-darwin runner-build-if-missing podman-embed-if-missing gvproxy-embed-if-applicable
+ensure-embeds: spawn-embed vfkit-embed-if-darwin runner-build-if-missing podman-embed-if-missing gvproxy-embed-if-applicable
+
+# ycode-spawn is a stdlib-only micro shim inside this repo (cmd/ycode-spawn);
+# unlike the other embeds it always builds (no fetch track, no soft-skip)
+# and the script is a no-op when the source hasn't changed.
+spawn-embed: ## Build + compress the ycode-spawn micro shim for embedding
+	@./scripts/embed-spawn.sh
 
 # `compile` runs the embed prereqs first, then re-invokes Make for the
 # actual `go build`. The sub-make is required because TAG_LIST's

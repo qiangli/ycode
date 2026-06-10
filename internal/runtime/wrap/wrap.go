@@ -32,11 +32,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	hookruntime "github.com/qiangli/ycode/internal/runtime/wrap/runtime"
 	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
+
+	"github.com/qiangli/ycode/internal/runtime/spawncore"
 )
 
 // envShim signals to ycode's main() that the process was invoked via a
@@ -44,26 +45,26 @@ import (
 // cobra root. Without this gate, renaming the ycode binary to "bash"
 // would silently engage shim behavior — the env var makes shim mode
 // an opt-in contract between Run() and ShimMain().
-const envShim = "YCODE_WRAP_SHIM"
+const envShim = spawncore.EnvShim
 
 // envDepth is a recursion guard: every shim invocation increments the
 // counter; ShimMain refuses to re-enter past maxShimDepth. Without
 // this, a bash shim that spawns a sub-bash through PATH would loop
 // forever.
-const envDepth = "YCODE_WRAP_DEPTH"
+const envDepth = spawncore.EnvDepth
 
 // envShimDir is the absolute path of the shim directory the parent
 // materialized. The child needs this to strip the shim from PATH
 // before resolving the real binary (otherwise the resolve would
 // re-hit the shim).
-const envShimDir = "YCODE_WRAP_SHIM_DIR"
+const envShimDir = spawncore.EnvShimDir
 
 // envWrappedAgent records the foreign-agent program name (claude,
 // codex, aider, gemini, opencode, ...) so OTel spans can carry it as
 // an attribute. Set by Run; read by ShimMain.
 const envWrappedAgent = "YCODE_WRAP_AGENT"
 
-const maxShimDepth = 4
+const maxShimDepth = spawncore.MaxDepth
 
 // defaultShims is the list of command names a fresh `ycode wrap`
 // session materializes symlinks for. Each entry must be a basename
@@ -291,6 +292,18 @@ func Run(ctx context.Context, opts Options) (int, error) {
 		_ = os.RemoveAll(sessionDir)
 	}()
 
+	// Per-session spawn-event socket: every shim dispatch fires one
+	// fire-and-forget datagram here before exec'ing the real tool;
+	// we aggregate and log per-minute rates + a session summary.
+	// Fail-open — telemetry must never block the session.
+	eventsSock := ""
+	if listener, evErr := startSpawnEventListener(sessionDir); evErr != nil {
+		slog.Warn("wrap: spawn-event listener unavailable; continuing without spawn telemetry", "err", evErr)
+	} else if listener != nil {
+		eventsSock = listener.sockPath
+		defer listener.stop()
+	}
+
 	bin := opts.AgentArgs[0]
 	args := opts.AgentArgs[1:]
 
@@ -307,6 +320,9 @@ func Run(ctx context.Context, opts Options) (int, error) {
 	}
 	env = injectShimEnv(env, shimDir, opts)
 	env = injectTraceparent(telCtx, env)
+	if eventsSock != "" {
+		env = append(env, spawncore.EnvEvents+"="+eventsSock)
+	}
 
 	// Runtime hooks (Phase 1.2): materialize Python sitecustomize.py
 	// and/or Node ycode-trace.cjs under <shimDir>/python|node/ and
@@ -395,102 +411,26 @@ func IsShimInvocation() bool {
 	return base != "ycode"
 }
 
-// ShimMain is the child-side entry point. It is invoked from
-// cmd/ycode/main.go when IsShimInvocation() reports true. Returns the
-// exit code the calling main() should propagate.
+// ShimMain is the in-binary fallback dispatcher, used when shim
+// symlinks point at the ycode binary itself: bare `go build` without
+// -tags embed_spawn, ycode-spawn extraction failure, or stale shim
+// dirs from sessions predating the micro shim. It delegates to the
+// same spawncore.Dispatch that cmd/ycode-spawn uses: depth guard →
+// PATH strip → real-binary resolve → spawn-event datagram → exec(2)
+// on unix (fork-and-wait on Windows, which has no exec). Note the
+// monolith's boot cost (~250ms, ~150MB) has already been paid by the
+// time control reaches here — the embedded micro shim is the real
+// fix; this path only keeps the fallback's semantics identical.
 //
-// Behavior:
-//  1. Initialize slog from YCODE_LOG_LEVEL so the per-exec span debug
-//     line (emitted by telotel.StartExecSpan's finish closure) is
-//     visible when operators ask for it. Without this, ShimMain runs
-//     under the default no-op handler and `ycode wrap --debug` would
-//     silently drop every shim-level exec span.
-//  2. Check the recursion-depth counter; bail if too deep.
-//  3. Strip the shim directory from $PATH (so the real-binary lookup
-//     does not re-hit the shim).
-//  4. Look up the real binary by basename via the cleaned $PATH.
-//  5. Open an ExecScopeWrappedAgent span and exec the real binary
-//     with stdin/out/err inherited.
+// The per-exec OTel span that used to live here was removed with the
+// switch to exec(2): shims never installed a real tracer provider
+// (main() routes here before any telemetry setup) so the span was a
+// no-op, and after exec there is no process left to finish it. Spawn
+// accounting now flows through the event datagram to the wrap
+// parent, which does own a real provider.
 func ShimMain() int {
 	defer initLoggerFromEnv()()
-	base := filepath.Base(os.Args[0])
-	depth := 0
-	if v := os.Getenv(envDepth); v != "" {
-		n, err := strconv.Atoi(v)
-		if err == nil {
-			depth = n
-		}
-	}
-	if depth >= maxShimDepth {
-		fmt.Fprintf(os.Stderr, "ycode wrap: shim recursion depth %d exceeded for %q; refusing to dispatch\n", depth, base)
-		return 125
-	}
-
-	shimDir := os.Getenv(envShimDir)
-	cleanedPath := stripShimFromPath(os.Getenv("PATH"), shimDir)
-	_ = os.Setenv("PATH", cleanedPath)
-	_ = os.Setenv(envDepth, strconv.Itoa(depth+1))
-
-	real, err := exec.LookPath(base)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ycode wrap: real %q not found on PATH: %v\n", base, err)
-		return 127
-	}
-	// Guard against the (unlikely) case where LookPath resolved back
-	// to the shim despite the strip — would loop forever via the
-	// kernel re-exec'ing ycode.
-	if shimDir != "" {
-		if rp, err := filepath.Abs(real); err == nil {
-			if strings.HasPrefix(rp, shimDir+string(os.PathSeparator)) || rp == shimDir {
-				fmt.Fprintf(os.Stderr, "ycode wrap: real %q still inside shim dir %q after strip; refusing\n", base, shimDir)
-				return 126
-			}
-		}
-	}
-
-	args := append([]string{}, os.Args[1:]...)
-	ctx := context.Background()
-	telCtx, finish := telotel.StartExecSpan(ctx, telotel.ExecScopeWrappedAgent, real, args)
-	_ = telCtx
-
-	cmd := exec.Command(real, args...)
-	cmd.Env = os.Environ()
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	// Setpgid + signal forwarding so SIGINT/SIGTERM/SIGHUP delivered to
-	// the shim's PID propagate to the wrapped binary (and its
-	// descendants). Without this, Go's default handler terminates the
-	// shim and orphans the child — traps inside the wrapped tool never
-	// fire, which broke mvdan-sh interp.TestKillTimeout and similar
-	// signal-driven tests run with the wrap shim on PATH.
-	cmd.SysProcAttr = newProcessGroupAttr()
-	if err = cmd.Start(); err != nil {
-		finish(0, err)
-		fmt.Fprintf(os.Stderr, "ycode wrap: exec %q: %v\n", real, err)
-		return 1
-	}
-	stopSignals := forwardSignalsToChild(cmd)
-	err = cmd.Wait()
-	stopSignals()
-
-	exitCode := 0
-	if cmd.ProcessState != nil {
-		exitCode = cmd.ProcessState.ExitCode()
-	}
-	finish(exitCode, err)
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitCode
-		}
-		fmt.Fprintf(os.Stderr, "ycode wrap: exec %q: %v\n", real, err)
-		if exitCode == 0 {
-			return 1
-		}
-		return exitCode
-	}
-	return exitCode
+	return spawncore.Dispatch(os.Args[0], os.Args[1:])
 }
 
 // injectShimEnv overlays the wrap-coordination variables on a copy of

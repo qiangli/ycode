@@ -4,17 +4,28 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"github.com/qiangli/ycode/internal/runtime/wrap/spawn_embed"
 )
 
 // materializeShimDir creates a fresh, per-invocation directory of
-// symlinks pointing at the running ycode binary, one entry per
-// command name in commands. When the foreign agent shells out to one
-// of those names through PATH, the kernel re-exec's ycode with
+// symlinks, one entry per command name in commands.
+//
+// Preferred target: the embedded ycode-spawn micro shim (~1.6MB,
+// stdlib-only), extracted into the dir as `.ycode-spawn`. It resolves
+// the real binary and exec(2)s — ~3ms per command, nothing resident.
+//
+// Fallback (embed absent, e.g. bare `go build` without
+// -tags embed_spawn, or extraction failure): symlinks point at the
+// running ycode binary itself. The kernel then re-exec's ycode with
 // argv[0]=basename — main() detects this via IsShimInvocation and
-// dispatches to ShimMain.
+// dispatches to ShimMain, which costs the monolith's ~250ms boot per
+// command (the fan-out behind the 2026-06-10 OOM; avoid relying on
+// this path for real sessions).
 //
 // Choice of root:
 //   - $XDG_RUNTIME_DIR/ycode-wrap/<pid>/bin when set (tmpfs; auto
@@ -43,6 +54,19 @@ func materializeShimDir(selfBinary string, commands []string) (string, string, e
 		return "", "", fmt.Errorf("abs %s: %w", selfBinary, err)
 	}
 
+	// Dispatch target for the symlinks: the micro shim when embedded,
+	// the ycode binary otherwise. Extraction failure falls back
+	// rather than failing the session — a slow shim beats no shim.
+	target := abs
+	if spawn_embed.Available() {
+		spawner := filepath.Join(dir, ".ycode-spawn")
+		if err := spawn_embed.ExtractTo(spawner); err != nil {
+			slog.Warn("wrap: ycode-spawn extract failed; shims fall back to the ycode binary", "err", err)
+		} else {
+			target = spawner
+		}
+	}
+
 	for _, name := range commands {
 		// Skip obviously bogus names. A shim called "ycode" would
 		// re-enter the binary at depth 0 forever.
@@ -53,10 +77,10 @@ func materializeShimDir(selfBinary string, commands []string) (string, string, e
 		// Remove any leftover from a previous (same-pid?) crash so
 		// Symlink doesn't fail with EEXIST.
 		_ = os.Remove(dst)
-		if err := os.Symlink(abs, dst); err != nil {
+		if err := os.Symlink(target, dst); err != nil {
 			// Symlink can fail on filesystems that don't support
 			// them (e.g. some Windows mounts). Fall back to a copy.
-			if cpErr := copyFile(abs, dst); cpErr != nil {
+			if cpErr := copyFile(target, dst); cpErr != nil {
 				return "", "", fmt.Errorf("symlink/copy %s: %w", dst, err)
 			}
 			// Make sure the copy is executable.

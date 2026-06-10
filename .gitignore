@@ -23,6 +23,11 @@ internal/container/vfkit_embed/vfkit.gz
 internal/container/gvproxy_embed/gvproxy.gz
 internal/container/podman_embed/podman.gz
 
+# Embedded ycode-spawn micro shim — produced by scripts/embed-spawn.sh
+# (stdlib-only build from cmd/ycode-spawn; runs on every `make compile`
+# via ensure-embeds). Same pattern as the embeds above.
+internal/runtime/wrap/spawn_embed/ycode-spawn.gz
+
 # Go build cache
 /vendor/
 
