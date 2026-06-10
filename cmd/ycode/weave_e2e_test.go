@@ -1384,7 +1384,10 @@ func TestWeaveE2E_Sandbox_OriginRemoved(t *testing.T) {
 
 // TestWeaveE2E_Resume_AfterFailedRun: a non-zero tool exit leaves
 // state=failed with the sandbox preserved — the documented retry
-// path (`weave kill` → `weave start --resume`) must accept it.
+// path (`weave kill` → `weave start --resume`) must accept it,
+// flip the queue back to working for the duration of the retry
+// (so list/wait don't act on the stale terminal state), and land
+// on submitted when the retry exits 0.
 func TestWeaveE2E_Resume_AfterFailedRun(t *testing.T) {
 	if testing.Short() {
 		t.Skip("e2e skipped in -short")
@@ -1397,19 +1400,44 @@ func TestWeaveE2E_Resume_AfterFailedRun(t *testing.T) {
 	if out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", "echo partial > work.txt; exit 7"); envExitCode(ee) == 0 {
 		t.Fatalf("expected non-zero wrapper exit; out=%s", out)
 	}
-	// Resume in the same sandbox: prior partial work is still there,
-	// the retry commits it and exits 0 → state=submitted.
+	// Resume in the same sandbox. The script holds the run open
+	// long enough for the test to observe the mid-run state, then
+	// commits the prior partial work and exits 0.
 	script := `test -f work.txt || exit 9
+sleep 3
 git add work.txt
 git -c user.name=r -c user.email=r@r commit -qm retry
 exit 0`
-	out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--resume", "--", "bash", "-c", script)
-	if got := envExitCode(ee); got != 0 {
-		t.Fatalf("resume after failed exited %d; out=%s", got, out)
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--resume", "--", "bash", "-c", script)
+
+	// Mid-run: the stale failed state must flip back to working.
+	deadline := time.Now().Add(15 * time.Second)
+	sawWorking := false
+	for time.Now().Before(deadline) {
+		out, _ := runWeave(t, repo, home, "list", "--json")
+		items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+		if len(items) > 0 && items[0].(map[string]any)["state"] == "working" {
+			sawWorking = true
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
-	out, _ = runWeave(t, repo, home, "list")
+	if !sawWorking {
+		_ = bg.Process.Kill()
+		bg.Wait()
+		t.Fatalf("resumed issue never flipped back to state=working")
+	}
+	_ = bg.Wait()
+
+	out, _ := runWeave(t, repo, home, "list")
 	items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
-	if state := items[0].(map[string]any)["state"]; state != "submitted" {
-		t.Fatalf("expected state=submitted after resumed retry, got %v", state)
+	item := items[0].(map[string]any)
+	if item["state"] != "submitted" {
+		t.Fatalf("expected state=submitted after resumed retry, got %v", item["state"])
+	}
+	if _, hasExit := item["exit_code"]; hasExit {
+		if ec := item["exit_code"].(float64); ec != 0 {
+			t.Fatalf("expected exit_code=0 after resumed retry, got %v", ec)
+		}
 	}
 }

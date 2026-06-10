@@ -484,6 +484,13 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 					it.ID, freshIt.WrapperPid, it.ID, errWeaveWrapperLive)
 			}
 			freshIt.WrapperPid = os.Getpid()
+			// Flip back to working and clear the stale terminal
+			// record — otherwise `weave list` shows failed while an
+			// agent is actively running and `weave wait` returns
+			// immediately on the old terminal state.
+			freshIt.State = "working"
+			freshIt.ExitCode = nil
+			freshIt.FinishedAt = time.Time{}
 			it = freshIt
 			return nil
 		})
