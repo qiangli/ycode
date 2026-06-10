@@ -68,7 +68,9 @@ func WriteUserSkills(home string) ([]string, error) {
 		return nil, fmt.Errorf("selfinit: empty home")
 	}
 	var written []string
+	embedded := make(map[string]struct{})
 	for _, name := range skills.Names() {
+		embedded[name] = struct{}{}
 		body, ok := skills.Body(name)
 		if !ok {
 			continue
@@ -78,6 +80,24 @@ func WriteUserSkills(home string) ([]string, error) {
 			return written, fmt.Errorf("write %s: %w", skillPath, err)
 		}
 		written = append(written, skillPath)
+	}
+	// Prune managed entries the binary no longer ships (renamed,
+	// or reclassified as contributor-internal). The ycode- prefix is
+	// the managed namespace: user-authored skills under other names
+	// are never touched; customized copies belong in the overlay
+	// (~/.agents/ycode/skills/), which this never reaches.
+	laneDir := filepath.Join(home, ".config", "ycode", "skills")
+	if entries, err := os.ReadDir(laneDir); err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if !e.IsDir() || !strings.HasPrefix(name, "ycode-") {
+				continue
+			}
+			if _, ok := embedded[name]; ok {
+				continue
+			}
+			_ = os.RemoveAll(filepath.Join(laneDir, name))
+		}
 	}
 	return written, nil
 }

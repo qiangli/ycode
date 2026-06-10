@@ -1,12 +1,17 @@
-// Package skills embeds the skill lane shipped with the ycode binary.
+// Package skills embeds the skill lane shipped with the ycode binary
+// — the skills for regular USERS of ycode, applicable in any repo.
 //
 // Every directory here (skills/ycode-<name>/skill.md) is compiled into
-// the binary and applies to ALL repos. `ycode init` installs editable
-// copies to ~/.config/ycode/skills/ (managed: re-synced when the
-// binary's embedded content changes); resolution falls back to the
-// embedded copy when no on-disk overlay shadows it, so a bare binary
-// works without any install step. Per-repo overrides go in
-// .agents/ycode/skills/<name>/skill.md, which shadows both.
+// the binary and resolves from any cwd; `ycode init` additionally
+// installs editable copies to ~/.config/ycode/skills/ (a managed lane,
+// re-synced whenever the binary's embedded content changes). Per-repo
+// or per-user overrides go in .agents/ycode/skills/ or
+// ~/.agents/ycode/skills/, which shadow both.
+//
+// Skills for ycode CONTRIBUTORS (build, deploy, validate, audit, …)
+// deliberately live outside this package, in the repo's
+// .agents/ycode/skills/ workspace overlay — available exactly when
+// the cwd is the ycode source tree, never bundled, never installed.
 package skills
 
 import (

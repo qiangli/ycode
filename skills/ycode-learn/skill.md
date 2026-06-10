@@ -9,12 +9,10 @@ user_invocable: true
 Analyze a reference project (existing or new) to identify features this project can adopt. Produces three deliverables: gap analysis, implementation plan, and tracking TODO.
 
 > `/learn` is **research-only** — it produces docs, not code changes.
-> For autonomous implementation against a third-party agentic tool,
-> use `/analyze`. For arbitrary development tasks (fix, improve, feature
-> work), use `/autopilot`.
+> For implementation of what it finds, hand off to `/autopilot`.
 
 `{{ARGS}}` is required. It is either:
-- A project name that exists under `priorart/` (e.g., `aider`, `cline`, `opencode`)
+- A project name that exists under the repo's reference corpus — `priorart/` by convention, or wherever this repo keeps read-only reference checkouts
 - A topic or technology to research (e.g., `mcp protocol`, `code review`, `terminal ui`)
 
 If `{{ARGS}}` is empty, ask the user what they want to study.
@@ -23,15 +21,15 @@ If `{{ARGS}}` is empty, ask the user what they want to study.
 
 Determine which mode to use:
 
-1. Run `ls priorart/` to get the list of existing prior-art projects.
-2. If `{{ARGS}}` matches a directory name under `priorart/` (case-insensitive), use **Mode 1: Study Existing Project**.
+1. Run `ls priorart/` (or the repo's reference-corpus dir) to list existing prior-art projects; skip if the dir doesn't exist.
+2. If `{{ARGS}}` matches one of those directory names (case-insensitive), use **Mode 1: Study Existing Project**.
 3. Otherwise, use **Mode 2: Research New Topic**.
 
 ---
 
 ## Mode 1: Study Existing Project
 
-The target project is `priorart/{{ARGS}}`.
+The target project is `priorart/{{ARGS}}` (adjust if this repo keeps its corpus elsewhere).
 
 ### Step 1: Explore the reference project
 
@@ -189,7 +187,7 @@ Summarize to the user:
 
 Then point at the next step:
 
-> "Run `/analyze {{ARGS}}` to autonomously implement the high/medium-priority gaps end-to-end (research → plan → build → test → commit). For non-tool-comparison goals, use `/autopilot task <goal>`."
+> "Run `/autopilot task <goal>` to implement the high/medium-priority gaps end-to-end (research → plan → build → test → commit)."
 
 `/learn` itself **does not modify code**. End the run after the
 hand-off recommendation.
@@ -252,7 +250,7 @@ Use a short, lowercase name for the directory (matching existing convention: `ai
 ### Step 5: Proceed as Mode 1
 
 Execute Mode 1 Steps 1-6 against the newly added project (research and
-docs only; do not implement — hand off to `/analyze` per Step 6).
+docs only; do not implement — hand off per Step 6).
 
 ---
 
@@ -265,5 +263,5 @@ docs only; do not implement — hand off to `/analyze` per Step 6).
 - **Scope aggressively.** The plan should explicitly defer low-priority items and explain why. Not every gap needs to be closed.
 - **Match existing doc style.** Read at least one existing `docs/gap-analysis-*.md`, `docs/plan-*.md`, and `docs/todo-*.md` before writing new ones. Follow their formatting conventions.
 - **Agent-agnostic.** Do not rely on any tool-specific capabilities. Use standard file operations, git commands, and shell. If web search is unavailable in Mode 2, fall back to asking the user for URLs.
-- **No implementation.** `/learn` produces only the three research artifacts. Hand off to `/analyze` (or `/autopilot task <goal>`) for implementation; do not modify code in this skill.
+- **No implementation.** `/learn` produces only the three research artifacts. Hand off to `/autopilot task <goal>` for implementation; do not modify code in this skill.
 - **Permissive licenses only.** Only add projects licensed under MIT, BSD, or Apache 2.0 as submodules. Never add GPL, AGPL, LGPL, SSPL, BSL, or other copyleft/source-available licensed projects.

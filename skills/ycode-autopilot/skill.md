@@ -88,12 +88,11 @@ Implement the plan using `Read` / `Edit` / `Write`. Stay tight:
 
 ### Step 5: TEST
 
-Run `make build` (full quality gate: tidy → fmt → vet → compile →
-test → verify).
-
-For changes that touch areas covered by `/validate`, additionally run
-the relevant `make validate*` target. Don't reinvent the test pipeline
-— if `/build`'s flow fits, follow it; if `/validate`'s does, follow that.
+Run the repo's quality gate. Discover it rather than inventing one:
+check CLAUDE.md / AGENTS.md / CONTRIBUTING / the Makefile for the
+canonical command (`make build`, `make test`, `go test ./...`,
+`npm test`, …) and run that. If the repo ships its own build or
+validate skills, defer to their procedure.
 
 ### Step 6: FIX
 
@@ -167,23 +166,24 @@ Final report to the user, in 3–5 lines:
 
 - **Fully autonomous.** Never ask for confirmation between steps;
   proceed once the task is parsed.
-- **Never modify** anything under `priorart/` or `external/` —
-  read-only.
+- **Never modify** vendored or reference trees (`vendor/`,
+  `external/`, `priorart/`, `third_party/`, or whatever the repo's
+  docs mark read-only).
 - **Stage by name** — never `git add -A` or `git add .`.
-- **`make build` must pass** before any commit.
+- **The repo's quality gate must pass** before any commit.
 - **No push** unless `--push` appears in `{{ARGS}}`.
 - **Cap retries.** 3 fix-and-retry cycles per task; report and stop if
   still red.
-- **Reuse, don't reinvent.** If `/build`, `/validate`, or `/deploy`
-  already cover a step, defer to their procedure.
+- **Reuse, don't reinvent.** If the repo ships skills or documented
+  flows covering a step (build, validate, deploy), defer to them.
 
 ---
 
 ## Collab mode
 
 When `{{ARGS}}` starts with `collab`, the agent is one of N workers
-operating against ycode's internal Gitea (see
-[docs/agent-collab.md](../../docs/agent-collab.md)). This mode is
+operating against ycode's internal forge (see docs/agent-collab.md
+in the ycode repo). This mode is
 typically invoked by `ycode autopilot collab --agents N`, not by humans.
 
 Differences from default mode:
@@ -195,7 +195,7 @@ Differences from default mode:
   unclaimed issue from `tasks/<slug>` and passes title+body as the goal.
 - **Commit author is `agent-<id>`** — the orchestrator pre-configures
   `user.email` / `user.name` in the worktree; do not override.
-- **Push, then PR.** After `make build` is green and you've committed,
+- **Push, then PR.** After the quality gate is green and you've committed,
   push the branch (the orchestrator pre-configures the `ycode-internal`
   remote) and open a PR back to `main`. The merger handles auto-merge.
 - **Never touch cwd.** Treat the user's working tree as off-limits.

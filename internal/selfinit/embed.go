@@ -3,8 +3,8 @@ package selfinit
 import "github.com/qiangli/ycode/skills"
 
 // The skill bodies shipped with the binary live in the top-level
-// skills/ package (skills/ycode-<name>/skill.md, embedded via
-// go:embed). WriteUserSkills installs editable copies under
+// skills/ package (skills/ycode-<name>/skill.md, compiled in via
+// embedding). WriteUserSkills installs editable copies under
 // ~/.config/ycode/skills/ — never into a repo.
 
 // ForemanSkillBody returns the embedded /foreman skill body. Useful

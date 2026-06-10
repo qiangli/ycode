@@ -17,7 +17,7 @@ yc tab status
 ```
 
 Exit 0 + `hub: up   extension: connected` means you're good. Anything
-else: tell the user to start `bin/ycode serve` and click Connect in
+else: tell the user to start `ycode serve` and click Connect in
 the extension popup on the target tab.
 
 ## Verbs
