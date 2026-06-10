@@ -31,6 +31,46 @@ import (
 type weaveQueue struct {
 	NextID int64        `json:"next_id"`
 	Items  []*weaveItem `json:"items"`
+	// Root is the repo the queue serves, stamped on writes. Queues
+	// are keyed by a path-mangled tag that can't be reversed; Root
+	// lets `weave list` name nearby queues in its empty-queue hint.
+	Root string `json:"root,omitempty"`
+}
+
+// weaveOtherActiveQueues scans sibling queue dirs for queues with
+// non-terminal items — fuel for the "ran from the wrong directory"
+// hint, the most common weave confusion in dogfooding.
+func weaveOtherActiveQueues(currentDir string) []map[string]any {
+	base := filepath.Dir(currentDir)
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return nil
+	}
+	var out []map[string]any
+	for _, e := range entries {
+		if !e.IsDir() || filepath.Join(base, e.Name()) == currentDir {
+			continue
+		}
+		q, err := loadWeaveQueue(filepath.Join(base, e.Name()))
+		if err != nil {
+			continue
+		}
+		active := 0
+		for _, it := range q.Items {
+			if !isTerminalState(it.State) {
+				active++
+			}
+		}
+		if active == 0 {
+			continue
+		}
+		name := q.Root
+		if name == "" {
+			name = e.Name()
+		}
+		out = append(out, map[string]any{"root": name, "active": active})
+	}
+	return out
 }
 
 type weaveItem struct {
@@ -143,6 +183,15 @@ func loadWeaveQueue(dir string) (*weaveQueue, error) {
 }
 
 func saveWeaveQueue(dir string, q *weaveQueue) error {
+	if q.Root == "" {
+		// Best-effort back-stamp for queues created before Root
+		// existed; saveWeaveQueue callers all run from the repo.
+		if cwd, err := os.Getwd(); err == nil {
+			if root, err := weaveRepoRoot(cwd); err == nil {
+				q.Root = root
+			}
+		}
+	}
 	path := filepath.Join(dir, "queue.json")
 	tmp := path + ".tmp"
 	b, err := json.MarshalIndent(q, "", "  ")
@@ -287,13 +336,25 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 		}
 		items = append(items, it)
 	}
+	var others []map[string]any
+	if len(items) == 0 {
+		others = weaveOtherActiveQueues(dir)
+	}
 	if mode == weavecli.OutputJSON {
-		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave list", map[string]any{
-			"items": items,
-		}))
+		res := map[string]any{"items": items}
+		if len(others) > 0 {
+			res["other_active_queues"] = others
+		}
+		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave list", res))
 	}
 	if len(items) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "weave list: queue empty")
+		fmt.Fprintf(cmd.OutOrStdout(), "weave list: queue empty for %s\n", root)
+		if len(others) > 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "  hint: queues are per-repo (keyed by cwd); active weaves exist elsewhere:")
+			for _, o := range others {
+				fmt.Fprintf(cmd.OutOrStdout(), "    %s (%d active) — cd there and re-run\n", o["root"], o["active"])
+			}
+		}
 		return nil
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "%-4s %-4s %-10s %-40s %s\n", "ID", "PRIO", "STATE", "TITLE", "SANDBOX")
