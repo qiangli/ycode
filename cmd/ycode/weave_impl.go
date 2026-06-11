@@ -94,7 +94,11 @@ type weaveItem struct {
 	Title    string `json:"title"`
 	Body     string `json:"body,omitempty"`
 	Priority string `json:"priority,omitempty"`
-	State    string `json:"state"`
+	// Points is the story-point estimate (Fibonacci 1,2,3,5,8) from
+	// the optional sprint-planning phase; 8 maps to the ~30-minute
+	// runtime cap — bigger work must be split before assignment.
+	Points int    `json:"points,omitempty"`
+	State  string `json:"state"`
 	// Tool is the short (argv[0] basename) name of the CLI working
 	// the issue — codex, claude, gemini, opencode, bash — recorded
 	// at claim time, updated on resume.
@@ -436,6 +440,32 @@ func ec(code int) error {
 	return &exitCodeError{code: code}
 }
 
+// runWeaveAddPointed validates optional story points, files the
+// issue, then stamps the points on it.
+func runWeaveAddPointed(cmd *cobra.Command, title, body, priority, verify string, points int, flags *weaveOutputFlags) error {
+	if points != 0 && !weaveValidPoints(points) {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), flags.mode(), "weave add",
+			weavecli.ExitInvalidArg, fmt.Errorf("points must be one of 1,2,3,5,8")))
+	}
+	if err := runWeaveAdd(cmd, title, body, priority, verify, flags); err != nil {
+		return err
+	}
+	if points != 0 {
+		cwd, _ := os.Getwd()
+		if root, err := weaveRepoRoot(cwd); err == nil {
+			if dir, err := weaveQueueDir(root); err == nil {
+				_ = withWeaveQueueLock(dir, func(q *weaveQueue) error {
+					if len(q.Items) > 0 {
+						q.Items[len(q.Items)-1].Points = points
+					}
+					return nil
+				})
+			}
+		}
+	}
+	return nil
+}
+
 func runWeaveAdd(cmd *cobra.Command, title, body, priority, verify string, flags *weaveOutputFlags) error {
 	mode := flags.mode()
 	if title == "" {
@@ -507,8 +537,12 @@ func weaveRenderItemRows(w io.Writer, items []*weaveItem) {
 		if len(toolCol) > 9 {
 			toolCol = toolCol[:9]
 		}
-		fmt.Fprintf(w, "%-4d %-4s %-10s %-9s %-8s %-8s %-40s %s\n",
-			it.ID, it.Priority, state, toolCol, weaveStartedCol(it), weaveDurationCol(it), title, weaveTildePath(it.Sandbox))
+		pts := "-"
+		if it.Points > 0 {
+			pts = strconv.Itoa(it.Points)
+		}
+		fmt.Fprintf(w, "%-4d %-4s %-3s %-10s %-9s %-8s %-8s %-40s %s\n",
+			it.ID, it.Priority, pts, state, toolCol, weaveStartedCol(it), weaveDurationCol(it), title, weaveTildePath(it.Sandbox))
 	}
 }
 
@@ -633,7 +667,7 @@ func runWeaveListAll(cmd *cobra.Command, includeHistory bool, activeOnly bool, f
 			fmt.Fprintln(w)
 		}
 		fmt.Fprintf(w, "%s\n", weaveTildePath(v.Root))
-		fmt.Fprintf(w, "%-4s %-4s %-10s %-9s %-8s %-8s %-40s %s\n", "ID", "PRIO", "STATE", "TOOL", "STARTED", "DUR", "TITLE", "SANDBOX")
+		fmt.Fprintf(w, "%-4s %-4s %-3s %-10s %-9s %-8s %-8s %-40s %s\n", "ID", "PRIO", "PTS", "STATE", "TOOL", "STARTED", "DUR", "TITLE", "SANDBOX")
 		weaveRenderItemRows(w, v.Items)
 	}
 	return nil
@@ -698,7 +732,7 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 		}
 		return nil
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "%-4s %-4s %-10s %-9s %-8s %-8s %-40s %s\n", "ID", "PRIO", "STATE", "TOOL", "STARTED", "DUR", "TITLE", "SANDBOX")
+	fmt.Fprintf(cmd.OutOrStdout(), "%-4s %-4s %-3s %-10s %-9s %-8s %-8s %-40s %s\n", "ID", "PRIO", "PTS", "STATE", "TOOL", "STARTED", "DUR", "TITLE", "SANDBOX")
 	weaveRenderItemRows(cmd.OutOrStdout(), items)
 	if anyStale {
 		fmt.Fprintln(cmd.OutOrStdout(), "* wrapper process is dead — re-attach with `weave start --resume --issue N` or `weave abandon N`")
@@ -2254,6 +2288,53 @@ func runWeaveListWatch(cmd *cobra.Command, includeHistory bool, flags *weaveOutp
 }
 
 // isValidPriority returns true for any of the accepted priority tiers.
+// weaveValidPoints is the allowed story-point scale (Fibonacci;
+// 8 = the ~30-minute cap — split anything judged bigger).
+func weaveValidPoints(n int) bool {
+	switch n {
+	case 1, 2, 3, 5, 8:
+		return true
+	}
+	return false
+}
+
+func runWeavePoint(cmd *cobra.Command, id int64, points int, flags *weaveOutputFlags) error {
+	mode := flags.mode()
+	cwd, _ := os.Getwd()
+	root, err := weaveRepoRoot(cwd)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave point",
+			weavecli.ExitPrecondFail, err))
+	}
+	dir, _ := weaveQueueDir(root)
+	if !weaveValidPoints(points) {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave point",
+			weavecli.ExitInvalidArg, fmt.Errorf("points must be one of 1,2,3,5,8 (8 = ~30m cap; split bigger work)")))
+	}
+	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
+		it := findWeaveItem(q, id)
+		if it == nil {
+			return fmt.Errorf("issue #%d not found%s", id, weaveOtherActiveQueuesHintSuffix(dir))
+		}
+		it.Points = points
+		return nil
+	})
+	if lockErr != nil {
+		code := weavecli.ExitGenericFail
+		if strings.Contains(lockErr.Error(), "not found") {
+			code = weavecli.ExitInvalidArg
+		}
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave point", code, lockErr))
+	}
+	if mode == weavecli.OutputJSON {
+		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave point", map[string]any{
+			"issue": id, "points": points,
+		}))
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "weave point: issue #%d = %d points\n", id, points)
+	return nil
+}
+
 func isValidPriority(s string) bool {
 	switch s {
 	case "p0", "p1", "p2", "p3":

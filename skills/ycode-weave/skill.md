@@ -36,6 +36,7 @@ self-orchestration is safe). From a user goal:
     cd <repo-root>                       # queues are per-repo (cwd-keyed)
     # 1. DECOMPOSE the goal into N independent issues with DISJOINT
     #    file scopes; write each body per the Phase 1 contract below.
+    #    Complex round? Run the optional Phase 1.5 planning poker.
     ycode weave add "<title>" --priority p0 --body "<body>"   # × N
     # 2. PREPARE (only if the build needs untracked corpora — Phase 2):
     ycode weave start --no-spawn --issue <N> && ln -s <corpus> <sandbox>/
@@ -121,6 +122,37 @@ One issue per independent task. Every body carries, in order:
 8. **Exit instruction** matched to the tool (see Phase 3): headless
    tools "exit cleanly (exit 0)"; steerable TUI runs "reply DONE and
    wait" (the orchestrator stops them).
+
+## Phase 1.5 — Sprint planning (OPTIONAL — the orchestrator's call)
+
+For complex multi-issue rounds, get second opinions on priority and
+effort BEFORE assignment. Skip it for small or obvious rounds; when
+used, timebox the whole phase to a few minutes.
+
+1. Compile the issue list (titles + 2-line summaries + proposed
+   scopes) into one planning brief with this rubric:
+   "Story-point each issue on the Fibonacci scale 1,2,3,5,8 where
+   8 ≈ 30 minutes of agent runtime — the hard cap. If you judge an
+   issue larger than 8, do not stretch the scale: propose the split
+   into smaller issues. Also rank priority (p0-p3) by value and
+   unblocking effect. Return STRICT JSON:
+   [{id, points, priority, split: [titles...]|null, note}]."
+2. Fan the brief out as CHEAP HEADLESS one-shots — these are
+   advisory calls, not sandboxed issues (no repo access needed):
+       codex exec "<brief>"          claude -p "<brief>"
+       gemini -p "<brief>"           opencode run "<brief>"
+   All four in parallel; collect within minutes.
+3. Reconcile — the orchestrator has FINAL SAY: take the median
+   points per issue; any tool-to-tool spread wider than one Fib
+   step, or any split proposal, means the issue is under-specified
+   — break it down and re-add the pieces. Record the outcome:
+       ycode weave point <issue> <1|2|3|5|8>
+       ycode weave prio  <issue> <p0..p3>
+   (or file with `weave add --points N` directly). PTS shows in
+   `weave list`.
+4. Assign per the report card and the points: budget --max-runtime
+   from points (8 → 30m + small margin), biggest issues to the
+   strongest tool first.
 
 ## Phase 2 — Allocate and prepare sandboxes
 

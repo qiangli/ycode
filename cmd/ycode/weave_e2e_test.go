@@ -2187,3 +2187,32 @@ func TestWeaveE2E_List_All_GlobalView(t *testing.T) {
 		t.Fatalf("expected 1 item, got %v", q0["items"])
 	}
 }
+
+// TestWeaveE2E_Points: story points via add --points and the point
+// verb; Fibonacci-only validation; visible in list JSON.
+func TestWeaveE2E_Points(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "pointed", "--points", "5"); envExitCode(ee) != 0 {
+		t.Fatalf("add --points failed")
+	}
+	out, _ := runWeave(t, repo, home, "list", "--json")
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if p, _ := item["points"].(float64); int(p) != 5 {
+		t.Fatalf("expected points=5, got %v", item["points"])
+	}
+	if _, ee := runWeave(t, repo, home, "point", "1", "8"); envExitCode(ee) != 0 {
+		t.Fatalf("point verb failed")
+	}
+	out, _ = runWeave(t, repo, home, "list", "--json")
+	item = parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if p, _ := item["points"].(float64); int(p) != 8 {
+		t.Fatalf("expected points=8 after point verb, got %v", item["points"])
+	}
+	// Non-Fibonacci refused.
+	if out, ee := runWeave(t, repo, home, "point", "1", "4"); envExitCode(ee) != 2 {
+		t.Fatalf("expected invalid_arg for points=4, got %d; out=%s", envExitCode(ee), out)
+	}
+}

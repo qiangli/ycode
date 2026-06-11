@@ -26,6 +26,7 @@ func newWeaveAddCmd() *cobra.Command {
 	var title, body, tool, priority string
 	var fromFile string
 	var verify string
+	var points int
 	cmd := &cobra.Command{
 		Use:   `add "<title>"`,
 		Short: "Seed an issue into the loom queue",
@@ -41,13 +42,14 @@ according to the priority sort order.`,
 			if fromFile != "" {
 				return runWeaveAddFromFile(cmd, fromFile, priority, &flags)
 			}
-			return runWeaveAdd(cmd, title, body, priority, verify, &flags)
+			return runWeaveAddPointed(cmd, title, body, priority, verify, points, &flags)
 		},
 	}
 	flags.attach(cmd)
 	cmd.Flags().StringVar(&body, "body", "", "Issue body (optional)")
 	cmd.Flags().StringVar(&tool, "tool", "", "Pin a specific agentic tool for this issue (label tool:X)")
 	cmd.Flags().StringVar(&priority, "priority", "", "Priority tier: p0|p1|p2|p3 (default p2)")
+	cmd.Flags().IntVar(&points, "points", 0, "Story points (1,2,3,5,8; 8 = ~30m cap — split bigger work)")
 	cmd.Flags().StringVar(&fromFile, "from-file", "", "Bulk seed: markdown (`- [ ] title`) or JSON list of {title,body,priority}")
 	cmd.Flags().StringVar(&verify, "verify", "", "Verify command the wrapper runs (`bash -c`) in the sandbox at terminal time; verify_exit/verify_output recorded on the item, non-zero blocks `weave pull`")
 	return cmd
@@ -148,6 +150,28 @@ func newWeavePrioCmd() *cobra.Command {
 	}
 	flags.attach(cmd)
 	cmd.Flags().BoolVar(&auto, "auto", false, "Delegate ranking to an LLM (re-ranks the whole queue)")
+	return cmd
+}
+
+func newWeavePointCmd() *cobra.Command {
+	var flags weaveOutputFlags
+	cmd := &cobra.Command{
+		Use:   "point <issue> <1|2|3|5|8>",
+		Short: "Set an issue's story points (sprint planning; 8 = ~30m cap)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("issue must be an integer: %q", args[0])
+			}
+			n, err := strconv.Atoi(args[1])
+			if err != nil {
+				return fmt.Errorf("points must be an integer: %q", args[1])
+			}
+			return runWeavePoint(cmd, id, n, &flags)
+		},
+	}
+	flags.attach(cmd)
 	return cmd
 }
 
