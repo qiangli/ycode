@@ -97,6 +97,16 @@ type weaveItem struct {
 	// the run ended is hidden.
 	CommitsAhead int    `json:"commits_ahead,omitempty"`
 	Head         string `json:"head,omitempty"`
+	// VerifyCommand is the substrate-verified outcome hook, supplied
+	// at `weave add --verify "<cmd>"`. The WRAPPER runs it via
+	// `bash -c` inside the sandbox at terminal time — when the tool
+	// exited 0 or left commits ahead — and records VerifyExit and
+	// VerifyOutput (last 2000 bytes) as evidence. Verify never changes
+	// the terminal state itself; `weave pull` refuses to merge
+	// submitted items whose VerifyExit is set and non-zero.
+	VerifyCommand string `json:"verify_command,omitempty"`
+	VerifyExit    *int   `json:"verify_exit,omitempty"`
+	VerifyOutput  string `json:"verify_output,omitempty"`
 	ExitCode   *int      `json:"exit_code,omitempty"`
 	LogPath    string    `json:"log_path,omitempty"`
 	// WrapperPid is the PID of the `ycode weave start` process
@@ -311,6 +321,42 @@ func weaveMeasureBranch(sandbox, base string) (ahead int, head string) {
 	return ahead, head
 }
 
+// weaveRunVerify executes an item's verify command via `bash -c` in
+// the sandbox with a 10-minute ceiling, returning the exit code and
+// the last 2000 bytes of combined output. Like weaveMeasureBranch,
+// this is the wrapper's own measurement — claims are measured by
+// weave, not asserted by agents. A timeout or signal death surfaces
+// as a non-zero exit; the decision about what to do with a failing
+// verify belongs to `weave pull`, never to this function.
+func weaveRunVerify(sandbox, command string) (int, string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	vc := exec.CommandContext(ctx, "bash", "-c", command)
+	vc.Dir = sandbox
+	out, err := vc.CombinedOutput()
+	exit := 0
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			exit = ee.ExitCode()
+		} else {
+			exit = 1
+		}
+		if exit < 0 {
+			// Signal death (incl. the 10m timeout kill) has no wait
+			// status; normalize so verify_exit is always meaningful.
+			exit = 1
+		}
+	}
+	s := string(out)
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		s += "\n[weave: verify command timed out after 10m]"
+	}
+	if len(s) > 2000 {
+		s = s[len(s)-2000:]
+	}
+	return exit, s
+}
+
 func findWeaveItem(q *weaveQueue, id int64) *weaveItem {
 	for _, it := range q.Items {
 		if it.ID == id {
@@ -361,7 +407,7 @@ func ec(code int) error {
 	return &exitCodeError{code: code}
 }
 
-func runWeaveAdd(cmd *cobra.Command, title, body, priority string, flags *weaveOutputFlags) error {
+func runWeaveAdd(cmd *cobra.Command, title, body, priority, verify string, flags *weaveOutputFlags) error {
 	mode := flags.mode()
 	if title == "" {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave add",
@@ -388,12 +434,13 @@ func runWeaveAdd(cmd *cobra.Command, title, body, priority string, flags *weaveO
 		prio = "p2"
 	}
 	it := &weaveItem{
-		ID:       q.NextID,
-		Title:    title,
-		Body:     body,
-		Priority: prio,
-		State:    "todo",
-		Created:  time.Now().UTC(),
+		ID:            q.NextID,
+		Title:         title,
+		Body:          body,
+		Priority:      prio,
+		State:         "todo",
+		VerifyCommand: verify,
+		Created:       time.Now().UTC(),
 	}
 	q.NextID++
 	q.Items = append(q.Items, it)
@@ -947,6 +994,18 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 	// audit trail shows exactly how the run ended. No commits, no
 	// submitted: nothing is taken on faith.
 	ahead, head := weaveMeasureBranch(sandbox, base)
+	// Verify command (from `weave add --verify`): run it now, outside
+	// the lock — it can take up to 10 minutes. Only when there is
+	// something to verify (clean exit or commits ahead). The result is
+	// EVIDENCE recorded alongside the terminal state; it never changes
+	// the submitted/killed/failed decision below — `weave pull` is the
+	// consumer that acts on a non-zero verify_exit.
+	var verifyExit *int
+	var verifyOutput string
+	if it.VerifyCommand != "" && (exitCode == 0 || ahead > 0) {
+		ve, vo := weaveRunVerify(sandbox, it.VerifyCommand)
+		verifyExit, verifyOutput = &ve, vo
+	}
 	lockErr := withWeaveQueueLock(dir, func(freshQ *weaveQueue) error {
 		freshIt := findWeaveItem(freshQ, it.ID)
 		if freshIt == nil {
@@ -958,6 +1017,10 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 		freshIt.CtlSock = ""
 		freshIt.CommitsAhead = ahead
 		freshIt.Head = head
+		if verifyExit != nil {
+			freshIt.VerifyExit = verifyExit
+			freshIt.VerifyOutput = verifyOutput
+		}
 		if logPath != "" {
 			freshIt.LogPath = logPath
 		}
@@ -1239,6 +1302,16 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags) error {
 		// or "abandoned" are skipped: failed shouldn't auto-merge,
 		// done is already merged, abandoned was torn down.
 		if it.State != "working" && it.State != "submitted" {
+			continue
+		}
+		// Substrate-verified outcome gate: the wrapper ran the item's
+		// verify command at terminal time; a recorded non-zero exit
+		// means the work failed its own acceptance check. Refuse to
+		// merge — before fetching, so the branch never even lands in
+		// the user's repo. (A future --force may override.)
+		if it.VerifyExit != nil && *it.VerifyExit != 0 {
+			results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "verify-failed",
+				Detail: fmt.Sprintf("verify command exited %d — inspect with `weave shell %d`, fix or abandon", *it.VerifyExit, it.ID)})
 			continue
 		}
 		// The agent's branch lives in the sandbox clone, not the
