@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/api"
+	"github.com/qiangli/ycode/internal/buildinfo"
 	"github.com/qiangli/ycode/internal/cli"
 	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/container"
@@ -67,6 +68,7 @@ func selfHealEnabled() bool {
 }
 
 func main() {
+	buildinfo.Set(version, commit)
 	// Intercept Gitea-generated git hook invocations before cobra parses.
 	// Gitea's bare repos contain pre-receive/update/post-receive scripts
 	// that exec `<binary> --config=<app.ini> hook <stage>` — those args

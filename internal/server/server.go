@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/qiangli/ycode/internal/buildinfo"
 	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/memwatch"
 	"github.com/qiangli/ycode/internal/service"
@@ -202,6 +203,8 @@ func (s *Server) Addr() string {
 func (s *Server) registerRoutes() {
 	// REST endpoints.
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
+	s.mux.HandleFunc("GET /version", s.handleVersion)
+	s.mux.HandleFunc("GET /api/version", s.handleVersion)
 	s.mux.HandleFunc("GET /api/config", s.authMiddleware(s.handleGetConfig))
 	s.mux.HandleFunc("PUT /api/config/model", s.authMiddleware(s.handleSwitchModel))
 	s.mux.HandleFunc("GET /api/sessions", s.authMiddleware(s.handleListSessions))
@@ -394,6 +397,13 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleVersion reports the binary's identity (ldflags tag + commit,
+// VCS details when embedded). Unauthenticated by design — same tier
+// as /api/health; it identifies the build, not the user's data.
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, buildinfo.Get())
 }
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {

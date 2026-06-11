@@ -489,13 +489,173 @@ func runWeaveAdd(cmd *cobra.Command, title, body, priority, verify string, flags
 	return nil
 }
 
+// weaveRenderItemRows prints the standard list table rows (no header).
+func weaveRenderItemRows(w io.Writer, items []*weaveItem) {
+	for _, it := range items {
+		title := it.Title
+		if len(title) > 40 {
+			title = title[:37] + "..."
+		}
+		state := it.State
+		if it.Stale {
+			state = it.State + "*"
+		}
+		toolCol := it.Tool
+		if toolCol == "" {
+			toolCol = "-"
+		}
+		if len(toolCol) > 9 {
+			toolCol = toolCol[:9]
+		}
+		fmt.Fprintf(w, "%-4d %-4s %-10s %-9s %-8s %-8s %-40s %s\n",
+			it.ID, it.Priority, state, toolCol, weaveStartedCol(it), weaveDurationCol(it), title, weaveTildePath(it.Sandbox))
+	}
+}
+
+// weaveAllQueueDirs returns every queue dir under the weave base.
+func weaveAllQueueDirs() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	base := filepath.Join(home, ".agents", "ycode", "weave")
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return nil
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, filepath.Join(base, e.Name()))
+		}
+	}
+	return dirs
+}
+
+// weaveQueueSummaries prints one compact line per queue on the
+// machine: basename as the queue's name, state counts, and what is
+// actively running. Used when the current repo has no queue.
+func weaveQueueSummaries(w io.Writer, skipDir string) int {
+	printed := 0
+	for _, dir := range weaveAllQueueDirs() {
+		if dir == skipDir {
+			continue
+		}
+		q, err := loadWeaveQueue(dir)
+		if err != nil || len(q.Items) == 0 {
+			continue
+		}
+		root := q.Root
+		if root == "" {
+			root = filepath.Base(dir)
+		}
+		name := filepath.Base(root)
+		counts := map[string]int{}
+		var live []string
+		for _, it := range q.Items {
+			counts[it.State]++
+			if it.State == "working" {
+				tool := it.Tool
+				if tool == "" {
+					tool = "?"
+				}
+				live = append(live, fmt.Sprintf("#%d %s %s", it.ID, tool, weaveDurationCol(it)))
+			}
+		}
+		summary := fmt.Sprintf("  %-12s %d total", name, len(q.Items))
+		order := []string{"working", "allocated", "todo", "submitted", "killed", "failed", "done", "abandoned"}
+		for _, st := range order {
+			if counts[st] > 0 {
+				summary += fmt.Sprintf(", %d %s", counts[st], st)
+			}
+		}
+		if len(live) > 0 {
+			summary += " — " + strings.Join(live, "; ")
+		}
+		fmt.Fprintln(w, summary)
+		fmt.Fprintf(w, "  %-12s %s\n", "", weaveTildePath(root))
+		printed++
+	}
+	return printed
+}
+
+// runWeaveListAll renders every weave queue on the machine — the
+// global view. activeOnly limits rows to non-terminal items (the
+// shape used when the current repo's queue is empty: show where the
+// action is instead of a bare hint).
+func runWeaveListAll(cmd *cobra.Command, includeHistory bool, activeOnly bool, flags *weaveOutputFlags) error {
+	mode := flags.mode()
+	type queueView struct {
+		Root  string       `json:"root"`
+		Dir   string       `json:"dir"`
+		Items []*weaveItem `json:"items"`
+	}
+	var views []queueView
+	for _, dir := range weaveAllQueueDirs() {
+		q, err := loadWeaveQueue(dir)
+		if err != nil || len(q.Items) == 0 {
+			continue
+		}
+		var items []*weaveItem
+		for _, it := range q.Items {
+			if activeOnly && isTerminalState(it.State) {
+				continue
+			}
+			if !includeHistory && !activeOnly && (it.State == "done" || it.State == "abandoned") {
+				continue
+			}
+			if it.State == "working" && it.WrapperPid > 0 && !pidAlive(it.WrapperPid) {
+				it.Stale = true
+			}
+			items = append(items, it)
+		}
+		if len(items) == 0 {
+			continue
+		}
+		root := q.Root
+		if root == "" {
+			root = filepath.Base(dir)
+		}
+		views = append(views, queueView{Root: root, Dir: dir, Items: items})
+	}
+	if mode == weavecli.OutputJSON {
+		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave list", map[string]any{
+			"queues": views,
+		}))
+	}
+	if len(views) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "weave list: no weaves on this machine")
+		return nil
+	}
+	w := cmd.OutOrStdout()
+	for i, v := range views {
+		if i > 0 {
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintf(w, "%s\n", weaveTildePath(v.Root))
+		fmt.Fprintf(w, "%-4s %-4s %-10s %-9s %-8s %-8s %-40s %s\n", "ID", "PRIO", "STATE", "TOOL", "STARTED", "DUR", "TITLE", "SANDBOX")
+		weaveRenderItemRows(w, v.Items)
+	}
+	return nil
+}
+
 func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFlags) error {
 	mode := flags.mode()
 	cwd, _ := os.Getwd()
 	root, err := weaveRepoRoot(cwd)
 	if err != nil {
-		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave list",
-			weavecli.ExitPrecondFail, err))
+		// Not a repo: there is no "this queue" — show the machine
+		// summary instead of a dead end (JSON callers get the same
+		// via the --all shape).
+		if mode == weavecli.OutputJSON {
+			return runWeaveListAll(cmd, includeHistory, false, flags)
+		}
+		w := cmd.OutOrStdout()
+		fmt.Fprintf(w, "weave list: %s is not a git repo; weaves on this machine:\n", cwd)
+		if weaveQueueSummaries(w, "") == 0 {
+			fmt.Fprintln(w, "  (none)")
+		}
+		return nil
 	}
 	dir, _ := weaveQueueDir(root)
 	q, err := loadWeaveQueue(dir)
@@ -531,35 +691,15 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave list", res))
 	}
 	if len(items) == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "weave list: queue empty for %s\n", root)
-		if len(others) > 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "  hint: queues are per-repo (keyed by cwd); active weaves exist elsewhere:")
-			for _, o := range others {
-				fmt.Fprintf(cmd.OutOrStdout(), "    %s (%d active) — cd there and re-run\n", o["root"], o["active"])
-			}
+		w := cmd.OutOrStdout()
+		fmt.Fprintf(w, "weave list: no weaves for %s (this repo)\n", filepath.Base(root))
+		if weaveQueueSummaries(w, dir) > 0 {
+			fmt.Fprintln(w, "  (queues are per-repo; cd there, or `weave list --all` for full tables)")
 		}
 		return nil
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "%-4s %-4s %-10s %-9s %-8s %-8s %-40s %s\n", "ID", "PRIO", "STATE", "TOOL", "STARTED", "DUR", "TITLE", "SANDBOX")
-	for _, it := range items {
-		title := it.Title
-		if len(title) > 40 {
-			title = title[:37] + "..."
-		}
-		state := it.State
-		if it.Stale {
-			state = it.State + "*"
-		}
-		toolCol := it.Tool
-		if toolCol == "" {
-			toolCol = "-"
-		}
-		if len(toolCol) > 9 {
-			toolCol = toolCol[:9]
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "%-4d %-4s %-10s %-9s %-8s %-8s %-40s %s\n",
-			it.ID, it.Priority, state, toolCol, weaveStartedCol(it), weaveDurationCol(it), title, weaveTildePath(it.Sandbox))
-	}
+	weaveRenderItemRows(cmd.OutOrStdout(), items)
 	if anyStale {
 		fmt.Fprintln(cmd.OutOrStdout(), "* wrapper process is dead — re-attach with `weave start --resume --issue N` or `weave abandon N`")
 	}

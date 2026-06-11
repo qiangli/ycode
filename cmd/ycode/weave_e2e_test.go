@@ -2145,3 +2145,45 @@ echo done`
 		t.Fatalf("expected empty line (RECEIVED:), got %q", got)
 	}
 }
+
+// TestWeaveE2E_List_All_GlobalView: --all renders every queue on the
+// machine grouped by repo (JSON: queues[]), and a repo with an empty
+// queue gets per-queue summaries naming other repos by basename.
+func TestWeaveE2E_List_All_GlobalView(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "global view seed"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// Second repo sharing the same HOME: its queue is empty.
+	repo2 := t.TempDir()
+	for _, c := range [][]string{
+		{"git", "init", "-q", "-b", "main"},
+		{"git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-qm", "seed"},
+	} {
+		cmd := exec.Command(c[0], c[1:]...)
+		cmd.Dir = repo2
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", c, err, out)
+		}
+	}
+	out, ee := runWeave(t, repo2, home, "list", "--all")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("list --all exited %d; out=%s", got, out)
+	}
+	queues := parseEnvelope(t, out)["result"].(map[string]any)["queues"].([]any)
+	if len(queues) != 1 {
+		t.Fatalf("expected 1 queue in global view, got %d (%v)", len(queues), queues)
+	}
+	q0 := queues[0].(map[string]any)
+	wantRoot, _ := filepath.EvalSymlinks(repo)
+	gotRoot, _ := filepath.EvalSymlinks(q0["root"].(string))
+	if gotRoot != wantRoot {
+		t.Fatalf("expected root=%s, got %v", wantRoot, gotRoot)
+	}
+	if len(q0["items"].([]any)) != 1 {
+		t.Fatalf("expected 1 item, got %v", q0["items"])
+	}
+}

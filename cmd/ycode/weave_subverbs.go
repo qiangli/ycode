@@ -155,12 +155,16 @@ func newWeaveListCmd() *cobra.Command {
 	var flags weaveOutputFlags
 	var watch bool
 	var history bool
+	var all bool
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "Show active weaves (or --watch for live state-transition stream)",
+		Short: "Show active weaves (--all: every queue on the machine)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if watch {
 				return runWeaveListWatch(cmd, history, &flags)
+			}
+			if all {
+				return runWeaveListAll(cmd, history, false, &flags)
 			}
 			return runWeaveList(cmd, history, &flags)
 		},
@@ -168,6 +172,7 @@ func newWeaveListCmd() *cobra.Command {
 	flags.attach(cmd)
 	cmd.Flags().BoolVar(&watch, "watch", false, "Stream state transitions (NDJSON when paired with --json)")
 	cmd.Flags().BoolVar(&history, "history", false, "Include reaped/abandoned leases")
+	cmd.Flags().BoolVar(&all, "all", false, "Every weave queue on the machine, grouped by repo")
 	return cmd
 }
 
