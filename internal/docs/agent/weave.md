@@ -67,14 +67,25 @@ they survive the shell's exit).
 - **todo** — added, not yet claimed.
 - **working** — `weave start` claimed it; subagent is running.
 - **submitted** — subagent exited 0; branch is ready for `pull`.
-- **failed** — subagent exited non-zero. `exit_code` and `log_path`
-  on the queue item; `pull` skips these.
+- **failed** — subagent exited non-zero on its own. `exit_code` and
+  `log_path` on the queue item; `pull` skips these.
+- **killed** — stopped by force (watchdog, `weave kill` escalation,
+  external signal). killed stays killed — never silently promoted —
+  but the wrapper records its own git measurement on the item
+  (`commits_ahead`, `head`) as evidence, so the orchestrator can
+  verify the work and deliberately resume, merge, or abandon.
+  `weave kill` always tries a graceful stop FIRST (`/exit` then
+  `/quit` over the control socket); a tool that obeys exits 0 and
+  is recorded submitted by the wrapper itself — ask `weave say N
+  "btw, are you done? reply DONE"` beforehand when you want spoken
+  confirmation too.
 - **done** — `pull` merged the branch into main; worktree torn down.
 - **abandoned** — `weave abandon <issue>` was called; sandbox and
   branch removed, queue item kept for history.
 
 `weave pull` accepts both `working` and `submitted`; `submitted` is
-the normal path when subagents have finished cleanly.
+the normal path when subagents have finished cleanly. `killed` and
+`failed` are never auto-merged.
 
 ## Subverbs
 

@@ -84,6 +84,15 @@ type weaveItem struct {
 	Created    time.Time `json:"created"`
 	StartedAt  time.Time `json:"started_at,omitempty"`
 	FinishedAt time.Time `json:"finished_at,omitempty"`
+	// CommitsAhead and Head are the wrapper's own git measurement of
+	// the sandbox branch at terminal time (rev-list count over base,
+	// plus HEAD). They are the EVIDENCE behind a submitted state for
+	// a run that did not exit 0: state never says submitted unless
+	// the substrate itself verified shippable commits, and the exit
+	// code / kill reason are preserved untouched so nothing about how
+	// the run ended is hidden.
+	CommitsAhead int    `json:"commits_ahead,omitempty"`
+	Head         string `json:"head,omitempty"`
 	ExitCode   *int      `json:"exit_code,omitempty"`
 	LogPath    string    `json:"log_path,omitempty"`
 	// WrapperPid is the PID of the `ycode weave start` process
@@ -125,7 +134,7 @@ func weaveCtlSockPath(dir string, id int64) string {
 // alone (no merge) and the user can inspect the log to decide.
 func isTerminalState(s string) bool {
 	switch s {
-	case "submitted", "failed", "done", "abandoned":
+	case "submitted", "failed", "killed", "done", "abandoned":
 		return true
 	}
 	return false
@@ -262,6 +271,23 @@ func weaveDurationCol(it *weaveItem) string {
 		return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
 	}
 	return fmt.Sprintf("%ds", int(d.Seconds()))
+}
+
+// weaveMeasureBranch is the wrapper's first-hand git interrogation of
+// a sandbox at terminal time: commits ahead of base and the HEAD sha.
+// This — not the tool's exit code, and never an agent's claim — is
+// what qualifies a non-zero exit for the submitted state.
+func weaveMeasureBranch(sandbox, base string) (ahead int, head string) {
+	if sandbox == "" {
+		return 0, ""
+	}
+	if out, err := exec.Command("git", "-C", sandbox, "rev-list", "--count", base+"..HEAD").Output(); err == nil {
+		ahead, _ = strconv.Atoi(strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("git", "-C", sandbox, "rev-parse", "HEAD").Output(); err == nil {
+		head = strings.TrimSpace(string(out))
+	}
+	return ahead, head
 }
 
 func findWeaveItem(q *weaveQueue, id int64) *weaveItem {
@@ -879,6 +905,14 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 	// We re-load inside the lock to pick up any updates that
 	// landed while the tool was running.
 	finishedAt := time.Now().UTC()
+	// Measure the branch ONCE, outside the lock: this is the
+	// substrate evidence for the terminal state. A non-zero exit
+	// (crash, watchdog, kill) with verified commits ahead is still
+	// shippable work — record it as submitted WITH the exit code and
+	// measurement preserved, so `weave pull` picks it up and the
+	// audit trail shows exactly how the run ended. No commits, no
+	// submitted: nothing is taken on faith.
+	ahead, head := weaveMeasureBranch(sandbox, base)
 	lockErr := withWeaveQueueLock(dir, func(freshQ *weaveQueue) error {
 		freshIt := findWeaveItem(freshQ, it.ID)
 		if freshIt == nil {
@@ -888,12 +922,26 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 		freshIt.ExitCode = &exitCode
 		freshIt.WrapperPid = 0
 		freshIt.CtlSock = ""
+		freshIt.CommitsAhead = ahead
+		freshIt.Head = head
 		if logPath != "" {
 			freshIt.LogPath = logPath
 		}
-		if exitCode == 0 && runErr == nil {
+		switch {
+		case exitCode == 0 && runErr == nil:
+			// Clean self-exit: the tool itself confirmed completion.
 			freshIt.State = "submitted"
-		} else {
+		case exitCode >= 129:
+			// Signal death (watchdog, weave kill escalation, external
+			// SIGTERM): killed stays killed — never silently promoted.
+			// The wrapper-measured evidence travels with the item so
+			// the orchestrator can verify and decide.
+			freshIt.State = "killed"
+			if ahead > 0 {
+				freshIt.Body = fmt.Sprintf("[killed exit %d with %d wrapper-verified commit(s) ahead at %.12s — inspect, then resume or merge deliberately]\n\n",
+					exitCode, ahead, head) + freshIt.Body
+			}
+		default:
 			freshIt.State = "failed"
 		}
 		it = freshIt
@@ -1820,8 +1868,57 @@ func runWeaveKill(cmd *cobra.Command, id int64, reason string, flags *weaveOutpu
 			weavecli.ExitPrecondFail, err))
 	}
 	dir, _ := weaveQueueDir(root)
+	base := weaveBaseBranch(root)
+
+	// Graceful first: if the wrapper serves a control socket, ask the
+	// TUI to leave on its own (`/exit`, then `/quit` for tools that
+	// spell it differently) and give each a short grace window. A
+	// clean self-exit means the WRAPPER records the terminal state
+	// from a real exit code — the most accurate outcome possible, no
+	// inference involved. Only a non-responding tool gets signals.
+	if q0, err := loadWeaveQueue(dir); err == nil {
+		if it0 := findWeaveItem(q0, id); it0 != nil && it0.State == "working" &&
+			it0.CtlSock != "" && it0.WrapperPid > 0 && pidAlive(it0.WrapperPid) {
+			// The completion signal is the QUEUE STATE, not the pid:
+			// the wrapper's terminal write is the event we're waiting
+			// for, and a pid check lies when the wrapper is a zombie
+			// child of some still-running parent (kill(pid,0) succeeds
+			// on zombies).
+			gracefulState := ""
+		verbs:
+			for _, verb := range []string{"/exit", "/quit"} {
+				if conn, err := net.DialTimeout("unix", it0.CtlSock, 2*time.Second); err == nil {
+					_, _ = fmt.Fprintln(conn, verb)
+					_ = conn.Close()
+				}
+				deadline := time.Now().Add(6 * time.Second)
+				for time.Now().Before(deadline) {
+					time.Sleep(300 * time.Millisecond)
+					if q1, err := loadWeaveQueue(dir); err == nil {
+						if it1 := findWeaveItem(q1, id); it1 != nil && isTerminalState(it1.State) {
+							gracefulState = it1.State
+							break verbs
+						}
+					}
+				}
+			}
+			if gracefulState != "" {
+				// The wrapper recorded the truthful terminal state
+				// from the tool's own exit; report what it wrote.
+				if mode == weavecli.OutputJSON {
+					return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave kill", map[string]any{
+						"issue": id, "state": gracefulState, "graceful": true, "reason": reason,
+					}))
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "weave kill: issue #%d exited gracefully on /exit, state=%s\n", id, gracefulState)
+				return nil
+			}
+		}
+	}
+
 	var killed bool
 	var wrapperPid int
+	var finalState string
 	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
 		it := findWeaveItem(q, id)
 		if it == nil {
@@ -1835,7 +1932,16 @@ func runWeaveKill(cmd *cobra.Command, id int64, reason string, flags *weaveOutpu
 			weaveStopWrapper(wrapperPid)
 			killed = true
 		}
-		it.State = "failed"
+		// killed stays killed: the forced stop is recorded as its own
+		// terminal state, never silently promoted. The wrapper-style
+		// git measurement is still taken and stored as evidence so
+		// the orchestrator can verify the work and decide (resume,
+		// merge deliberately, or abandon).
+		ahead, head := weaveMeasureBranch(it.Sandbox, base)
+		it.CommitsAhead = ahead
+		it.Head = head
+		it.State = "killed"
+		finalState = it.State
 		killCode := -1
 		it.ExitCode = &killCode
 		it.FinishedAt = time.Now().UTC()
@@ -1843,11 +1949,14 @@ func runWeaveKill(cmd *cobra.Command, id int64, reason string, flags *weaveOutpu
 		// Stash the kill reason in the Body so `weave list` shows
 		// it (Body isn't load-bearing once the subagent has
 		// started — the prompt's already been consumed).
+		note := "[killed by orchestrator"
 		if reason != "" {
-			it.Body = "[killed by orchestrator: " + reason + "]\n\n" + it.Body
-		} else {
-			it.Body = "[killed by orchestrator]\n\n" + it.Body
+			note += ": " + reason
 		}
+		if ahead > 0 {
+			note += fmt.Sprintf(" — %d wrapper-verified commit(s) ahead at %.12s", ahead, head)
+		}
+		it.Body = note + "]\n\n" + it.Body
 		return nil
 	})
 	if lockErr != nil {
@@ -1865,13 +1974,13 @@ func runWeaveKill(cmd *cobra.Command, id int64, reason string, flags *weaveOutpu
 	if mode == weavecli.OutputJSON {
 		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave kill", map[string]any{
 			"issue":       id,
-			"state":       "failed",
+			"state":       finalState,
 			"wrapper_pid": wrapperPid,
 			"killed":      killed,
 			"reason":      reason,
 		}))
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "weave kill: issue #%d wrapper_pid=%d killed=%v state=failed\n", id, wrapperPid, killed)
+	fmt.Fprintf(cmd.OutOrStdout(), "weave kill: issue #%d wrapper_pid=%d killed=%v state=%s\n", id, wrapperPid, killed, finalState)
 	return nil
 }
 

@@ -157,12 +157,17 @@ regressions.
     ycode weave wait --all --timeout 50m
     ycode weave pull                      # merges working/submitted branches
 
-- Steerable TUI runs don't exit on DONE. Stopping them with
-  `weave kill N` preserves the branch but records state=failed —
-  `pull` then SKIPS it. Merge manually:
+- Steerable TUI runs don't exit on DONE. `weave kill N` now tries a
+  graceful `/exit`//`/quit` handshake first — a tool that obeys
+  exits 0 and the wrapper records a genuine `submitted` (then
+  `pull` merges it normally). Verify first when in doubt:
+  `weave say N "btw, are you done? reply DONE"` and watch the log.
+  Only a non-responding tool gets force-killed, recorded as
+  `killed` (its own state — never promoted) with wrapper-measured
+  evidence (`commits_ahead`, `head`) on the item; inspect, then
+  resume or merge deliberately:
       git fetch --no-tags <sandbox> agent/weave-issue-N:agent/weave-issue-N
       git merge --no-ff agent/weave-issue-N
-  (`failed` after a kill is bookkeeping, not a verdict on the work.)
 - After pull: rebuild, run the canonical measurement, then run the
   FULL suite on a QUIET machine — not just the fixtures the agents
   worked on. Cross-fixture ripple is real: one round improved its

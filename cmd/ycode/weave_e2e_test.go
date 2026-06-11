@@ -823,8 +823,8 @@ sleep 600`
 		t.Fatalf("kill exited %d; out=%s", got, out)
 	}
 	res := parseEnvelope(t, out)["result"].(map[string]any)
-	if res["state"] != "failed" {
-		t.Fatalf("expected state=failed after kill, got %v", res["state"])
+	if res["state"] != "killed" {
+		t.Fatalf("expected state=killed after forced kill, got %v", res["state"])
 	}
 	if int(res["wrapper_pid"].(float64)) != wrapperPid {
 		t.Fatalf("kill envelope reports wrong wrapper_pid: %v vs %d", res["wrapper_pid"], wrapperPid)
@@ -1233,8 +1233,8 @@ func TestWeaveE2E_MaxRuntime_KillsSpinningSubagent(t *testing.T) {
 		t.Fatalf("wait exited %d; out=%s", got, out)
 	}
 	ready := parseEnvelope(t, out)["result"].(map[string]any)["ready"].([]any)[0].(map[string]any)
-	if ready["state"] != "failed" {
-		t.Fatalf("expected state=failed after max-runtime kill, got %v", ready["state"])
+	if ready["state"] != "killed" {
+		t.Fatalf("expected state=killed after max-runtime kill, got %v", ready["state"])
 	}
 	_ = bg.Wait()
 }
@@ -1265,8 +1265,8 @@ sleep 600`
 		t.Fatalf("wait exited %d; out=%s", got, out)
 	}
 	ready := parseEnvelope(t, out)["result"].(map[string]any)["ready"].([]any)[0].(map[string]any)
-	if ready["state"] != "failed" {
-		t.Fatalf("expected state=failed after mem-limit kill, got %v", ready["state"])
+	if ready["state"] != "killed" {
+		t.Fatalf("expected state=killed after mem-limit kill, got %v", ready["state"])
 	}
 	if logPath, _ := ready["log_path"].(string); logPath != "" {
 		b, err := os.ReadFile(logPath)
@@ -1575,4 +1575,64 @@ func TestWeaveE2E_Sandbox_NoOriginBreadcrumbs(t *testing.T) {
 	if leaks > 0 {
 		t.Fatalf("%d files leak the origin path", leaks)
 	}
+}
+
+// TestWeaveE2E_Kill_GracefulExit: `weave kill` first asks the tool to
+// leave via the control socket (/exit, then /quit). A tool that obeys
+// exits 0, so the WRAPPER records submitted from a real exit code —
+// the accurate, no-inference outcome. The forced path (and its
+// distinct killed state) is only for tools that don't respond.
+func TestWeaveE2E_Kill_GracefulExit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "graceful exit check"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// The tool commits its work, then waits on stdin like a TUI; it
+	// honors /exit by leaving with code 0.
+	script := `echo done-work > work.txt
+git add work.txt
+git -c user.name=g -c user.email=g@g commit -qm "work"
+while read -r line; do
+	[ "$line" = "/exit" ] && exit 0
+done`
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script)
+	deadline := time.Now().Add(15 * time.Second)
+	ready := false
+	for time.Now().Before(deadline) {
+		out, _ := runWeave(t, repo, home, "list", "--json")
+		items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+		if len(items) > 0 {
+			item := items[0].(map[string]any)
+			sock, _ := item["ctl_sock"].(string)
+			if pidF, ok := item["wrapper_pid"].(float64); ok && pidF > 0 && sock != "" {
+				ready = true
+				break
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !ready {
+		_ = bg.Process.Kill()
+		bg.Wait()
+		t.Fatalf("wrapper/ctl_sock never appeared")
+	}
+	// Give the script a beat to finish its commit before killing.
+	time.Sleep(1 * time.Second)
+	out, ee := runWeave(t, repo, home, "kill", "1", "--reason", "graceful-test")
+	if got := envExitCode(ee); got != 0 {
+		_ = bg.Process.Kill()
+		bg.Wait()
+		t.Fatalf("kill exited %d; out=%s", got, out)
+	}
+	res := parseEnvelope(t, out)["result"].(map[string]any)
+	if res["state"] != "submitted" {
+		t.Fatalf("expected graceful kill to land submitted (tool exited 0), got %v", res["state"])
+	}
+	if g, _ := res["graceful"].(bool); !g {
+		t.Fatalf("expected graceful=true in envelope, got %v", res)
+	}
+	_ = bg.Wait()
 }
