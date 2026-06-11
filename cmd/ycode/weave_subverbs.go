@@ -263,6 +263,27 @@ func newWeavePullCmd() *cobra.Command {
 	return cmd
 }
 
+func newWeavePruneCmd() *cobra.Command {
+	var flags weaveOutputFlags
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Remove sandbox directories and merged branches for terminal items",
+		Long: `prune cleans up after terminal queue items:
+- Removes lingering sandbox directories for done, abandoned, failed, and killed items
+- Deletes agent/weave-issue-N branches from the user repo if fully merged
+
+Use --yes to skip the confirmation prompt. This is safe: branches are only
+deleted with -d (lowercase), which refuses if not fully merged.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runWeavePrune(cmd, yes, &flags)
+		},
+	}
+	flags.attach(cmd)
+	cmd.Flags().BoolVar(&yes, "yes", false, "Skip the confirmation prompt")
+	return cmd
+}
+
 func newWeaveAbandonCmd() *cobra.Command {
 	var flags weaveOutputFlags
 	var reason string

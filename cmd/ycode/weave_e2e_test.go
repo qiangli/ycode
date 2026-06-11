@@ -1621,6 +1621,171 @@ func TestWeaveE2E_Sandbox_NoOriginBreadcrumbs(t *testing.T) {
 	}
 }
 
+// TestWeaveE2E_Pull_RemovesSandboxAfterMerge verifies that after a
+// successful pull, the merged sandbox directory is properly removed
+// (not using git worktree remove, which doesn't work for full clones).
+func TestWeaveE2E_Pull_RemovesSandboxAfterMerge(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "add a file for merge"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+
+	// Tool creates a commit in the sandbox
+	script := `set -e; echo merged-content > merged.txt; git add merged.txt; git commit -qm "feat: add merged.txt"`
+	out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script)
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("start with committer exited %d; out=%s", got, out)
+	}
+
+	// Get sandbox path before pull
+	out, _ = runWeave(t, repo, home, "list", "--history")
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	sandbox := item["sandbox"].(string)
+	if sandbox == "" {
+		t.Fatalf("expected sandbox path on item; got %v", item)
+	}
+
+	// Verify sandbox exists before pull
+	if _, err := os.Stat(sandbox); err != nil {
+		t.Fatalf("sandbox should exist before pull: %v", err)
+	}
+
+	// Pull merges the work
+	out, ee = runWeave(t, repo, home, "pull")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("pull exited %d; out=%s", got, out)
+	}
+
+	// Verify sandbox is GONE after pull
+	if _, err := os.Stat(sandbox); !os.IsNotExist(err) {
+		t.Fatalf("sandbox dir should be removed after pull, but still exists: %s", sandbox)
+	}
+
+	// Verify the merged file is on main
+	if _, err := os.Stat(filepath.Join(repo, "merged.txt")); err != nil {
+		t.Fatalf("expected merged.txt on main after pull: %v", err)
+	}
+
+	// Verify item is now "done"
+	out, _ = runWeave(t, repo, home, "list", "--history")
+	item = parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if item["state"] != "done" {
+		t.Fatalf("expected state=done after pull, got %v", item["state"])
+	}
+}
+
+// TestWeaveE2E_Prune_RemovesFailedSandbox verifies that a failed item's
+// sandbox survives pull (failed items are not merged), and then prune --yes
+// properly removes the lingering sandbox and branch.
+func TestWeaveE2E_Prune_RemovesFailedSandbox(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "failing task"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+
+	// Start a tool that creates a commit but exits non-zero
+	script := `set -e; echo partial-work > partial.txt; git add partial.txt; git commit -qm "partial work"; exit 7`
+	out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script)
+	if got := envExitCode(ee); got == 0 {
+		t.Fatalf("expected non-zero exit for failing tool; out=%s", out)
+	}
+
+	// Verify state is failed
+	out, _ = runWeave(t, repo, home, "list", "--history")
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if item["state"] != "failed" {
+		t.Fatalf("expected state=failed, got %v", item["state"])
+	}
+
+	sandbox := item["sandbox"].(string)
+	if sandbox == "" {
+		t.Fatalf("expected sandbox path on failed item; got %v", item)
+	}
+
+	// Verify sandbox still exists (failed items are not touched by pull)
+	if _, err := os.Stat(sandbox); err != nil {
+		t.Fatalf("sandbox should exist for failed item: %v", err)
+	}
+
+	// Pull should skip failed items
+	out, ee = runWeave(t, repo, home, "pull")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("pull exited %d; out=%s", got, out)
+	}
+
+	// Sandbox should still exist after pull (failed items not merged)
+	if _, err := os.Stat(sandbox); err != nil {
+		t.Fatalf("sandbox should still exist after pull for failed item: %v", err)
+	}
+
+	// Now prune --yes should clean it up
+	out, ee = runWeave(t, repo, home, "prune", "--yes")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("prune --yes exited %d; out=%s", got, out)
+	}
+
+	// Verify sandbox is now gone
+	if _, err := os.Stat(sandbox); !os.IsNotExist(err) {
+		t.Fatalf("sandbox should be removed after prune, but still exists: %s", sandbox)
+	}
+
+	// Verify prune envelope
+	res := parseEnvelope(t, out)["result"].(map[string]any)
+	if int(res["removed"].(float64)) < 1 {
+		t.Fatalf("expected at least 1 item pruned; got %v", res["removed"])
+	}
+}
+
+// TestWeaveE2E_Prune_SkipsSubmittedNotMerged verifies that prune skips
+// submitted items (they're not terminal yet - they need pull first).
+func TestWeaveE2E_Prune_SkipsSubmittedNotMerged(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "submitted task"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+
+	// Start a tool that succeeds
+	script := `set -e; echo done > done.txt; git add done.txt; git commit -qm "done work"`
+	out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script)
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("start exited %d; out=%s", got, out)
+	}
+
+	// Verify state is submitted (not terminal for prune)
+	out, _ = runWeave(t, repo, home, "list", "--history")
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if item["state"] != "submitted" {
+		t.Fatalf("expected state=submitted, got %v", item["state"])
+	}
+
+	sandbox := item["sandbox"].(string)
+
+	// Prune should skip submitted items
+	out, ee = runWeave(t, repo, home, "prune", "--yes")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("prune exited %d; out=%s", got, out)
+	}
+
+	// Sandbox should still exist (submitted is not pruned)
+	if _, err := os.Stat(sandbox); err != nil {
+		t.Fatalf("sandbox should still exist for submitted item (not pruned): %v", err)
+	}
+
+	res := parseEnvelope(t, out)["result"].(map[string]any)
+	if int(res["removed"].(float64)) != 0 {
+		t.Fatalf("expected 0 items pruned for submitted-only queue; got %v", res["removed"])
+	}
+}
+
 // TestWeaveE2E_Kill_GracefulExit: `weave kill` first asks the tool to
 // leave via the control socket (/exit, then /quit). A tool that obeys
 // exits 0, so the WRAPPER records submitted from a real exit code —
