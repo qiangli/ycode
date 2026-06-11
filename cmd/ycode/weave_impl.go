@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -791,12 +792,12 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			// clone, the sandbox has its own `.git`; refs and HEAD
 			// can't cross the boundary, and a wandering agent hits a
 			// different git repo entirely.
-			gw := exec.Command("git", "clone", "--local", "--branch", base, root, sandbox)
+			gw := exec.Command("git", "clone", "--local", "--no-hardlinks", "--branch", base, root, sandbox)
 			gw.Stdout = cmd.OutOrStdout()
 			gw.Stderr = cmd.ErrOrStderr()
 			if err := gw.Run(); err != nil {
 				return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
-					weavecli.ExitGenericFail, fmt.Errorf("git clone --local: %w", err)))
+					weavecli.ExitGenericFail, fmt.Errorf("git clone --local --no-hardlinks: %w", err)))
 			}
 			// Check out the per-issue agent branch in the clone.
 			ck := exec.Command("git", "-C", sandbox, "checkout", "-b", branch)
@@ -1104,7 +1105,12 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 // runWeaveSay injects one line into a running subagent's PTY via
 // the wrapper's per-issue control socket. The wrapper appends \r,
 // so the TUI treats it as a submitted message.
-func runWeaveSay(cmd *cobra.Command, id int64, text string, flags *weaveOutputFlags) error {
+//
+// Flags:
+//   - tab: prepend a literal Tab keystroke
+//   - enter: send only a bare Enter (text becomes optional)
+//   - raw: send C-style decoded bytes verbatim (\t \r \n \x1b etc.)
+func runWeaveSay(cmd *cobra.Command, id int64, text string, tab, enter bool, raw string, flags *weaveOutputFlags) error {
 	mode := flags.mode()
 	cwd, _ := os.Getwd()
 	root, err := weaveRepoRoot(cwd)
@@ -1131,27 +1137,116 @@ func runWeaveSay(cmd *cobra.Command, id int64, text string, flags *weaveOutputFl
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave say",
 			weavecli.ExitStateConflict, fmt.Errorf("issue #%d has no control socket — its wrapper predates `weave say` or ran with --pty=never", it.ID)))
 	}
-	conn, err := net.DialTimeout("unix", it.CtlSock, 3*time.Second)
-	if err != nil {
-		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave say",
-			weavecli.ExitDepUnhealthy, fmt.Errorf("control socket dial: %w", err)))
+
+	// Build the byte sequence according to flags.
+	var payload []byte
+	switch {
+	case raw != "":
+		// C-style escape decoding.
+		payload = decodeCescape(raw)
+	case enter:
+		// Send only a bare Enter (carriage return).
+		payload = []byte{'\r'}
+	default:
+		// Plain text mode: strip newlines and add trailing \r.
+		text = strings.ReplaceAll(strings.ReplaceAll(text, "\r", " "), "\n", " ")
+		if tab {
+			payload = append([]byte{'\t'}, text...)
+		} else {
+			payload = []byte(text)
+		}
+		payload = append(payload, '\r')
 	}
-	defer conn.Close()
-	// Strip newlines so one say = one injected line; the wrapper
-	// adds the terminating \r itself.
-	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r", " "), "\n", " ")
-	if _, err := fmt.Fprintln(conn, text); err != nil {
-		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave say",
-			weavecli.ExitGenericFail, fmt.Errorf("control socket write: %w", err)))
+
+	// Send using the verbatim protocol for all special modes,
+	// or plain line protocol for plain text.
+	var frame string
+	if raw != "" || enter || tab {
+		// Verbatim frame: \x00R<base64>\n
+		enc := base64.StdEncoding.EncodeToString(payload)
+		frame = fmt.Sprintf("\x00R%s\n", enc)
+	} else {
+		// Plain line protocol: the line is written to PTY with \r appended.
+		frame = string(payload) + "\n"
 	}
+	if err := weaveWriteControlFrame(it.CtlSock, frame); err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave say",
+			weavecli.ExitDepUnhealthy, err))
+	}
+
+	sentDesc := string(payload)
 	if mode == weavecli.OutputJSON {
 		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave say", map[string]any{
 			"issue": it.ID,
-			"sent":  text,
+			"sent":  sentDesc,
 		}))
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "weave say: sent to issue #%d — watch `weave log %d -f`\n", it.ID, it.ID)
 	return nil
+}
+
+func weaveWriteControlFrame(path, frame string) error {
+	conn, err := net.DialTimeout("unix", path, 3*time.Second)
+	if err == nil {
+		defer conn.Close()
+		if _, err := io.WriteString(conn, frame); err != nil {
+			return fmt.Errorf("control socket write: %w", err)
+		}
+		return nil
+	}
+
+	st, statErr := os.Stat(path)
+	if statErr == nil && st.Mode().IsRegular() {
+		f, openErr := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+		if openErr != nil {
+			return fmt.Errorf("control file open: %w", openErr)
+		}
+		defer f.Close()
+		if _, writeErr := io.WriteString(f, frame); writeErr != nil {
+			return fmt.Errorf("control file write: %w", writeErr)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("control socket dial: %w", err)
+}
+
+// decodeCescape decodes C-style escape sequences: \t, \r, \n, \xNN, \\.
+func decodeCescape(s string) []byte {
+	var out []byte
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) {
+			out = append(out, s[i])
+			continue
+		}
+		switch s[i+1] {
+		case 't':
+			out = append(out, '\t')
+			i++
+		case 'r':
+			out = append(out, '\r')
+			i++
+		case 'n':
+			out = append(out, '\n')
+			i++
+		case '\\':
+			out = append(out, '\\')
+			i++
+		case 'x':
+			if i+3 < len(s) {
+				b, err := strconv.ParseUint(s[i+2:i+4], 16, 8)
+				if err == nil {
+					out = append(out, byte(b))
+					i += 3
+					continue
+				}
+			}
+			out = append(out, s[i])
+		default:
+			out = append(out, s[i])
+		}
+	}
+	return out
 }
 
 // runWeaveLog prints the captured PTY log for an issue, optionally

@@ -217,8 +217,10 @@ callers read the file themselves.`,
 
 func newWeaveSayCmd() *cobra.Command {
 	var flags weaveOutputFlags
+	var tab, enter bool
+	var raw string
 	cmd := &cobra.Command{
-		Use:   `say <issue> "<text>"`,
+		Use:   `say <issue> ["<text>"]`,
 		Short: "Inject a line into a running subagent's terminal",
 		Long: `say connects to the running wrapper's per-issue control socket and
 types the text into the subagent's PTY, followed by Enter. To the
@@ -228,7 +230,14 @@ so mid-run steering works the way you'd expect:
   ycode weave say 4 "/btw what is the status? reply in the log"
   ycode weave say 4 "stop exploring; commit what passes and exit"
 
-Anyone on the host (a peer agent, a human in another terminal) can
+Flags provide additional control over the injected bytes:
+
+  --tab          Prepend a literal Tab keystroke before the text
+  --enter        Send ONLY a bare Enter (the text arg becomes optional)
+  --raw "<bytes>" Send C-style decoded bytes (\t \r \n \x1b) verbatim,
+                  no implicit trailing Enter
+
+Plain usage is unchanged (text + Enter). Anyone on the host can
 inject; watch the reaction with 'weave log <issue> -f'.
 
 Caveats: the issue must be state=working with a live wrapper that
@@ -236,16 +245,32 @@ allocated a PTY. Tools that don't read terminal input in their
 non-interactive modes (e.g. 'claude -p') receive the keystrokes but
 ignore them — use a TUI/streaming mode when you plan to steer.
 Wrappers started by an older ycode have no control socket.`,
-		Args: cobra.MinimumNArgs(2),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 1 {
+				return fmt.Errorf("issue required")
+			}
+			// Text is optional when --enter is used or when --raw provides the payload.
+			if !enter && raw == "" && len(args) < 2 {
+				return fmt.Errorf("text required (or use --enter for bare Enter, or --raw for verbatim bytes)")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
 				return fmt.Errorf("issue must be an integer: %q", args[0])
 			}
-			return runWeaveSay(cmd, id, strings.Join(args[1:], " "), &flags)
+			text := ""
+			if len(args) > 1 {
+				text = strings.Join(args[1:], " ")
+			}
+			return runWeaveSay(cmd, id, text, tab, enter, raw, &flags)
 		},
 	}
 	flags.attach(cmd)
+	cmd.Flags().BoolVar(&tab, "tab", false, "Prepend a literal Tab keystroke")
+	cmd.Flags().BoolVar(&enter, "enter", false, "Send only a bare Enter (text becomes optional)")
+	cmd.Flags().StringVar(&raw, "raw", "", "Send C-style decoded bytes verbatim (\\t \\r \\n \\x1b etc.)")
 	return cmd
 }
 

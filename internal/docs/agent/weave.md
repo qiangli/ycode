@@ -129,14 +129,19 @@ with non-zero `verify_exit` (status `verify-failed`).
   buffer in non-interactive modes (`claude -p`) leave the capture
   empty until exit — empty under `-f` means "nothing emitted", not
   "nothing happening".
-- `say <issue> "<text>"` — inject one line into a RUNNING subagent's
-  PTY (typed keystrokes + Enter, via the wrapper's per-issue control
-  socket). Use for mid-run steering: `weave say 4 "/btw status?"`,
-  `weave say 4 "stop exploring, commit what passes"`. Requires
-  state=working + a live wrapper that allocated a PTY; tools that
-  ignore terminal input in non-interactive modes (`claude -p`) won't
-  react — launch claude with a streaming/TUI mode when you plan to
-  steer. Watch the reaction with `weave log <issue> -f`.
+- `say <issue> ["<text>"] [--tab] [--enter] [--raw "<bytes>"]` —
+  inject keystrokes into a RUNNING subagent's PTY via the wrapper's
+  per-issue control socket. Flags control the byte sequence:
+  `--tab` prepends a literal Tab, `--enter` sends only a bare Enter
+  (text becomes optional), `--raw` sends C-style decoded bytes
+  (`\t \r \n \x1b` etc.) verbatim with no implicit Enter. Use for
+  mid-run steering: `weave say 4 "/btw status?"`,
+  `weave say 4 "stop exploring, commit what passes"`,
+  `weave say 4 --raw "\tstatus"`. Requires state=working + a live
+  wrapper that allocated a PTY; tools that ignore terminal input in
+  non-interactive modes (`claude -p`) won't react — launch claude
+  with a streaming/TUI mode when you plan to steer. Watch the
+  reaction with `weave log <issue> -f`.
 - `wait [--issue N | --all] [--timeout DUR]` — block until target
   reaches terminal state.
 - `pull` — merge every working/submitted branch with commits ahead.

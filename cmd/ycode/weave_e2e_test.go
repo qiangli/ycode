@@ -2010,3 +2010,138 @@ func TestWeaveE2E_Verify_FailBlocksPull(t *testing.T) {
 		t.Fatalf("expected item to remain submitted after verify-failed pull, got %v", item["state"])
 	}
 }
+
+// TestWeaveE2E_Say_Raw_SendsLiteralTab verifies that --raw sends
+// C-style decoded bytes verbatim to the subagent's PTY.
+func TestWeaveE2E_Say_Raw_SendsLiteralTab(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "tab check"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// Script reads one character with IFS= read -r and writes what it received.
+	script := `IFS= read -r -n 1 ch < /dev/tty
+echo "$ch" > tab-received.txt
+echo done`
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script)
+	defer func() { _ = bg.Process.Kill(); _ = bg.Wait() }()
+
+	// Wait for the control socket to appear.
+	deadline := time.Now().Add(15 * time.Second)
+	ready := false
+	for time.Now().Before(deadline) {
+		out, _ := runWeave(t, repo, home, "list", "--json")
+		items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+		if len(items) > 0 {
+			if sock, _ := items[0].(map[string]any)["ctl_sock"].(string); sock != "" {
+				if _, err := os.Stat(sock); err == nil {
+					ready = true
+					break
+				}
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatalf("control socket never appeared in queue")
+	}
+
+	// Send a literal tab via --raw, plus an explicit Enter so the
+	// terminal line discipline delivers the byte to the waiting read.
+	if out, ee := runWeave(t, repo, home, "say", "1", "--raw", "\\t\\r"); envExitCode(ee) != 0 {
+		t.Fatalf("say --raw exited %d; out=%s", envExitCode(ee), out)
+	}
+
+	// Wait for the subagent to finish writing the file.
+	deadline = time.Now().Add(10 * time.Second)
+	var got []byte
+	for time.Now().Before(deadline) {
+		out, _ := runWeave(t, repo, home, "list", "--json")
+		items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+		if len(items) > 0 {
+			sandbox, _ := items[0].(map[string]any)["sandbox"].(string)
+			if sandbox != "" {
+				if b, err := os.ReadFile(filepath.Join(sandbox, "tab-received.txt")); err == nil {
+					got = b
+					if len(got) > 0 {
+						break
+					}
+				}
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	// The received character should be a literal tab (ASCII 9).
+	if len(got) == 0 || got[0] != '\t' {
+		t.Fatalf("expected literal tab, got %q (bytes=%v)", string(got), got)
+	}
+}
+
+// TestWeaveE2E_Say_Enter_SendsBareEnter verifies that --enter sends
+// a bare Enter keystroke that unblocks a `read` waiting for input.
+func TestWeaveE2E_Say_Enter_SendsBareEnter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "enter check"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// Script reads a line and writes "RECEIVED:$line".
+	script := `IFS= read -r line < /dev/tty
+echo "RECEIVED:$line" > enter-received.txt
+echo done`
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script)
+	defer func() { _ = bg.Process.Kill(); _ = bg.Wait() }()
+
+	// Wait for the control socket to appear.
+	deadline := time.Now().Add(15 * time.Second)
+	ready := false
+	for time.Now().Before(deadline) {
+		out, _ := runWeave(t, repo, home, "list", "--json")
+		items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+		if len(items) > 0 {
+			if sock, _ := items[0].(map[string]any)["ctl_sock"].(string); sock != "" {
+				if _, err := os.Stat(sock); err == nil {
+					ready = true
+					break
+				}
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatalf("control socket never appeared in queue")
+	}
+
+	// Send a bare Enter via --enter (no text argument).
+	if out, ee := runWeave(t, repo, home, "say", "1", "--enter"); envExitCode(ee) != 0 {
+		t.Fatalf("say --enter exited %d; out=%s", envExitCode(ee), out)
+	}
+
+	// Wait for the subagent to finish writing the file.
+	deadline = time.Now().Add(10 * time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		out, _ := runWeave(t, repo, home, "list", "--json")
+		items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+		if len(items) > 0 {
+			sandbox, _ := items[0].(map[string]any)["sandbox"].(string)
+			if sandbox != "" {
+				if b, err := os.ReadFile(filepath.Join(sandbox, "enter-received.txt")); err == nil {
+					got = strings.TrimSpace(string(b))
+					if got != "" {
+						break
+					}
+				}
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	// The received line should be empty (just Enter was sent).
+	if got != "RECEIVED:" {
+		t.Fatalf("expected empty line (RECEIVED:), got %q", got)
+	}
+}
