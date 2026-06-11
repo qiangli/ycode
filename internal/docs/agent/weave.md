@@ -129,6 +129,9 @@ the normal path when subagents have finished cleanly. `killed` and
 - `wait [--issue N | --all] [--timeout DUR]` — block until target
   reaches terminal state.
 - `pull` — merge every working/submitted branch with commits ahead.
+- `prune [--yes]` — remove sandbox directories and merged branches for
+  terminal items (done, abandoned, failed, killed). Safe: branches only
+  deleted if fully merged (`git branch -d`).
 - `abandon <issue> [--reason]` — stop running wrapper + tear down
   sandbox + branch. Use when giving up entirely.
 - `kill <issue> [--reason]` — stop the running wrapper PRECISELY

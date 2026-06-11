@@ -1276,10 +1276,13 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags) error {
 			results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "conflict", Detail: strings.TrimSpace(string(out))})
 			continue
 		}
+		// Sandbox is a full clone (not a worktree) — use safeRemoveAll with
+		// containment check to prevent accidental deletion outside the queue dir.
 		if it.Sandbox != "" {
-			_ = exec.Command("git", "-C", root, "worktree", "remove", "--force", it.Sandbox).Run()
+			_ = safeRemoveSandbox(dir, it.Sandbox)
 		}
-		_ = exec.Command("git", "-C", root, "branch", "-D", it.Branch).Run()
+		// Delete the fetched branch from user repo if fully merged (-d, never -D).
+		_ = exec.Command("git", "-C", root, "branch", "-d", it.Branch).Run()
 		it.State = "done"
 		it.Sandbox = ""
 		results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "merged"})
@@ -1376,6 +1379,44 @@ func gitOut(root string, args ...string) (string, error) {
 		return "", fmt.Errorf("%s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
+}
+
+// safeRemoveSandbox removes a sandbox directory safely by verifying
+// containment: the path must be non-empty and live under the queue
+// directory's sandboxes/ subdirectory (filepath.Rel containment check).
+// Returns nil on success or if path is already gone.
+func safeRemoveSandbox(queueDir, sandboxPath string) error {
+	if sandboxPath == "" {
+		return nil
+	}
+	// Resolve to absolute paths for reliable comparison
+	absQueue, err := filepath.Abs(queueDir)
+	if err != nil {
+		return err
+	}
+	absSandbox, err := filepath.Abs(sandboxPath)
+	if err != nil {
+		return err
+	}
+	// Containment check: sandbox must be under queueDir/sandboxes/
+	expectedParent := filepath.Join(absQueue, "sandboxes")
+	rel, err := filepath.Rel(expectedParent, absSandbox)
+	if err != nil {
+		return fmt.Errorf("sandbox path containment check failed: %w", err)
+	}
+	if strings.HasPrefix(rel, "..") || rel == "." {
+		return fmt.Errorf("sandbox path %q is not contained in %q", absSandbox, expectedParent)
+	}
+	// Additional safety: verify it's a directory before removal
+	if st, err := os.Stat(absSandbox); err != nil {
+		if os.IsNotExist(err) {
+			return nil // Already gone
+		}
+		return err
+	} else if !st.IsDir() {
+		return fmt.Errorf("sandbox path %q is not a directory", absSandbox)
+	}
+	return os.RemoveAll(absSandbox)
 }
 
 // runWeavePrio sets an issue's priority tier on the local queue.
@@ -2015,6 +2056,116 @@ func runWeaveKill(cmd *cobra.Command, id int64, reason string, flags *weaveOutpu
 		}))
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "weave kill: issue #%d wrapper_pid=%d killed=%v state=%s\n", id, wrapperPid, killed, finalState)
+	return nil
+}
+
+// runWeavePrune removes sandbox directories for terminal items (done,
+// abandoned, failed, killed) and deletes their agent/weave-issue-N branches
+// from the user repo if fully merged (git branch -d, never -D). Prints a
+// per-item line + summary; --yes skips confirmation.
+func runWeavePrune(cmd *cobra.Command, yes bool, flags *weaveOutputFlags) error {
+	mode := flags.mode()
+	cwd, _ := os.Getwd()
+	root, err := weaveRepoRoot(cwd)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave prune",
+			weavecli.ExitPrecondFail, err))
+	}
+	dir, _ := weaveQueueDir(root)
+	q, err := loadWeaveQueue(dir)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave prune",
+			weavecli.ExitGenericFail, err))
+	}
+
+	type pruneResult struct {
+		Issue   int64  `json:"issue"`
+		State   string `json:"state"`
+		Sandbox string `json:"sandbox,omitempty"`
+		Branch  string `json:"branch,omitempty"`
+		Action  string `json:"action"` // "removed", "skipped", "branch_deleted"
+	}
+
+	var results []pruneResult
+	var toPrune []*weaveItem
+
+	// Identify terminal items: done, abandoned, failed, killed (NOT submitted)
+	for _, it := range q.Items {
+		switch it.State {
+		case "done", "abandoned", "failed", "killed":
+			toPrune = append(toPrune, it)
+		}
+	}
+
+	if len(toPrune) == 0 {
+		if mode == weavecli.OutputJSON {
+			return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave prune", map[string]any{
+				"removed": 0,
+				"results": results,
+			}))
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "weave prune: no terminal items to clean up")
+		return nil
+	}
+
+	// Confirmation prompt (unless --yes or JSON mode)
+	if !yes && mode != weavecli.OutputJSON {
+		fmt.Fprintf(cmd.OutOrStdout(), "weave prune: will clean up %d terminal items (sandbox + merged branches). proceed? [y/N] ", len(toPrune))
+		var resp string
+		_, _ = fmt.Fscanln(os.Stdin, &resp)
+		if !strings.EqualFold(resp, "y") && !strings.EqualFold(resp, "yes") {
+			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave prune",
+				weavecli.ExitInvalidArg, fmt.Errorf("cancelled")))
+		}
+	}
+
+	for _, it := range toPrune {
+		// Remove sandbox directory if it exists
+		if it.Sandbox != "" {
+			if _, err := os.Stat(it.Sandbox); err == nil {
+				if err := safeRemoveSandbox(dir, it.Sandbox); err == nil {
+					results = append(results, pruneResult{Issue: it.ID, State: it.State, Sandbox: it.Sandbox, Action: "removed"})
+				} else {
+					results = append(results, pruneResult{Issue: it.ID, State: it.State, Sandbox: it.Sandbox, Action: "failed: " + err.Error()})
+				}
+			}
+		}
+
+		// Delete branch from user repo if fully merged (-d, never -D)
+		if it.Branch != "" {
+			// Use -d (lowercase) to only delete if fully merged
+			if out, err := exec.Command("git", "-C", root, "branch", "-d", it.Branch).CombinedOutput(); err == nil {
+				results = append(results, pruneResult{Issue: it.ID, State: it.State, Branch: it.Branch, Action: "branch_deleted"})
+			} else {
+				// Branch may not exist in user repo, or not fully merged
+				msg := strings.TrimSpace(string(out))
+				if strings.Contains(msg, "not found") || strings.Contains(msg, "not a valid") {
+					results = append(results, pruneResult{Issue: it.ID, State: it.State, Branch: it.Branch, Action: "skipped: branch not in user repo"})
+				} else {
+					results = append(results, pruneResult{Issue: it.ID, State: it.State, Branch: it.Branch, Action: "skipped: not fully merged"})
+				}
+			}
+		}
+	}
+
+	if mode == weavecli.OutputJSON {
+		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave prune", map[string]any{
+			"removed": len(results),
+			"results": results,
+		}))
+	}
+
+	// Human-readable output
+	for _, r := range results {
+		if r.Action == "removed" {
+			fmt.Fprintf(cmd.OutOrStdout(), "  issue #%d (%s): removed sandbox\n", r.Issue, r.State)
+		} else if r.Action == "branch_deleted" {
+			fmt.Fprintf(cmd.OutOrStdout(), "  issue #%d (%s): deleted branch %s\n", r.Issue, r.State, r.Branch)
+		} else if strings.HasPrefix(r.Action, "skipped:") {
+			fmt.Fprintf(cmd.OutOrStdout(), "  issue #%d (%s): %s\n", r.Issue, r.State, r.Action)
+		}
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "weave prune: cleaned up %d items\n", len(toPrune))
 	return nil
 }
 
