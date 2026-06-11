@@ -168,9 +168,21 @@ regressions.
 BLOCKED-AGENT PROTOCOL — TUI agents stall on dialogs, and a status
 question typed into a menu is noise. Watch for waiting-screens in
 the capture tail (selection menus `● 1.`/`❯ 1.`, "Enter to
-confirm", y/n, "Press enter", usage/rate limits, auth prompts,
-idle composer). When one appears, read the last lines and respond
-to WHAT THE SCREEN ASKS:
+confirm", y/n, `[y]`-style prompts, "Press enter", usage/rate
+limits, auth prompts, idle composer). Screen text alone can be
+SCROLLBACK — a rendered pane from a command that already finished
+(one orchestrator answered a `patch … Assume -R? [y]` prompt that
+had been dead for minutes, typing noise into the composer). VERIFY
+the block is live before answering:
+
+    ps -axo pid,ppid,stat,command | awk -v wp=<wrapper_pid> '$2==wp'
+    # then walk children: a LIVE block shows a child process
+    # (patch, a shell, an editor) sitting in a foreground TTY wait;
+    # get wrapper_pid from `weave list --json`.
+
+Live block confirmed — or a top-level dialog with NO spinner and no
+running children (trust dialogs, limit menus) — then respond to
+WHAT THE SCREEN ASKS:
 
 - Orchestrator handles automatically: workspace-trust dialogs
   (`say N "1"`), model-switch/limit menus where one option clearly
