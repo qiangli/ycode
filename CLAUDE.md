@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-`AGENTS.md` is the agent-agnostic counterpart — same project, slightly broader audience (Codex, OpenCode, Cursor). When the two diverge, treat this file as Claude-Code-specific overlay and `AGENTS.md` as the shared baseline.
+`AGENTS.md` is the agent-agnostic counterpart — same project, slightly broader audience (Codex, OpenCode, Cursor); `GEMINI.md` is the Gemini CLI flavor. When they diverge, treat this file as Claude-Code-specific overlay and `AGENTS.md` as the shared baseline.
 
 ## Project shape
 
@@ -11,6 +11,7 @@ ycode — pure Go CLI agent harness. Single static binary, Go 1.26+, permissive-
 - Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one-shot.
 - Core loop: `internal/runtime/conversation/runtime.go` — assemble request → provider → dispatch tool calls → repeat.
 - This checkout usually lives inside the **`dhnt/` umbrella** as a git submodule. Sibling-path replaces in `go.mod` resolve `../sh` and `../nadir` to flat siblings — inside the umbrella those are real submodules; for standalone clones, `scripts/bootstrap-siblings.sh` reads `.sibling-pins` and clones them at the pinned SHAs.
+- Root `go.work` defines the workspace: the main module plus `pkg/oci`, `pkg/ollm`, `pkg/otel`, with workspace-level replaces pointing the big vendored deps (podman, ollama, jaeger, victorialogs, perses) at `external/`. To iterate on a `qiangli/*` dep alongside ycode, clone it under `peers/<name>` (gitignored) and add `./peers/<name>` to the `use` directive.
 
 ## First-time setup
 
@@ -22,7 +23,7 @@ make install-hooks                     # pre-push runs `make ci` in the ycode-bu
 
 Skipping `make init` will leave Gitea bindata + Perses plugins missing; many tests and `ycode serve` will fail in subtle ways.
 
-The embedded ollama runner (`internal/inference/runner_embed/ycode-runner.gz`) is produced by `make build` on first run via `runner-build-if-missing` — *not* by `make init`. On `darwin/arm64` no extra toolchain is needed (Metal is in-tree); other platforms need CMake + a C/C++ compiler. Without the toolchain the script warns and skip-cleans — ycode still builds but ollama features degrade to `ErrRunnerNotInstalled` at runtime. The embedded podman binary follows the same shape via `scripts/embed-podman.sh` (system binary first, fallback to a `-tags remote` build from `external/podman/cmd/podman/` on macOS/Windows or native on Linux).
+The embedded ollama runner (`internal/inference/runner_embed/ycode-runner.gz`) is produced by `make build` on first run via `runner-build-if-missing` — *not* by `make init`. On `darwin/arm64` no extra toolchain is needed (Metal is in-tree); other platforms need CMake + a C/C++ compiler. Without the toolchain the script warns and skip-cleans — ycode still builds but ollama features degrade to `ErrRunnerNotInstalled` at runtime. The embedded podman binary follows the same shape via `scripts/embed-podman.sh` (system binary first, fallback to a `-tags remote` build from `external/podman/cmd/podman/` on macOS/Windows or native on Linux). `make embed-fetch` downloads all prebuilt embed blobs for the current platform from the latest GitHub release — the fast path when you don't want to build them locally.
 
 ## Escape hatch — `--use-system-binaries`
 
@@ -53,7 +54,7 @@ make test            # unit tests (-short -race) with default tags
 make ci              # full GitHub Actions matrix in a Linux container (slow, definitive)
 ```
 
-**Build tags** are non-trivial — the default is `sqlite,sqlite_unlock_notify,bindata` plus four auto-added tags, each gated on the presence of its embed `.gz`: `embed_runner` (llama.cpp inference), `embed_vfkit` (macOS podman-machine helper), `embed_podman` (podman client), `embed_gvproxy` (podman user-mode net). The auto-add probes are in the single `TAG_LIST` line near the top of the `Makefile`. Bare `go build` without tags will not produce a working binary. Use the Makefile or:
+**Build tags** are non-trivial — the default is `sqlite,sqlite_unlock_notify,bindata` plus five auto-added tags, each gated on the presence of its embed `.gz`: `embed_spawn` (ycode-spawn exec shim), `embed_runner` (llama.cpp inference), `embed_vfkit` (macOS podman-machine helper), `embed_podman` (podman client), `embed_gvproxy` (podman user-mode net). The auto-add probes are in the single `TAG_LIST` line near the top of the `Makefile`. Bare `go build` without tags will not produce a working binary. Use the Makefile or:
 
 ```bash
 go build -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/
@@ -128,11 +129,23 @@ Supporting layers:
 
 Full deep dive: `docs/architecture.md`. Strategy and feature-tier policy (stable / experimental / wip): `docs/strategy.md`.
 
-## Foreman / Worker
+## Multi-agent orchestration — Weave and Foreman
 
-ycode runs a Foreman/Worker model when invoked through `/foreman` skills. The active session is the **Foreman** — full privileges, full source tree, backlog at `~/.agents/ycode/projects/<id>/backlog/`. Workers are sandboxed subprocesses, each pinned to one Gitea issue and one Loom workspace.
+**Weave** (`ycode weave …`) is the v2 front-door to Loom (the git-workspace substrate): it fans a queue of independent issues out to parallel subagent CLIs (claude, codex, opencode, gemini, …), each in an isolated git-clone sandbox with no origin-path breadcrumbs, then converges with verification. CLI in `cmd/ycode/weave*.go` + `internal/cli/weavecli/`; Gitea backend in `internal/gitserver/weave{api,setup,board}/`.
 
-Useful commands:
+```bash
+ycode weave add "title"                  # file an issue into the queue
+ycode weave start [--issue N] [-- tool]  # claim, allocate sandbox, launch tool
+ycode weave list                         # active weaves (TOOL / STARTED / DUR)
+ycode weave log <N> [-f]                 # live PTY capture
+ycode weave say <N> "msg"                # inject keystrokes into a worker's PTY
+ycode weave pull                         # merge submitted work back to main
+ycode weave kill|abandon|shell|wait|reset
+```
+
+The operating playbook (blocked-agent protocol, verify-a-prompt-is-live-before-answering, full-suite regression gate after every round) is the `skills/ycode-weave` skill. Design: `docs/loom-v2-plan.md`; worked example: `docs/weave-runbook.md`.
+
+**Foreman/Worker** is the older model, invoked through `/foreman` skills. The active session is the **Foreman** — full privileges, full source tree, backlog at `~/.agents/ycode/projects/<id>/backlog/`. Workers are sandboxed subprocesses, each pinned to one Gitea issue and one Loom workspace.
 
 ```bash
 ycode backlog new "title" --priority p1|p2|p3   # plan
@@ -141,6 +154,10 @@ ycode foreman pause|resume|stop|skip|prio|tell|status
 ```
 
 Protocol: `docs/backlog.md`. CLI/UX walk-through: `docs/usage.md`.
+
+## Skills
+
+Bundled skills live at top-level `skills/` (`ycode-weave`, `ycode-foreman`, `ycode-autopilot`, `ycode-tab`, …), are embedded in the binary via `skills/embed.go`, and install user-globally. Edit them there — not in `.agents/ycode/skills/`, which is the installed copy.
 
 ## Umbrella interaction
 
@@ -154,4 +171,8 @@ When this checkout is inside `dhnt/`, the parent `dhnt/CLAUDE.md` governs cross-
 - `docs/instructions.md` — shared agent-agnostic conventions, skill system, build/test/commit rules
 - `docs/backlog.md` — Boss → Foreman → Worker protocol
 - `docs/pipeline.md` — six-step pipeline for non-trivial work (research → plan → build/test → evaluate → commit → codify)
+- `docs/loom-v2-plan.md` / `docs/loom-v2-implementation.md` — weave/loom v2 design and implementation status
+- `docs/weave-runbook.md` — end-to-end three-agent weave walkthrough
+- `docs/shell-agent.md` — agent-mode shell integration recipes and the hint engine
+- `docs/release.md` — release procedure and the per-platform asset matrix
 - `external/gitea/AGENTS.md`, `external/podman/AGENTS.md` — embedded subsystem guidance
