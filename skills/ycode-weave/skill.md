@@ -36,6 +36,10 @@ One issue per independent task. Every body carries, in order:
 2. **GOAL** — one measurable outcome.
 3. **REPRO** — the exact command that measures it, runnable from the
    sandbox. If the canonical harness applies filters/env, embed them.
+   Anchor binaries BEFORE entering linked corpora: `BIN=$PWD/bin/tool`
+   at the repo root, never `realpath ../..` from inside a symlinked
+   directory — it resolves to the symlink target's checkout and the
+   agent silently measures the wrong build.
 4. **SCOPE** — directory allowlist, disjoint from every other issue
    running in parallel (parallel agents must not be able to collide
    even if both succeed).
@@ -87,6 +91,13 @@ Per tool:
   headless run, or accept fire-and-forget and read its transcript
   under `~/.claude/projects/<sandbox-slug>/` for progress.
 - **opencode**: `opencode run "<body>"` — streams live, exits clean.
+  CONTAINMENT WARNING: opencode keeps persistent per-project state;
+  if it has ever worked in the origin repo it gravitates back to it
+  by absolute path — even with the sandbox's `origin` remote removed
+  (observed twice: committed to the real checkout's master, sandbox
+  branch left empty). Prefer codex/claude when sandbox containment
+  matters; if you do use opencode, check `git -C <sandbox> log` AND
+  the origin repo's HEAD at completion before trusting state.
 
 Background each start (`&`); the wrapper auto-setsids.
 
@@ -141,6 +152,11 @@ regressions.
   (`failed` after a kill is bookkeeping, not a verdict on the work.)
 - After pull: rebuild, run the canonical measurement, run the test
   suite on a QUIET machine. Only then report numbers.
+- Escaped commit (work landed on the ORIGIN repo's branch instead
+  of the sandbox): don't reflex-revert. Verify it canonically in
+  place — exact repro, full package tests, inspect any test
+  deletions for legitimacy. Keep it if real (record via
+  `weave abandon N --reason`), reset and park on a branch if not.
 - Clean residue: `weave abandon N --reason "<why, where the work
   went>"` — the reason is the audit trail.
 
