@@ -40,12 +40,12 @@ import (
 // pass-through case. guards carries the three watchdog tripwires
 // (idle, wall-clock, memory) — see weaveGuards. Returns the
 // subagent's exit code (or 128+N when killed by signal N, matching
-// the wrap helper).
-func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, guards weaveGuards) (int, error) {
+// the wrap helper), the first wrapper-initiated kill reason, if any.
+func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, guards weaveGuards) (int, string, error) {
 	rows, cols := weavePTYSize()
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
 	if err != nil {
-		return 127, fmt.Errorf("pty.Start: %w", err)
+		return 127, "", fmt.Errorf("pty.Start: %w", err)
 	}
 	defer ptmx.Close()
 
@@ -60,8 +60,10 @@ func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, guards weaveGuards) (int,
 	// We signal the group AND each descendant from a `ps` snapshot,
 	// then escalate to SIGKILL after a grace window.
 	var killOnce sync.Once
+	var killReason atomic.Value
 	killTree := func(reason string, grace time.Duration) {
 		killOnce.Do(func() {
+			killReason.Store(reason)
 			if cmd.Process == nil {
 				return
 			}
@@ -309,22 +311,23 @@ func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, guards weaveGuards) (int,
 	waitErr := cmd.Wait()
 	restore()
 
+	reason, _ := killReason.Load().(string)
 	switch e := waitErr.(type) {
 	case nil:
-		return 0, nil
+		return 0, reason, nil
 	case *exec.ExitError:
 		if status, ok := e.Sys().(syscall.WaitStatus); ok {
 			if status.Signaled() {
-				return 128 + int(status.Signal()), nil
+				return 128 + int(status.Signal()), reason, nil
 			}
-			return status.ExitStatus(), nil
+			return status.ExitStatus(), reason, nil
 		}
-		return 1, nil
+		return 1, reason, nil
 	default:
 		if errors.Is(waitErr, io.EOF) {
-			return 0, nil
+			return 0, reason, nil
 		}
-		return 1, waitErr
+		return 1, reason, waitErr
 	}
 }
 

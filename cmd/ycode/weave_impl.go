@@ -74,15 +74,15 @@ func weaveOtherActiveQueues(currentDir string) []map[string]any {
 }
 
 type weaveItem struct {
-	ID         int64     `json:"id"`
-	Title      string    `json:"title"`
-	Body       string    `json:"body,omitempty"`
-	Priority   string    `json:"priority,omitempty"`
-	State      string    `json:"state"`
+	ID       int64  `json:"id"`
+	Title    string `json:"title"`
+	Body     string `json:"body,omitempty"`
+	Priority string `json:"priority,omitempty"`
+	State    string `json:"state"`
 	// Tool is the short (argv[0] basename) name of the CLI working
 	// the issue — codex, claude, gemini, opencode, bash — recorded
 	// at claim time, updated on resume.
-	Tool string `json:"tool,omitempty"`
+	Tool       string    `json:"tool,omitempty"`
 	Sandbox    string    `json:"sandbox,omitempty"`
 	Branch     string    `json:"branch,omitempty"`
 	Created    time.Time `json:"created"`
@@ -97,8 +97,9 @@ type weaveItem struct {
 	// the run ended is hidden.
 	CommitsAhead int    `json:"commits_ahead,omitempty"`
 	Head         string `json:"head,omitempty"`
-	ExitCode   *int      `json:"exit_code,omitempty"`
-	LogPath    string    `json:"log_path,omitempty"`
+	ExitCode     *int   `json:"exit_code,omitempty"`
+	KilledBy     string `json:"killed_by,omitempty"`
+	LogPath      string `json:"log_path,omitempty"`
 	// WrapperPid is the PID of the `ycode weave start` process
 	// supervising this item (NOT the subagent's PID — the wrapper
 	// is the session leader after auto-setsid and signals propagate
@@ -902,8 +903,9 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 	weaveMaybeSetsid(parentStdinTTY)
 
 	var (
-		exitCode int
-		runErr   error
+		exitCode   int
+		killReason string
+		runErr     error
 	)
 	if ptyMode == "never" {
 		tool.Stdin = os.Stdin
@@ -923,11 +925,11 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			// Subagent stdio: PTY ↔ log file. stdin is the PTY slave
 			// (no user input source); stdout/stderr go to the PTY
 			// master which we copy to logFile.
-			exitCode, runErr = runWeaveToolPTY(tool, logFile, guards)
+			exitCode, killReason, runErr = runWeaveToolPTY(tool, logFile, guards)
 			_ = logFile.Close()
 		} else {
 			// Interactive TTY pass-through.
-			exitCode, runErr = runWeaveToolPTY(tool, nil, guards)
+			exitCode, killReason, runErr = runWeaveToolPTY(tool, nil, guards)
 		}
 	}
 
@@ -954,6 +956,7 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 		}
 		freshIt.FinishedAt = finishedAt
 		freshIt.ExitCode = &exitCode
+		freshIt.KilledBy = killReason
 		freshIt.WrapperPid = 0
 		freshIt.CtlSock = ""
 		freshIt.CommitsAhead = ahead
