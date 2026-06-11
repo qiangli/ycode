@@ -237,6 +237,23 @@ func saveWeaveQueue(dir string, q *weaveQueue) error {
 // weaveStartedCol renders the subagent's start time for the list
 // table: clock time for today, date for older, "-" when the item
 // never started (or predates the started_at field).
+// weaveTildePath abbreviates the user's home prefix to ~ for table
+// display; JSON output keeps absolute paths.
+func weaveTildePath(p string) string {
+	if p == "" {
+		return p
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if p == home {
+			return "~"
+		}
+		if strings.HasPrefix(p, home+string(filepath.Separator)) {
+			return "~" + p[len(home):]
+		}
+	}
+	return p
+}
+
 func weaveStartedCol(it *weaveItem) string {
 	if it.StartedAt.IsZero() {
 		return "-"
@@ -465,7 +482,7 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 			toolCol = toolCol[:9]
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "%-4d %-4s %-10s %-9s %-8s %-8s %-40s %s\n",
-			it.ID, it.Priority, state, toolCol, weaveStartedCol(it), weaveDurationCol(it), title, it.Sandbox)
+			it.ID, it.Priority, state, toolCol, weaveStartedCol(it), weaveDurationCol(it), title, weaveTildePath(it.Sandbox))
 	}
 	if anyStale {
 		fmt.Fprintln(cmd.OutOrStdout(), "* wrapper process is dead — re-attach with `weave start --resume --issue N` or `weave abandon N`")
