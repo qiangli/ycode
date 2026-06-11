@@ -58,6 +58,7 @@ Tool cheat-sheet (details + caveats in Phase 3):
     codex     codex exec --full-auto "<body>"                       # headless, exits clean
     gemini    gemini --yolo --skip-trust -i "<body>"                # TUI; no trust dialog
     opencode  opencode run "<body>"                                 # headless; check artifacts, not exit code
+    aider     aider --yes-always --no-check-update --message "<body>"  # headless; auto-commits; model from ~/.aider.conf.yml
 
 ## Tool report card (update as evidence accumulates)
 
@@ -70,6 +71,10 @@ Reflecting seven dogfood rounds:
 - **opencode**: best as verification judge; ingests `say` steering while
   headless; check artifacts not exit codes (permission rejections can end runs
   with exit 0).
+- **aider**: probationary — smoke-tested (headless edit +
+  auto-commit work); auto-commit removes the forgot-to-commit
+  failure mode; DeepSeek-only per owner config; not yet proven on a
+  gated issue.
 - **gemini**: currently weakest — stalled 30 min on a usage-limit menu,
   unresponsive to /exit and /quit, one rejected branch that failed verification
   (claimed improvement, measured regression); also writes a GEMINI.md context
@@ -209,6 +214,13 @@ Per tool:
   workspace trust dialog suppressed; exits on `/quit` (the graceful
   kill handshake covers it via its second verb). Headless
   alternative: `-p "<body>"`.
+- **aider**: `aider --yes-always --no-check-update --message "<body>"
+  [files...]` — headless one-shot, exits clean, and AUTO-COMMITS its
+  own edits (no orphan-commit rescues). Model comes from
+  ~/.aider.conf.yml (this machine: DeepSeek-only by owner directive —
+  do NOT pass --model); requires DEEPSEEK_API_KEY in the environment.
+  Litter caveat: it creates/edits .gitignore and .aider* files in the
+  sandbox — never stage those. Interactive mode exits on /exit.
 - **opencode**: `opencode run "<body>"` — streams live, exits clean,
   and DOES ingest `weave say` lines mid-run (steerable while
   headless). Two caveats: its own permission system auto-rejects
