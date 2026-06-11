@@ -70,6 +70,8 @@ they survive the shell's exit).
   <tool>`. Not claimed by top-of-queue starts; never reads stale.
 - **working** — `weave start` claimed it; subagent is running.
 - **submitted** — subagent exited 0; branch is ready for `pull`.
+  `killed_by` is still populated when a watchdog/signal initiated
+  termination but the tool trapped SIGTERM and exited 0.
 - **failed** — subagent exited non-zero on its own. `exit_code` and
   `log_path` on the queue item; `pull` skips these.
 - **killed** — stopped by force (watchdog, `weave kill` escalation,

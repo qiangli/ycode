@@ -397,6 +397,36 @@ func TestWeaveE2E_Start_WithTool_SubmittedOnSuccess(t *testing.T) {
 	}
 }
 
+func TestWeaveE2E_Start_MaxRuntimeTrapTermExitZeroRecordsKilledBy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "watchdog provenance"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	script := `set -e
+trap 'exit 0' TERM
+echo done > watchdog.txt
+git add watchdog.txt
+git -c user.email=t@t -c user.name=t commit -qm "agent: commit before watchdog"
+sleep 600 &
+wait $!`
+	out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--max-runtime", "5s", "--", "bash", "-c", script)
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("start exited %d; out=%s", got, out)
+	}
+	out, _ = runWeave(t, repo, home, "list", "--history")
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if item["state"] != "submitted" {
+		t.Fatalf("expected trapped SIGTERM exit 0 to submit, got %v", item["state"])
+	}
+	killedBy, _ := item["killed_by"].(string)
+	if !strings.Contains(killedBy, "runtime exceeds --max-runtime") {
+		t.Fatalf("expected killed_by to record max-runtime watchdog, got %q; item=%v", killedBy, item)
+	}
+}
+
 func TestWeaveE2E_Start_FailedOnNonZero(t *testing.T) {
 	if testing.Short() {
 		t.Skip("e2e skipped in -short")
