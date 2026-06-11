@@ -120,28 +120,16 @@ with non-zero `verify_exit` (status `verify-failed`).
   ceiling, immune to output; always set it when unattended),
   `--mem-limit` (subagent-tree RSS, default `16g`, `0` disables —
   the OOM backstop; kill reason + forensics → issue log).
-- `log <issue> [-f|--follow] [-n|--tail N]` — print the issue's PTY
-  capture (everything the subagent wrote to its terminal). `-f`
-  streams until the issue reaches a terminal state; `-n 0 -f` means
-  "new output only". Raw ANSI byte stream — pipe `less -R`. With
-  `--json` returns `{log_path, size_bytes, state, exit_code}`
-  instead of the stream; read the file yourself. Caveat: tools that
-  buffer in non-interactive modes (`claude -p`) leave the capture
-  empty until exit — empty under `-f` means "nothing emitted", not
-  "nothing happening".
-- `say <issue> ["<text>"] [--tab] [--enter] [--raw "<bytes>"]` —
-  inject keystrokes into a RUNNING subagent's PTY via the wrapper's
-  per-issue control socket. Flags control the byte sequence:
-  `--tab` prepends a literal Tab, `--enter` sends only a bare Enter
-  (text becomes optional), `--raw` sends C-style decoded bytes
-  (`\t \r \n \x1b` etc.) verbatim with no implicit Enter. Use for
-  mid-run steering: `weave say 4 "/btw status?"`,
-  `weave say 4 "stop exploring, commit what passes"`,
-  `weave say 4 --raw "\tstatus"`. Requires state=working + a live
-  wrapper that allocated a PTY; tools that ignore terminal input in
-  non-interactive modes (`claude -p`) won't react — launch claude
-  with a streaming/TUI mode when you plan to steer. Watch the
-  reaction with `weave log <issue> -f`.
+- `log <issue> [-f] [-n N]` — print/stream the issue's PTY capture
+  (raw ANSI; persists post-run). `--json` returns {log_path, size,
+  state, exit_code} instead. Buffering tools (`claude -p`) leave it
+  empty until exit.
+- `say <issue> ["<text>"] [--tab|--enter|--raw "<bytes>"]` — inject
+  keystrokes into a RUNNING subagent's PTY (text + Enter by default;
+  --raw decodes C escapes verbatim, --enter sends a bare Enter,
+  --tab prefixes Tab for queue-on-Tab TUIs). Requires state=working
+  + live wrapper + PTY; verify a suspected dialog is LIVE (ps the
+  wrapper tree) before answering; watch reactions via `log -f`.
 - `wait [--issue N | --all] [--timeout DUR]` — block until target
   reaches terminal state.
 - `pull` — merge every working/submitted branch with commits ahead.
@@ -199,48 +187,9 @@ ycode weave pull --json
 
 ### Pattern B — parallel impl + judge validation
 
-```bash
-# Phase 1: file + run the implementers in parallel.
-ycode weave add "fix #1" --priority p0 --json
-ycode weave add "fix #2" --priority p0 --json
-ycode weave start --issue 1 -- codex       "fix #1" &
-ycode weave start --issue 2 -- claude-code "fix #2" &
-ycode weave wait --all --timeout 30m --json
-
-# Phase 2: inspect failures BEFORE merging. weave pull skips
-# state=failed branches, but you usually want a decision (abandon
-# + re-file, or `start --resume --issue N` after fixing the prompt)
-# rather than a silent skip.
-ycode weave list --history --json
-# … decide / re-file / re-start as needed …
-
-# Phase 3: merge clean branches.
-ycode weave pull --json
-
-# Phase 4: NOW file the validation issue (after pull, so the
-# judge's worktree branches off the merged main).
-ycode weave add "validate + run e2e" --priority p1 --json
-# capture the new ID from the envelope; assume it's 3.
-
-# Phase 5: run the judge against the merged state. Foreground is
-# fine here (only one thing running) or background + wait.
-ycode weave start --issue 3 -- opencode "$(cat <<'EOF'
-Run the full e2e suite against main. If everything passes, commit
-an empty marker file ./.judge-pass and exit 0. If anything fails,
-write your diagnosis to ./.judge-report.md, commit it, exit 0.
-Either way your branch will be merged so the orchestrator can
-read the marker / report.
-EOF
-)"
-
-# Phase 6: merge the judge's commit (carries pass-marker OR
-# diagnosis — both are useful in history).
-ycode weave pull --json
-# Inspect ./.judge-pass / ./.judge-report.md on main; proceed
-# to `make test && git push` only if the gate signals green.
-```
-
-If the judge reports failures, file new fix issues, re-run the
-phases. weave's queue persists across orchestrator turns — a
-follow-up `weave add` lands at the next NextID, and the prior
-items keep their state for history.
+Same as A through `pull`, then file ONE more issue against the
+merged state and run a judge agent on it: independently re-measure
+every claim, run the full suite, audit commits, write a verdict
+report, commit it. Add the judge issue only AFTER `pull` (its
+sandbox clones main at allocation). The ycode-weave skill carries
+the full worked sequence.
