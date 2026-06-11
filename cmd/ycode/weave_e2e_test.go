@@ -1858,6 +1858,84 @@ func TestWeaveE2E_Pull_DoesNotClobberConcurrentStartAllocation(t *testing.T) {
 	}
 }
 
+// TestWeaveE2E_AddPointsSerializesWithConcurrentStartAllocation pins
+// a whole-queue writer recurrence: add --points must not perform an
+// unlocked post-add save that can race with a wrapper allocation and
+// erase its sandbox field.
+func TestWeaveE2E_AddPointsSerializesWithConcurrentStartAllocation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "allocate while pointed add runs"); envExitCode(ee) != 0 {
+		t.Fatalf("seed add failed")
+	}
+
+	pause := filepath.Join(t.TempDir(), "add-inside-lock.pause")
+	if err := os.WriteFile(pause, []byte("pause"), 0o644); err != nil {
+		t.Fatalf("write pause file: %v", err)
+	}
+	addDone := runWeaveAsyncEnv(t, repo, home, []string{"YCODE_WEAVE_TEST_ADD_INSIDE_LOCK_FILE=" + pause}, "add", "pointed add", "--points", "5")
+	ready := pause + ".ready"
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("add --points did not reach inside-lock pause")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	startDone := runWeaveAsyncEnv(t, repo, home, nil, "start", "--no-spawn", "--issue", "1")
+	select {
+	case res := <-startDone:
+		t.Fatalf("start allocation completed while add --points held queue lock; exit=%d out=%s", envExitCode(res.ee), res.out)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := os.Remove(pause); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("release pause: %v", err)
+	}
+	addRes := <-addDone
+	if got := envExitCode(addRes.ee); got != 0 {
+		t.Fatalf("add --points exited %d; out=%s", got, addRes.out)
+	}
+	startRes := <-startDone
+	if got := envExitCode(startRes.ee); got != 0 {
+		t.Fatalf("start --no-spawn exited %d; out=%s", got, startRes.out)
+	}
+
+	out, _ := runWeave(t, repo, home, "list", "--history")
+	items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+	var issue1, issue2 map[string]any
+	for _, raw := range items {
+		item := raw.(map[string]any)
+		switch int(item["id"].(float64)) {
+		case 1:
+			issue1 = item
+		case 2:
+			issue2 = item
+		}
+	}
+	if issue1 == nil || issue2 == nil {
+		t.Fatalf("expected issues 1 and 2, got %v", items)
+	}
+	if issue1["state"] != "allocated" {
+		t.Fatalf("expected issue 1 to stay allocated, got %v; item=%v", issue1["state"], issue1)
+	}
+	sandbox, _ := issue1["sandbox"].(string)
+	if sandbox == "" {
+		t.Fatalf("concurrent add --points clobbered issue 1 sandbox: item=%v", issue1)
+	}
+	if _, err := os.Stat(sandbox); err != nil {
+		t.Fatalf("issue 1 sandbox missing after concurrent add --points: %v", err)
+	}
+	if p, _ := issue2["points"].(float64); int(p) != 5 {
+		t.Fatalf("expected issue 2 points=5, got %v; item=%v", issue2["points"], issue2)
+	}
+}
+
 // TestWeaveE2E_Prune_RemovesFailedSandbox verifies that a failed item's
 // sandbox survives pull (failed items are not merged), and then prune --yes
 // properly removes the lingering sandbox and branch.

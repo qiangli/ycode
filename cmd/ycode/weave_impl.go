@@ -440,33 +440,23 @@ func ec(code int) error {
 	return &exitCodeError{code: code}
 }
 
-// runWeaveAddPointed validates optional story points, files the
-// issue, then stamps the points on it.
+// runWeaveAddPointed validates optional story points and files the
+// issue in one queue transaction. Points used to be stamped in a
+// second read-modify-write after add returned; that made add --points
+// sensitive to concurrent queue writers and to "last item" races.
 func runWeaveAddPointed(cmd *cobra.Command, title, body, priority, verify string, points int, flags *weaveOutputFlags) error {
 	if points != 0 && !weaveValidPoints(points) {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), flags.mode(), "weave add",
 			weavecli.ExitInvalidArg, fmt.Errorf("points must be one of 1,2,3,5,8")))
 	}
-	if err := runWeaveAdd(cmd, title, body, priority, verify, flags); err != nil {
-		return err
-	}
-	if points != 0 {
-		cwd, _ := os.Getwd()
-		if root, err := weaveRepoRoot(cwd); err == nil {
-			if dir, err := weaveQueueDir(root); err == nil {
-				_ = withWeaveQueueLock(dir, func(q *weaveQueue) error {
-					if len(q.Items) > 0 {
-						q.Items[len(q.Items)-1].Points = points
-					}
-					return nil
-				})
-			}
-		}
-	}
-	return nil
+	return runWeaveAddWithPoints(cmd, title, body, priority, verify, points, flags)
 }
 
 func runWeaveAdd(cmd *cobra.Command, title, body, priority, verify string, flags *weaveOutputFlags) error {
+	return runWeaveAddWithPoints(cmd, title, body, priority, verify, 0, flags)
+}
+
+func runWeaveAddWithPoints(cmd *cobra.Command, title, body, priority, verify string, points int, flags *weaveOutputFlags) error {
 	mode := flags.mode()
 	if title == "" {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave add",
@@ -496,10 +486,12 @@ func runWeaveAdd(cmd *cobra.Command, title, body, priority, verify string, flags
 			Priority:      prio,
 			State:         "todo",
 			VerifyCommand: verify,
+			Points:        points,
 			Created:       time.Now().UTC(),
 		}
 		q.NextID++
 		q.Items = append(q.Items, it)
+		weaveTestPauseInsideAddLock()
 		return nil
 	})
 	if lockErr != nil {
@@ -512,10 +504,29 @@ func runWeaveAdd(cmd *cobra.Command, title, body, priority, verify string, flags
 			"title":    it.Title,
 			"priority": it.Priority,
 			"state":    it.State,
+			"points":   it.Points,
 		}))
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "weave add: issue #%d created (%s, todo) — %q\n", it.ID, it.Priority, it.Title)
 	return nil
+}
+
+func weaveTestPauseInsideAddLock() {
+	pause := os.Getenv("YCODE_WEAVE_TEST_ADD_INSIDE_LOCK_FILE")
+	if pause == "" {
+		return
+	}
+	_ = os.WriteFile(pause+".ready", []byte("ready"), 0o644)
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		if _, err := os.Stat(pause); os.IsNotExist(err) {
+			return
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 // weaveRenderItemRows prints the standard list table rows (no header).
@@ -1953,11 +1964,6 @@ func runWeaveReset(cmd *cobra.Command, yes bool, flags *weaveOutputFlags) error 
 			weavecli.ExitPrecondFail, err))
 	}
 	dir, _ := weaveQueueDir(root)
-	q, err := loadWeaveQueue(dir)
-	if err != nil {
-		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave reset",
-			weavecli.ExitGenericFail, err))
-	}
 	if !yes {
 		// Agent mode (or any non-TTY) without --yes is a refusal — a
 		// destructive op shouldn't run without explicit confirmation.
@@ -1979,30 +1985,36 @@ func runWeaveReset(cmd *cobra.Command, yes bool, flags *weaveOutputFlags) error 
 		Sandbox string `json:"sandbox,omitempty"`
 	}
 	var teardowns []tear
-	for _, it := range q.Items {
-		if it.Sandbox == "" && it.Branch == "" && it.WrapperPid == 0 {
-			continue
+	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
+		for _, it := range q.Items {
+			if it.Sandbox == "" && it.Branch == "" && it.WrapperPid == 0 {
+				continue
+			}
+			// Stop any still-running wrapper precisely (PID + setsid
+			// group). Reset is a destructive batch op — we want
+			// everything torn down cleanly.
+			if it.WrapperPid > 0 {
+				weaveStopWrapper(it.WrapperPid)
+			}
+			// Sandboxes are independent git clones — rm -rf is right.
+			if it.Sandbox != "" {
+				_ = os.RemoveAll(it.Sandbox)
+			}
+			if it.Branch != "" {
+				// Best-effort: drop the branch from the user's repo if
+				// `weave pull` fetched it earlier.
+				_ = exec.Command("git", "-C", root, "branch", "-D", it.Branch).Run()
+			}
+			teardowns = append(teardowns, tear{Issue: it.ID, Branch: it.Branch, Sandbox: it.Sandbox})
 		}
-		// Stop any still-running wrapper precisely (PID + setsid
-		// group). Reset is a destructive batch op — we want
-		// everything torn down cleanly.
-		if it.WrapperPid > 0 {
-			weaveStopWrapper(it.WrapperPid)
-		}
-		// Sandboxes are independent git clones — rm -rf is right.
-		if it.Sandbox != "" {
-			_ = os.RemoveAll(it.Sandbox)
-		}
-		if it.Branch != "" {
-			// Best-effort: drop the branch from the user's repo if
-			// `weave pull` fetched it earlier.
-			_ = exec.Command("git", "-C", root, "branch", "-D", it.Branch).Run()
-		}
-		teardowns = append(teardowns, tear{Issue: it.ID, Branch: it.Branch, Sandbox: it.Sandbox})
+		q.Items = nil
+		q.NextID = 1
+		return nil
+	})
+	if lockErr != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave reset",
+			weavecli.ExitGenericFail, lockErr))
 	}
-	// Remove the queue file itself; on next add it gets recreated.
-	queuePath := filepath.Join(dir, "queue.json")
-	_ = os.Remove(queuePath)
 	// Best-effort: also remove the sandboxes/ tree in case the
 	// individual removals left empty dirs behind.
 	_ = os.RemoveAll(filepath.Join(dir, "sandboxes"))
