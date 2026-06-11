@@ -150,8 +150,13 @@ regressions.
       git fetch --no-tags <sandbox> agent/weave-issue-N:agent/weave-issue-N
       git merge --no-ff agent/weave-issue-N
   (`failed` after a kill is bookkeeping, not a verdict on the work.)
-- After pull: rebuild, run the canonical measurement, run the test
-  suite on a QUIET machine. Only then report numbers.
+- After pull: rebuild, run the canonical measurement, then run the
+  FULL suite on a QUIET machine — not just the fixtures the agents
+  worked on. Cross-fixture ripple is real: one round improved its
+  target fixture while silently flipping an unrelated one from PASS
+  to FAIL by deleting a quirk-encoding block it didn't need to
+  touch. Bisect any regression against the pre-merge commit before
+  accepting the round.
 - Escaped commit (work landed on the ORIGIN repo's branch instead
   of the sandbox): don't reflex-revert. Verify it canonically in
   place — exact repro, full package tests, inspect any test
