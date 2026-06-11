@@ -59,6 +59,11 @@ func weaveSetupRepo(t *testing.T) (string, string) {
 // for confirmation refuse rather than hanging.
 func runWeave(t *testing.T, repo, home string, args ...string) (string, *exec.ExitError) {
 	t.Helper()
+	return runWeaveEnv(t, repo, home, nil, args...)
+}
+
+func runWeaveEnv(t *testing.T, repo, home string, extraEnv []string, args ...string) (string, *exec.ExitError) {
+	t.Helper()
 	if _, err := os.Stat(weaveE2EBinary); os.IsNotExist(err) {
 		t.Skipf("binary not found at %s; run 'make compile' first", weaveE2EBinary)
 	}
@@ -79,6 +84,7 @@ func runWeave(t *testing.T, repo, home string, args ...string) (string, *exec.Ex
 		// tty-detection would flap in CI.
 		"YCODE_AGENT=1",
 	)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Stdin = nil // closed; reset --yes path checks this
 	out, runErr := cmd.CombinedOutput()
 	var ee *exec.ExitError
@@ -89,6 +95,25 @@ func runWeave(t *testing.T, repo, home string, args ...string) (string, *exec.Ex
 		t.Fatalf("unexpected non-exit error running ycode weave %v: %v\n%s", args, runErr, out)
 	}
 	return string(out), nil
+}
+
+func runWeaveAsyncEnv(t *testing.T, repo, home string, extraEnv []string, args ...string) <-chan struct {
+	out string
+	ee  *exec.ExitError
+} {
+	t.Helper()
+	ch := make(chan struct {
+		out string
+		ee  *exec.ExitError
+	}, 1)
+	go func() {
+		out, ee := runWeaveEnv(t, repo, home, extraEnv, args...)
+		ch <- struct {
+			out string
+			ee  *exec.ExitError
+		}{out: out, ee: ee}
+	}()
+	return ch
 }
 
 // parseEnvelope extracts the first JSON envelope (object containing
@@ -1739,6 +1764,97 @@ func TestWeaveE2E_Pull_RemovesSandboxAfterMerge(t *testing.T) {
 	item = parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
 	if item["state"] != "done" {
 		t.Fatalf("expected state=done after pull, got %v", item["state"])
+	}
+}
+
+// TestWeaveE2E_Pull_DoesNotClobberConcurrentStartAllocation pins a
+// production data-loss race: pull loaded queue.json, merged one
+// submitted issue, then saved that stale full queue after a concurrent
+// start --no-spawn had recorded another issue's sandbox.
+func TestWeaveE2E_Pull_DoesNotClobberConcurrentStartAllocation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "allocate while pull runs"); envExitCode(ee) != 0 {
+		t.Fatalf("add 1 failed")
+	}
+	if _, ee := runWeave(t, repo, home, "add", "submitted merge target"); envExitCode(ee) != 0 {
+		t.Fatalf("add 2 failed")
+	}
+	script := `set -e; echo merged > pull-race.txt; git add pull-race.txt; git commit -qm "feat: pull race"`
+	if out, ee := runWeave(t, repo, home, "start", "--issue", "2", "--", "bash", "-c", script); envExitCode(ee) != 0 {
+		t.Fatalf("start issue 2 failed: %s", out)
+	}
+
+	pause := filepath.Join(t.TempDir(), "pull-after-load.pause")
+	if err := os.WriteFile(pause, []byte("pause"), 0o644); err != nil {
+		t.Fatalf("write pause file: %v", err)
+	}
+	pullDone := runWeaveAsyncEnv(t, repo, home, []string{"YCODE_WEAVE_TEST_PULL_AFTER_LOAD_FILE=" + pause}, "pull")
+	ready := pause + ".ready"
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pull did not reach after-load pause")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	startDone := runWeaveAsyncEnv(t, repo, home, nil, "start", "--no-spawn", "--issue", "1")
+	var startRes struct {
+		out string
+		ee  *exec.ExitError
+	}
+	startFinished := false
+	select {
+	case startRes = <-startDone:
+		startFinished = true
+	case <-time.After(10 * time.Second):
+	}
+	if err := os.Remove(pause); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("release pause: %v", err)
+	}
+
+	if !startFinished {
+		startRes = <-startDone
+	}
+	if got := envExitCode(startRes.ee); got != 0 {
+		t.Fatalf("start --no-spawn exited %d; out=%s", got, startRes.out)
+	}
+	pullRes := <-pullDone
+	if got := envExitCode(pullRes.ee); got != 0 {
+		t.Fatalf("pull exited %d; out=%s", got, pullRes.out)
+	}
+
+	out, _ := runWeave(t, repo, home, "list", "--history")
+	items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+	var issue1 map[string]any
+	for _, raw := range items {
+		item := raw.(map[string]any)
+		if int(item["id"].(float64)) == 1 {
+			issue1 = item
+			break
+		}
+	}
+	if issue1 == nil {
+		t.Fatalf("issue 1 missing from queue: %v", items)
+	}
+	if issue1["state"] != "allocated" {
+		t.Fatalf("expected issue 1 to stay allocated, got %v; item=%v", issue1["state"], issue1)
+	}
+	sandbox, _ := issue1["sandbox"].(string)
+	if sandbox == "" {
+		t.Fatalf("concurrent pull clobbered issue 1 sandbox: item=%v", issue1)
+	}
+	if _, err := os.Stat(sandbox); err != nil {
+		t.Fatalf("issue 1 sandbox missing after concurrent pull: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "pull-race.txt")); err != nil {
+		t.Fatalf("expected issue 2 merge result on main: %v", err)
 	}
 }
 
