@@ -858,6 +858,49 @@ func TestWeaveE2E_Kill_RequiresWorking(t *testing.T) {
 	}
 }
 
+func TestWeaveE2E_Kill_NotFoundHintsOtherActiveQueue(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "active elsewhere"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	if out, ee := runWeave(t, repo, home, "start", "--no-spawn", "--issue", "1"); envExitCode(ee) != 0 {
+		t.Fatalf("start --no-spawn failed: out=%s", out)
+	}
+
+	otherRepo := t.TempDir()
+	cmds := [][]string{
+		{"git", "init", "-q", "-b", "main"},
+		{"git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-qm", "seed"},
+	}
+	for _, c := range cmds {
+		cmd := exec.Command(c[0], c[1:]...)
+		cmd.Dir = otherRepo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", c, err, out)
+		}
+	}
+
+	out, ee := runWeave(t, otherRepo, home, "kill", "1")
+	if got := envExitCode(ee); got != 2 {
+		t.Fatalf("expected exit=2 (invalid_arg) for wrong-repo kill, got %d; out=%s", got, out)
+	}
+	env := parseEnvelope(t, out)
+	if env["status"] != "error" {
+		t.Fatalf("expected status=error, got %v", env["status"])
+	}
+	errObj := env["error"].(map[string]any)
+	if errObj["code"] != "invalid_arg" {
+		t.Fatalf("expected error.code=invalid_arg, got %v", errObj["code"])
+	}
+	msg, _ := errObj["message"].(string)
+	if !strings.Contains(msg, "queues are per-repo") || !strings.Contains(msg, repo+" (1)") {
+		t.Fatalf("expected wrong-repo hint to mention %s active queue; msg=%q out=%s", repo, msg, out)
+	}
+}
+
 func TestWeaveE2E_NoSpawn_RequiresGitRepo(t *testing.T) {
 	if testing.Short() {
 		t.Skip("e2e skipped in -short")
