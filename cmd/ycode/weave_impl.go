@@ -73,6 +73,21 @@ func weaveOtherActiveQueues(currentDir string) []map[string]any {
 	return out
 }
 
+func weaveOtherActiveQueuesHintSuffix(currentDir string) string {
+	others := weaveOtherActiveQueues(currentDir)
+	if len(others) == 0 {
+		return ""
+	}
+	sort.Slice(others, func(i, j int) bool {
+		return fmt.Sprint(others[i]["root"]) < fmt.Sprint(others[j]["root"])
+	})
+	parts := make([]string, 0, len(others))
+	for _, o := range others {
+		parts = append(parts, fmt.Sprintf("%s (%d)", o["root"], o["active"]))
+	}
+	return " (queues are per-repo; active weaves exist for: " + strings.Join(parts, ", ") + ")"
+}
+
 type weaveItem struct {
 	ID       int64  `json:"id"`
 	Title    string `json:"title"`
@@ -678,7 +693,7 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 		it = findWeaveItem(q, issueID)
 		if it == nil {
 			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
-				weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found", issueID)))
+				weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found%s", issueID, weaveOtherActiveQueuesHintSuffix(dir))))
 		}
 	} else {
 		if opts.resume {
@@ -1106,7 +1121,7 @@ func runWeaveSay(cmd *cobra.Command, id int64, text string, flags *weaveOutputFl
 	it := findWeaveItem(q, id)
 	if it == nil {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave say",
-			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found", id)))
+			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found%s", id, weaveOtherActiveQueuesHintSuffix(dir))))
 	}
 	if it.State != "working" || it.WrapperPid == 0 || !pidAlive(it.WrapperPid) {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave say",
@@ -1161,7 +1176,7 @@ func runWeaveLog(cmd *cobra.Command, id int64, follow bool, tailN int, flags *we
 	it := findWeaveItem(q, id)
 	if it == nil {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave log",
-			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found", id)))
+			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found%s", id, weaveOtherActiveQueuesHintSuffix(dir))))
 	}
 	logPath := it.LogPath
 	if logPath == "" {
@@ -1419,7 +1434,7 @@ func runWeaveAbandon(cmd *cobra.Command, id int64, reason string, flags *weaveOu
 	it := findWeaveItem(q, id)
 	if it == nil {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave abandon",
-			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found", id)))
+			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found%s", id, weaveOtherActiveQueuesHintSuffix(dir))))
 	}
 	// If a wrapper PID is recorded and the item is still working,
 	// signal precisely — SIGTERM the recorded PID, wait briefly,
@@ -1538,7 +1553,7 @@ func runWeavePrio(cmd *cobra.Command, id int64, tier string, auto bool, flags *w
 	it := findWeaveItem(q, id)
 	if it == nil {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave prio",
-			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found", id)))
+			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found%s", id, weaveOtherActiveQueuesHintSuffix(dir))))
 	}
 	prev := it.Priority
 	it.Priority = tier
@@ -1578,7 +1593,7 @@ func runWeaveShell(cmd *cobra.Command, id int64, flags *weaveOutputFlags) error 
 	it := findWeaveItem(q, id)
 	if it == nil {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave shell",
-			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found", id)))
+			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found%s", id, weaveOtherActiveQueuesHintSuffix(dir))))
 	}
 	if it.Sandbox == "" {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave shell",
@@ -2084,10 +2099,11 @@ func runWeaveKill(cmd *cobra.Command, id int64, reason string, flags *weaveOutpu
 	var killed bool
 	var wrapperPid int
 	var finalState string
+	notFoundHint := weaveOtherActiveQueuesHintSuffix(dir)
 	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
 		it := findWeaveItem(q, id)
 		if it == nil {
-			return fmt.Errorf("issue #%d not found", id)
+			return fmt.Errorf("issue #%d not found%s", id, notFoundHint)
 		}
 		if it.State != "working" {
 			return fmt.Errorf("issue #%d state is %q (kill requires working)", id, it.State)
@@ -2309,7 +2325,7 @@ func runWeaveWait(cmd *cobra.Command, issueID int64, all bool, timeout time.Dura
 			it := findWeaveItem(q, issueID)
 			if it == nil {
 				return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave wait",
-					weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found", issueID)))
+					weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found%s", issueID, weaveOtherActiveQueuesHintSuffix(dir))))
 			}
 			if isTerminalState(it.State) {
 				return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave wait", map[string]any{
