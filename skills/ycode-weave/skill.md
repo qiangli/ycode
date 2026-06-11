@@ -15,6 +15,17 @@ named where that helps.
 Use this when you have N independent pieces of work for peer agent
 CLIs. For one inline edit in the current checkout, just do the work.
 
+## Authoring --verify commands
+
+The wrapper runs them with a hermetic `bash --noprofile --norc -c`
+in the sandbox (10m ceiling). Still: never `bash -l` inside (user
+dotfiles), never `set -e` around a `diff` pipeline (exit 1 means
+"files differ", not failure), always `echo` the measured number
+(it lands in verify_output — the evidence trail), and end with the
+explicit gate test (`[ "$n" -lt <baseline> ]`). The gate refusing a
+merge is `weave pull` reporting verify-failed; the orchestrator
+re-runs the gate by hand before overriding anything.
+
 ## Quick start — any orchestrator, zero to fleet
 
 You may be Claude Code, codex, gemini, opencode, or anything that

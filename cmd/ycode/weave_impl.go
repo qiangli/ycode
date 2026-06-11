@@ -348,8 +348,20 @@ func weaveMeasureBranch(sandbox, base string) (ahead int, head string) {
 func weaveRunVerify(sandbox, command string) (int, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	vc := exec.CommandContext(ctx, "bash", "-c", command)
+	// Hermetic shell: --noprofile --norc keeps the measurement
+	// immune to user dotfiles (a broken ~/.bash_profile once failed
+	// an honest gate in production), and PWD is pinned like the
+	// subagent's own environment.
+	vc := exec.CommandContext(ctx, "bash", "--noprofile", "--norc", "-c", command)
 	vc.Dir = sandbox
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "PWD=") || strings.HasPrefix(kv, "OLDPWD=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	vc.Env = append(env, "PWD="+sandbox)
 	out, err := vc.CombinedOutput()
 	exit := 0
 	if err != nil {
