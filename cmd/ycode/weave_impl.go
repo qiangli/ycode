@@ -79,6 +79,10 @@ type weaveItem struct {
 	Body       string    `json:"body,omitempty"`
 	Priority   string    `json:"priority,omitempty"`
 	State      string    `json:"state"`
+	// Tool is the short (argv[0] basename) name of the CLI working
+	// the issue — codex, claude, gemini, opencode, bash — recorded
+	// at claim time, updated on resume.
+	Tool string `json:"tool,omitempty"`
 	Sandbox    string    `json:"sandbox,omitempty"`
 	Branch     string    `json:"branch,omitempty"`
 	Created    time.Time `json:"created"`
@@ -443,7 +447,7 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 		}
 		return nil
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "%-4s %-4s %-10s %-8s %-8s %-40s %s\n", "ID", "PRIO", "STATE", "STARTED", "DUR", "TITLE", "SANDBOX")
+	fmt.Fprintf(cmd.OutOrStdout(), "%-4s %-4s %-10s %-9s %-8s %-8s %-40s %s\n", "ID", "PRIO", "STATE", "TOOL", "STARTED", "DUR", "TITLE", "SANDBOX")
 	for _, it := range items {
 		title := it.Title
 		if len(title) > 40 {
@@ -453,8 +457,15 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 		if it.Stale {
 			state = it.State + "*"
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "%-4d %-4s %-10s %-8s %-8s %-40s %s\n",
-			it.ID, it.Priority, state, weaveStartedCol(it), weaveDurationCol(it), title, it.Sandbox)
+		toolCol := it.Tool
+		if toolCol == "" {
+			toolCol = "-"
+		}
+		if len(toolCol) > 9 {
+			toolCol = toolCol[:9]
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%-4d %-4s %-10s %-9s %-8s %-8s %-40s %s\n",
+			it.ID, it.Priority, state, toolCol, weaveStartedCol(it), weaveDurationCol(it), title, it.Sandbox)
 	}
 	if anyStale {
 		fmt.Fprintln(cmd.OutOrStdout(), "* wrapper process is dead — re-attach with `weave start --resume --issue N` or `weave abandon N`")
@@ -672,6 +683,9 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			freshIt.StartedAt = time.Now().UTC()
 			freshIt.FinishedAt = time.Time{}
 			freshIt.CtlSock = ctlSock
+			if len(toolArgs) > 0 {
+				freshIt.Tool = filepath.Base(toolArgs[0])
+			}
 			it = freshIt
 			return nil
 		})
@@ -751,6 +765,9 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			freshIt.WrapperPid = os.Getpid()
 			freshIt.CtlSock = ctlSock
 			freshIt.StartedAt = time.Now().UTC()
+			if len(toolArgs) > 0 {
+				freshIt.Tool = filepath.Base(toolArgs[0])
+			}
 			it = freshIt
 			return nil
 		})

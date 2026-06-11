@@ -97,6 +97,11 @@ Per tool:
   --verbose --output-format stream-json -p "<body>"` for a streaming
   headless run, or accept fire-and-forget and read its transcript
   under `~/.claude/projects/<sandbox-slug>/` for progress.
+- **gemini**: `gemini --yolo --skip-trust -i "<body>"` — interactive
+  (steerable) with all tool approvals auto-accepted and the
+  workspace trust dialog suppressed; exits on `/quit` (the graceful
+  kill handshake covers it via its second verb). Headless
+  alternative: `-p "<body>"`.
 - **opencode**: `opencode run "<body>"` — streams live, exits clean,
   and DOES ingest `weave say` lines mid-run (steerable while
   headless). Two caveats: its own permission system auto-rejects
@@ -116,7 +121,7 @@ Background each start (`&`); the wrapper auto-setsids.
 
 ## Phase 4 — Monitor
 
-    ycode weave list             # STARTED + DUR columns show run age
+    ycode weave list             # TOOL + STARTED + DUR: who works what, since when
     ycode weave log N -f         # live PTY capture (any number of watchers)
     ycode weave list --watch --json   # NDJSON state transitions
 
