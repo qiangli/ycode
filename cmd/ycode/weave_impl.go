@@ -805,12 +805,26 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 		}
 	}
 	if opts.noSpawn {
+		// Allocated, not working: nothing is running, so don't record
+		// a wrapper pid that will immediately read as a dead/stale
+		// worker in `weave list`. The sandbox waits for a later
+		// `start --resume --issue N -- <tool>` to assign an agent.
+		_ = withWeaveQueueLock(dir, func(freshQ *weaveQueue) error {
+			if freshIt := findWeaveItem(freshQ, it.ID); freshIt != nil {
+				freshIt.State = "allocated"
+				freshIt.WrapperPid = 0
+				freshIt.CtlSock = ""
+				freshIt.StartedAt = time.Time{}
+				freshIt.Tool = ""
+			}
+			return nil
+		})
 		if mode == weavecli.OutputJSON {
 			return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave start", map[string]any{
 				"issue":    it.ID,
 				"sandbox":  sandbox,
 				"branch":   branch,
-				"state":    "working",
+				"state":    "allocated",
 				"no_spawn": true,
 			}))
 		}

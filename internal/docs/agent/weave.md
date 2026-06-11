@@ -65,6 +65,9 @@ they survive the shell's exit).
 ## States
 
 - **todo** — added, not yet claimed.
+- **allocated** — `start --no-spawn` provisioned the sandbox; no
+  agent assigned yet. Assign one with `start --resume --issue N --
+  <tool>`. Not claimed by top-of-queue starts; never reads stale.
 - **working** — `weave start` claimed it; subagent is running.
 - **submitted** — subagent exited 0; branch is ready for `pull`.
 - **failed** — subagent exited non-zero on its own. `exit_code` and

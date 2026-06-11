@@ -274,8 +274,8 @@ func TestWeaveE2E_Start_NoSpawn(t *testing.T) {
 		t.Fatalf("start --no-spawn exited %d; out=%s", got, out)
 	}
 	res := parseEnvelope(t, out)["result"].(map[string]any)
-	if res["state"] != "working" {
-		t.Fatalf("expected state=working, got %v", res["state"])
+	if res["state"] != "allocated" {
+		t.Fatalf("expected state=allocated for --no-spawn, got %v", res["state"])
 	}
 	sandbox, _ := res["sandbox"].(string)
 	if sandbox == "" {
@@ -296,11 +296,25 @@ func TestWeaveE2E_Start_NoSpawn(t *testing.T) {
 		t.Fatalf("expected sandbox checked out on agent/weave-issue-1; got %q (err=%v)", sandboxBranchOut, err)
 	}
 
-	// list should now show state=working.
+	// list shows allocated, with no stale flag (nothing is running).
 	out, _ = runWeave(t, repo, home, "list")
-	items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
-	if items[0].(map[string]any)["state"] != "working" {
-		t.Fatalf("expected list to show state=working, got %v", items[0])
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if item["state"] != "allocated" {
+		t.Fatalf("expected list to show state=allocated, got %v", item)
+	}
+	if stale, _ := item["stale"].(bool); stale {
+		t.Fatalf("allocated item must not read as stale: %v", item)
+	}
+	// An allocated sandbox is assignable: resume launches a tool in it
+	// and the normal lifecycle proceeds.
+	out, ee = runWeave(t, repo, home, "start", "--issue", "1", "--resume", "--", "bash", "-c", "echo hi > a.txt; git add a.txt; git -c user.name=t -c user.email=t@t commit -qm a; exit 0")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("resume from allocated exited %d; out=%s", got, out)
+	}
+	out, _ = runWeave(t, repo, home, "list")
+	item = parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if item["state"] != "submitted" {
+		t.Fatalf("expected submitted after assigned run, got %v", item["state"])
 	}
 }
 
