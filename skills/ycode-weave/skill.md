@@ -124,6 +124,17 @@ Skip this phase when the repo is self-contained.
 
 ## Phase 3 — Launch (tool recipes + watchdogs)
 
+Calibrate `--mem-limit` to the TARGET REPO's build profile, not a
+global default: a Go repo that links a 500MB binary peaks ~5GB RSS
+in the linker alone — a 5g cap killed three builders in one round
+(the watchdog forensics named `link` each time). Budget link-peak
+plus headroom (12g served).
+
+When verifying agent work via e2e suites that drive a compiled
+binary, REBUILD that binary first (make compile / the repo's
+equivalent) — judging fresh code against a stale harness binary
+produces phantom failures (nearly cost one agent a correct fix).
+
 ALWAYS set watchdogs on unattended runs — they are the reason a
 runaway costs a retry instead of the machine:
 
