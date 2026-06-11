@@ -47,6 +47,23 @@ Tool cheat-sheet (details + caveats in Phase 3):
     gemini    gemini --yolo --skip-trust -i "<body>"                # TUI; no trust dialog
     opencode  opencode run "<body>"                                 # headless; check artifacts, not exit code
 
+## Tool report card (update as evidence accumulates)
+
+Reflecting seven dogfood rounds:
+
+- **codex**: reliable workhorse; honest no-ops (declines to commit when its
+  change regresses the metric); headless exec exits clean.
+- **claude**: strongest on deep multi-file work (delivered both fixture flips);
+  TUI needs trust-dialog answer + graceful /exit stop.
+- **opencode**: best as verification judge; ingests `say` steering while
+  headless; check artifacts not exit codes (permission rejections can end runs
+  with exit 0).
+- **gemini**: currently weakest — stalled 30 min on a usage-limit menu,
+  unresponsive to /exit and /quit, one rejected branch that failed verification
+  (claimed improvement, measured regression); also writes a GEMINI.md context
+  file into any cwd it is invoked in, even for --help. Prefer headless -p for
+  low-stakes tasks; keep p0 work elsewhere until it earns up.
+
 Everything below is the depth behind those six steps — read Phase 1
 (issue contract) and Phase 7 (verification) in full before your
 first round; skim the rest and return on demand.
@@ -202,6 +219,9 @@ WHAT THE SCREEN ASKS:
 
 - One say = one typed line + Enter. Injected text is keystrokes; the
   agent treats it as user input.
+- Text injected while nothing reads it lands in the composer and is
+  delivered as the NEXT user message — harmless; instruct workers to
+  ignore stray one-liners.
 - codex mid-turn QUEUES typed input on Tab instead of submitting:
   follow the say with a literal Tab via the control socket
   (`printf '\t\n' | nc -U <ctl_sock>`). Avoid a leading `/` on plain
@@ -222,6 +242,9 @@ WHAT THE SCREEN ASKS:
 - Agent finished but claimed results you can't see: NEVER trust the
   claim — re-run the issue's REPRO yourself before merging. Park
   unverifiable work on a branch; re-file with a hardened prompt.
+- **WARNING**: resumed sandboxes keep their ORIGINAL base commit — work
+  resumed after sibling merges lands on a stale base; rebase in the sandbox
+  or expect conflicts at pull.
 
 ## Phase 7 — Converge and verify
 
