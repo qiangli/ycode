@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -226,15 +227,20 @@ func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, guards weaveGuards) (int,
 						defer c.Close()
 						sc := bufio.NewScanner(c)
 						for sc.Scan() {
-							if line := sc.Text(); line != "" {
-								_, _ = ptmx.WriteString(line + "\r")
-							}
+							weaveWritePTYControlLine(ptmx, sc.Text())
 						}
 					}(conn)
 				}
 			}()
 		} else {
-			slog.Warn("weave: control socket unavailable; `weave say` disabled for this run", "path", guards.ctlSock, "err", lnErr)
+			if f, err := os.OpenFile(guards.ctlSock, os.O_CREATE|os.O_RDONLY, 0o600); err == nil {
+				_ = f.Close()
+				defer func() { _ = os.Remove(guards.ctlSock) }()
+				go weaveTailPTYControlFile(guards.ctlSock, ptmx)
+				slog.Warn("weave: control socket unavailable; using file control fallback", "path", guards.ctlSock, "err", lnErr)
+			} else {
+				slog.Warn("weave: control socket unavailable; `weave say` disabled for this run", "path", guards.ctlSock, "err", lnErr)
+			}
 		}
 	}
 
@@ -325,6 +331,48 @@ func runWeaveToolPTY(cmd *exec.Cmd, logSink io.Writer, guards weaveGuards) (int,
 			return 0, nil
 		}
 		return 1, waitErr
+	}
+}
+
+func weaveWritePTYControlLine(ptmx *os.File, line string) {
+	if line == "" {
+		return
+	}
+	// Verbatim frame: \x00R<base64> — decoded bytes written
+	// to PTY exactly as-is (no trailing \r).
+	if strings.HasPrefix(line, "\x00R") {
+		if decoded, err := base64.StdEncoding.DecodeString(line[2:]); err == nil {
+			_, _ = ptmx.Write(decoded)
+		}
+		return
+	}
+	// Plain line protocol: append \r for Enter.
+	_, _ = ptmx.WriteString(line + "\r")
+}
+
+func weaveTailPTYControlFile(path string, ptmx *os.File) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	r := bufio.NewReader(f)
+	for {
+		line, err := r.ReadString('\n')
+		if line != "" {
+			line = strings.TrimSuffix(line, "\n")
+			line = strings.TrimSuffix(line, "\r")
+			weaveWritePTYControlLine(ptmx, line)
+		}
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, io.EOF) {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		return
 	}
 }
 
