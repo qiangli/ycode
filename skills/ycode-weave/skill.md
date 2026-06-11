@@ -76,6 +76,13 @@ runaway costs a retry instead of the machine:
 
     --max-runtime 45m --mem-limit 6g     # idle-timeout optional; TUI spinners defeat it
 
+Two watchdog facts: timers count AWAKE time (macOS sleep pauses Go
+timers, so DUR can show hours against a 30m cap — not a bug), and
+TUI agents don't self-pace toward the deadline the way headless
+exec modes do. Give interactive runs a soft budget inside the
+prompt ("commit whatever passes by minute 35") or expect to recover
+orphaned work after the kill.
+
 Per tool:
 
 - **codex, headless**: `codex exec --full-auto "<body>"` — exits
@@ -90,7 +97,13 @@ Per tool:
   --verbose --output-format stream-json -p "<body>"` for a streaming
   headless run, or accept fire-and-forget and read its transcript
   under `~/.claude/projects/<sandbox-slug>/` for progress.
-- **opencode**: `opencode run "<body>"` — streams live, exits clean.
+- **opencode**: `opencode run "<body>"` — streams live, exits clean,
+  and DOES ingest `weave say` lines mid-run (steerable while
+  headless). Two caveats: its own permission system auto-rejects
+  file-tool reads that resolve through symlinks to outside the
+  project — tell it to use bash cat/grep for linked corpora — and a
+  rejected tool call can end the run with EXIT 0 and no deliverable:
+  always check for the artifact, never trust the exit code alone.
   CONTAINMENT WARNING: opencode keeps persistent per-project state;
   if it has ever worked in the origin repo it gravitates back to it
   by absolute path — even with the sandbox's `origin` remote removed
@@ -164,6 +177,14 @@ regressions.
   `weave abandon N --reason`), reset and park on a branch if not.
 - Clean residue: `weave abandon N --reason "<why, where the work
   went>"` — the reason is the audit trail.
+
+For multi-issue rounds, finish with a JUDGE pass (the runbook's
+Pattern B): after merging, file one more issue on a fresh sandbox
+off the merged state — independently re-measure every claim, run
+the full suite, audit each commit for test deletions/scope spills,
+and commit a verdict report. A judge round caught nothing the
+orchestrator missed exactly once so far; every other time it
+surfaced a reconciliation worth recording.
 
 ## Failure modes, condensed
 
