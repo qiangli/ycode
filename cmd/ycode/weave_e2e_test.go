@@ -1523,3 +1523,56 @@ func TestWeaveE2E_Say_RequiresLiveSubagent(t *testing.T) {
 		t.Fatalf("expected state_conflict (4), got %d; out=%s", got, out)
 	}
 }
+
+// TestWeaveE2E_Sandbox_NoOriginBreadcrumbs: enforcement, not advice —
+// a subagent must not be able to LEARN the origin repo's path from
+// anything weave hands it. Two escapes taught us the vectors: the
+// origin remote (removed earlier), the clone reflog ("clone: from
+// <path>"), the inherited PWD/OLDPWD env, and the queue tag spelling
+// the path. The subagent here dumps its env; the test then scans the
+// dump plus every byte of the sandbox (including .git) and the
+// sandbox's own path for the origin location.
+func TestWeaveE2E_Sandbox_NoOriginBreadcrumbs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "containment probe"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	// The subagent records its environment from inside the sandbox.
+	if out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", "env > envdump.txt; pwd >> envdump.txt"); envExitCode(ee) != 0 {
+		t.Fatalf("start failed: %s", out)
+	}
+	out, _ := runWeave(t, repo, home, "list", "--json")
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	sandbox := item["sandbox"].(string)
+
+	// Vector 0: the sandbox path itself must not contain the origin
+	// path (the queue tag used to spell it out).
+	if strings.Contains(sandbox, strings.TrimPrefix(repo, string(filepath.Separator))) ||
+		strings.Contains(sandbox, repo) {
+		t.Fatalf("sandbox path leaks origin location: %s (origin %s)", sandbox, repo)
+	}
+
+	// Vectors 1-3: no file in the sandbox — env dump, git config,
+	// reflogs, packed refs, anything — may contain the origin path.
+	leaks := 0
+	_ = filepath.Walk(sandbox, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		if strings.Contains(string(b), repo) {
+			t.Errorf("origin path found in %s", path)
+			leaks++
+		}
+		return nil
+	})
+	if leaks > 0 {
+		t.Fatalf("%d files leak the origin path", leaks)
+	}
+}

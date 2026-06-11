@@ -153,12 +153,28 @@ func weaveQueueDir(repoRoot string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	r := strings.NewReplacer(string(filepath.Separator), "_", ":", "_")
-	tag := r.Replace(strings.TrimPrefix(repoRoot, string(filepath.Separator)))
-	if len(tag) > 120 {
-		tag = tag[len(tag)-120:]
-	}
+	// Containment: the tag must NOT spell out the repo path — the
+	// sandbox lives under this dir, so a path-mangled tag hands every
+	// subagent the origin location (one escape decoded exactly that).
+	// basename keeps the dir human-navigable; the hash disambiguates
+	// same-named repos without revealing where they live.
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(repoRoot))
+	tag := fmt.Sprintf("%s-%08x", filepath.Base(repoRoot), h.Sum32())
 	dir := filepath.Join(home, ".agents", "ycode", "weave", tag)
+	// One-time migration from the legacy path-mangled tag so existing
+	// queues (history, logs) carry over.
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		r := strings.NewReplacer(string(filepath.Separator), "_", ":", "_")
+		legacy := r.Replace(strings.TrimPrefix(repoRoot, string(filepath.Separator)))
+		if len(legacy) > 120 {
+			legacy = legacy[len(legacy)-120:]
+		}
+		legacyDir := filepath.Join(home, ".agents", "ycode", "weave", legacy)
+		if st, err := os.Stat(legacyDir); err == nil && st.IsDir() {
+			_ = os.Rename(legacyDir, dir)
+		}
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -677,6 +693,12 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			// needs the remote — `weave pull` fetches FROM the sandbox
 			// path into the user's repo, never the other way around.
 			_ = exec.Command("git", "-C", sandbox, "remote", "remove", "origin").Run()
+			// Scrub reflogs: `git clone` records "clone: from <abs
+			// origin path>" in .git/logs/HEAD — the breadcrumb the
+			// second sandbox escape had available after the remote
+			// was gone. git recreates reflogs as the agent works;
+			// only the clone-time entries carry the origin path.
+			_ = os.RemoveAll(filepath.Join(sandbox, ".git", "logs"))
 		}
 		for _, kv := range [][2]string{
 			{"user.name", fmt.Sprintf("agent-weave-issue-%d", it.ID)},
@@ -734,7 +756,18 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 		}
 		return nil
 	}
-	env := os.Environ()
+	// Containment: the subagent must not learn the origin repo's
+	// path from its environment. The orchestrator's shell typically
+	// sits in the origin repo, so the inherited PWD/OLDPWD point
+	// straight at it — scrub them and pin PWD to the sandbox.
+	env := make([]string, 0, len(os.Environ())+8)
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "PWD=") || strings.HasPrefix(kv, "OLDPWD=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(env, "PWD="+sandbox)
 	env = append(env,
 		fmt.Sprintf("YCODE_LOOM_ID=weave-issue-%d", it.ID),
 		fmt.Sprintf("YCODE_LOOM_BRANCH=%s", branch),
