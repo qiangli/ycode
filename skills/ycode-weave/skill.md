@@ -129,6 +129,24 @@ Never measure benchmarks/suites on the host while subagents compile
 in parallel — per-test timeouts flake under load and read as
 regressions.
 
+BLOCKED-AGENT PROTOCOL — TUI agents stall on dialogs, and a status
+question typed into a menu is noise. Watch for waiting-screens in
+the capture tail (selection menus `● 1.`/`❯ 1.`, "Enter to
+confirm", y/n, "Press enter", usage/rate limits, auth prompts,
+idle composer). When one appears, read the last lines and respond
+to WHAT THE SCREEN ASKS:
+
+- Orchestrator handles automatically: workspace-trust dialogs
+  (`say N "1"`), model-switch/limit menus where one option clearly
+  continues the task, composer nudges (Tab to queue, Enter), any
+  confirmation consistent with the issue body. (A gemini run once
+  sat 30 minutes on a "limit reached — switch model?" menu; the
+  answer was `say N "1"`.)
+- Escalate to the human, never auto-answer: authentication/login,
+  API keys, billing/upgrade decisions, anything destructive or
+  outside the issue's scope, and any dialog you can't classify.
+  Surface the captured lines verbatim when asking.
+
 ## Phase 5 — Steer (weave say)
 
     ycode weave say N "btw, status check: one line — current measured
