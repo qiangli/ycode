@@ -124,12 +124,16 @@ type weaveItem struct {
 	// VerifyOutput (last 2000 bytes) as evidence. Verify never changes
 	// the terminal state itself; `weave pull` refuses to merge
 	// submitted items whose VerifyExit is set and non-zero.
-	VerifyCommand string `json:"verify_command,omitempty"`
-	VerifyExit    *int   `json:"verify_exit,omitempty"`
-	VerifyOutput  string `json:"verify_output,omitempty"`
-	ExitCode      *int   `json:"exit_code,omitempty"`
-	KilledBy      string `json:"killed_by,omitempty"`
-	LogPath       string `json:"log_path,omitempty"`
+	VerifyCommand  string `json:"verify_command,omitempty"`
+	VerifyExit     *int   `json:"verify_exit,omitempty"`
+	VerifyOutput   string `json:"verify_output,omitempty"`
+	VerifyTree     string `json:"verify_tree,omitempty"`
+	Dirty          bool   `json:"dirty"`
+	DirtyFiles     int    `json:"dirty_files,omitempty"`
+	UntrackedFiles int    `json:"untracked_files,omitempty"`
+	ExitCode       *int   `json:"exit_code,omitempty"`
+	KilledBy       string `json:"killed_by,omitempty"`
+	LogPath        string `json:"log_path,omitempty"`
 	// WrapperPid is the PID of the `ycode weave start` process
 	// supervising this item (NOT the subagent's PID — the wrapper
 	// is the session leader after auto-setsid and signals propagate
@@ -340,6 +344,31 @@ func weaveMeasureBranch(sandbox, base string) (ahead int, head string) {
 		head = strings.TrimSpace(string(out))
 	}
 	return ahead, head
+}
+
+// weaveMeasureDirtiness records tracked working-tree changes
+// separately from untracked litter. The pull safety gate cares about
+// tracked changes because they can make verify attest bytes that HEAD
+// will not merge; untracked files are preserved as context only.
+func weaveMeasureDirtiness(sandbox string) (dirty bool, dirtyFiles, untrackedFiles int) {
+	if sandbox == "" {
+		return false, 0, 0
+	}
+	out, err := exec.Command("git", "-C", sandbox, "status", "--porcelain", "--untracked-files=all").Output()
+	if err != nil {
+		return false, 0, 0
+	}
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "?? ") {
+			untrackedFiles++
+			continue
+		}
+		dirtyFiles++
+	}
+	return dirtyFiles > 0, dirtyFiles, untrackedFiles
 }
 
 // weaveRunVerify executes an item's verify command via `bash -c` in
@@ -960,6 +989,12 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			freshIt.StartedAt = time.Now().UTC()
 			freshIt.FinishedAt = time.Time{}
 			freshIt.CtlSock = ctlSock
+			freshIt.VerifyExit = nil
+			freshIt.VerifyOutput = ""
+			freshIt.VerifyTree = ""
+			freshIt.Dirty = false
+			freshIt.DirtyFiles = 0
+			freshIt.UntrackedFiles = 0
 			if len(toolArgs) > 0 {
 				freshIt.Tool = filepath.Base(toolArgs[0])
 			}
@@ -1222,6 +1257,7 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 	// audit trail shows exactly how the run ended. No commits, no
 	// submitted: nothing is taken on faith.
 	ahead, head := weaveMeasureBranch(sandbox, base)
+	dirty, dirtyFiles, untrackedFiles := weaveMeasureDirtiness(sandbox)
 	// Verify command (from `weave add --verify`): run it now, outside
 	// the lock — it can take up to 10 minutes. Only when there is
 	// something to verify (clean exit or commits ahead). The result is
@@ -1230,8 +1266,18 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 	// consumer that acts on a non-zero verify_exit.
 	var verifyExit *int
 	var verifyOutput string
+	var verifyTree string
 	if it.VerifyCommand != "" && (exitCode == 0 || ahead > 0) {
 		ve, vo := weaveRunVerify(sandbox, it.VerifyCommand)
+		if dirty {
+			verifyTree = "working-tree-dirty"
+			vo += fmt.Sprintf("\n[weave: VERIFY ATTESTED A DIRTY WORKING TREE: working tree had tracked uncommitted changes in %d file(s); HEAD alone is not the verified tree]", dirtyFiles)
+		} else {
+			verifyTree = "head"
+		}
+		if len(vo) > 2000 {
+			vo = vo[len(vo)-2000:]
+		}
 		verifyExit, verifyOutput = &ve, vo
 	}
 	lockErr := withWeaveQueueLock(dir, func(freshQ *weaveQueue) error {
@@ -1246,9 +1292,13 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 		freshIt.CtlSock = ""
 		freshIt.CommitsAhead = ahead
 		freshIt.Head = head
+		freshIt.Dirty = dirty
+		freshIt.DirtyFiles = dirtyFiles
+		freshIt.UntrackedFiles = untrackedFiles
 		if verifyExit != nil {
 			freshIt.VerifyExit = verifyExit
 			freshIt.VerifyOutput = verifyOutput
+			freshIt.VerifyTree = verifyTree
 		}
 		if logPath != "" {
 			freshIt.LogPath = logPath
@@ -1623,6 +1673,11 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags) error {
 			if it.State != "working" && it.State != "submitted" {
 				continue
 			}
+			if it.Dirty {
+				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "dirty",
+					Detail: fmt.Sprintf("verify attested a dirty working tree with %d tracked file(s) uncommitted; resume the agent to commit the work (or commit manually in the sandbox) and re-verify", it.DirtyFiles)})
+				continue
+			}
 			// Substrate-verified outcome gate: the wrapper ran the item's
 			// verify command at terminal time; a recorded non-zero exit
 			// means the work failed its own acceptance check. Refuse to
@@ -1643,6 +1698,15 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags) error {
 			}
 			if _, err := os.Stat(it.Sandbox); err != nil {
 				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "skipped", Detail: fmt.Sprintf("sandbox missing: %v", err)})
+				continue
+			}
+			liveDirty, liveDirtyFiles, liveUntrackedFiles := weaveMeasureDirtiness(it.Sandbox)
+			if liveDirty {
+				it.Dirty = true
+				it.DirtyFiles = liveDirtyFiles
+				it.UntrackedFiles = liveUntrackedFiles
+				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "dirty",
+					Detail: fmt.Sprintf("sandbox has %d tracked uncommitted file(s); resume the agent to commit the work (or commit manually in the sandbox) and re-verify", liveDirtyFiles)})
 				continue
 			}
 			fetchSpec := fmt.Sprintf("%s:%s", it.Branch, it.Branch)
@@ -1671,7 +1735,10 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags) error {
 			// Sandbox is a full clone (not a worktree) — use safeRemoveAll with
 			// containment check to prevent accidental deletion outside the queue dir.
 			if it.Sandbox != "" {
-				_ = safeRemoveSandbox(dir, it.Sandbox)
+				if err := safeRemoveSandbox(dir, it.Sandbox); err != nil {
+					results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "cleanup-failed", Detail: err.Error()})
+					continue
+				}
 			}
 			// Delete the fetched branch from user repo if fully merged (-d, never -D).
 			_ = exec.Command("git", "-C", root, "branch", "-d", it.Branch).Run()
@@ -1828,6 +1895,9 @@ func safeRemoveSandbox(queueDir, sandboxPath string) error {
 		return err
 	} else if !st.IsDir() {
 		return fmt.Errorf("sandbox path %q is not a directory", absSandbox)
+	}
+	if dirty, dirtyFiles, _ := weaveMeasureDirtiness(absSandbox); dirty {
+		return fmt.Errorf("refusing to remove sandbox %q: %d tracked file(s) have uncommitted changes", absSandbox, dirtyFiles)
 	}
 	return os.RemoveAll(absSandbox)
 }

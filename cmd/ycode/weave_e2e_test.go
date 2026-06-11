@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2150,6 +2151,110 @@ func TestWeaveE2E_Verify_PassRecordedAndPullMerges(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, "verified.txt")); err != nil {
 		t.Fatalf("expected verified.txt on main after pull: %v", err)
+	}
+}
+
+// TestWeaveE2E_Verify_DirtyWorkingTreeBlocksPull reproduces the
+// dogfood regression where verify attested uncommitted tracked
+// changes, but pull merged only HEAD and then deleted the sandbox.
+// The dirty attestation must be explicit, pull must refuse it, and a
+// resume that commits the improvement must re-verify cleanly before
+// merge.
+func TestWeaveE2E_Verify_DirtyWorkingTreeBlocksPull(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	verify := `echo verified-tree=$(cat artifact.txt); test "$(cat artifact.txt)" = B`
+	if _, ee := runWeave(t, repo, home, "add", "dirty verify evidence", "--verify", verify); envExitCode(ee) != 0 {
+		t.Fatalf("add --verify failed")
+	}
+	script := `set -e
+echo A > artifact.txt
+git add artifact.txt
+git commit -qm "feat: state a"
+echo B > artifact.txt
+echo litter > .aider-log
+exit 0`
+	if out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script); envExitCode(ee) != 0 {
+		t.Fatalf("start exited non-zero; out=%s", out)
+	}
+
+	out, _ := runWeave(t, repo, home, "list", "--json")
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if item["state"] != "submitted" {
+		t.Fatalf("expected state=submitted, got %v", item["state"])
+	}
+	if item["dirty"] != true {
+		t.Fatalf("expected dirty=true after tracked uncommitted improvement, item=%v", item)
+	}
+	if got := int(item["dirty_files"].(float64)); got != 1 {
+		t.Fatalf("expected dirty_files=1, got %v (item=%v)", item["dirty_files"], item)
+	}
+	if got := int(item["untracked_files"].(float64)); got != 1 {
+		t.Fatalf("expected untracked_files=1, got %v (item=%v)", item["untracked_files"], item)
+	}
+	if item["verify_tree"] != "working-tree-dirty" {
+		t.Fatalf("expected verify_tree=working-tree-dirty, got %v", item["verify_tree"])
+	}
+	if !strings.Contains(fmt.Sprint(item["verify_output"]), "verified-tree=B") ||
+		!strings.Contains(fmt.Sprint(item["verify_output"]), "working tree had tracked uncommitted changes") {
+		t.Fatalf("verify_output did not record dirty attestation: %q", item["verify_output"])
+	}
+	sandbox := fmt.Sprint(item["sandbox"])
+
+	out, ee := runWeave(t, repo, home, "pull")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("pull exited %d; out=%s", got, out)
+	}
+	results := parseEnvelope(t, out)["result"].(map[string]any)["results"].([]any)
+	if len(results) != 1 || results[0].(map[string]any)["status"] != "dirty" {
+		t.Fatalf("expected status=dirty, got %v", results)
+	}
+	if !strings.Contains(fmt.Sprint(results[0].(map[string]any)["detail"]), "resume the agent") {
+		t.Fatalf("dirty refusal did not tell operator how to recover: %v", results[0])
+	}
+	if _, err := os.Stat(sandbox); err != nil {
+		t.Fatalf("dirty sandbox must survive refused pull: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "artifact.txt")); err == nil {
+		t.Fatalf("dirty verified work was merged before the improvement was committed")
+	}
+
+	resumeScript := `set -e
+test "$(cat artifact.txt)" = B
+git add artifact.txt
+git commit -qm "feat: state b"
+exit 0`
+	if out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--resume", "--", "bash", "-c", resumeScript); envExitCode(ee) != 0 {
+		t.Fatalf("resume exited non-zero; out=%s", out)
+	}
+	out, _ = runWeave(t, repo, home, "list", "--json")
+	item = parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if item["dirty"] != false {
+		t.Fatalf("expected dirty=false after resume commit, item=%v", item)
+	}
+	if item["verify_tree"] != "head" {
+		t.Fatalf("expected verify_tree=head after clean reverify, got %v", item["verify_tree"])
+	}
+
+	out, ee = runWeave(t, repo, home, "pull")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("pull after clean reverify exited %d; out=%s", got, out)
+	}
+	results = parseEnvelope(t, out)["result"].(map[string]any)["results"].([]any)
+	if len(results) != 1 || results[0].(map[string]any)["status"] != "merged" {
+		t.Fatalf("expected status=merged after clean reverify, got %v", results)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, "artifact.txt"))
+	if err != nil {
+		t.Fatalf("expected artifact.txt on main after pull: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != "B" {
+		t.Fatalf("merged tree diverged from verified tree: artifact.txt=%q", got)
+	}
+	if _, err := os.Stat(sandbox); !os.IsNotExist(err) {
+		t.Fatalf("cleanly merged sandbox should be removed, stat err=%v", err)
 	}
 }
 
