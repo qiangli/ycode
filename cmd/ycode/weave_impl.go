@@ -483,29 +483,28 @@ func runWeaveAdd(cmd *cobra.Command, title, body, priority, verify string, flags
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave add",
 			weavecli.ExitGenericFail, err))
 	}
-	q, err := loadWeaveQueue(dir)
-	if err != nil {
-		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave add",
-			weavecli.ExitGenericFail, err))
-	}
 	prio := priority
 	if prio == "" {
 		prio = "p2"
 	}
-	it := &weaveItem{
-		ID:            q.NextID,
-		Title:         title,
-		Body:          body,
-		Priority:      prio,
-		State:         "todo",
-		VerifyCommand: verify,
-		Created:       time.Now().UTC(),
-	}
-	q.NextID++
-	q.Items = append(q.Items, it)
-	if err := saveWeaveQueue(dir, q); err != nil {
+	var it *weaveItem
+	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
+		it = &weaveItem{
+			ID:            q.NextID,
+			Title:         title,
+			Body:          body,
+			Priority:      prio,
+			State:         "todo",
+			VerifyCommand: verify,
+			Created:       time.Now().UTC(),
+		}
+		q.NextID++
+		q.Items = append(q.Items, it)
+		return nil
+	})
+	if lockErr != nil {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave add",
-			weavecli.ExitGenericFail, err))
+			weavecli.ExitGenericFail, lockErr))
 	}
 	if mode == weavecli.OutputJSON {
 		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave add", map[string]any{
@@ -1595,11 +1594,6 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags) error {
 			weavecli.ExitPrecondFail, err))
 	}
 	dir, _ := weaveQueueDir(root)
-	q, err := loadWeaveQueue(dir)
-	if err != nil {
-		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave pull",
-			weavecli.ExitGenericFail, err))
-	}
 	type result struct {
 		Issue  int64  `json:"issue"`
 		Branch string `json:"branch"`
@@ -1607,77 +1601,78 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags) error {
 		Detail string `json:"detail,omitempty"`
 	}
 	var results []result
-	dirty := false
-	for _, it := range q.Items {
-		// Merge any branch belonging to an item that's either still
-		// running (working — predates state transitions) or that
-		// finished cleanly (submitted). Items in "failed", "done",
-		// or "abandoned" are skipped: failed shouldn't auto-merge,
-		// done is already merged, abandoned was torn down.
-		if it.State != "working" && it.State != "submitted" {
-			continue
+	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
+		weaveTestPauseAfterPullLoad()
+		for _, it := range q.Items {
+			// Merge any branch belonging to an item that's either still
+			// running (working — predates state transitions) or that
+			// finished cleanly (submitted). Items in "failed", "done",
+			// or "abandoned" are skipped: failed shouldn't auto-merge,
+			// done is already merged, abandoned was torn down.
+			if it.State != "working" && it.State != "submitted" {
+				continue
+			}
+			// Substrate-verified outcome gate: the wrapper ran the item's
+			// verify command at terminal time; a recorded non-zero exit
+			// means the work failed its own acceptance check. Refuse to
+			// merge — before fetching, so the branch never even lands in
+			// the user's repo. (A future --force may override.)
+			if it.VerifyExit != nil && *it.VerifyExit != 0 {
+				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "verify-failed",
+					Detail: fmt.Sprintf("verify command exited %d — inspect with `weave shell %d`, fix or abandon", *it.VerifyExit, it.ID)})
+				continue
+			}
+			// The agent's branch lives in the sandbox clone, not the
+			// user's repo. Fetch it across (idempotent — already-present
+			// commits are skipped). If the sandbox is gone (abandoned
+			// mid-pull, disk wiped) we record a skip with the reason.
+			if it.Sandbox == "" {
+				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "skipped", Detail: "no sandbox recorded"})
+				continue
+			}
+			if _, err := os.Stat(it.Sandbox); err != nil {
+				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "skipped", Detail: fmt.Sprintf("sandbox missing: %v", err)})
+				continue
+			}
+			fetchSpec := fmt.Sprintf("%s:%s", it.Branch, it.Branch)
+			if _, err := gitOut(root, "fetch", "--no-tags", it.Sandbox, fetchSpec); err != nil {
+				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "skipped", Detail: fmt.Sprintf("fetch from sandbox: %v", err)})
+				continue
+			}
+			cnt, err := gitOut(root, "rev-list", "--count", fmt.Sprintf("HEAD..%s", it.Branch))
+			if err != nil {
+				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "skipped", Detail: err.Error()})
+				continue
+			}
+			ahead, _ := strconv.Atoi(strings.TrimSpace(cnt))
+			if ahead == 0 {
+				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "empty"})
+				continue
+			}
+			mergeMsg := fmt.Sprintf("weave: merge issue #%d — %s", it.ID, it.Title)
+			mc := exec.Command("git", "-C", root, "merge", "--no-ff", "-m", mergeMsg, it.Branch)
+			out, err := mc.CombinedOutput()
+			if err != nil {
+				_ = exec.Command("git", "-C", root, "merge", "--abort").Run()
+				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "conflict", Detail: strings.TrimSpace(string(out))})
+				continue
+			}
+			// Sandbox is a full clone (not a worktree) — use safeRemoveAll with
+			// containment check to prevent accidental deletion outside the queue dir.
+			if it.Sandbox != "" {
+				_ = safeRemoveSandbox(dir, it.Sandbox)
+			}
+			// Delete the fetched branch from user repo if fully merged (-d, never -D).
+			_ = exec.Command("git", "-C", root, "branch", "-d", it.Branch).Run()
+			it.State = "done"
+			it.Sandbox = ""
+			results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "merged"})
 		}
-		// Substrate-verified outcome gate: the wrapper ran the item's
-		// verify command at terminal time; a recorded non-zero exit
-		// means the work failed its own acceptance check. Refuse to
-		// merge — before fetching, so the branch never even lands in
-		// the user's repo. (A future --force may override.)
-		if it.VerifyExit != nil && *it.VerifyExit != 0 {
-			results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "verify-failed",
-				Detail: fmt.Sprintf("verify command exited %d — inspect with `weave shell %d`, fix or abandon", *it.VerifyExit, it.ID)})
-			continue
-		}
-		// The agent's branch lives in the sandbox clone, not the
-		// user's repo. Fetch it across (idempotent — already-present
-		// commits are skipped). If the sandbox is gone (abandoned
-		// mid-pull, disk wiped) we record a skip with the reason.
-		if it.Sandbox == "" {
-			results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "skipped", Detail: "no sandbox recorded"})
-			continue
-		}
-		if _, err := os.Stat(it.Sandbox); err != nil {
-			results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "skipped", Detail: fmt.Sprintf("sandbox missing: %v", err)})
-			continue
-		}
-		fetchSpec := fmt.Sprintf("%s:%s", it.Branch, it.Branch)
-		if _, err := gitOut(root, "fetch", "--no-tags", it.Sandbox, fetchSpec); err != nil {
-			results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "skipped", Detail: fmt.Sprintf("fetch from sandbox: %v", err)})
-			continue
-		}
-		cnt, err := gitOut(root, "rev-list", "--count", fmt.Sprintf("HEAD..%s", it.Branch))
-		if err != nil {
-			results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "skipped", Detail: err.Error()})
-			continue
-		}
-		ahead, _ := strconv.Atoi(strings.TrimSpace(cnt))
-		if ahead == 0 {
-			results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "empty"})
-			continue
-		}
-		mergeMsg := fmt.Sprintf("weave: merge issue #%d — %s", it.ID, it.Title)
-		mc := exec.Command("git", "-C", root, "merge", "--no-ff", "-m", mergeMsg, it.Branch)
-		out, err := mc.CombinedOutput()
-		if err != nil {
-			_ = exec.Command("git", "-C", root, "merge", "--abort").Run()
-			results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "conflict", Detail: strings.TrimSpace(string(out))})
-			continue
-		}
-		// Sandbox is a full clone (not a worktree) — use safeRemoveAll with
-		// containment check to prevent accidental deletion outside the queue dir.
-		if it.Sandbox != "" {
-			_ = safeRemoveSandbox(dir, it.Sandbox)
-		}
-		// Delete the fetched branch from user repo if fully merged (-d, never -D).
-		_ = exec.Command("git", "-C", root, "branch", "-d", it.Branch).Run()
-		it.State = "done"
-		it.Sandbox = ""
-		results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "merged"})
-		dirty = true
-	}
-	if dirty {
-		if err := saveWeaveQueue(dir, q); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "weave pull: queue save failed: %v\n", err)
-		}
+		return nil
+	})
+	if lockErr != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave pull",
+			weavecli.ExitGenericFail, lockErr))
 	}
 	if mode == weavecli.OutputJSON {
 		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave pull", map[string]any{
@@ -1698,6 +1693,24 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags) error {
 	return nil
 }
 
+func weaveTestPauseAfterPullLoad() {
+	pause := os.Getenv("YCODE_WEAVE_TEST_PULL_AFTER_LOAD_FILE")
+	if pause == "" {
+		return
+	}
+	_ = os.WriteFile(pause+".ready", []byte("ready"), 0o644)
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		if _, err := os.Stat(pause); os.IsNotExist(err) {
+			return
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
 func runWeaveAbandon(cmd *cobra.Command, id int64, reason string, flags *weaveOutputFlags) error {
 	mode := flags.mode()
 	cwd, _ := os.Getwd()
@@ -1707,45 +1720,48 @@ func runWeaveAbandon(cmd *cobra.Command, id int64, reason string, flags *weaveOu
 			weavecli.ExitPrecondFail, err))
 	}
 	dir, _ := weaveQueueDir(root)
-	q, err := loadWeaveQueue(dir)
-	if err != nil {
+	var it *weaveItem
+	notFoundHint := weaveOtherActiveQueuesHintSuffix(dir)
+	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
+		it = findWeaveItem(q, id)
+		if it == nil {
+			return fmt.Errorf("issue #%d not found%s", id, notFoundHint)
+		}
+		// If a wrapper PID is recorded and the item is still working,
+		// signal precisely — SIGTERM the recorded PID, wait briefly,
+		// escalate to SIGKILL. The wrapper is its own session leader
+		// (auto-setsid on non-TTY), so SIGTERM reaches the subagent's
+		// process group cleanly. This is the supported way to stop a
+		// running weave; the dogfood found that `pkill -f` would also
+		// catch peer ycode/claude sessions belonging to other agents,
+		// which is dangerous in a shared agentic environment.
+		if it.State == "working" && it.WrapperPid > 0 {
+			weaveStopWrapper(it.WrapperPid)
+		}
+		// Sandbox is a real git clone now (not a worktree); delete the
+		// directory tree. The agent's branch lives inside that clone —
+		// no separate `git branch -D` against the user's repo because
+		// the branch doesn't exist there unless `weave pull` fetched it.
+		if it.Sandbox != "" {
+			_ = os.RemoveAll(it.Sandbox)
+		}
+		if it.Branch != "" {
+			// Best-effort: drop the branch from the user's repo too, in
+			// case `weave pull` fetched it earlier.
+			_ = exec.Command("git", "-C", root, "branch", "-D", it.Branch).Run()
+		}
+		it.State = "abandoned"
+		it.Sandbox = ""
+		it.WrapperPid = 0
+		return nil
+	})
+	if lockErr != nil {
+		code := weavecli.ExitGenericFail
+		if strings.Contains(lockErr.Error(), "not found") {
+			code = weavecli.ExitInvalidArg
+		}
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave abandon",
-			weavecli.ExitGenericFail, err))
-	}
-	it := findWeaveItem(q, id)
-	if it == nil {
-		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave abandon",
-			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found%s", id, weaveOtherActiveQueuesHintSuffix(dir))))
-	}
-	// If a wrapper PID is recorded and the item is still working,
-	// signal precisely — SIGTERM the recorded PID, wait briefly,
-	// escalate to SIGKILL. The wrapper is its own session leader
-	// (auto-setsid on non-TTY), so SIGTERM reaches the subagent's
-	// process group cleanly. This is the supported way to stop a
-	// running weave; the dogfood found that `pkill -f` would also
-	// catch peer ycode/claude sessions belonging to other agents,
-	// which is dangerous in a shared agentic environment.
-	if it.State == "working" && it.WrapperPid > 0 {
-		weaveStopWrapper(it.WrapperPid)
-	}
-	// Sandbox is a real git clone now (not a worktree); delete the
-	// directory tree. The agent's branch lives inside that clone —
-	// no separate `git branch -D` against the user's repo because
-	// the branch doesn't exist there unless `weave pull` fetched it.
-	if it.Sandbox != "" {
-		_ = os.RemoveAll(it.Sandbox)
-	}
-	if it.Branch != "" {
-		// Best-effort: drop the branch from the user's repo too, in
-		// case `weave pull` fetched it earlier.
-		_ = exec.Command("git", "-C", root, "branch", "-D", it.Branch).Run()
-	}
-	it.State = "abandoned"
-	it.Sandbox = ""
-	it.WrapperPid = 0
-	if err := saveWeaveQueue(dir, q); err != nil {
-		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave abandon",
-			weavecli.ExitGenericFail, err))
+			code, lockErr))
 	}
 	if mode == weavecli.OutputJSON {
 		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave abandon", map[string]any{
@@ -1826,21 +1842,25 @@ func runWeavePrio(cmd *cobra.Command, id int64, tier string, auto bool, flags *w
 			weavecli.ExitPrecondFail, err))
 	}
 	dir, _ := weaveQueueDir(root)
-	q, err := loadWeaveQueue(dir)
-	if err != nil {
+	var it *weaveItem
+	var prev string
+	notFoundHint := weaveOtherActiveQueuesHintSuffix(dir)
+	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
+		it = findWeaveItem(q, id)
+		if it == nil {
+			return fmt.Errorf("issue #%d not found%s", id, notFoundHint)
+		}
+		prev = it.Priority
+		it.Priority = tier
+		return nil
+	})
+	if lockErr != nil {
+		code := weavecli.ExitGenericFail
+		if strings.Contains(lockErr.Error(), "not found") {
+			code = weavecli.ExitInvalidArg
+		}
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave prio",
-			weavecli.ExitGenericFail, err))
-	}
-	it := findWeaveItem(q, id)
-	if it == nil {
-		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave prio",
-			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found%s", id, weaveOtherActiveQueuesHintSuffix(dir))))
-	}
-	prev := it.Priority
-	it.Priority = tier
-	if err := saveWeaveQueue(dir, q); err != nil {
-		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave prio",
-			weavecli.ExitGenericFail, err))
+			code, lockErr))
 	}
 	if mode == weavecli.OutputJSON {
 		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave prio", map[string]any{
@@ -2140,11 +2160,6 @@ func runWeaveAddFromFile(cmd *cobra.Command, path, defaultPriority string, flags
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave add",
 			weavecli.ExitGenericFail, err))
 	}
-	q, err := loadWeaveQueue(dir)
-	if err != nil {
-		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave add",
-			weavecli.ExitGenericFail, err))
-	}
 	now := time.Now().UTC()
 	type added struct {
 		ID       int64  `json:"id"`
@@ -2152,17 +2167,20 @@ func runWeaveAddFromFile(cmd *cobra.Command, path, defaultPriority string, flags
 		Priority string `json:"priority"`
 	}
 	var addedAll []added
-	for _, e := range entries {
-		e.ID = q.NextID
-		q.NextID++
-		e.State = "todo"
-		e.Created = now
-		q.Items = append(q.Items, e)
-		addedAll = append(addedAll, added{ID: e.ID, Title: e.Title, Priority: e.Priority})
-	}
-	if err := saveWeaveQueue(dir, q); err != nil {
+	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
+		for _, e := range entries {
+			e.ID = q.NextID
+			q.NextID++
+			e.State = "todo"
+			e.Created = now
+			q.Items = append(q.Items, e)
+			addedAll = append(addedAll, added{ID: e.ID, Title: e.Title, Priority: e.Priority})
+		}
+		return nil
+	})
+	if lockErr != nil {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave add",
-			weavecli.ExitGenericFail, err))
+			weavecli.ExitGenericFail, lockErr))
 	}
 	if mode == weavecli.OutputJSON {
 		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave add", map[string]any{
@@ -2395,10 +2413,8 @@ func runWeaveKill(cmd *cobra.Command, id int64, reason string, flags *weaveOutpu
 			gracefulState := ""
 		verbs:
 			for _, verb := range []string{"/exit", "/quit"} {
-				if conn, err := net.DialTimeout("unix", it0.CtlSock, 2*time.Second); err == nil {
-					_, _ = fmt.Fprintln(conn, verb)
-					_ = conn.Close()
-				}
+				frame := "\x00R" + base64.StdEncoding.EncodeToString([]byte(verb+"\n")) + "\n"
+				_ = weaveWriteControlFrame(it0.CtlSock, frame)
 				deadline := time.Now().Add(6 * time.Second)
 				for time.Now().Before(deadline) {
 					time.Sleep(300 * time.Millisecond)
