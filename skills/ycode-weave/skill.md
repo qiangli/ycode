@@ -15,6 +15,42 @@ named where that helps.
 Use this when you have N independent pieces of work for peer agent
 CLIs. For one inline edit in the current checkout, just do the work.
 
+## Quick start — any orchestrator, zero to fleet
+
+You may be Claude Code, codex, gemini, opencode, or anything that
+can run a CLI: the flow is identical, and you may enlist YOUR OWN
+CLI as a worker too (each worker runs in an isolated clone, so
+self-orchestration is safe). From a user goal:
+
+    cd <repo-root>                       # queues are per-repo (cwd-keyed)
+    # 1. DECOMPOSE the goal into N independent issues with DISJOINT
+    #    file scopes; write each body per the Phase 1 contract below.
+    ycode weave add "<title>" --priority p0 --body "<body>"   # × N
+    # 2. PREPARE (only if the build needs untracked corpora — Phase 2):
+    ycode weave start --no-spawn --issue <N> && ln -s <corpus> <sandbox>/
+    # 3. LAUNCH one worker per issue, backgrounded, watchdogs ON
+    #    (tool recipes in Phase 3 — pick per tool, including your own):
+    ycode weave start --resume --issue <N> --max-runtime 45m --mem-limit 5g \
+        -- <tool> <tool-flags> "<body>" &
+    # 4. MONITOR: `weave list` (TOOL/STARTED/DUR), `weave log <N> -f`,
+    #    blocked-agent protocol (Phase 4); steer with `weave say`.
+    ycode weave wait --all --timeout 50m
+    # 5. CONVERGE: verify each claim, then merge + re-measure (Phase 7):
+    ycode weave pull
+    # 6. JUDGE: file one more issue on the merged state for an
+    #    independent verification agent (end of Phase 7).
+
+Tool cheat-sheet (details + caveats in Phase 3):
+
+    claude    claude --dangerously-skip-permissions "<body>"        # TUI; answer trust via: weave say N "1"
+    codex     codex exec --full-auto "<body>"                       # headless, exits clean
+    gemini    gemini --yolo --skip-trust -i "<body>"                # TUI; no trust dialog
+    opencode  opencode run "<body>"                                 # headless; check artifacts, not exit code
+
+Everything below is the depth behind those six steps — read Phase 1
+(issue contract) and Phase 7 (verification) in full before your
+first round; skim the rest and return on demand.
+
 ## Phase 0 — Before filing anything
 
 - `cd` to the target repo root. Queues are per-repo, keyed by cwd;
