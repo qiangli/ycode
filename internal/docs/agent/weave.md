@@ -92,6 +92,12 @@ they survive the shell's exit).
 the normal path when subagents have finished cleanly. `killed` and
 `failed` are never auto-merged.
 
+`verify_command` (from `add --verify "<cmd>"`) is run by the wrapper
+via `bash -c` in the sandbox at terminal time (clean exit or commits
+ahead, 10m ceiling); `verify_exit`/`verify_output` land on the item
+as evidence — state is unchanged, but `pull` skips submitted items
+with non-zero `verify_exit` (status `verify-failed`).
+
 ## Subverbs
 
 - `add "<title>" [--priority p0|p1|p2|p3] [--body] [--from-file]` —

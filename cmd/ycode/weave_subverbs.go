@@ -25,6 +25,7 @@ func newWeaveAddCmd() *cobra.Command {
 	var flags weaveOutputFlags
 	var title, body, tool, priority string
 	var fromFile string
+	var verify string
 	cmd := &cobra.Command{
 		Use:   `add "<title>"`,
 		Short: "Seed an issue into the loom queue",
@@ -40,7 +41,7 @@ according to the priority sort order.`,
 			if fromFile != "" {
 				return runWeaveAddFromFile(cmd, fromFile, priority, &flags)
 			}
-			return runWeaveAdd(cmd, title, body, priority, &flags)
+			return runWeaveAdd(cmd, title, body, priority, verify, &flags)
 		},
 	}
 	flags.attach(cmd)
@@ -48,6 +49,7 @@ according to the priority sort order.`,
 	cmd.Flags().StringVar(&tool, "tool", "", "Pin a specific agentic tool for this issue (label tool:X)")
 	cmd.Flags().StringVar(&priority, "priority", "", "Priority tier: p0|p1|p2|p3 (default p2)")
 	cmd.Flags().StringVar(&fromFile, "from-file", "", "Bulk seed: markdown (`- [ ] title`) or JSON list of {title,body,priority}")
+	cmd.Flags().StringVar(&verify, "verify", "", "Verify command the wrapper runs (`bash -c`) in the sandbox at terminal time; verify_exit/verify_output recorded on the item, non-zero blocks `weave pull`")
 	return cmd
 }
 

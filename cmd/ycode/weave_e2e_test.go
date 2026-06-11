@@ -1845,3 +1845,103 @@ done`
 	}
 	_ = bg.Wait()
 }
+
+// ─── Verify-command tests (substrate-verified outcomes) ───────────
+//
+// `weave add --verify "<cmd>"` stores a per-issue acceptance command
+// that the WRAPPER runs in the sandbox at terminal time — claims are
+// measured by weave, not asserted by agents. The verify result never
+// changes the terminal state (evidence, not verdict); `weave pull`
+// is the consumer that refuses verify-failed branches.
+
+// TestWeaveE2E_Verify_PassRecordedAndPullMerges: a committing tool
+// with --verify "exit 0" lands submitted with verify_exit=0, and
+// pull merges the branch as usual.
+func TestWeaveE2E_Verify_PassRecordedAndPullMerges(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "verified work", "--verify", "exit 0"); envExitCode(ee) != 0 {
+		t.Fatalf("add --verify failed")
+	}
+	script := `set -e; echo ok > verified.txt; git add verified.txt; git commit -qm "feat: verified"`
+	if out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script); envExitCode(ee) != 0 {
+		t.Fatalf("start exited non-zero; out=%s", out)
+	}
+	out, _ := runWeave(t, repo, home, "list", "--json")
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if item["state"] != "submitted" {
+		t.Fatalf("expected state=submitted, got %v", item["state"])
+	}
+	if item["verify_command"] != "exit 0" {
+		t.Fatalf("expected verify_command persisted, got %v", item["verify_command"])
+	}
+	ve, ok := item["verify_exit"].(float64)
+	if !ok || int(ve) != 0 {
+		t.Fatalf("expected verify_exit=0, got %v (item=%v)", item["verify_exit"], item)
+	}
+	out, ee := runWeave(t, repo, home, "pull")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("pull exited %d; out=%s", got, out)
+	}
+	results := parseEnvelope(t, out)["result"].(map[string]any)["results"].([]any)
+	if len(results) != 1 || results[0].(map[string]any)["status"] != "merged" {
+		t.Fatalf("expected status=merged for verify-passing item, got %v", results)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "verified.txt")); err != nil {
+		t.Fatalf("expected verified.txt on main after pull: %v", err)
+	}
+}
+
+// TestWeaveE2E_Verify_FailBlocksPull: a committing tool with
+// --verify "exit 1" still lands submitted (verify is evidence, not
+// verdict) with verify_exit=1, but pull reports verify-failed and
+// does NOT merge — the agent branch must be absent from the user
+// repo entirely (the skip happens before the fetch).
+func TestWeaveE2E_Verify_FailBlocksPull(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "fails its check", "--verify", "exit 1"); envExitCode(ee) != 0 {
+		t.Fatalf("add --verify failed")
+	}
+	script := `set -e; echo bad > unverified.txt; git add unverified.txt; git commit -qm "feat: unverified"`
+	if out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script); envExitCode(ee) != 0 {
+		t.Fatalf("start exited non-zero; out=%s", out)
+	}
+	out, _ := runWeave(t, repo, home, "list", "--json")
+	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if item["state"] != "submitted" {
+		t.Fatalf("verify failure must not change the terminal state; expected submitted, got %v", item["state"])
+	}
+	ve, ok := item["verify_exit"].(float64)
+	if !ok || int(ve) != 1 {
+		t.Fatalf("expected verify_exit=1, got %v (item=%v)", item["verify_exit"], item)
+	}
+	out, ee := runWeave(t, repo, home, "pull")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("pull exited %d; out=%s", got, out)
+	}
+	results := parseEnvelope(t, out)["result"].(map[string]any)["results"].([]any)
+	if len(results) != 1 || results[0].(map[string]any)["status"] != "verify-failed" {
+		t.Fatalf("expected status=verify-failed, got %v", results)
+	}
+	// Not merged: the file is absent from main, and the agent branch
+	// never landed in the user repo at all.
+	if _, err := os.Stat(filepath.Join(repo, "unverified.txt")); err == nil {
+		t.Fatalf("verify-failed work was merged onto main")
+	}
+	branches, _ := exec.Command("git", "-C", repo, "branch", "--list", "agent/weave-issue-1").CombinedOutput()
+	if strings.Contains(string(branches), "agent/weave-issue-1") {
+		t.Fatalf("verify-failed branch leaked into user repo: %q", branches)
+	}
+	// The item stays submitted (not done) so a fix + re-pull or a
+	// future --force can pick it up.
+	out, _ = runWeave(t, repo, home, "list", "--json")
+	item = parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if item["state"] != "submitted" {
+		t.Fatalf("expected item to remain submitted after verify-failed pull, got %v", item["state"])
+	}
+}
