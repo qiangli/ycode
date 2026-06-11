@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -763,7 +764,7 @@ func TestWeaveE2E_Pull_NothingToMerge(t *testing.T) {
 	if _, ee := runWeave(t, repo, home, "add", "x"); envExitCode(ee) != 0 {
 		t.Fatalf("add failed")
 	}
-	if _, ee := runWeave(t, repo, home, "start", "--no-spawn", "--issue", "1"); envExitCode(ee) != 0 {
+	if _, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", "exit 0"); envExitCode(ee) != 0 {
 		t.Fatalf("start failed")
 	}
 	out, ee := runWeave(t, repo, home, "pull")
@@ -1243,13 +1244,34 @@ func TestWeaveE2E_List_MarksStaleWorking(t *testing.T) {
 	if _, ee := runWeave(t, repo, home, "add", "stale detect"); envExitCode(ee) != 0 {
 		t.Fatalf("add failed")
 	}
-	if out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--no-spawn"); envExitCode(ee) != 0 {
-		t.Fatalf("no-spawn start failed: %s", out)
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", "sleep 600")
+	// Wait for the wrapper pid, then kill it RAW (kill -9, bypassing
+	// weave) — the crash case stale detection exists for.
+	var wrapperPid int
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		out, _ := runWeave(t, repo, home, "list", "--json")
+		items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
+		if len(items) > 0 {
+			if pidF, ok := items[0].(map[string]any)["wrapper_pid"].(float64); ok && pidF > 0 {
+				wrapperPid = int(pidF)
+				break
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
+	if wrapperPid == 0 {
+		_ = bg.Process.Kill()
+		bg.Wait()
+		t.Fatalf("wrapper pid never appeared")
+	}
+	_ = syscall.Kill(wrapperPid, syscall.SIGKILL)
+	_ = bg.Wait()
+	time.Sleep(500 * time.Millisecond)
 	out, _ := runWeave(t, repo, home, "list", "--json")
 	item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
 	if item["state"] != "working" {
-		t.Fatalf("expected state=working, got %v", item["state"])
+		t.Fatalf("expected state=working after raw wrapper kill, got %v", item["state"])
 	}
 	if stale, _ := item["stale"].(bool); !stale {
 		t.Fatalf("expected stale=true for working item with dead wrapper; item=%v", item)
