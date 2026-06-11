@@ -71,10 +71,15 @@ Reflecting seven dogfood rounds:
 - **opencode**: best as verification judge; ingests `say` steering while
   headless; check artifacts not exit codes (permission rejections can end runs
   with exit 0).
-- **aider**: probationary — smoke-tested (headless edit +
-  auto-commit work); auto-commit removes the forgot-to-commit
-  failure mode; DeepSeek-only per owner config; not yet proven on a
-  gated issue.
+- **aider**: passed probation on a gated 3-pointer (sh new-exp
+  anchored-substitution fix, −21 diff lines, zero collateral, ~$0.02).
+  Reliable surgical edits when the issue body pins exact cases and
+  files; auto-commit removes the forgot-to-commit failure mode. Two
+  caveats: it resolves test-name collisions by DELETING its own new
+  tests (tell it to rename instead — a follow-up resume fixed it on
+  the first ask), and it cannot iterate against a test suite in
+  --message mode, so the verify gate is the only backstop. Give it
+  well-specified one-shot edits, not exploratory work.
 - **gemini**: currently weakest — stalled 30 min on a usage-limit menu,
   unresponsive to /exit and /quit, one rejected branch that failed verification
   (claimed improvement, measured regression); also writes a GEMINI.md context
@@ -316,6 +321,16 @@ WHAT THE SCREEN ASKS:
 
     ycode weave wait --all --timeout 50m
     ycode weave pull                      # merges working/submitted branches
+
+- **Check for a dirty sandbox BEFORE pull**: `git -C <sandbox> status
+  --porcelain` (ignore `.aider*`/`GEMINI.md` litter). The wrapper's
+  verify runs against the WORKING TREE, but pull merges only COMMITS —
+  an agent that commits an interim state and keeps improving
+  uncommitted gets a green gate attesting work that never merges, and
+  sandbox cleanup destroys it (this shipped a silently-regressed
+  master once: gate said redir=0, merged commit measured redir=4).
+  If dirty with real changes: resume the agent with "commit your
+  work", or commit it yourself in the sandbox, and re-verify.
 
 - Steerable TUI runs don't exit on DONE. `weave kill N` now tries a
   graceful `/exit`//`/quit` handshake first — a tool that obeys
