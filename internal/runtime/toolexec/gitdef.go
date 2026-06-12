@@ -1,5 +1,12 @@
 package toolexec
 
+import (
+	"context"
+	"errors"
+
+	shgit "github.com/qiangli/coreutils/git"
+)
+
 // gitDockerfile builds a minimal Alpine image with git and openssh.
 // The image is ~8MB compressed and provides full git CLI compatibility.
 const gitDockerfile = `FROM alpine:3.21
@@ -8,61 +15,47 @@ WORKDIR /workspace
 `
 
 // NewGitDef returns a ToolDef for git with container fallback.
-// NativeFuncs provides in-process go-git implementations for common subcommands.
-// When a native implementation returns ErrNotImplemented, the executor falls
-// through to the host git binary (tier 2) or container (tier 3).
+//
+// Tier 1 (native) is the shared pure-Go implementation in
+// github.com/qiangli/coreutils/git — the same package outpost's
+// `outpost git` uses. It covers the common porcelain + plumbing
+// subcommands (including pull and clone); anything it can't handle
+// returns git.ErrUnsupported, which maps to ErrNotImplemented here so
+// the executor falls through to the host git binary (tier 2) or the
+// container (tier 3).
+//
+// History: the native layer originally lived in this package as
+// git_native*.go; it was extracted to coreutils so ycode and outpost
+// share one implementation. ycode's git e2e suite (git_e2e_test.go)
+// still exercises it end-to-end through this adapter.
 func NewGitDef() *ToolDef {
+	subs := shgit.ExecCommands()
+	funcs := make(map[string]NativeFunc, len(subs))
+	for _, sub := range subs {
+		funcs[sub] = nativeGitFunc(sub)
+	}
 	return &ToolDef{
 		Name:         "git",
 		Binary:       "git",
 		Image:        "ycode-git:latest",
 		Dockerfile:   gitDockerfile,
 		MountWorkDir: true,
-		NativeFuncs: map[string]NativeFunc{
-			// Phase 1: Read-only commands
-			"rev-parse":  nativeRevParse,
-			"status":     nativeStatus,
-			"log":        nativeLog,
-			"diff":       nativeDiff,
-			"merge-base": nativeMergeBase,
-			"rev-list":   nativeRevList,
-			"config":     nativeConfig,
-			// Phase 2: Write commands
-			"add":      nativeAdd,
-			"commit":   nativeCommit,
-			"branch":   nativeBranch,
-			"checkout": nativeCheckout,
-			"reset":    nativeReset,
-			"show":     nativeShow,
-			"stash":    nativeStash,
-			// Phase 3: Complex commands
-			"worktree":     nativeWorktree,
-			"merge":        nativeMerge,
-			"tag":          nativeTag,
-			"fetch":        nativeFetch,
-			"grep":         nativeGrep,
-			"ls-files":     nativeLsFiles,
-			"blame":        nativeBlame,
-			"for-each-ref": nativeForEachRef,
-			"remote":       nativeRemote,
-			// Tier 2: Server/write operations
-			"push":         nativePush,
-			"cherry-pick":  nativeCherryPick,
-			"rebase":       nativeRebase,
-			"apply":        nativeApply,
-			"format-patch": nativeFormatPatch,
-			"rm":           nativeRm,
-			// Tier 3: Plumbing commands
-			"cat-file":     nativeCatFile,
-			"hash-object":  nativeHashObject,
-			"read-tree":    nativeReadTree,
-			"write-tree":   nativeWriteTree,
-			"commit-tree":  nativeCommitTree,
-			"symbolic-ref": nativeSymbolicRef,
-			"update-ref":   nativeUpdateRef,
-			"diff-tree":    nativeDiffTree,
-			"ls-tree":      nativeLsTree,
-			"show-ref":     nativeShowRef,
-		},
+		NativeFuncs:  funcs,
+	}
+}
+
+// nativeGitFunc adapts one coreutils/git subcommand to the NativeFunc
+// shape: the executor strips the subcommand from args, Exec wants it
+// back, and ErrUnsupported becomes the fall-through sentinel.
+func nativeGitFunc(sub string) NativeFunc {
+	return func(ctx context.Context, dir string, args []string) (*Result, error) {
+		res, err := shgit.Exec(ctx, dir, append([]string{sub}, args...))
+		if err != nil {
+			if errors.Is(err, shgit.ErrUnsupported) {
+				return nil, ErrNotImplemented
+			}
+			return nil, err
+		}
+		return &Result{Stdout: res.Stdout, Stderr: res.Stderr, ExitCode: res.ExitCode}, nil
 	}
 }

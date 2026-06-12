@@ -240,7 +240,7 @@ Auto-merge daemon — one per project under `ycode autopilot collab`.
 
 - `internal/gitserver/workspace.go:38` — `PrepareWorkspace` becomes the
   "checkout fork into a sandbox dir" primitive for both agents and merger.
-- `internal/runtime/toolexec/git_native_tier2.go` — native `Push`/`Pull`/`Fetch`.
+- `github.com/qiangli/coreutils/git` (via `internal/runtime/toolexec/gitdef.go`) — native `Push`/`Pull`/`Fetch`.
 - `internal/gitserver/api.go` — REST client (issues, PRs, branches, merges).
 - `internal/runtime/task/registry.go:36` — background goroutine tracking.
 - `internal/runtime/bash/` — in-process CI execution.

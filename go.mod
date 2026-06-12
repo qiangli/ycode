@@ -57,7 +57,7 @@ require (
 	github.com/creack/pty/v2 v2.0.1
 	github.com/dgraph-io/dgo/v250 v250.0.0
 	github.com/dhnt/dhnt v0.2.0-alpha.3
-	github.com/go-git/go-git/v5 v5.18.0
+	github.com/go-git/go-git/v5 v5.19.1
 	github.com/google/go-github/v84 v84.0.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
@@ -349,7 +349,7 @@ require (
 	github.com/go-faster/errors v0.7.1 // indirect
 	github.com/go-fed/httpsig v1.1.1-0.20201223112313-55836744818e // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
-	github.com/go-git/go-billy/v5 v5.8.0 // indirect
+	github.com/go-git/go-billy/v5 v5.9.0 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260214004413-d219187c3433 // indirect
@@ -618,7 +618,7 @@ require (
 	github.com/perses/spec v0.1.2 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
-	github.com/pjbgf/sha1cd v0.5.0 // indirect
+	github.com/pjbgf/sha1cd v0.6.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pkg/profile v1.7.0 // indirect
@@ -639,6 +639,7 @@ require (
 	github.com/prometheus/sigv4 v0.4.1 // indirect
 	github.com/prometheus/statsd_exporter v0.29.0 // indirect
 	github.com/protocolbuffers/txtpbfmt v0.0.0-20260217160748-a481f6a22f94 // indirect
+	github.com/qiangli/coreutils v0.0.0
 	github.com/quasoft/websspi v1.1.2 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.54.0 // indirect
@@ -912,3 +913,5 @@ require (
 	xorm.io/builder v0.3.13 // indirect
 	xorm.io/xorm v1.3.11 // indirect
 )
+
+replace github.com/qiangli/coreutils => ../coreutils
