@@ -54,7 +54,7 @@ self-orchestration is safe). From a user goal:
 
 Tool cheat-sheet (details + caveats in Phase 3):
 
-    claude    claude --dangerously-skip-permissions "<body>"        # TUI; answer trust via: weave say N "1"
+    claude    claude --dangerously-skip-permissions "<body>"        # TUI; pre-seed trust in ~/.claude.json (see Per tool) or say N "1"
     codex     codex exec --full-auto "<body>"                       # headless, exits clean
     gemini    gemini --yolo --skip-trust -i "<body>"                # TUI; no trust dialog
     opencode  opencode run "<body>"                                 # headless; check artifacts, not exit code
@@ -214,6 +214,21 @@ Per tool:
   --verbose --output-format stream-json -p "<body>"` for a streaming
   headless run, or accept fire-and-forget and read its transcript
   under `~/.claude/projects/<sandbox-slug>/` for progress.
+- **claude TUI trust dialog**: there is NO flag to pre-trust a folder
+  (`--dangerously-skip-permissions` does not cover it; only `-p` mode
+  skips trust). PRE-SEED the per-directory cache during sandbox prep
+  instead — upsert into `~/.claude.json`:
+      python3 - "$SANDBOX" << 'EOF'
+      import json,sys,os
+      p=os.path.expanduser('~/.claude.json'); d=json.load(open(p))
+      d.setdefault('projects',{}).setdefault(sys.argv[1],{}).update(
+          hasTrustDialogAccepted=True, hasCompletedProjectOnboarding=True)
+      json.dump(d,open(p,'w'),indent=2)
+      EOF
+  Undocumented but it is exactly the key the dialog itself writes.
+  Fallback if the dialog still appears: `weave say N "1"` — and match
+  on the word "trust" in the log, not exact menu text (the dialog
+  wording varies across claude versions).
 - **gemini**: `gemini --yolo --skip-trust -i "<body>"` — interactive
   (steerable) with all tool approvals auto-accepted and the
   workspace trust dialog suppressed; exits on `/quit` (the graceful
