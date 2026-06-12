@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ycode-live",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "description": "ycode live mode — drives this Chrome from a local ycode session via WebSocket.",
   "minimum_chrome_version": "114",
   "permissions": [

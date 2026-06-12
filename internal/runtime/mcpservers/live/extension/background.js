@@ -15,6 +15,12 @@ let ws = null;
 let reconnectMs = RECONNECT_BASE_MS;
 let connectedPort = 0;
 let activeTabId = null;
+// User intent. Only the popup's connect/disconnect commands flip this.
+// openWS/scheduleReconnect bail when it's false so a disconnect (or a
+// socket that closes after the user asked to stop) fully tears down the
+// reconnect loop instead of spinning on ERR_CONNECTION_REFUSED forever.
+let wantConnected = false;
+let reconnectTimer = null;
 
 // --- entry: open/close commands from popup ---
 
@@ -24,9 +30,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.tabId) {
       activeTabId = msg.tabId;
     }
+    wantConnected = true;
+    reconnectMs = RECONNECT_BASE_MS;
     openWS();
     sendResponse({ status: "connecting", port: connectedPort });
   } else if (msg && msg.type === "ycode-live:disconnect") {
+    // Flip intent off *before* closing so the socket's onclose handler
+    // doesn't schedule a fresh reconnect.
+    wantConnected = false;
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     if (ws) {
       try { ws.close(); } catch (e) { /* ignore */ }
       ws = null;
@@ -46,6 +61,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // --- websocket lifecycle ---
 
 function openWS() {
+  if (!wantConnected) {
+    return;
+  }
   if (ws && ws.readyState !== WebSocket.CLOSED) {
     return;
   }
@@ -89,7 +107,18 @@ function openWS() {
 }
 
 function scheduleReconnect() {
-  setTimeout(openWS, reconnectMs);
+  // Respect user intent — a disconnect (or a close that races the
+  // disconnect command) must not revive the loop.
+  if (!wantConnected) {
+    return;
+  }
+  if (reconnectTimer !== null) {
+    return; // a reconnect is already pending
+  }
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    openWS();
+  }, reconnectMs);
   reconnectMs = Math.min(reconnectMs * 2, RECONNECT_MAX_MS);
 }
 
