@@ -200,6 +200,47 @@ exec modes do. Give interactive runs a soft budget inside the
 prompt ("commit whatever passes by minute 35") or expect to recover
 orphaned work after the kill.
 
+## Startup-prompt defense in depth (every tool, every launch)
+
+Interactive tools block on trust/permission prompts; headless ones may
+silently no-op instead (worse — exit 0, no artifacts). Apply THREE
+levels, in order, for every launch:
+
+1. **CLI flag** — use it when it exists.
+2. **Pre-seed config** — when no flag covers it, write the tool's own
+   trust/permission cache for the sandbox path during prep (the exact
+   key the tool's dialog would write).
+3. **Monitor + `weave say`** — ALWAYS, even with 1+2: for the first
+   ~90s of any TUI launch, poll `weave log N -n 6` for prompt
+   signatures — match generic words (`trust`, `approve`, `allow`,
+   `Yes/No`, `press Enter`), NOT exact menu text (wording shifts
+   between tool versions) — and answer with `weave say N "<answer>"`.
+
+Per-tool matrix (this machine, update as versions change):
+
+| tool | 1) flags | 2) pre-seed | 3) watch for |
+|---|---|---|---|
+| claude TUI | none for trust (--dangerously-skip-permissions ≠ trust) | `~/.claude.json` → `projects.<sandbox>.hasTrustDialogAccepted=true` (+ hasCompletedProjectOnboarding) | "trust" dialog → say "1" |
+| codex exec | `--skip-git-repo-check --sandbox workspace-write` (no prompts in exec mode) | `~/.codex/config.toml` → `[projects."<sandbox>"]\ntrust_level = "trusted"` (needed for TUI mode) | TUI: directory-trust → say "1" |
+| gemini | `--yolo --skip-trust` (covers everything) | n/a | usage-limit menus (it stalls there) |
+| opencode | NO flags; headless `run` silently REJECTS un-permitted tools and exits 0 — the no-op-with-green-exit failure mode | write `opencode.json` into the sandbox root at prep: `{"permission":{"edit":"allow","bash":"allow","webfetch":"allow"}}` (never commit it) | artifacts, not prompts: zero commits + clean exit = rejection happened |
+| aider | `--yes-always` (covers all confirmations) | n/a (model/keys via ~/.aider.conf.yml + ~/.env) | reasoning loops ("Already done…" repetition) — kill, don't wait |
+
+Pre-seed snippets (run during Phase 2 prep, $SANDBOX = absolute path):
+
+    # claude
+    python3 - "$SANDBOX" << 'EOF'
+    import json,sys,os
+    p=os.path.expanduser('~/.claude.json'); d=json.load(open(p))
+    d.setdefault('projects',{}).setdefault(sys.argv[1],{}).update(
+        hasTrustDialogAccepted=True, hasCompletedProjectOnboarding=True)
+    json.dump(d,open(p,'w'),indent=2)
+    EOF
+    # codex (TUI mode only; exec mode needs no seed)
+    printf '\n[projects."%s"]\ntrust_level = "trusted"\n' "$SANDBOX" >> ~/.codex/config.toml
+    # opencode
+    printf '{"permission":{"edit":"allow","bash":"allow","webfetch":"allow"}}' > "$SANDBOX/opencode.json"
+
 Per tool:
 
 - **codex, headless**: `codex exec --full-auto "<body>"` — exits
