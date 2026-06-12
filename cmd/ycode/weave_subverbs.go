@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/qiangli/ycode/internal/cli/weavecli"
 )
 
 // Per-subverb constructors. Each registers its flags + RunE; the
@@ -307,11 +309,26 @@ func newWeavePullCmd() *cobra.Command {
 	var flags weaveOutputFlags
 	var watch bool
 	cmd := &cobra.Command{
-		Use:   "pull",
+		Use:   "pull [issue]",
 		Short: "Fast-forward your local main with the merged agent branches",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = watch
-			return runWeavePull(cmd, &flags)
+			var issueID int64
+			var issueSpecified bool
+			if len(args) > 1 {
+				return ec(weavecli.EmitError(cmd.ErrOrStderr(), flags.mode(), "weave pull",
+					weavecli.ExitInvalidArg, fmt.Errorf("expected at most one issue argument")))
+			}
+			if len(args) == 1 {
+				id, err := strconv.ParseInt(args[0], 10, 64)
+				if err != nil || id <= 0 {
+					return ec(weavecli.EmitError(cmd.ErrOrStderr(), flags.mode(), "weave pull",
+						weavecli.ExitInvalidArg, fmt.Errorf("invalid issue %q", args[0])))
+				}
+				issueID = id
+				issueSpecified = true
+			}
+			return runWeavePull(cmd, &flags, issueID, issueSpecified)
 		},
 	}
 	flags.attach(cmd)

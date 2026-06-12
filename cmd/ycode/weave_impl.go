@@ -1646,7 +1646,7 @@ func tailOffset(f *os.File, n int) (int64, error) {
 	return 0, nil
 }
 
-func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags) error {
+func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags, issueID int64, issueSpecified bool) error {
 	mode := flags.mode()
 	cwd, _ := os.Getwd()
 	root, err := weaveRepoRoot(cwd)
@@ -1664,13 +1664,24 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags) error {
 	var results []result
 	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
 		weaveTestPauseAfterPullLoad()
+		if issueSpecified && findWeaveItem(q, issueID) == nil {
+			return fmt.Errorf("issue #%d not found%s", issueID, weaveOtherActiveQueuesHintSuffix(dir))
+		}
 		for _, it := range q.Items {
+			if issueSpecified && it.ID != issueID {
+				continue
+			}
 			// Merge any branch belonging to an item that's either still
 			// running (working — predates state transitions) or that
 			// finished cleanly (submitted). Items in "failed", "done",
 			// or "abandoned" are skipped: failed shouldn't auto-merge,
 			// done is already merged, abandoned was torn down.
 			if it.State != "working" && it.State != "submitted" {
+				continue
+			}
+			if it.State == "working" && it.WrapperPid > 0 && pidAlive(it.WrapperPid) {
+				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "running",
+					Detail: fmt.Sprintf("wrapper pid %d alive; wait or kill before pull", it.WrapperPid)})
 				continue
 			}
 			if it.Dirty {
@@ -1749,8 +1760,12 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags) error {
 		return nil
 	})
 	if lockErr != nil {
+		code := weavecli.ExitGenericFail
+		if strings.Contains(lockErr.Error(), "not found") {
+			code = weavecli.ExitInvalidArg
+		}
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave pull",
-			weavecli.ExitGenericFail, lockErr))
+			code, lockErr))
 	}
 	if mode == weavecli.OutputJSON {
 		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave pull", map[string]any{
@@ -1886,6 +1901,22 @@ func safeRemoveSandbox(queueDir, sandboxPath string) error {
 	}
 	if strings.HasPrefix(rel, "..") || rel == "." {
 		return fmt.Errorf("sandbox path %q is not contained in %q", absSandbox, expectedParent)
+	}
+	if q, err := loadWeaveQueue(absQueue); err == nil {
+		for _, it := range q.Items {
+			if it.Sandbox == "" || it.State != "working" || it.WrapperPid == 0 || !pidAlive(it.WrapperPid) {
+				continue
+			}
+			itemSandbox, err := filepath.Abs(it.Sandbox)
+			if err != nil {
+				continue
+			}
+			if itemSandbox == absSandbox {
+				return fmt.Errorf("refusing to remove sandbox %q: issue #%d has live wrapper pid %d", absSandbox, it.ID, it.WrapperPid)
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("sandbox live-wrapper check failed: %w", err)
 	}
 	// Additional safety: verify it's a directory before removal
 	if st, err := os.Stat(absSandbox); err != nil {

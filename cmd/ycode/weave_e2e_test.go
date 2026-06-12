@@ -847,6 +847,101 @@ func TestWeaveE2E_Pull_MergesCommittedWork(t *testing.T) {
 	}
 }
 
+// TestWeaveE2E_Pull_IssueArgSkipsLiveWorkingBystander reproduces a
+// dogfood incident where `weave pull <other-issue>` still swept a
+// live working item, fetched its stale sandbox branch, and removed
+// the sandbox under the running wrapper.
+func TestWeaveE2E_Pull_IssueArgSkipsLiveWorkingBystander(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "submitted green"); envExitCode(ee) != 0 {
+		t.Fatalf("add issue 1 failed")
+	}
+	if _, ee := runWeave(t, repo, home, "add", "live retry with stale commit"); envExitCode(ee) != 0 {
+		t.Fatalf("add issue 2 failed")
+	}
+
+	liveScript := `set -e; echo stale > stale.txt; git add stale.txt; git commit -qm "feat: stale retry commit"; touch committed.ready; sleep 600`
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "2", "--", "bash", "-c", liveScript)
+	defer func() { _ = bg.Process.Kill(); _ = bg.Wait() }()
+
+	var liveSandbox string
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		item := weaveIssueItem(t, repo, home, 2)
+		liveSandbox, _ = item["sandbox"].(string)
+		if pidF, ok := item["wrapper_pid"].(float64); ok && pidF > 0 && liveSandbox != "" {
+			if _, err := os.Stat(filepath.Join(liveSandbox, "committed.ready")); err == nil {
+				break
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if liveSandbox == "" {
+		t.Fatalf("issue 2 never recorded a sandbox")
+	}
+	if _, err := os.Stat(filepath.Join(liveSandbox, "committed.ready")); err != nil {
+		t.Fatalf("issue 2 stale commit marker never appeared: %v", err)
+	}
+
+	greenScript := `set -e; echo green > green.txt; git add green.txt; git commit -qm "feat: green"`
+	out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", greenScript)
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("start issue 1 exited %d; out=%s", got, out)
+	}
+
+	out, ee = runWeave(t, repo, home, "pull", "1")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("pull issue 1 exited %d; out=%s", got, out)
+	}
+	results := parseEnvelope(t, out)["result"].(map[string]any)["results"].([]any)
+	if len(results) != 1 {
+		t.Fatalf("targeted pull should only return issue 1, got %v", results)
+	}
+	row := results[0].(map[string]any)
+	if int(row["issue"].(float64)) != 1 || row["status"] != "merged" {
+		t.Fatalf("expected issue 1 merged, got %v", row)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "green.txt")); err != nil {
+		t.Fatalf("expected green.txt on main after targeted pull: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "stale.txt")); !os.IsNotExist(err) {
+		t.Fatalf("targeted pull should not merge stale.txt; stat err=%v", err)
+	}
+	if _, err := os.Stat(liveSandbox); err != nil {
+		t.Fatalf("live issue 2 sandbox should remain after targeted pull: %v", err)
+	}
+
+	out, ee = runWeave(t, repo, home, "pull")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("blanket pull exited %d; out=%s", got, out)
+	}
+	results = parseEnvelope(t, out)["result"].(map[string]any)["results"].([]any)
+	if len(results) != 1 {
+		t.Fatalf("blanket pull should only report live issue 2, got %v", results)
+	}
+	row = results[0].(map[string]any)
+	if int(row["issue"].(float64)) != 2 || row["status"] != "running" {
+		t.Fatalf("expected issue 2 running, got %v", row)
+	}
+	if detail, _ := row["detail"].(string); !strings.Contains(detail, "wrapper pid") || !strings.Contains(detail, "alive; wait or kill before pull") {
+		t.Fatalf("expected live-wrapper detail, got %v", row)
+	}
+	if _, err := os.Stat(liveSandbox); err != nil {
+		t.Fatalf("live issue 2 sandbox should remain after blanket pull: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "stale.txt")); !os.IsNotExist(err) {
+		t.Fatalf("blanket pull should not merge stale.txt; stat err=%v", err)
+	}
+
+	if _, ee := runWeave(t, repo, home, "kill", "2", "--reason", "cleanup"); envExitCode(ee) != 0 {
+		t.Fatalf("cleanup kill failed")
+	}
+	_ = bg.Wait()
+}
+
 // TestWeaveE2E_Kill stops a running subagent precisely without
 // removing its sandbox or branch, then verifies the partial work
 // is preserved for later inspection / resume.
@@ -1202,13 +1297,26 @@ func pidGone(pid int) bool {
 // issueSandbox returns issue 1's sandbox path from the queue.
 func issueSandbox(t *testing.T, repo, home string) string {
 	t.Helper()
+	item := weaveIssueItem(t, repo, home, 1)
+	sb, _ := item["sandbox"].(string)
+	return sb
+}
+
+func weaveIssueItem(t *testing.T, repo, home string, id int) map[string]any {
+	t.Helper()
 	out, _ := runWeave(t, repo, home, "list", "--json")
 	items := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)
 	if len(items) == 0 {
 		t.Fatalf("no items in queue")
 	}
-	sb, _ := items[0].(map[string]any)["sandbox"].(string)
-	return sb
+	for _, raw := range items {
+		item := raw.(map[string]any)
+		if int(item["id"].(float64)) == id {
+			return item
+		}
+	}
+	t.Fatalf("issue %d not found in queue: %v", id, items)
+	return nil
 }
 
 // TestWeaveE2E_Kill_TerminatesSubagentTree asserts `weave kill`
