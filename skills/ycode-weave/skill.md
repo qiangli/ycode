@@ -392,6 +392,14 @@ WHAT THE SCREEN ASKS:
   If dirty with real changes: resume the agent with "commit your
   work", or commit it yourself in the sandbox, and re-verify.
 
+- **Enforce the cap — split, don't extend.** 8 points ≈ 30 min. When
+  a run hits ~1.5× its cap with the core deliverable already
+  committed, wrap it (`say` a commit-and-exit order, then graceful
+  `weave kill`) and file the residue as FRESH, smaller issues — an
+  agent polishing past its cap delivers less than a new scoped run.
+  Better: don't file open-ended 8-pointers at all; scope each issue
+  to one named cluster with its own gate so progress is verifiable
+  in 5-point bites.
 - Steerable TUI runs don't exit on DONE. `weave kill N` now tries a
   graceful `/exit`//`/quit` handshake first — a tool that obeys
   exits 0 and the wrapper records a genuine `submitted` (then
