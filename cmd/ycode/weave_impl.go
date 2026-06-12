@@ -419,6 +419,23 @@ func weaveRunVerify(sandbox, command string) (int, string) {
 	return exit, s
 }
 
+func weaveCollectVerifyEvidence(sandbox, command string, dirty bool, dirtyFiles int) (verifyExit *int, verifyOutput, verifyTree string) {
+	if command == "" {
+		return nil, "", ""
+	}
+	ve, vo := weaveRunVerify(sandbox, command)
+	if dirty {
+		verifyTree = "working-tree-dirty"
+		vo += fmt.Sprintf("\n[weave: VERIFY ATTESTED A DIRTY WORKING TREE: working tree had tracked uncommitted changes in %d file(s); HEAD alone is not the verified tree]", dirtyFiles)
+	} else {
+		verifyTree = "head"
+	}
+	if len(vo) > 2000 {
+		vo = vo[len(vo)-2000:]
+	}
+	return &ve, vo, verifyTree
+}
+
 func findWeaveItem(q *weaveQueue, id int64) *weaveItem {
 	for _, it := range q.Items {
 		if it.ID == id {
@@ -1268,17 +1285,7 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 	var verifyOutput string
 	var verifyTree string
 	if it.VerifyCommand != "" && (exitCode == 0 || ahead > 0) {
-		ve, vo := weaveRunVerify(sandbox, it.VerifyCommand)
-		if dirty {
-			verifyTree = "working-tree-dirty"
-			vo += fmt.Sprintf("\n[weave: VERIFY ATTESTED A DIRTY WORKING TREE: working tree had tracked uncommitted changes in %d file(s); HEAD alone is not the verified tree]", dirtyFiles)
-		} else {
-			verifyTree = "head"
-		}
-		if len(vo) > 2000 {
-			vo = vo[len(vo)-2000:]
-		}
-		verifyExit, verifyOutput = &ve, vo
+		verifyExit, verifyOutput, verifyTree = weaveCollectVerifyEvidence(sandbox, it.VerifyCommand, dirty, dirtyFiles)
 	}
 	lockErr := withWeaveQueueLock(dir, func(freshQ *weaveQueue) error {
 		freshIt := findWeaveItem(freshQ, it.ID)
@@ -2556,6 +2563,8 @@ func runWeaveKill(cmd *cobra.Command, id int64, reason string, flags *weaveOutpu
 	var killed bool
 	var wrapperPid int
 	var finalState string
+	var sandbox string
+	var verifyCommand string
 	notFoundHint := weaveOtherActiveQueuesHintSuffix(dir)
 	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
 		it := findWeaveItem(q, id)
@@ -2566,37 +2575,74 @@ func runWeaveKill(cmd *cobra.Command, id int64, reason string, flags *weaveOutpu
 			return fmt.Errorf("issue #%d state is %q (kill requires working)", id, it.State)
 		}
 		wrapperPid = it.WrapperPid
-		if wrapperPid > 0 {
-			weaveStopWrapper(wrapperPid)
-			killed = true
-		}
-		// killed stays killed: the forced stop is recorded as its own
-		// terminal state, never silently promoted. The wrapper-style
-		// git measurement is still taken and stored as evidence so
-		// the orchestrator can verify the work and decide (resume,
-		// merge deliberately, or abandon).
-		ahead, head := weaveMeasureBranch(it.Sandbox, base)
-		it.CommitsAhead = ahead
-		it.Head = head
-		it.State = "killed"
-		finalState = it.State
-		killCode := -1
-		it.ExitCode = &killCode
-		it.FinishedAt = time.Now().UTC()
-		it.WrapperPid = 0
-		// Stash the kill reason in the Body so `weave list` shows
-		// it (Body isn't load-bearing once the subagent has
-		// started — the prompt's already been consumed).
-		note := "[killed by orchestrator"
-		if reason != "" {
-			note += ": " + reason
-		}
-		if ahead > 0 {
-			note += fmt.Sprintf(" — %d wrapper-verified commit(s) ahead at %.12s", ahead, head)
-		}
-		it.Body = note + "]\n\n" + it.Body
+		sandbox = it.Sandbox
+		verifyCommand = it.VerifyCommand
 		return nil
 	})
+	if lockErr == nil && wrapperPid > 0 {
+		weaveStopWrapper(wrapperPid)
+		killed = true
+	}
+
+	// killed stays killed: the forced stop is recorded as its own
+	// terminal state, never silently promoted. Measure after the
+	// process tree is dead so verify cannot race a still-running build.
+	// Like the normal terminal path, expensive substrate evidence is
+	// collected outside the queue lock and attached during the final
+	// locked write.
+	ahead, head := weaveMeasureBranch(sandbox, base)
+	dirty, dirtyFiles, untrackedFiles := weaveMeasureDirtiness(sandbox)
+	var verifyExit *int
+	var verifyOutput string
+	var verifyTree string
+	if lockErr == nil && verifyCommand != "" && (ahead > 0 || dirty) {
+		verifyExit, verifyOutput, verifyTree = weaveCollectVerifyEvidence(sandbox, verifyCommand, dirty, dirtyFiles)
+	}
+
+	if lockErr == nil {
+		lockErr = withWeaveQueueLock(dir, func(q *weaveQueue) error {
+			it := findWeaveItem(q, id)
+			if it == nil {
+				return fmt.Errorf("issue #%d not found%s", id, notFoundHint)
+			}
+			if it.State != "working" && it.State != "killed" {
+				return fmt.Errorf("issue #%d state is %q (kill requires working)", id, it.State)
+			}
+			it.CommitsAhead = ahead
+			it.Head = head
+			it.Dirty = dirty
+			it.DirtyFiles = dirtyFiles
+			it.UntrackedFiles = untrackedFiles
+			if verifyExit != nil {
+				it.VerifyExit = verifyExit
+				it.VerifyOutput = verifyOutput
+				it.VerifyTree = verifyTree
+			}
+			it.State = "killed"
+			finalState = it.State
+			killCode := -1
+			if it.ExitCode == nil {
+				it.ExitCode = &killCode
+			}
+			it.FinishedAt = time.Now().UTC()
+			it.WrapperPid = 0
+			it.CtlSock = ""
+			// Stash the kill reason in the Body so `weave list` shows
+			// it (Body isn't load-bearing once the subagent has
+			// started — the prompt's already been consumed).
+			note := "[killed by orchestrator"
+			if reason != "" {
+				note += ": " + reason
+			}
+			if ahead > 0 {
+				note += fmt.Sprintf(" — %d wrapper-verified commit(s) ahead at %.12s", ahead, head)
+			}
+			if !strings.HasPrefix(it.Body, "[killed") {
+				it.Body = note + "]\n\n" + it.Body
+			}
+			return nil
+		})
+	}
 	if lockErr != nil {
 		if strings.Contains(lockErr.Error(), "not found") {
 			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave kill",
@@ -2610,15 +2656,25 @@ func runWeaveKill(cmd *cobra.Command, id int64, reason string, flags *weaveOutpu
 			weavecli.ExitGenericFail, lockErr))
 	}
 	if mode == weavecli.OutputJSON {
-		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave kill", map[string]any{
+		result := map[string]any{
 			"issue":       id,
 			"state":       finalState,
 			"wrapper_pid": wrapperPid,
 			"killed":      killed,
 			"reason":      reason,
-		}))
+		}
+		if verifyExit != nil {
+			result["verify_exit"] = *verifyExit
+			result["verify_output"] = verifyOutput
+			result["verify_tree"] = verifyTree
+		}
+		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave kill", result))
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "weave kill: issue #%d wrapper_pid=%d killed=%v state=%s\n", id, wrapperPid, killed, finalState)
+	if verifyExit != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "weave kill: issue #%d wrapper_pid=%d killed=%v state=%s verify_exit=%d\n", id, wrapperPid, killed, finalState, *verifyExit)
+	} else {
+		fmt.Fprintf(cmd.OutOrStdout(), "weave kill: issue #%d wrapper_pid=%d killed=%v state=%s\n", id, wrapperPid, killed, finalState)
+	}
 	return nil
 }
 
