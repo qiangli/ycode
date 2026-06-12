@@ -359,9 +359,20 @@ type ContainerConfig struct {
 
 // ContainerGatewayConfig is the per-process localhost gateway settings
 // for podman. URL + TokenFile are only consulted when Mode == "remote".
+//
+// The remote URL is backend-agnostic — it can point at either a paired
+// host's RAW podman passthrough (…/app/podman/, full daemon, trusted
+// self-use) or its SAFE-BY-DEFAULT sandbox mount (…/app/sandbox/, which
+// strips privileged / host-namespace / host-bind / added-cap / device
+// requests and injects resource caps). Use the sandbox mount when this
+// ycode is a thin client running untrusted-or-just-remote code on
+// someone else's node; the TokenFile then holds a token scoped to
+// sandbox:run rather than host:proxy. A create request the sandbox mount
+// rejects comes back as a 403 with a {"message":"sandbox: …"} body the
+// docker/podman client surfaces verbatim.
 type ContainerGatewayConfig struct {
 	Mode      string `json:"mode,omitempty"`      // "embedded" (default) | "remote"
-	URL       string `json:"url,omitempty"`       // https://cloudbox/h/<host>/app/podman/
+	URL       string `json:"url,omitempty"`       // https://cloudbox/matrix/h/<host>/app/{podman,sandbox}/
 	TokenFile string `json:"tokenFile,omitempty"` // path to file containing the cloudbox Bearer token
 }
 
