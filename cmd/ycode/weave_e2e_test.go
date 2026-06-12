@@ -1008,6 +1008,107 @@ sleep 600`
 	}
 }
 
+func TestWeaveE2E_Kill_VerifiesCommittedWork(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	verify := `test -f partial.txt && echo killed-verify-ok`
+	if _, ee := runWeave(t, repo, home, "add", "verified killed work", "--verify", verify); envExitCode(ee) != 0 {
+		t.Fatalf("add --verify failed")
+	}
+	script := `set -e
+echo partial > partial.txt
+git add partial.txt
+git commit -qm "partial work"
+sleep 600`
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script)
+
+	if pid := waitIssueWrapperPid(t, repo, home); pid == 0 {
+		_ = bg.Process.Kill()
+		bg.Wait()
+		t.Fatalf("wrapper_pid never landed in queue")
+	}
+	out, ee := runWeave(t, repo, home, "kill", "1", "--reason", "test-kill")
+	if got := envExitCode(ee); got != 0 {
+		_ = bg.Process.Kill()
+		bg.Wait()
+		t.Fatalf("kill exited %d; out=%s", got, out)
+	}
+	res := parseEnvelope(t, out)["result"].(map[string]any)
+	if res["state"] != "killed" {
+		t.Fatalf("expected state=killed after forced kill, got %v", res["state"])
+	}
+	ve, ok := res["verify_exit"].(float64)
+	if !ok || int(ve) != 0 {
+		t.Fatalf("kill envelope should report verify_exit=0, got %v (res=%v)", res["verify_exit"], res)
+	}
+	if !strings.Contains(fmt.Sprint(res["verify_output"]), "killed-verify-ok") {
+		t.Fatalf("kill envelope should include verify output, got %q", res["verify_output"])
+	}
+	_ = bg.Wait()
+
+	item := weaveIssueItem(t, repo, home, 1)
+	if item["state"] != "killed" {
+		t.Fatalf("expected persisted state=killed, got %v", item["state"])
+	}
+	ve, ok = item["verify_exit"].(float64)
+	if !ok || int(ve) != 0 {
+		t.Fatalf("expected persisted verify_exit=0, got %v (item=%v)", item["verify_exit"], item)
+	}
+	if item["verify_tree"] != "head" {
+		t.Fatalf("expected verify_tree=head, got %v", item["verify_tree"])
+	}
+	if item["dirty"] != false {
+		t.Fatalf("expected clean tree for committed killed work, item=%v", item)
+	}
+	if !strings.Contains(fmt.Sprint(item["verify_output"]), "killed-verify-ok") {
+		t.Fatalf("expected persisted verify output, got %q", item["verify_output"])
+	}
+}
+
+func TestWeaveE2E_Kill_SkipsVerifyWithoutEvidence(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "clean killed work", "--verify", "echo should-not-run"); envExitCode(ee) != 0 {
+		t.Fatalf("add --verify failed")
+	}
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", "sleep 600")
+
+	if pid := waitIssueWrapperPid(t, repo, home); pid == 0 {
+		_ = bg.Process.Kill()
+		bg.Wait()
+		t.Fatalf("wrapper_pid never landed in queue")
+	}
+	out, ee := runWeave(t, repo, home, "kill", "1", "--reason", "test-clean-kill")
+	if got := envExitCode(ee); got != 0 {
+		_ = bg.Process.Kill()
+		bg.Wait()
+		t.Fatalf("kill exited %d; out=%s", got, out)
+	}
+	res := parseEnvelope(t, out)["result"].(map[string]any)
+	if _, ok := res["verify_exit"]; ok {
+		t.Fatalf("kill envelope should omit verify_exit for clean zero-commit kill, got %v", res)
+	}
+	_ = bg.Wait()
+
+	item := weaveIssueItem(t, repo, home, 1)
+	if item["state"] != "killed" {
+		t.Fatalf("expected state=killed, got %v", item["state"])
+	}
+	if _, ok := item["verify_exit"]; ok {
+		t.Fatalf("verify should be skipped for clean zero-commit kill, item=%v", item)
+	}
+	if got, _ := item["commits_ahead"].(float64); int(got) != 0 {
+		t.Fatalf("expected commits_ahead=0, got %v", item["commits_ahead"])
+	}
+	if item["dirty"] != false {
+		t.Fatalf("expected clean tree, item=%v", item)
+	}
+}
+
 // TestWeaveE2E_Kill_RequiresWorking refuses if the item isn't
 // currently working.
 func TestWeaveE2E_Kill_RequiresWorking(t *testing.T) {
