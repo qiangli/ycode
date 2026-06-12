@@ -69,8 +69,12 @@ Reflecting seven dogfood rounds:
 - **claude**: strongest on deep multi-file work (delivered both fixture flips);
   TUI needs trust-dialog answer + graceful /exit stop.
 - **opencode**: best as verification judge; ingests `say` steering while
-  headless; check artifacts not exit codes (permission rejections can end runs
-  with exit 0).
+  headless; check artifacts not exit codes. ROOT CAUSE of its silent
+  exit-0 no-ops confirmed: with no `permission` config it REJECTS its
+  own edit/bash tools and exits green — always pre-seed the sandbox
+  opencode.json (see defense-in-depth matrix). Even with permissions
+  fixed, its one rehab dev attempt regressed the metric and left work
+  uncommitted: keep it on judge/doc lanes; dev only as last resort.
 - **aider**: passed probation on a gated 3-pointer (sh new-exp
   anchored-substitution fix, −21 diff lines, zero collateral, ~$0.02).
   Reliable surgical edits when the issue body pins exact cases and
