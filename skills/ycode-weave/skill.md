@@ -15,15 +15,42 @@ named where that helps.
 Use this when you have N independent pieces of work for peer agent
 CLIs. For one inline edit in the current checkout, just do the work.
 
+## Orchestrator contract
+
+Before you run a round, decide which role you can actually hold:
+
+- **Author / scout**: write ready-to-file issues, gates, plans, and
+  assignments. Do not launch, merge, or kill.
+- **Command**: hold the live session, steer workers, salvage failures,
+  judge evidence, and merge verified work.
+- **Deputy**: run one fully specified, bounded round, then hand
+  control back.
+- **Judge / verification**: re-derive evidence and write verdicts.
+  Do not edit source, merge, push, or kill.
+
+If unsure, drop one role. A round that fails visibly is cheaper than a
+round that silently no-ops.
+
+The queue is the source of truth. Re-read
+`ycode weave list --json` before any decision to file, launch, steer,
+kill, judge, pull, or report. Treat `state`, `exit`, `commits_ahead`,
+`dirty`, `verify_exit`, `verify_output`, `verify_tree`, and
+`killed_by` as facts. A worker's prose or commit message is only a
+lead until reproduced. Echo measured numbers exactly from terminal
+output; if evidence is absent, write `MISSING`.
+
 ## Authoring --verify commands
 
 The wrapper runs them with a hermetic `bash --noprofile --norc -c`
 in the sandbox (10m ceiling). Still: never `bash -l` inside (user
 dotfiles), never `set -e` around a `diff` pipeline (exit 1 means
-"files differ", not failure), always `echo` the measured number
-(it lands in verify_output — the evidence trail), and end with the
-explicit gate test (`[ "$n" -lt <baseline> ]`). The gate refusing a
-merge is `weave pull` reporting verify-failed; the orchestrator
+"files differ", not failure), anchor `ROOT=$PWD` before any `cd` into
+symlinked corpora, always `echo` the measured number (it lands in
+verify_output — the evidence trail), and end with the explicit gate
+test (`[ "$n" -lt <baseline> ]`). For improvement work, the merge
+decision must also require queue evidence that committed work exists
+(`commits_ahead > 0`) so a no-op tree cannot pass. The gate refusing
+a merge is `weave pull` reporting verify-failed; the orchestrator
 re-runs the gate by hand before overriding anything.
 
 ## Quick start — any orchestrator, zero to fleet
@@ -48,7 +75,7 @@ self-orchestration is safe). From a user goal:
     #    blocked-agent protocol (Phase 4); steer with `weave say`.
     ycode weave wait --all --timeout 50m
     # 5. CONVERGE: verify each claim, then merge + re-measure (Phase 7):
-    ycode weave pull
+    ycode weave pull <N>                 # targeted; one verified item at a time
     # 6. JUDGE: file one more issue on the merged state for an
     #    independent verification agent (end of Phase 7).
 
@@ -380,7 +407,8 @@ WHAT THE SCREEN ASKS:
 ## Phase 7 — Converge and verify
 
     ycode weave wait --all --timeout 50m
-    ycode weave pull                      # merges working/submitted branches
+    ycode weave list --json               # read state/exit/commits/dirty/verify fields
+    ycode weave pull N                    # targeted: one clean, committed, verified item
 
 - **Check for a dirty sandbox BEFORE pull**: `git -C <sandbox> status
   --porcelain` (ignore `.aider*`/`GEMINI.md` litter). The wrapper's
@@ -407,10 +435,12 @@ WHAT THE SCREEN ASKS:
   `weave say N "btw, are you done? reply DONE"` and watch the log.
   Only a non-responding tool gets force-killed, recorded as
   `killed` (its own state — never promoted) with wrapper-measured
-  evidence (`commits_ahead`, `head`) on the item; inspect, then
-  resume or merge deliberately:
-      git fetch --no-tags <sandbox> agent/weave-issue-N:agent/weave-issue-N
-      git merge --no-ff agent/weave-issue-N
+  evidence (`commits_ahead`, `head`) on the item. If you are not in
+  the command role, record the state and leave the sandbox intact.
+  If you are in the command role, inspect, re-verify, commit any real
+  residue in the sandbox, and prefer `ycode weave pull N` once the
+  item is clean and attested. Manual fetch/merge is salvage of last
+  resort, not normal convergence, and must be reported as salvage.
 - After pull: rebuild, run the canonical measurement, then run the
   FULL suite on a QUIET machine — not just the fixtures the agents
   worked on. Cross-fixture ripple is real: one round improved its
@@ -442,5 +472,5 @@ surfaced a reconciliation worth recording.
 | capture empty, agent "working" | tool buffers (claude -p) | read its transcript; next time use streaming mode |
 | agent cites paths outside sandbox | corpus missing in clone, or remote followed | Phase 2 links; origin is removed from sandboxes — verify `git remote` is empty |
 | claimed improvement won't reproduce | agent measured differently | re-run the issue's exact REPRO; park the branch |
-| state=failed after a kill you issued | kill bookkeeping | branch is intact; manual fetch+merge |
+| state=failed after a kill you issued | kill bookkeeping | branch is intact; inspect, re-verify, then prefer targeted `weave pull N`; manual fetch/merge is command-role salvage only |
 | exit 143, no commits | watchdog kill | check sandbox for uncommitted progress before re-filing |
