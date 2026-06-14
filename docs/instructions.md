@@ -121,9 +121,15 @@ When asked to commit changes in this project, follow the `/commit` skill (embedd
 
 ## Development Pipeline
 
-Non-trivial fixes and features follow the documented six-step pipeline:
-**research → plan → build/test → evaluate → commit → codify**. Each step
-has a concrete output and verification gate. Telemetry across all three
+Non-trivial fixes and features follow the documented lifecycle:
+**Research → Strategy → Execution**.
+
+1. **Research**: Systematically map the codebase and validate assumptions.
+2. **Strategy**: Formulate a grounded plan and share it.
+3. **Execution**: Follow the six-step iterative loop: **Plan → Act → Test → Evaluate → Commit → Codify**.
+
+Each step has a concrete output and verification gate.
+ Telemetry across all three
 OTel pillars (metrics, traces, logs) is part of the evaluate gate — a
 change isn't done if its panels can't populate. See
 [pipeline.md](./pipeline.md) for the full process and where each artifact

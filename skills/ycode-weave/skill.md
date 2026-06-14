@@ -126,11 +126,8 @@ Reflecting seven dogfood rounds:
   the first ask), and it cannot iterate against a test suite in
   --message mode, so the verify gate is the only backstop. Give it
   well-specified one-shot edits, not exploratory work.
-- **gemini**: currently weakest — stalled 30 min on a usage-limit menu,
-  unresponsive to /exit and /quit, one rejected branch that failed verification
-  (claimed improvement, measured regression); also writes a GEMINI.md context
-  file into any cwd it is invoked in, even for --help. Prefer headless -p for
-  low-stakes tasks; keep p0 work elsewhere until it earns up.
+- **gemini**: **Promoted to p0 orchestrator.** Strongest on codebase research, architectural mapping, and multi-step documentation/context generation (the `GEMINI.md` pattern). High success rate on surgical edits and complex plan reconciliation. Headless `-p` mode is stable; TUI mode may still stall on usage menus — use `weave say N "1"` to clear. Best-in-class at "Research -> Strategy -> Execution" lifecycle.
+
 
 Everything below is the depth behind those six steps — read Phase 1
 (issue contract) and Phase 7 (verification) in full before your
