@@ -12,16 +12,10 @@ steer them, recover from kills, and merge verified work back. Every
 rule below was earned in dogfooding; the failure it prevents is
 named where that helps.
 
-If this checkout lives inside the `dhnt/` umbrella, also read
-`<dhnt>/docs/orchestrator-instruction.md` (usually
-`../docs/orchestrator-instruction.md` from the `ycode/` repo root).
-That file is the short, tool-agnostic operating contract; this skill
-is the detailed playbook with launch recipes, prompt handling,
-recovery, and convergence tactics.
-
-Also read `ycode/internal/docs/agent/weave.md` for the MVP-quick-reference
-contract — exact CLI calls, state machine, envelope schemas, and failure
-mode table.
+This skill is self-contained: it assumes only the `ycode weave` command
+set (available wherever `ycode` is installed) plus whatever worker CLIs
+you choose to launch. Run `ycode weave --help` (and `ycode weave
+<subcommand> --help`) for the exact subcommands and flags on your machine.
 
 Use this when you have N independent pieces of work for peer agent
 CLIs. For one inline edit in the current checkout, just do the work.
