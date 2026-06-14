@@ -19,6 +19,10 @@ That file is the short, tool-agnostic operating contract; this skill
 is the detailed playbook with launch recipes, prompt handling,
 recovery, and convergence tactics.
 
+Also read `ycode/internal/docs/agent/weave.md` for the MVP-quick-reference
+contract — exact CLI calls, state machine, envelope schemas, and failure
+mode table.
+
 Use this when you have N independent pieces of work for peer agent
 CLIs. For one inline edit in the current checkout, just do the work.
 
@@ -126,7 +130,12 @@ Reflecting seven dogfood rounds:
   the first ask), and it cannot iterate against a test suite in
   --message mode, so the verify gate is the only backstop. Give it
   well-specified one-shot edits, not exploratory work.
-- **gemini**: **Promoted to p0 orchestrator.** Strongest on codebase research, architectural mapping, and multi-step documentation/context generation (the `GEMINI.md` pattern). High success rate on surgical edits and complex plan reconciliation. Headless `-p` mode is stable; TUI mode may still stall on usage menus — use `weave say N "1"` to clear. Best-in-class at "Research -> Strategy -> Execution" lifecycle.
+- **gemini**: **Promoted to p0 orchestrator.** Strongest on codebase research,
+  architectural mapping, and multi-step documentation/context generation
+  (the `GEMINI.md` pattern). High success rate on surgical edits and
+  complex plan reconciliation. Headless `-p` mode is stable; TUI mode may
+  still stall on usage menus — use `weave say N "1"` to clear. Best-in-class
+  at "Research -> Strategy -> Execution" lifecycle.
 
 
 Everything below is the depth behind those six steps — read Phase 1
