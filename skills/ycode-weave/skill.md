@@ -12,12 +12,20 @@ steer them, recover from kills, and merge verified work back. Every
 rule below was earned in dogfooding; the failure it prevents is
 named where that helps.
 
+If this checkout lives inside the `dhnt/` umbrella, also read
+`<dhnt>/docs/orchestrator-instruction.md` (usually
+`../docs/orchestrator-instruction.md` from the `ycode/` repo root).
+That file is the short, tool-agnostic operating contract; this skill
+is the detailed playbook with launch recipes, prompt handling,
+recovery, and convergence tactics.
+
 Use this when you have N independent pieces of work for peer agent
 CLIs. For one inline edit in the current checkout, just do the work.
 
 ## Orchestrator contract
 
-Before you run a round, decide which role you can actually hold:
+Before filing, launching, judging, merging, or killing anything,
+decide which role you can actually hold in your current runtime:
 
 - **Author / scout**: write ready-to-file issues, gates, plans, and
   assignments. Do not launch, merge, or kill.
@@ -31,13 +39,19 @@ Before you run a round, decide which role you can actually hold:
 If unsure, drop one role. A round that fails visibly is cheaper than a
 round that silently no-ops.
 
-The queue is the source of truth. Re-read
-`ycode weave list --json` before any decision to file, launch, steer,
-kill, judge, pull, or report. Treat `state`, `exit`, `commits_ahead`,
-`dirty`, `verify_exit`, `verify_output`, `verify_tree`, and
-`killed_by` as facts. A worker's prose or commit message is only a
-lead until reproduced. Echo measured numbers exactly from terminal
-output; if evidence is absent, write `MISSING`.
+The queue is the source of truth. Re-read `ycode weave list --json`
+before any decision to file, launch, steer, kill, judge, pull, report,
+or abandon work. Treat `state`, `exit`, `commits_ahead`, `dirty`,
+`verify_exit`, `verify_output`, `verify_tree`, and `killed_by` as
+facts. A worker's prose, transcript, or commit message is only a lead
+until reproduced. Echo measured numbers exactly from terminal output;
+if evidence is absent, write `MISSING`. For improvement work, require
+both a passing gate and queue evidence that `commits_ahead > 0`.
+
+Operational invariant: keep five things aligned with observable
+evidence — the queue, the sandboxes, the workers, the verification
+gates, and the merged checkout. If any two disagree, stop and
+diagnose before continuing.
 
 ## Authoring --verify commands
 
@@ -61,6 +75,7 @@ CLI as a worker too (each worker runs in an isolated clone, so
 self-orchestration is safe). From a user goal:
 
     cd <repo-root>                       # queues are per-repo (cwd-keyed)
+    # 0. ORIENT at the target repo root; queues are cwd-keyed.
     # 1. DECOMPOSE the goal into N independent issues with DISJOINT
     #    file scopes; write each body per the Phase 1 contract below.
     #    Complex round? Run the optional Phase 1.5 planning poker.
@@ -130,6 +145,10 @@ first round; skim the rest and return on demand.
   clones contain ONLY tracked files — a missing corpus is why one
   dogfood agent escaped its sandbox hunting for fixtures and another
   couldn't verify at all.
+- In submodule umbrellas, run weave against the actual repo being
+  changed, not the umbrella, unless the issue is explicitly about
+  umbrella-level docs or pin bumps. Submodule pin bumps require
+  explicit human authorization.
 
 ## Phase 1 — File issues (the issue-body contract)
 
@@ -154,7 +173,8 @@ One issue per independent task. Every body carries, in order:
    unverified claim is worse than none." (An agent once claimed a
    25% improvement that did not reproduce.)
 6. **Commit discipline** — `git add` files BY NAME; commit to the
-   current branch; DO NOT push; DO NOT switch branches.
+   current branch; DO NOT push; DO NOT switch branches; end the
+   instructions with `COMMIT YOUR WORK`.
 7. **Blockers escape** — "if stuck after 3 serious attempts, commit
    what works plus <TOPIC>-BLOCKERS.md with your diagnosis — include
    a verified patch if the fix lies outside your scope — then exit
@@ -455,6 +475,9 @@ WHAT THE SCREEN ASKS:
   `weave abandon N --reason`), reset and park on a branch if not.
 - Clean residue: `weave abandon N --reason "<why, where the work
   went>"` — the reason is the audit trail.
+
+- Hard stop: pushing, destructive cleanup, and submodule pin bumps
+  require explicit per-action human authorization.
 
 For multi-issue rounds, finish with a JUDGE pass (the runbook's
 Pattern B): after merging, file one more issue on a fresh sandbox
