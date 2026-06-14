@@ -2,7 +2,10 @@
 
 Status: **implemented** (P0–P5 landed; issues #13–#18). Companion to
 [`loom-v2-plan.md`](./loom-v2-plan.md) (substrate design) and
-[`weave-runbook.md`](./weave-runbook.md) (operator walkthrough).
+[`weave-runbook.md`](./weave-runbook.md) (operator walkthrough). The next
+layer of friction — provisioning, foreign-CLI prompt/approval delivery,
+liveness, and verified convergence — is catalogued in
+[`weave-enhancement-roadmap.md`](./weave-enhancement-roadmap.md).
 
 > **Implementation note (post-build).** P2 shipped as *two* gates, not one
 > uniform surface. Verbs that act on an implicit **set** the caller never
