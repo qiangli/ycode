@@ -50,6 +50,7 @@ See docs/loom-v2-plan.md for the full design.`,
 	cmd.AddCommand(newWeavePrioCmd())
 	cmd.AddCommand(newWeavePointCmd())
 	cmd.AddCommand(newWeaveListCmd())
+	cmd.AddCommand(newWeaveStatusCmd())
 	cmd.AddCommand(newWeaveLogCmd())
 	cmd.AddCommand(newWeaveSayCmd())
 	cmd.AddCommand(newWeavePullCmd())
@@ -76,6 +77,14 @@ func (f *weaveOutputFlags) attach(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.jsonF, "json", false, "Emit machine-readable envelope (versioned schema)")
 	cmd.Flags().BoolVar(&f.plainF, "plain", false, "Plain-text output, no ANSI or spinners")
 	cmd.Flags().BoolVar(&f.quietF, "quiet", false, "Final result line only")
+	// Every subverb emits its own envelope and propagates an
+	// *exitCodeError. cobra's error handling only consults the leaf
+	// command and the absolute root — NOT the `weave` parent — so the
+	// parent's SilenceErrors/SilenceUsage don't reach here. Set them on
+	// the leaf itself or cobra double-prints "Error: exit N" + a full
+	// usage dump on top of the envelope (the confirmation-refusal noise).
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
 }
 
 func (f *weaveOutputFlags) mode() weavecli.OutputMode {

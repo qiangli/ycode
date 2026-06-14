@@ -354,7 +354,15 @@ Background each start (`&`); the wrapper auto-setsids.
 
     ycode weave list             # TOOL + STARTED + DUR: who works what, since when
     ycode weave log N -f         # live PTY capture (any number of watchers)
+    ycode weave log N --summary  # compact outcome: state/exit/verify/commits/merged
+    ycode weave status N         # where one issue stands + merged-into-main yes/no
     ycode weave list --watch --json   # NDJSON state transitions
+
+`weave list` reconciles state against git: a `submitted` item whose
+commits already landed in the base branch (merged out-of-band, not via
+`weave pull`) shows as `done` and is swept by `weave prune` — no more
+stranded items that only `abandon` could clear. A footer flags terminal
+items still holding sandbox clones on disk (`weave prune` to reclaim).
 
 Never measure benchmarks/suites on the host while subagents compile
 in parallel — per-test timeouts flake under load and read as

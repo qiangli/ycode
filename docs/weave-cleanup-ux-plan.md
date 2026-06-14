@@ -1,7 +1,22 @@
 # Weave — Cleanup & State-Reconciliation UX Plan
 
-Status: design plan. Companion to [`loom-v2-plan.md`](./loom-v2-plan.md) (substrate
-design) and [`weave-runbook.md`](./weave-runbook.md) (operator walkthrough).
+Status: **implemented** (P0–P5 landed; issues #13–#18). Companion to
+[`loom-v2-plan.md`](./loom-v2-plan.md) (substrate design) and
+[`weave-runbook.md`](./weave-runbook.md) (operator walkthrough).
+
+> **Implementation note (post-build).** P2 shipped as *two* gates, not one
+> uniform surface. Verbs that act on an implicit **set** the caller never
+> enumerated (`reset`, `prune`) refuse a non-interactive call without `--yes`
+> (`weaveConfirmBatch`) — accidental invocation is catastrophic. Verbs that act
+> on a single **explicitly named** issue (`abandon`, `kill`) only prompt at a
+> TTY and otherwise proceed (`weaveConfirmTargeted`) — orchestrators invoke them
+> programmatically and a hard `--yes` requirement would break the
+> orchestrator-safe stop path (it did, in the e2e suite). `kill` in particular
+> is *non-destructive* (sandbox + branch + commits preserved), so the
+> data-loss rationale never applied to it. Both still take `--yes` for
+> scriptability, both route through one prompt helper, and neither dumps usage
+> on refusal (fixed by setting `SilenceUsage`/`SilenceErrors` on each leaf in
+> `attach()` — the `weave` parent's setting was never consulted by cobra).
 
 This document captures friction found while cleaning up a stale weave queue and
 proposes a prioritized set of fixes. The work all orbits one root cause:

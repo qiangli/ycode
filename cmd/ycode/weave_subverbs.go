@@ -206,6 +206,7 @@ func newWeaveLogCmd() *cobra.Command {
 	var flags weaveOutputFlags
 	var follow bool
 	var tailN int
+	var summary bool
 	cmd := &cobra.Command{
 		Use:   "log <issue>",
 		Short: "Print (or --follow) the captured PTY log of an issue's subagent",
@@ -237,12 +238,13 @@ callers read the file themselves.`,
 			if err != nil {
 				return fmt.Errorf("issue must be an integer: %q", args[0])
 			}
-			return runWeaveLog(cmd, id, follow, tailN, &flags)
+			return runWeaveLog(cmd, id, follow, tailN, summary, &flags)
 		},
 	}
 	flags.attach(cmd)
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Stream appended output until the issue reaches a terminal state")
 	cmd.Flags().IntVarP(&tailN, "tail", "n", -1, "Print only the last N lines (0 = none, useful with -f; -1 = whole file)")
+	cmd.Flags().BoolVar(&summary, "summary", false, "Print a compact outcome (state, exit, verify, commits, merged) instead of the raw PTY stream")
 	return cmd
 }
 
@@ -360,6 +362,7 @@ deleted with -d (lowercase), which refuses if not fully merged.`,
 func newWeaveAbandonCmd() *cobra.Command {
 	var flags weaveOutputFlags
 	var reason string
+	var yes bool
 	cmd := &cobra.Command{
 		Use:   "abandon <issue>",
 		Short: "Tear down a weave (sandbox + branch + any running wrapper)",
@@ -367,24 +370,52 @@ func newWeaveAbandonCmd() *cobra.Command {
 + branch. Use this when giving up on an issue entirely.
 
 For "stop the runaway but keep the partial work for inspection",
-use ` + "`weave kill`" + ` instead.`,
+use ` + "`weave kill`" + ` instead.
+
+At a TTY this prompts before tearing down; pass --yes to skip the
+prompt (required in non-interactive / --json invocations).`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
 				return fmt.Errorf("issue must be an integer: %q", args[0])
 			}
-			return runWeaveAbandon(cmd, id, reason, &flags)
+			return runWeaveAbandon(cmd, id, reason, yes, &flags)
 		},
 	}
 	flags.attach(cmd)
 	cmd.Flags().StringVar(&reason, "reason", "", "Optional human-readable reason for logs")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Skip the confirmation prompt")
+	return cmd
+}
+
+func newWeaveStatusCmd() *cobra.Command {
+	var flags weaveOutputFlags
+	cmd := &cobra.Command{
+		Use:   "status <issue>",
+		Short: "Show an issue's reconciled state, merge status, and verify result",
+		Long: `status answers "where does this issue stand?" without a manual git
+investigation: it reports the recorded state reconciled against git
+(a "submitted" item already in base reads as done), the branch +
+sandbox HEAD, whether the work is merged into the base branch, how
+many commits it is ahead, and the last substrate-verified result.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("issue must be an integer: %q", args[0])
+			}
+			return runWeaveStatus(cmd, id, &flags)
+		},
+	}
+	flags.attach(cmd)
 	return cmd
 }
 
 func newWeaveKillCmd() *cobra.Command {
 	var flags weaveOutputFlags
 	var reason string
+	var yes bool
 	cmd := &cobra.Command{
 		Use:   "kill <issue>",
 		Short: "Stop the running wrapper precisely, preserve sandbox + branch",
@@ -408,11 +439,12 @@ agentic environments.`,
 			if err != nil {
 				return fmt.Errorf("issue must be an integer: %q", args[0])
 			}
-			return runWeaveKill(cmd, id, reason, &flags)
+			return runWeaveKill(cmd, id, reason, yes, &flags)
 		},
 	}
 	flags.attach(cmd)
 	cmd.Flags().StringVar(&reason, "reason", "", "Optional human-readable reason for the failure record")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Skip the confirmation prompt")
 	return cmd
 }
 

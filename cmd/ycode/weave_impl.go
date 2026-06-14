@@ -179,6 +179,19 @@ func isTerminalState(s string) bool {
 	return false
 }
 
+// isPrunableState reports whether `weave prune` will sweep an item in
+// this state: the terminal states that leave a reclaimable sandbox
+// behind. "submitted" is excluded — it's awaiting `weave pull` — unless
+// reconciliation has already flipped it to "done" (see
+// weaveReconcileMerged).
+func isPrunableState(s string) bool {
+	switch s {
+	case "done", "abandoned", "failed", "killed":
+		return true
+	}
+	return false
+}
+
 func weaveRepoRoot(cwd string) (string, error) {
 	out, err := exec.Command("git", "-C", cwd, "rev-parse", "--show-toplevel").Output()
 	if err != nil {
@@ -344,6 +357,67 @@ func weaveMeasureBranch(sandbox, base string) (ahead int, head string) {
 		head = strings.TrimSpace(string(out))
 	}
 	return ahead, head
+}
+
+// weaveItemMerged reports whether an item's work is already contained
+// in the base branch — its recorded terminal HEAD sha (or the sandbox's
+// live HEAD, as a fallback) is an ancestor of base in the USER repo.
+// This is git's own truth, independent of the recorded queue State, and
+// is what lets the lifecycle verbs detect a "submitted" item that landed
+// in main by some route other than `weave pull` (a manual merge, a peer
+// weave that absorbed it, the same commits fetched and merged earlier).
+//
+// It is deliberately conservative: it answers yes ONLY when that exact
+// commit object is reachable from base in the user repo. A branch that
+// was never fetched (its commits absent from the user repo) reads as
+// not-merged — the safe answer, since nothing has actually landed. We
+// check the sandbox HEAD, never `git branch -d` against the user repo:
+// agent branches live only in the sandbox clone and are never fetched
+// unless `weave pull` ran, so a branch-name check is a near-permanent
+// no-op (the bug this replaces).
+func weaveItemMerged(root, base string, it *weaveItem) bool {
+	if root == "" || base == "" {
+		return false
+	}
+	// "Merged" means work that LANDED, not an empty run. An item with no
+	// commits ahead of base has a HEAD equal to the base commit, which
+	// is trivially its own ancestor — without this guard every clean
+	// zero-commit run would read as merged (and a "submitted" one would
+	// get reconciled to done and vanish from the list). CommitsAhead is
+	// the wrapper's terminal-time measurement; 0 means nothing to merge,
+	// which is "empty", not "merged".
+	if it.CommitsAhead <= 0 {
+		return false
+	}
+	sha := it.Head
+	if sha == "" && it.Sandbox != "" {
+		if out, err := exec.Command("git", "-C", it.Sandbox, "rev-parse", "HEAD").Output(); err == nil {
+			sha = strings.TrimSpace(string(out))
+		}
+	}
+	if sha == "" {
+		return false
+	}
+	// `merge-base --is-ancestor A B` exits 0 iff A is an ancestor of B.
+	// A missing object exits 128; a known-but-unmerged sha exits 1 —
+	// both mean "not merged" for our purposes.
+	return exec.Command("git", "-C", root, "merge-base", "--is-ancestor", sha, base).Run() == nil
+}
+
+// weaveReconcileMerged flips any "submitted" item whose work is already
+// merged into base (per weaveItemMerged) to "done", so the recorded
+// State stops contradicting git reality. Returns the count of items
+// changed. Callers holding the queue lock (pull, prune) persist the
+// change; the read-only list path uses it for display only.
+func weaveReconcileMerged(root, base string, q *weaveQueue) int {
+	n := 0
+	for _, it := range q.Items {
+		if it.State == "submitted" && weaveItemMerged(root, base, it) {
+			it.State = "done"
+			n++
+		}
+	}
+	return n
 }
 
 // weaveMeasureDirtiness records tracked working-tree changes
@@ -578,10 +652,7 @@ func weaveTestPauseInsideAddLock() {
 // weaveRenderItemRows prints the standard list table rows (no header).
 func weaveRenderItemRows(w io.Writer, items []*weaveItem) {
 	for _, it := range items {
-		title := it.Title
-		if len(title) > 40 {
-			title = title[:37] + "..."
-		}
+		title := weaveTruncate(it.Title, 40)
 		state := it.State
 		if it.Stale {
 			state = it.State + "*"
@@ -600,6 +671,21 @@ func weaveRenderItemRows(w io.Writer, items []*weaveItem) {
 		fmt.Fprintf(w, "%-4d %-4s %-3s %-10s %-9s %-8s %-8s %-40s %s\n",
 			it.ID, it.Priority, pts, state, toolCol, weaveStartedCol(it), weaveDurationCol(it), title, weaveTildePath(it.Sandbox))
 	}
+}
+
+// weaveTruncate shortens s to at most maxRunes runes, cutting on a rune
+// boundary and appending an ellipsis. Byte-slicing a title (the old
+// `title[:37]`) split mid-rune on multibyte titles and rendered as the
+// `recurrence �...` mojibake in the list table; counting runes fixes it.
+func weaveTruncate(s string, maxRunes int) string {
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	if maxRunes <= 3 {
+		return string(r[:maxRunes])
+	}
+	return string(r[:maxRunes-3]) + "..."
 }
 
 // weaveAllQueueDirs returns every queue dir under the weave base.
@@ -753,9 +839,23 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave list",
 			weavecli.ExitGenericFail, err))
 	}
+	// Reconcile for display (not persisted here — prune/pull hold the
+	// lock and persist): a "submitted" item whose work already landed
+	// in base shows as "done" instead of lying about pending work.
+	base := weaveBaseBranch(root)
+	weaveReconcileMerged(root, base, q)
 	var items []*weaveItem
 	anyStale := false
+	reclaimable := 0
 	for _, it := range q.Items {
+		// Terminal items whose sandbox clone still occupies disk are
+		// reclaimable via `weave prune` — surfaced in a footer so the
+		// clutter isn't invisible until something trips over it.
+		if isPrunableState(it.State) && it.Sandbox != "" {
+			if st, statErr := os.Stat(it.Sandbox); statErr == nil && st.IsDir() {
+				reclaimable++
+			}
+		}
 		if !includeHistory && (it.State == "done" || it.State == "abandoned") {
 			continue
 		}
@@ -778,6 +878,9 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 		if len(others) > 0 {
 			res["other_active_queues"] = others
 		}
+		if reclaimable > 0 {
+			res["reclaimable"] = reclaimable
+		}
 		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave list", res))
 	}
 	if len(items) == 0 {
@@ -786,6 +889,7 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 		if weaveQueueSummaries(w, dir) > 0 {
 			fmt.Fprintln(w, "  (queues are per-repo; cd there, or `weave list --all` for full tables)")
 		}
+		weavePrintReclaimableFooter(w, reclaimable)
 		return nil
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "%-4s %-4s %-3s %-10s %-9s %-8s %-8s %-40s %s\n", "ID", "PRIO", "PTS", "STATE", "TOOL", "STARTED", "DUR", "TITLE", "SANDBOX")
@@ -793,7 +897,21 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 	if anyStale {
 		fmt.Fprintln(cmd.OutOrStdout(), "* wrapper process is dead — re-attach with `weave start --resume --issue N` or `weave abandon N`")
 	}
+	weavePrintReclaimableFooter(cmd.OutOrStdout(), reclaimable)
 	return nil
+}
+
+// weavePrintReclaimableFooter emits the one-line clutter hint when
+// terminal items still hold sandbox clones on disk.
+func weavePrintReclaimableFooter(w io.Writer, reclaimable int) {
+	if reclaimable <= 0 {
+		return
+	}
+	noun := "sandbox"
+	if reclaimable != 1 {
+		noun = "sandboxes"
+	}
+	fmt.Fprintf(w, "+%d terminal item(s) holding %s on disk — run `weave prune` to reclaim\n", reclaimable, noun)
 }
 
 func runWeaveNext(cmd *cobra.Command, flags *weaveOutputFlags) error {
@@ -1507,7 +1625,74 @@ func decodeCescape(s string) []byte {
 // state. The capture file only exists when the subagent ran with a
 // captured PTY (non-TTY parent); interactive passthrough sessions
 // have nothing recorded.
-func runWeaveLog(cmd *cobra.Command, id int64, follow bool, tailN int, flags *weaveOutputFlags) error {
+// weaveLogSummary prints a compact one-glance outcome for an issue
+// instead of the raw PTY capture: terminal state, the substrate's own
+// evidence (exit code, verify result, commits ahead), and whether the
+// work has landed in base. The default `weave log` dumps the full PTY
+// stream, which lands mid-diff under `tail` and buries the bottom line.
+func weaveLogSummary(cmd *cobra.Command, mode weavecli.OutputMode, root string, it *weaveItem) error {
+	base := weaveBaseBranch(root)
+	merged := weaveItemMerged(root, base, it)
+	if mode == weavecli.OutputJSON {
+		res := map[string]any{
+			"issue":         it.ID,
+			"state":         it.State,
+			"tool":          it.Tool,
+			"duration":      weaveDurationCol(it),
+			"commits_ahead": it.CommitsAhead,
+			"merged":        merged,
+		}
+		if it.Head != "" {
+			res["head"] = it.Head
+		}
+		if it.ExitCode != nil {
+			res["exit_code"] = *it.ExitCode
+		}
+		if it.VerifyExit != nil {
+			res["verify_exit"] = *it.VerifyExit
+		}
+		if it.KilledBy != "" {
+			res["killed_by"] = it.KilledBy
+		}
+		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave log", res))
+	}
+	w := cmd.OutOrStdout()
+	tool := it.Tool
+	if tool == "" {
+		tool = "-"
+	}
+	fmt.Fprintf(w, "issue #%d — %s\n", it.ID, weaveTruncate(it.Title, 72))
+	fmt.Fprintf(w, "  state:    %s   tool: %s   dur: %s\n", it.State, tool, weaveDurationCol(it))
+	if it.ExitCode != nil {
+		fmt.Fprintf(w, "  exit:     %d\n", *it.ExitCode)
+	}
+	if it.KilledBy != "" {
+		fmt.Fprintf(w, "  killed:   %s\n", it.KilledBy)
+	}
+	if it.VerifyExit != nil {
+		verdict := "passed"
+		if *it.VerifyExit != 0 {
+			verdict = fmt.Sprintf("FAILED (exit %d)", *it.VerifyExit)
+		}
+		fmt.Fprintf(w, "  verify:   %s\n", verdict)
+	}
+	branchInfo := fmt.Sprintf("%d commit(s) ahead of %s", it.CommitsAhead, base)
+	if len(it.Head) >= 12 {
+		branchInfo += " @ " + it.Head[:12]
+	}
+	fmt.Fprintf(w, "  branch:   %s\n", branchInfo)
+	if it.Dirty {
+		fmt.Fprintf(w, "  dirty:    %d tracked uncommitted file(s)\n", it.DirtyFiles)
+	}
+	mergedStr := "no — `weave pull` to merge"
+	if merged {
+		mergedStr = "yes — already in " + base
+	}
+	fmt.Fprintf(w, "  merged:   %s\n", mergedStr)
+	return nil
+}
+
+func runWeaveLog(cmd *cobra.Command, id int64, follow bool, tailN int, summary bool, flags *weaveOutputFlags) error {
 	mode := flags.mode()
 	cwd, _ := os.Getwd()
 	root, err := weaveRepoRoot(cwd)
@@ -1525,6 +1710,9 @@ func runWeaveLog(cmd *cobra.Command, id int64, follow bool, tailN int, flags *we
 	if it == nil {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave log",
 			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found%s", id, weaveOtherActiveQueuesHintSuffix(dir))))
+	}
+	if summary {
+		return weaveLogSummary(cmd, mode, root, it)
 	}
 	logPath := it.LogPath
 	if logPath == "" {
@@ -1662,6 +1850,7 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags, issueID int64, is
 			weavecli.ExitPrecondFail, err))
 	}
 	dir, _ := weaveQueueDir(root)
+	base := weaveBaseBranch(root)
 	type result struct {
 		Issue  int64  `json:"issue"`
 		Branch string `json:"branch"`
@@ -1676,6 +1865,19 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags, issueID int64, is
 		}
 		for _, it := range q.Items {
 			if issueSpecified && it.ID != issueID {
+				continue
+			}
+			// Already landed in base by some other route (manual merge,
+			// a peer weave). Reconcile the stale "submitted" to "done"
+			// and report it rather than re-fetching a no-op branch.
+			if it.State == "submitted" && weaveItemMerged(root, base, it) {
+				it.State = "done"
+				if it.Sandbox != "" {
+					_ = safeRemoveSandbox(dir, it.Sandbox)
+					it.Sandbox = ""
+				}
+				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "already-merged",
+					Detail: "work already in " + base + "; marked done"})
 				continue
 			}
 			// Merge any branch belonging to an item that's either still
@@ -1811,7 +2013,7 @@ func weaveTestPauseAfterPullLoad() {
 	}
 }
 
-func runWeaveAbandon(cmd *cobra.Command, id int64, reason string, flags *weaveOutputFlags) error {
+func runWeaveAbandon(cmd *cobra.Command, id int64, reason string, yes bool, flags *weaveOutputFlags) error {
 	mode := flags.mode()
 	cwd, _ := os.Getwd()
 	root, err := weaveRepoRoot(cwd)
@@ -1820,6 +2022,11 @@ func runWeaveAbandon(cmd *cobra.Command, id int64, reason string, flags *weaveOu
 			weavecli.ExitPrecondFail, err))
 	}
 	dir, _ := weaveQueueDir(root)
+	if err := weaveConfirmTargeted(cmd, mode,
+		fmt.Sprintf("weave abandon: tears down issue #%d's sandbox + branch; any unmerged work is lost.", id), yes); err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave abandon",
+			weavecli.ExitInvalidArg, err))
+	}
 	var it *weaveItem
 	notFoundHint := weaveOtherActiveQueuesHintSuffix(dir)
 	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
@@ -1871,6 +2078,137 @@ func runWeaveAbandon(cmd *cobra.Command, id int64, reason string, flags *weaveOu
 		}))
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "weave abandon: issue #%d abandoned\n", it.ID)
+	return nil
+}
+
+// runWeaveStatus answers the single most common operator question about
+// an item — "is this already in main?" — directly, instead of forcing a
+// manual `queue.json` → sandbox `git log` → `merge-base --is-ancestor`
+// investigation. Reports the recorded state reconciled against git
+// reality, the branch + sandbox HEAD, merged-into-base, commits ahead,
+// and the last verify result.
+func runWeaveStatus(cmd *cobra.Command, id int64, flags *weaveOutputFlags) error {
+	mode := flags.mode()
+	cwd, _ := os.Getwd()
+	root, err := weaveRepoRoot(cwd)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave status",
+			weavecli.ExitPrecondFail, err))
+	}
+	dir, _ := weaveQueueDir(root)
+	q, err := loadWeaveQueue(dir)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave status",
+			weavecli.ExitGenericFail, err))
+	}
+	it := findWeaveItem(q, id)
+	if it == nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave status",
+			weavecli.ExitInvalidArg, fmt.Errorf("issue #%d not found%s", id, weaveOtherActiveQueuesHintSuffix(dir))))
+	}
+	base := weaveBaseBranch(root)
+	merged := weaveItemMerged(root, base, it)
+	// Reconcile for display: a submitted item already in base reads as
+	// done (and reconciledFrom records the drift so the operator sees
+	// why prune would now sweep it).
+	displayState := it.State
+	reconciledFrom := ""
+	if it.State == "submitted" && merged {
+		displayState = "done"
+		reconciledFrom = "submitted"
+	}
+	stale := it.State == "working" && it.WrapperPid > 0 && !pidAlive(it.WrapperPid)
+	sandboxExists := false
+	if it.Sandbox != "" {
+		if st, statErr := os.Stat(it.Sandbox); statErr == nil && st.IsDir() {
+			sandboxExists = true
+		}
+	}
+
+	if mode == weavecli.OutputJSON {
+		res := map[string]any{
+			"issue":          it.ID,
+			"title":          it.Title,
+			"state":          displayState,
+			"recorded_state": it.State,
+			"merged":         merged,
+			"base":           base,
+			"commits_ahead":  it.CommitsAhead,
+			"branch":         it.Branch,
+			"sandbox":        it.Sandbox,
+			"sandbox_exists": sandboxExists,
+			"stale":          stale,
+			"dirty":          it.Dirty,
+		}
+		if reconciledFrom != "" {
+			res["reconciled_from"] = reconciledFrom
+		}
+		if it.Head != "" {
+			res["head"] = it.Head
+		}
+		if it.ExitCode != nil {
+			res["exit_code"] = *it.ExitCode
+		}
+		if it.VerifyExit != nil {
+			res["verify_exit"] = *it.VerifyExit
+		}
+		if it.KilledBy != "" {
+			res["killed_by"] = it.KilledBy
+		}
+		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave status", res))
+	}
+
+	w := cmd.OutOrStdout()
+	fmt.Fprintf(w, "issue #%d — %s\n", it.ID, weaveTruncate(it.Title, 72))
+	stateLine := displayState
+	if reconciledFrom != "" {
+		stateLine += fmt.Sprintf(" (recorded %q; merged outside `weave pull`)", reconciledFrom)
+	} else if stale {
+		stateLine += " (stale — wrapper pid dead)"
+	}
+	fmt.Fprintf(w, "  state:    %s\n", stateLine)
+	if it.Tool != "" {
+		fmt.Fprintf(w, "  tool:     %s   dur: %s\n", it.Tool, weaveDurationCol(it))
+	}
+	if it.Branch != "" {
+		fmt.Fprintf(w, "  branch:   %s\n", it.Branch)
+	}
+	branchInfo := fmt.Sprintf("%d commit(s) ahead of %s", it.CommitsAhead, base)
+	if len(it.Head) >= 12 {
+		branchInfo += " @ " + it.Head[:12]
+	}
+	fmt.Fprintf(w, "  commits:  %s\n", branchInfo)
+	if it.ExitCode != nil {
+		fmt.Fprintf(w, "  exit:     %d\n", *it.ExitCode)
+	}
+	if it.KilledBy != "" {
+		fmt.Fprintf(w, "  killed:   %s\n", it.KilledBy)
+	}
+	if it.VerifyExit != nil {
+		verdict := "passed"
+		if *it.VerifyExit != 0 {
+			verdict = fmt.Sprintf("FAILED (exit %d)", *it.VerifyExit)
+		}
+		fmt.Fprintf(w, "  verify:   %s\n", verdict)
+	}
+	if it.Dirty {
+		fmt.Fprintf(w, "  dirty:    %d tracked uncommitted file(s)\n", it.DirtyFiles)
+	}
+	if it.Sandbox != "" {
+		state := "present"
+		if !sandboxExists {
+			state = "gone on disk"
+		}
+		fmt.Fprintf(w, "  sandbox:  %s (%s)\n", weaveTildePath(it.Sandbox), state)
+	}
+	mergedStr := "no"
+	switch {
+	case merged:
+		mergedStr = "yes — already in " + base
+	case it.State == "submitted":
+		mergedStr = "no — `weave pull` to merge"
+	}
+	fmt.Fprintf(w, "  merged:   %s\n", mergedStr)
 	return nil
 }
 
@@ -2072,20 +2410,10 @@ func runWeaveReset(cmd *cobra.Command, yes bool, flags *weaveOutputFlags) error 
 			weavecli.ExitPrecondFail, err))
 	}
 	dir, _ := weaveQueueDir(root)
-	if !yes {
-		// Agent mode (or any non-TTY) without --yes is a refusal — a
-		// destructive op shouldn't run without explicit confirmation.
-		if mode == weavecli.OutputJSON || !stdinIsTTY() {
-			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave reset",
-				weavecli.ExitInvalidArg, fmt.Errorf("refusing destructive reset without --yes")))
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "weave reset: this removes every worktree + branch for this repo and clears the queue.\nproceed? [y/N] ")
-		var resp string
-		_, _ = fmt.Fscanln(os.Stdin, &resp)
-		if !strings.EqualFold(resp, "y") && !strings.EqualFold(resp, "yes") {
-			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave reset",
-				weavecli.ExitInvalidArg, fmt.Errorf("cancelled")))
-		}
+	if err := weaveConfirmBatch(cmd, mode, "reset",
+		"weave reset: this removes every sandbox + branch for this repo and clears the queue.", yes); err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave reset",
+			weavecli.ExitInvalidArg, err))
 	}
 	type tear struct {
 		Issue   int64  `json:"issue"`
@@ -2492,6 +2820,49 @@ func stdinIsTTY() bool {
 	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
+// weaveConfirmPrompt runs the shared [y/N] prompt at a TTY and returns a
+// "cancelled" error on anything but yes. Callers gate when it runs.
+func weaveConfirmPrompt(cmd *cobra.Command, prompt string) error {
+	if prompt != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\n", prompt)
+	}
+	fmt.Fprint(cmd.OutOrStdout(), "proceed? [y/N] ")
+	var resp string
+	_, _ = fmt.Fscanln(os.Stdin, &resp)
+	if !strings.EqualFold(resp, "y") && !strings.EqualFold(resp, "yes") {
+		return fmt.Errorf("cancelled")
+	}
+	return nil
+}
+
+// weaveConfirmBatch gates the BATCH destructive verbs (reset, prune)
+// that act on an implicit SET the caller never enumerated — accidental
+// invocation is catastrophic, so a non-interactive (or --json) call
+// without --yes is refused outright. With --yes it proceeds silently; at
+// a TTY it prompts. Refusal is one clean error — no hung prompt, no
+// usage dump (attach() sets SilenceUsage on the leaf).
+func weaveConfirmBatch(cmd *cobra.Command, mode weavecli.OutputMode, verb, prompt string, yes bool) error {
+	if yes {
+		return nil
+	}
+	if mode == weavecli.OutputJSON || !stdinIsTTY() {
+		return fmt.Errorf("refusing destructive %s without --yes in non-interactive mode", verb)
+	}
+	return weaveConfirmPrompt(cmd, prompt)
+}
+
+// weaveConfirmTargeted gates the verbs that act on a single EXPLICITLY
+// NAMED issue (abandon, kill). The blast radius is one issue the caller
+// already chose, and orchestrators invoke these programmatically — so a
+// non-interactive call PROCEEDS (it is not refused). The prompt fires
+// only for an interactive human at a TTY; --yes skips even that.
+func weaveConfirmTargeted(cmd *cobra.Command, mode weavecli.OutputMode, prompt string, yes bool) error {
+	if yes || mode == weavecli.OutputJSON || !stdinIsTTY() {
+		return nil
+	}
+	return weaveConfirmPrompt(cmd, prompt)
+}
+
 // runWeaveKill stops the running wrapper for an issue WITHOUT
 // tearing down its sandbox or branch. Use when a subagent has gone
 // stuck (no output for a long time, runaway iteration, etc.) and
@@ -2505,7 +2876,7 @@ func stdinIsTTY() bool {
 // wrapper PID from the queue and signals only that process group,
 // then flips the queue item to `failed` with a "killed by
 // orchestrator" marker.
-func runWeaveKill(cmd *cobra.Command, id int64, reason string, flags *weaveOutputFlags) error {
+func runWeaveKill(cmd *cobra.Command, id int64, reason string, yes bool, flags *weaveOutputFlags) error {
 	mode := flags.mode()
 	cwd, _ := os.Getwd()
 	root, err := weaveRepoRoot(cwd)
@@ -2514,6 +2885,11 @@ func runWeaveKill(cmd *cobra.Command, id int64, reason string, flags *weaveOutpu
 			weavecli.ExitPrecondFail, err))
 	}
 	dir, _ := weaveQueueDir(root)
+	if err := weaveConfirmTargeted(cmd, mode,
+		fmt.Sprintf("weave kill: stops the running subagent for issue #%d (sandbox + branch preserved).", id), yes); err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave kill",
+			weavecli.ExitInvalidArg, err))
+	}
 	base := weaveBaseBranch(root)
 
 	// Graceful first: if the wrapper serves a control socket, ask the
@@ -2682,6 +3058,12 @@ func runWeaveKill(cmd *cobra.Command, id int64, reason string, flags *weaveOutpu
 // abandoned, failed, killed) and deletes their agent/weave-issue-N branches
 // from the user repo if fully merged (git branch -d, never -D). Prints a
 // per-item line + summary; --yes skips confirmation.
+//
+// Before classifying, it reconciles "submitted" items against git: one
+// whose work is already an ancestor of the base branch (merged by some
+// route other than `weave pull`) is flipped to "done" and swept in the
+// same pass — without this, such an item is stranded forever (prune
+// refuses it, leaving only the data-loss-flavored `abandon`).
 func runWeavePrune(cmd *cobra.Command, yes bool, flags *weaveOutputFlags) error {
 	mode := flags.mode()
 	cwd, _ := os.Getwd()
@@ -2691,10 +3073,37 @@ func runWeavePrune(cmd *cobra.Command, yes bool, flags *weaveOutputFlags) error 
 			weavecli.ExitPrecondFail, err))
 	}
 	dir, _ := weaveQueueDir(root)
+	base := weaveBaseBranch(root)
+
+	// First pass (no lock): reconcile in-memory and count what prune
+	// would sweep, so the confirmation prompt names a real number.
 	q, err := loadWeaveQueue(dir)
 	if err != nil {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave prune",
 			weavecli.ExitGenericFail, err))
+	}
+	weaveReconcileMerged(root, base, q)
+	pendingCount := 0
+	for _, it := range q.Items {
+		if isPrunableState(it.State) {
+			pendingCount++
+		}
+	}
+	if pendingCount == 0 {
+		if mode == weavecli.OutputJSON {
+			return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave prune", map[string]any{
+				"removed": 0,
+				"results": []any{},
+			}))
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "weave prune: no terminal items to clean up")
+		return nil
+	}
+
+	if err := weaveConfirmBatch(cmd, mode, "prune",
+		fmt.Sprintf("weave prune: will clean up %d terminal item(s) (sandbox + merged branches).", pendingCount), yes); err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave prune",
+			weavecli.ExitInvalidArg, err))
 	}
 
 	type pruneResult struct {
@@ -2702,69 +3111,50 @@ func runWeavePrune(cmd *cobra.Command, yes bool, flags *weaveOutputFlags) error 
 		State   string `json:"state"`
 		Sandbox string `json:"sandbox,omitempty"`
 		Branch  string `json:"branch,omitempty"`
-		Action  string `json:"action"` // "removed", "skipped", "branch_deleted"
+		Merged  bool   `json:"merged"`
+		Action  string `json:"action"` // "removed", "skipped", "branch_deleted", "failed: ..."
 	}
 
 	var results []pruneResult
-	var toPrune []*weaveItem
-
-	// Identify terminal items: done, abandoned, failed, killed (NOT submitted)
-	for _, it := range q.Items {
-		switch it.State {
-		case "done", "abandoned", "failed", "killed":
-			toPrune = append(toPrune, it)
+	swept := 0
+	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
+		// Re-reconcile under the lock so the flip persists to disk.
+		weaveReconcileMerged(root, base, q)
+		for _, it := range q.Items {
+			if !isPrunableState(it.State) {
+				continue
+			}
+			swept++
+			// Whether the work landed in base — git's truth, checked via
+			// the sandbox HEAD sha (recorded at terminal time), NOT a
+			// user-repo branch lookup that's a no-op for unfetched
+			// agent branches. Read before the sandbox is removed.
+			merged := weaveItemMerged(root, base, it)
+			if it.Sandbox != "" {
+				if _, statErr := os.Stat(it.Sandbox); statErr == nil {
+					if rmErr := safeRemoveSandbox(dir, it.Sandbox); rmErr == nil {
+						results = append(results, pruneResult{Issue: it.ID, State: it.State, Sandbox: it.Sandbox, Merged: merged, Action: "removed"})
+						it.Sandbox = "" // stale path must not linger in the queue
+					} else {
+						results = append(results, pruneResult{Issue: it.ID, State: it.State, Sandbox: it.Sandbox, Merged: merged, Action: "failed: " + rmErr.Error()})
+					}
+				} else {
+					it.Sandbox = "" // already gone on disk; drop the dead pointer
+				}
+			}
+			// Best-effort: drop the branch from the user repo if `weave
+			// pull` fetched it earlier. -d (never -D) refuses unmerged.
+			if it.Branch != "" {
+				if exec.Command("git", "-C", root, "branch", "-d", it.Branch).Run() == nil {
+					results = append(results, pruneResult{Issue: it.ID, State: it.State, Branch: it.Branch, Merged: merged, Action: "branch_deleted"})
+				}
+			}
 		}
-	}
-
-	if len(toPrune) == 0 {
-		if mode == weavecli.OutputJSON {
-			return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave prune", map[string]any{
-				"removed": 0,
-				"results": results,
-			}))
-		}
-		fmt.Fprintln(cmd.OutOrStdout(), "weave prune: no terminal items to clean up")
 		return nil
-	}
-
-	// Confirmation prompt (unless --yes or JSON mode)
-	if !yes && mode != weavecli.OutputJSON {
-		fmt.Fprintf(cmd.OutOrStdout(), "weave prune: will clean up %d terminal items (sandbox + merged branches). proceed? [y/N] ", len(toPrune))
-		var resp string
-		_, _ = fmt.Fscanln(os.Stdin, &resp)
-		if !strings.EqualFold(resp, "y") && !strings.EqualFold(resp, "yes") {
-			return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave prune",
-				weavecli.ExitInvalidArg, fmt.Errorf("cancelled")))
-		}
-	}
-
-	for _, it := range toPrune {
-		// Remove sandbox directory if it exists
-		if it.Sandbox != "" {
-			if _, err := os.Stat(it.Sandbox); err == nil {
-				if err := safeRemoveSandbox(dir, it.Sandbox); err == nil {
-					results = append(results, pruneResult{Issue: it.ID, State: it.State, Sandbox: it.Sandbox, Action: "removed"})
-				} else {
-					results = append(results, pruneResult{Issue: it.ID, State: it.State, Sandbox: it.Sandbox, Action: "failed: " + err.Error()})
-				}
-			}
-		}
-
-		// Delete branch from user repo if fully merged (-d, never -D)
-		if it.Branch != "" {
-			// Use -d (lowercase) to only delete if fully merged
-			if out, err := exec.Command("git", "-C", root, "branch", "-d", it.Branch).CombinedOutput(); err == nil {
-				results = append(results, pruneResult{Issue: it.ID, State: it.State, Branch: it.Branch, Action: "branch_deleted"})
-			} else {
-				// Branch may not exist in user repo, or not fully merged
-				msg := strings.TrimSpace(string(out))
-				if strings.Contains(msg, "not found") || strings.Contains(msg, "not a valid") {
-					results = append(results, pruneResult{Issue: it.ID, State: it.State, Branch: it.Branch, Action: "skipped: branch not in user repo"})
-				} else {
-					results = append(results, pruneResult{Issue: it.ID, State: it.State, Branch: it.Branch, Action: "skipped: not fully merged"})
-				}
-			}
-		}
+	})
+	if lockErr != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave prune",
+			weavecli.ExitGenericFail, lockErr))
 	}
 
 	if mode == weavecli.OutputJSON {
@@ -2776,15 +3166,20 @@ func runWeavePrune(cmd *cobra.Command, yes bool, flags *weaveOutputFlags) error 
 
 	// Human-readable output
 	for _, r := range results {
-		if r.Action == "removed" {
-			fmt.Fprintf(cmd.OutOrStdout(), "  issue #%d (%s): removed sandbox\n", r.Issue, r.State)
-		} else if r.Action == "branch_deleted" {
-			fmt.Fprintf(cmd.OutOrStdout(), "  issue #%d (%s): deleted branch %s\n", r.Issue, r.State, r.Branch)
-		} else if strings.HasPrefix(r.Action, "skipped:") {
+		switch {
+		case r.Action == "removed":
+			merged := ""
+			if !r.Merged {
+				merged = " (NOT merged into " + base + ")"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "  issue #%d (%s): removed sandbox%s\n", r.Issue, r.State, merged)
+		case r.Action == "branch_deleted":
+			fmt.Fprintf(cmd.OutOrStdout(), "  issue #%d (%s): deleted merged branch %s\n", r.Issue, r.State, r.Branch)
+		case strings.HasPrefix(r.Action, "failed:"):
 			fmt.Fprintf(cmd.OutOrStdout(), "  issue #%d (%s): %s\n", r.Issue, r.State, r.Action)
 		}
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "weave prune: cleaned up %d items\n", len(toPrune))
+	fmt.Fprintf(cmd.OutOrStdout(), "weave prune: cleaned up %d item(s)\n", swept)
 	return nil
 }
 
