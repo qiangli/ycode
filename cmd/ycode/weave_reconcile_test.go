@@ -1,10 +1,57 @@
 package main
 
 import (
+	"bytes"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// TestWeaveQueueSummariesActiveOnly locks in the cross-repo hint fix:
+// the "where's the action" summary (activeOnly=true) skips a queue whose
+// every item is terminal, while the machine overview (activeOnly=false)
+// still lists it. This drives the real weaveQueueSummaries against
+// on-disk queue dirs under an isolated HOME — the bug was a repo with
+// only done/abandoned items being advertised as if there were something
+// to cd to (and each of ycode/sh surfacing the other).
+func TestWeaveQueueSummariesActiveOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	base := filepath.Join(home, ".agents", "ycode", "weave")
+
+	writeQueue := func(tag string, q *weaveQueue) {
+		dir := filepath.Join(base, tag)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := saveWeaveQueue(dir, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeQueue("done-repo-aaaa1111", &weaveQueue{Root: "/repo/done-repo", Items: []*weaveItem{
+		{ID: 1, State: "done"}, {ID: 2, State: "abandoned"},
+	}})
+	writeQueue("busy-repo-bbbb2222", &weaveQueue{Root: "/repo/busy-repo", Items: []*weaveItem{
+		{ID: 1, State: "done"}, {ID: 2, State: "working", Tool: "codex"},
+	}})
+
+	var active bytes.Buffer
+	weaveQueueSummaries(&active, "", true)
+	if strings.Contains(active.String(), "done-repo") {
+		t.Errorf("activeOnly=true should skip the all-terminal queue; got:\n%s", active.String())
+	}
+	if !strings.Contains(active.String(), "busy-repo") {
+		t.Errorf("activeOnly=true should list the queue with a working item; got:\n%s", active.String())
+	}
+
+	var overview bytes.Buffer
+	weaveQueueSummaries(&overview, "", false)
+	if !strings.Contains(overview.String(), "done-repo") {
+		t.Errorf("activeOnly=false (machine overview) should still list the all-terminal queue; got:\n%s", overview.String())
+	}
+}
 
 // gitT runs a git command in dir, failing the test on error.
 func gitT(t *testing.T, dir string, args ...string) string {

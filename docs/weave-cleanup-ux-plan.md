@@ -185,6 +185,29 @@ git knowledge required.
 **Acceptance.** `log --summary` gives a one-glance outcome; no mojibake in
 `list`.
 
+### P6 — Cross-repo "where's the action" summary must filter to active
+
+**Problem (follow-up, found dogfooding the P0–P5 build).** Two cross-repo
+summary functions disagreed. `weaveOtherActiveQueues` (JSON + not-found hint
+suffix) filtered to queues with non-terminal items (`if active == 0 {
+continue }`), but the human `list` path used `weaveQueueSummaries`, which
+surfaced *any* non-empty queue. Result: running `weave list` under `sh/` (all
+items terminal) advertised the `ycode` queue ("18 total, 2 done, 16
+abandoned"), and under `ycode/` it advertised `sh` — each repo claiming the
+*other* had work, when neither had anything active. The hint "queues are
+per-repo; cd there" implied somewhere to go that was all history.
+
+**Fix.** `weaveQueueSummaries(w, skipDir, activeOnly)` — the empty-queue hint
+passes `activeOnly=true` (skip all-terminal siblings, matching the JSON path);
+the not-a-repo machine overview passes `false` (finished queues are the point
+there). The current-repo "empty" line now also distinguishes *no active work*
+from *nothing ever happened*: `no active weaves for sh (this repo); 91 in
+history (--history to view)`.
+
+**Acceptance.** With every queue all-terminal, `weave list` in any repo reports
+only its own history count and surfaces no sibling queue. A sibling with a
+`working`/`todo`/`submitted` item still appears.
+
 ---
 
 ## Sequencing

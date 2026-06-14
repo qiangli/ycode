@@ -711,7 +711,15 @@ func weaveAllQueueDirs() []string {
 // weaveQueueSummaries prints one compact line per queue on the
 // machine: basename as the queue's name, state counts, and what is
 // actively running. Used when the current repo has no queue.
-func weaveQueueSummaries(w io.Writer, skipDir string) int {
+//
+// activeOnly skips queues with no non-terminal items — the "where's the
+// action" hint shown when the current repo's queue is empty should not
+// surface a sibling queue whose every item is done/abandoned (there is
+// nothing to cd to). It is left false for the not-a-repo machine
+// overview, where seeing finished queues is the point. This mirrors the
+// filter weaveOtherActiveQueues already applies to the JSON / hint-
+// suffix paths, so the human and machine views agree on "active".
+func weaveQueueSummaries(w io.Writer, skipDir string, activeOnly bool) int {
 	printed := 0
 	for _, dir := range weaveAllQueueDirs() {
 		if dir == skipDir {
@@ -727,9 +735,13 @@ func weaveQueueSummaries(w io.Writer, skipDir string) int {
 		}
 		name := filepath.Base(root)
 		counts := map[string]int{}
+		active := 0
 		var live []string
 		for _, it := range q.Items {
 			counts[it.State]++
+			if !isTerminalState(it.State) {
+				active++
+			}
 			if it.State == "working" {
 				tool := it.Tool
 				if tool == "" {
@@ -737,6 +749,9 @@ func weaveQueueSummaries(w io.Writer, skipDir string) int {
 				}
 				live = append(live, fmt.Sprintf("#%d %s %s", it.ID, tool, weaveDurationCol(it)))
 			}
+		}
+		if activeOnly && active == 0 {
+			continue
 		}
 		summary := fmt.Sprintf("  %-12s %d total", name, len(q.Items))
 		order := []string{"working", "allocated", "todo", "submitted", "killed", "failed", "done", "abandoned"}
@@ -828,7 +843,7 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 		}
 		w := cmd.OutOrStdout()
 		fmt.Fprintf(w, "weave list: %s is not a git repo; weaves on this machine:\n", cwd)
-		if weaveQueueSummaries(w, "") == 0 {
+		if weaveQueueSummaries(w, "", false) == 0 {
 			fmt.Fprintln(w, "  (none)")
 		}
 		return nil
@@ -885,8 +900,24 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 	}
 	if len(items) == 0 {
 		w := cmd.OutOrStdout()
-		fmt.Fprintf(w, "weave list: no weaves for %s (this repo)\n", filepath.Base(root))
-		if weaveQueueSummaries(w, dir) > 0 {
+		// "Empty" here means no ACTIVE weaves; terminal items (done/
+		// abandoned) are hidden without --history. Say so, with the
+		// count, so an all-terminal queue doesn't read as "nothing ever
+		// happened here".
+		history := 0
+		for _, it := range q.Items {
+			if it.State == "done" || it.State == "abandoned" {
+				history++
+			}
+		}
+		if history > 0 {
+			fmt.Fprintf(w, "weave list: no active weaves for %s (this repo); %d in history (--history to view)\n", filepath.Base(root), history)
+		} else {
+			fmt.Fprintf(w, "weave list: no weaves for %s (this repo)\n", filepath.Base(root))
+		}
+		// Only surface OTHER queues that have active work — an all-
+		// terminal sibling queue is not somewhere to cd to.
+		if weaveQueueSummaries(w, dir, true) > 0 {
 			fmt.Fprintln(w, "  (queues are per-repo; cd there, or `weave list --all` for full tables)")
 		}
 		weavePrintReclaimableFooter(w, reclaimable)
