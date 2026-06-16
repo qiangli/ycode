@@ -86,10 +86,14 @@ Run `dhnt conductor` (below) — or drive the phases by hand with
    than a handful of issues, research approaches/prior-art/risks first
    (hand off to `/learn` or `/web-research`). This is a branch: simple
    goals skip it. _(judgement allowed)_
-3. **FAN-OUT** — enlist the team: one agent CLI per open issue, each in
-   an isolated git-clone sandbox. `ycode weave start --issue N -- <tool>`.
+3. **FAN-OUT** *(routed by scale)* — a 2-way router: **one** open issue →
+   **SOLO** (drive a single agent, no fan-out overhead); **many** → **FLEET**
+   (one agent CLI per issue, each in an isolated git-clone sandbox,
+   `ycode weave start --issue N -- <tool>`).
 4. **STEER** — watch and unblock: `ycode weave list`, `ycode weave log N`,
    inject keystrokes with `ycode weave say N "<msg>"`. _(judgement allowed)_
+   Then an **ESCALATE** branch fires *only when* workers are stuck/blocked —
+   it nudges them (`weave say`) to continue or write a BLOCKERS note.
 5. **CONVERGE** — wait for the fleet, then merge **verified** work back:
    `ycode weave wait` then `ycode weave pull`. Re-run the goal verifier
    by hand before trusting a merge (the `/weave` Phase 7 discipline).
@@ -154,7 +158,21 @@ distinct dhnt skill (`ConductorJudgeSkill`) — a different contract is a
 different content address — whose only change is the goal-met clause:
 `enisure meto value go` (judged) in place of `enisure exito value go`
 (exit-coded). Its canonical form re-parses to identity
-`h008f938379ed392606e325afc386c1a5e96dec7b5c750776cba6312b2c528b0f`.
+`h4d294d74295d462a53cbf6ba168fe835b1b02a52acd56ac86332485a976980c3`.
+
+### Per-task contracts (P6 composition)
+
+The fleet doesn't dispatch opaque agents — each task is a **sub-skill with
+its own contract**, the dhnt analogue of CrewAI's per-task
+`expected_output`: a task is done when *its* scoped tests pass and its work
+is committed (`ConductorTaskSkill`, effect cap `{read, write, time}`). Because
+the conductor **composes** that task skill (pillar P6) and a task's effect
+cap is a subset of the conductor's, the composition is *statically
+auditable*: `Library.EffectViolations(ConductorComposedSkill())` is empty —
+dispatching tasks can never widen the orchestrator's blast radius — and the
+dependency `Closure` lists exactly the sub-skills the fleet may call. (The
+runnable conductor binds leaf primitives; the composed variant is the
+analysis view.)
 
 `dhnt conductor` runs the phases and prints the attestation
 (`outcome=… valid=… consistent=… passed=… failed=… effects=…`). If
@@ -176,10 +194,10 @@ For dhnt-aware runtimes — execute this; it re-parses to the same skill
 and yields the identity below:
 
 ```
-sokilili coniducatoro efefecato reada wurite neto sopenida time fini enisure exito value go fini enisure exito value cu fini enisure exito value vi fini sotepo sa rune value pa fini wuheni exito value bo sotepo si rune latitude judage value re fini fini sotepo so rune value fa fini sotepo su rune latitude judage value wo fini sotepo ta rune value vo fini sotepo te rune value ru fini onifaili balocakeroso fini fini
+sokilili coniducatoro efefecato reada wurite neto sopenida time fini enisure exito value go fini enisure exito value cu fini enisure exito value vi fini sotepo sa rune value pa fini wuheni exito value bo sotepo si rune latitude judage value re fini fini wuheni exito value ni sotepo so rune value lo fini elise sotepo fo rune value fa fini fini sotepo su rune latitude judage value wo fini wuheni exito value tu sotepo ne rune latitude judage value ke fini fini sotepo ta rune value vo fini sotepo te rune value ru fini onifaili balocakeroso fini fini
 ```
 
-identity: `hee2694a7deea6ed3154041bb8f27a0d7dc8afa6995d44ec4c6c30ddb6b13c9c3`
+identity: `h6ec7cd804c966953db879ae9e0862dda6a8680b22c83de758b8b5970c0cf8ab4`
 
 > Source: this skill is authored as a runnable dhnt skill in
 > `github.com/dhnt/dhnt` (`skills/dev/conductor.go`: `ConductorSkill` +
