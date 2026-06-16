@@ -155,9 +155,19 @@ ycode foreman pause|resume|stop|skip|prio|tell|status
 
 Protocol: `docs/backlog.md`. CLI/UX walk-through: `docs/usage.md`.
 
+**Conductor** is the goal-oriented *director* that sits above all three:
+it drives a team of agent CLIs through plan → research → fan-out → steer
+→ converge → retro and loops until a goal's contract is verified done. It
+does not replace weave/foreman/autopilot — it delegates to them. Unlike
+those prose playbooks, conductor is authored as a runnable **dhnt skill**
+(`github.com/dhnt/dhnt`, `skills/dev/conductor.go`, driven by
+`dhnt conductor --goal "…" --verify "…"`): the goal is the contract, the
+phases are steps, and a run emits a verifiable attestation. The
+`skills/ycode-conductor` skill is the exported, human-readable face.
+
 ## Skills
 
-Bundled skills live at top-level `skills/` (`ycode-weave`, `ycode-foreman`, `ycode-autopilot`, `ycode-tab`, …), are embedded in the binary via `skills/embed.go`, and install user-globally. Edit them there — not in `.agents/ycode/skills/`, which is the installed copy.
+Bundled skills live at top-level `skills/` (`ycode-weave`, `ycode-foreman`, `ycode-autopilot`, `ycode-conductor`, `ycode-tab`, …), are embedded in the binary via `skills/embed.go`, and install user-globally. Edit them there — not in `.agents/ycode/skills/`, which is the installed copy. Note: `ycode-conductor` is *generated* — it is the SKILL.md export of the dhnt `ConductorSkill` in `github.com/dhnt/dhnt`; edit the dhnt source and re-export rather than hand-editing the canonical block.
 
 ## Umbrella interaction
 
