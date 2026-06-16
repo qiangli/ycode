@@ -39,6 +39,8 @@ var PricingTable = map[string]ModelPricing{
 	// DeepSeek (cache read = cache-hit input price)
 	"deepseek-chat":     {InputPerM: 0.27, OutputPerM: 1.10, CacheWritePerM: 0, CacheReadPerM: 0.07},
 	"deepseek-reasoner": {InputPerM: 0.55, OutputPerM: 2.19, CacheWritePerM: 0, CacheReadPerM: 0.14},
+	"deepseek-v4-flash": {InputPerM: 0.27, OutputPerM: 1.10, CacheWritePerM: 0, CacheReadPerM: 0.07},
+	"deepseek-v4-pro":   {InputPerM: 0.55, OutputPerM: 2.19, CacheWritePerM: 0, CacheReadPerM: 0.14},
 	// Local models (Ollama) — zero cost.
 	"local": {InputPerM: 0, OutputPerM: 0},
 	// Fallback

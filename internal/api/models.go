@@ -89,6 +89,8 @@ var envKeyModels = []struct {
 	{"DEEPSEEK_API_KEY", "deepseek", []string{
 		"deepseek-chat",
 		"deepseek-reasoner",
+		"deepseek-v4-flash",
+		"deepseek-v4-pro",
 	}},
 }
 
