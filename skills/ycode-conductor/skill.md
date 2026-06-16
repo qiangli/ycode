@@ -86,7 +86,24 @@ dhnt conductor . --goal "…" --roster claude,codex,gemini --verify "make test"
 
 # Default verifier = "all queued work merged" (omit --verify):
 dhnt conductor . --goal "triage and fix the flaky tests"
+
+# No clean pass/fail gate? Let a model judge goal-met from the merged work:
+dhnt conductor . --goal "the docs now explain the retry semantics" --judge --judge-agent gemini
 ```
+
+### Judge mode (`--judge`)
+
+Some goals have no exit-coded verifier — "the docs read more clearly,"
+"the refactor is simpler," "the feature behaves as described." For those,
+`--judge` swaps the deterministic goal-met check for a **model judge**: it
+gathers evidence (a summary of the merged work plus recent history) and
+asks an agent CLI whether the goal is *fully* achieved, defaulting to "not
+met" when unsure. The convergence gate stays deterministic. This is a
+distinct dhnt skill (`ConductorJudgeSkill`) — a different contract is a
+different content address — whose only change is the goal-met clause:
+`enisure meto value go` (judged) in place of `enisure exito value go`
+(exit-coded). Its canonical form re-parses to identity
+`h1e7fbfe28de30c5c7b1c17e1523974f5ab823a47519f7df64d40aee4392ace9e`.
 
 `dhnt conductor` runs the phases once and prints the attestation
 (`valid=… consistent=… passed=… failed=… effects=…`). If `valid=false`,
