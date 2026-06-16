@@ -44,6 +44,29 @@ func DetectProviderFromModel(model string) string {
 	}
 }
 
+// providerEnvKey returns the conventional API-key env var(s) for a provider
+// name as returned by DetectProviderFromModel. Empty for "unknown".
+func providerEnvKey(provider string) string {
+	switch provider {
+	case "anthropic":
+		return "ANTHROPIC_API_KEY"
+	case "openai":
+		return "OPENAI_API_KEY"
+	case "gemini":
+		return "GOOGLE_API_KEY (or GEMINI_API_KEY)"
+	case "xai":
+		return "XAI_API_KEY"
+	case "dashscope":
+		return "DASHSCOPE_API_KEY"
+	case "moonshot":
+		return "MOONSHOT_API_KEY (or KIMI_API_KEY)"
+	case "deepseek":
+		return "DEEPSEEK_API_KEY"
+	default:
+		return ""
+	}
+}
+
 // envKeyModels maps environment variable names to their well-known flagship models.
 var envKeyModels = []struct {
 	envKey   string

@@ -2,6 +2,7 @@ package api
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -176,6 +177,40 @@ func TestDetectProvider_DHNTBeatsOpenAI(t *testing.T) {
 	}
 	if cfg.APIKey != "dhnt-token" {
 		t.Errorf("DHNT_API_KEY must win over OPENAI_API_KEY; got %q", cfg.APIKey)
+	}
+}
+
+// TestDetectProvider_CommercialModelNoKeyDoesNotFallThroughToDHNT is the
+// regression for the "no reachable backend has model deepseek-v4-pro" report:
+// a commercial-provider model (deepseek-*) selected without its API key must
+// NOT fall through to the DHNT cloudbox pool (which only serves Ollama-tagged
+// local models and 404s on commercial IDs). It must fail fast with a clear
+// error naming the key to set.
+func TestDetectProvider_CommercialModelNoKeyDoesNotFallThroughToDHNT(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("DHNT_BASE_URL", "https://ai.dhnt.io/v1")
+	t.Setenv("DHNT_API_KEY", "dhnt-token")
+
+	_, err := DetectProvider("deepseek-v4-pro")
+	if err == nil {
+		t.Fatal("expected error, got nil — request would route to cloudbox pool")
+	}
+	if !strings.Contains(err.Error(), "DEEPSEEK_API_KEY") {
+		t.Errorf("error should name the key to set; got %q", err.Error())
+	}
+
+	// Sanity: with the key present, it routes straight to DeepSeek even
+	// though DHNT is still configured.
+	t.Setenv("DEEPSEEK_API_KEY", "sk-deepseek")
+	cfg, err := DetectProvider("deepseek-v4-pro")
+	if err != nil {
+		t.Fatalf("unexpected error with key set: %v", err)
+	}
+	if cfg.BaseURL != "https://api.deepseek.com/v1" {
+		t.Errorf("BaseURL = %q, want DeepSeek endpoint", cfg.BaseURL)
+	}
+	if cfg.DisplayName != "deepseek" {
+		t.Errorf("DisplayName = %q, want deepseek", cfg.DisplayName)
 	}
 }
 

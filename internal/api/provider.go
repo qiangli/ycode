@@ -109,11 +109,25 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 		return cfg, nil
 	}
 
+	// 1b. Model matched a commercial provider prefix (deepseek-*, gpt-*,
+	// claude-*, …) but its API key is not set. Do NOT fall through to the
+	// DHNT cloudbox pool — the pool serves Ollama-tagged local models, never
+	// commercial cloud model IDs, so it would 404 with a cryptic
+	// "no reachable backend has model <name>". Report a clear, actionable
+	// error naming the key to set. A nil cfg here means "matched but no
+	// creds"; the local Ollama colon-tag case returns a non-nil ProviderLocal
+	// cfg and is intentionally allowed to fall through to DHNT below.
+	if modelMatched && cfg == nil {
+		if envKey := providerEnvKey(DetectProviderFromModel(resolved)); envKey != "" {
+			return nil, fmt.Errorf("model %q requires %s; set it (or `ycode login`), or pick a model your configured provider serves", model, envKey)
+		}
+		return nil, fmt.Errorf("model %q requires provider credentials; set the matching provider API key, or pick a different model", model)
+	}
+
 	// 2. DHNT cloudbox-pooled override. Checked after model-specific
 	// credentials so that explicitly-set per-provider API keys remain
-	// usable alongside DHNT. When the model matched a known provider
-	// but credentials are unavailable (cfg == nil), fall through to
-	// DHNT if configured.
+	// usable alongside DHNT. Reached for local Ollama-tagged models
+	// (non-nil ProviderLocal cfg, no key) so the pool can serve them.
 	if baseURL := envNonEmpty("DHNT_BASE_URL"); baseURL != "" {
 		// Allow empty key: cloudbox returns 401 on /v1/* without an
 		// llm:chat bearer, which surfaces as a clear error at the
