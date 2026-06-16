@@ -86,10 +86,12 @@ Run `dhnt conductor` (below) — or drive the phases by hand with
    than a handful of issues, research approaches/prior-art/risks first
    (hand off to `/learn` or `/web-research`). This is a branch: simple
    goals skip it. _(judgement allowed)_
-3. **FAN-OUT** *(routed by scale)* — a 2-way router: **one** open issue →
-   **SOLO** (drive a single agent, no fan-out overhead); **many** → **FLEET**
-   (one agent CLI per issue, each in an isolated git-clone sandbox,
-   `ycode weave start --issue N -- <tool>`).
+3. **FAN-OUT** *(routed by parallel-safety — see Scheduling strategy)* — a
+   2-way router: fan out to a **FLEET** (one agent CLI per issue, isolated
+   sandboxes) **only when** the work is *many AND disjoint*; a single issue
+   **or** tasks that share an implementation route to **SEQUENTIAL** — one
+   worker grinding + resuming. Parallel agents on shared source produce
+   competing rewrites that collide irreconcilably at merge.
 4. **STEER** — watch and unblock: `ycode weave list`, `ycode weave log N`,
    inject keystrokes with `ycode weave say N "<msg>"`. _(judgement allowed)_
    Then an **ESCALATE** branch fires *only when* workers are stuck/blocked —
@@ -100,6 +102,42 @@ Run `dhnt conductor` (below) — or drive the phases by hand with
 6. **RETRO** — capture what was learned: the tool report card (which CLI
    did well on what) and any `/learn` notes for next time. This is what
    makes conductor *self-improving* across runs, not just within one.
+
+## Scheduling strategy
+
+The conductor's job is **optimal scheduling of agents over tasks** — maximize
+velocity per token, not just "run agents in parallel." The rules below are
+earned from dogfooding and are what the FAN-OUT router encodes:
+
+1. **Route by parallel-safety, not scale.** Fan out to a FLEET *only when*
+   tasks are **many AND disjoint** (non-overlapping source). A single task,
+   **or any set that shares an implementation** (one feature, overlapping
+   files), runs **SEQUENTIALLY** — one worker grinding and resuming.
+   *Why:* parallel agents on shared code each rewrite the same functions
+   differently; the results **collide irreconcilably at merge**, so the
+   parallel attempt (a whole agent's effort) *plus* conflict-resolution
+   costs far more time and tokens than one agent doing it in sequence.
+   A flip-in-isolation is **not** a flip-when-integrated.
+2. **Assign by capability.** Put the strongest-fit agent on each task (the
+   RETRO report card): deep multi-file work → the strongest model; tightly
+   pinned surgical edits → a one-shot agent; verification/judging → a
+   separate reviewer. Don't give exploratory work to one-shot agents.
+3. **Hard single-feature task = sequential grind with resume.** Decompose
+   into bite-size, commit each reduction, resume until done (e.g. 143→32→
+   10→0). Agents often hit the watchdog mid-work with an *uncommitted*
+   fix — recover it (commit the residue) and resume; don't discard.
+4. **Race, don't merge, competing attempts.** To explore *approaches* to one
+   hard problem, run agents in **separate** sandboxes and take the single
+   **furthest** result — never merge two independent attempts at the same
+   feature (that is the collision in #1).
+5. **Gate every merge on the FULL suite, not the per-task measure.** A task
+   can pass its own gate while silently breaking a sibling that shares code
+   (the CONVERGE/REVIEW phases exist for exactly this — see Success criteria).
+
+The router's `parallel-safe` check defaults to **sequential** (the safe
+choice) unless it can confirm `>1 issue AND disjoint scopes`; the concrete
+check lives in the Spec (runtime config) so the PLAN phase's scope
+discipline drives it.
 
 ## Running it
 
@@ -194,10 +232,10 @@ For dhnt-aware runtimes — execute this; it re-parses to the same skill
 and yields the identity below:
 
 ```
-sokilili coniducatoro efefecato reada wurite neto sopenida time fini enisure exito value go fini enisure exito value cu fini enisure exito value vi fini sotepo sa rune value pa fini wuheni exito value bo sotepo si rune latitude judage value re fini fini wuheni exito value ni sotepo so rune value lo fini elise sotepo fo rune value fa fini fini sotepo su rune latitude judage value wo fini wuheni exito value tu sotepo ne rune latitude judage value ke fini fini sotepo ta rune value vo fini sotepo te rune value ru fini onifaili balocakeroso fini fini
+sokilili coniducatoro efefecato reada wurite neto sopenida time fini enisure exito value go fini enisure exito value cu fini enisure exito value vi fini sotepo sa rune value pa fini wuheni exito value bo sotepo si rune latitude judage value re fini fini wuheni exito value ni sotepo fo rune value fa fini elise sotepo so rune value lo fini fini sotepo su rune latitude judage value wo fini wuheni exito value tu sotepo ne rune latitude judage value ke fini fini sotepo ta rune value vo fini sotepo te rune value ru fini onifaili balocakeroso fini fini
 ```
 
-identity: `h6ec7cd804c966953db879ae9e0862dda6a8680b22c83de758b8b5970c0cf8ab4`
+identity: `hdff537944f4158711267c9403cf454ff3f809e8faf5a9496a5389f0ba5656b54`
 
 > Source: this skill is authored as a runnable dhnt skill in
 > `github.com/dhnt/dhnt` (`skills/dev/conductor.go`: `ConductorSkill` +
