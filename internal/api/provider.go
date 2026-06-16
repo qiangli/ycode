@@ -73,14 +73,16 @@ func ResolveModelWithAliases(model string, configAliases map[string]string) stri
 // DetectProvider determines which provider to use based on the model name
 // and available environment variables. It follows this priority:
 //
-//  1. DHNT_BASE_URL (+ DHNT_API_KEY) → cloudbox-pooled OpenAI-compatible
-//     (checked first because an explicit user signal must beat the
-//     model-name heuristic — e.g. "qwen3.5:9b" looks like an Ollama tag
-//     but the user's DHNT_BASE_URL says "route this through cloudbox").
-//  2. Model name prefix/alias → known provider
-//  3. OPENAI_BASE_URL (+ OPENAI_API_KEY) → generic OpenAI-compatible
-//  4. Available API keys: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY
-//  5. Default: Anthropic
+//  1. Model name prefix/alias match with available credentials (e.g.
+//     "kimi-k2.5" + KIMI_API_KEY → Moonshot) — beats DHNT so that
+//     explicit per-provider API keys route directly, not through cloudbox.
+//  2. DHNT_BASE_URL (+ DHNT_API_KEY) → cloudbox-pooled OpenAI-compatible
+//  3. Model name match without credentials → error
+//  4. OPENAI_BASE_URL (+ OPENAI_API_KEY) → generic OpenAI-compatible
+//  5. Available API keys: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY,
+//     DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, DEEPSEEK_API_KEY,
+//     GOOGLE_API_KEY, GEMINI_API_KEY
+//  6. OAuth token → Anthropic
 //
 // The DHNT_* pair follows the existing per-provider convention
 // (<PROVIDER>_BASE_URL + <PROVIDER>_API_KEY, same as OPENAI_*,
@@ -92,10 +94,24 @@ func ResolveModelWithAliases(model string, configAliases map[string]string) stri
 // tool in the same shell. The two paths are independent — neither
 // clobbers the other.
 func DetectProvider(model string) (*ProviderConfig, error) {
-	// dhnt-namespaced override (cloudbox-pooled OpenAI-compat). Wins
-	// over model-name detection AND OPENAI_* so an explicit user signal
-	// beats both the model-prefix heuristic and a real OpenAI key in
-	// the same shell.
+	resolved := ResolveModel(model)
+
+	// 1. Check model name for provider hints with available credentials.
+	// When the model matches a known provider AND the corresponding API
+	// key is set, route directly — the user's explicit per-provider key
+	// beats the cloudbox override. Ollama-style models (colon tags) that
+	// don't require an API key are intentionally excluded here; they
+	// fall through to DHNT when it is configured.
+	cfg, modelMatched := detectFromModel(resolved)
+	if modelMatched && cfg != nil && (cfg.APIKey != "" || cfg.BearerToken != "") {
+		return cfg, nil
+	}
+
+	// 2. DHNT cloudbox-pooled override. Checked after model-specific
+	// credentials so that explicitly-set per-provider API keys remain
+	// usable alongside DHNT. When the model matched a known provider
+	// but credentials are unavailable (cfg == nil), fall through to
+	// DHNT if configured.
 	if baseURL := envNonEmpty("DHNT_BASE_URL"); baseURL != "" {
 		// Allow empty key: cloudbox returns 401 on /v1/* without an
 		// llm:chat bearer, which surfaces as a clear error at the
@@ -107,13 +123,9 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 		}, nil
 	}
 
-	resolved := ResolveModel(model)
-
-	// Check model name for provider hints.
-	if cfg, matched := detectFromModel(resolved); matched {
-		if cfg != nil {
-			return cfg, nil
-		}
+	// 3. Model matched a known provider but no credentials found and no
+	// DHNT override available.
+	if modelMatched {
 		return nil, fmt.Errorf("model %q requires provider credentials; see provider-specific env vars", model)
 	}
 

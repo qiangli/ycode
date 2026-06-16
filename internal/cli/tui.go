@@ -421,6 +421,10 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if err := m.cl.SwitchModel(context.Background(), model); err != nil {
 							m.toasts.add(fmt.Sprintf("Model switch failed: %v", err), ToastError)
 						} else {
+							resolved := api.ResolveModel(model)
+							m.app.SetModel(resolved)
+							m.app.SetProviderKind(api.DetectProviderFromModel(resolved))
+							m.app.usageTracker.Model = resolved
 							m.toasts.add(fmt.Sprintf("Switched to %s", model), ToastSuccess)
 						}
 					} else {
