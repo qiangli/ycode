@@ -117,7 +117,30 @@ dhnt conductor . --goal "…" --verify "go test ./..." --review "golangci-lint r
 
 # Self-healing learn loop: prefer/learn a host-local orchestration variant:
 dhnt conductor . --goal "…" --verify "make test" --adapt --repair-agent codex
+
+# Bound the effort: at most 5 rounds, stop if the pooled spend exceeds a ceiling:
+dhnt conductor . --goal "…" --verify "go test ./..." --max-rounds 5 \
+  --budget-probe 'sh -c "test $(ycode weave cost --total) -lt 500000"'
 ```
+
+### Bounding effort — `--max-rounds` and `--budget-probe`
+
+"Goal-oriented until done" is bounded, not open-ended. `--max-rounds N`
+(default 1) runs the conductor up to N rounds, stopping the moment the
+contract holds — the explicit, terminating form of the loop. PLAN is
+idempotent (it files the goal only if not already queued), so re-running
+rounds re-checks CONVERGE/REVIEW as the fleet finishes rather than
+duplicating work.
+
+`--budget-probe "<cmd>"` is a **spend ceiling**: before each round the
+command runs, and a non-zero exit ("over budget") stops the loop cleanly.
+This keeps the budget honest — rather than faking token metering, it
+delegates measurement to a probe you wire to a real cost source (the same
+command-gate shape as the goal verifier), e.g.
+`'sh -c "test $(ycode weave cost --total) -lt 500000"'`. Being over budget
+is a stop condition, not a contract failure — it isn't part of the skill's
+canonical form, so the conductor identity is unchanged. (`--max-rounds`
+bounds the non-adapt loop; `--adapt` has its own bounded repair loop.)
 
 ### Judge mode (`--judge`)
 
