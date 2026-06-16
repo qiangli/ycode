@@ -32,17 +32,39 @@ verifiable receipt; any other tool just follows the prose.
 
 ## The contract is the spine
 
-A conductor run is **valid** iff two checks hold (see Success criteria):
+A conductor run is **valid** iff three checks hold (see Success criteria):
 
 1. **goal-met** — the goal verifier exits 0 (e.g. `go test ./...`, a
-   custom gate, or — by default — "all queued work merged").
+   custom gate, or — by default — "all queued work merged"). In `--judge`
+   mode this is a model verdict instead of an exit code.
 2. **converged** — no open/unmerged work remains in the queue.
+3. **reviewed** — an *independent post-convergence review* of the merged
+   result passes (a regression gate, so a merged combination that breaks
+   the tree is caught before accept; defaults to re-running the goal
+   verifier, override with `--review`).
 
 This is the leveler: every executor tier (a strong model, a weak model,
 a deterministic runner) is judged by the *same* contract, so results
 converge regardless of who does the work. "Goal-oriented until done"
-means you re-run conductor until both checks pass — the language has no
-loop construct on purpose; the goal contract *is* the loop condition.
+means you re-run conductor until all three checks pass — the language has
+no loop construct on purpose; the goal contract *is* the loop condition.
+
+### On-fail policy and the learn loop
+
+The skill declares `onifaili balocakeroso` (**on-fail: blockers**): an
+unmet goal does **not** crash the run — conductor surfaces the failing
+checks as blockers and exits gracefully (exit 0). Each run makes
+progress; you re-invoke to continue. (This is the weave "blocker-escape"
+discipline, now a first-class dhnt policy. The language also offers
+`aboroto` = abort and `retoroyu` = retry for other skills.)
+
+`--adapt` turns the re-run into a **self-healing learn loop**: conductor
+prefers the host's previously-learned orchestration for this environment,
+and on failure (with `--repair-agent`) a model proposes a fix that is
+**contract-verified against the original spec** and *folded* into a
+host-local version — so the next run reuses it. This is the RETRO phase
+made durable: lessons persist as verified skill versions
+(`~/.dhnt/versions`), promotable to the catalog with `dhnt promote`.
 
 ## Effect cap (blast radius)
 
@@ -89,6 +111,12 @@ dhnt conductor . --goal "triage and fix the flaky tests"
 
 # No clean pass/fail gate? Let a model judge goal-met from the merged work:
 dhnt conductor . --goal "the docs now explain the retry semantics" --judge --judge-agent gemini
+
+# Independent review gate (a linter / smoke distinct from the goal verifier):
+dhnt conductor . --goal "…" --verify "go test ./..." --review "golangci-lint run"
+
+# Self-healing learn loop: prefer/learn a host-local orchestration variant:
+dhnt conductor . --goal "…" --verify "make test" --adapt --repair-agent codex
 ```
 
 ### Judge mode (`--judge`)
@@ -103,14 +131,16 @@ distinct dhnt skill (`ConductorJudgeSkill`) — a different contract is a
 different content address — whose only change is the goal-met clause:
 `enisure meto value go` (judged) in place of `enisure exito value go`
 (exit-coded). Its canonical form re-parses to identity
-`h1e7fbfe28de30c5c7b1c17e1523974f5ab823a47519f7df64d40aee4392ace9e`.
+`h008f938379ed392606e325afc386c1a5e96dec7b5c750776cba6312b2c528b0f`.
 
-`dhnt conductor` runs the phases once and prints the attestation
-(`valid=… consistent=… passed=… failed=… effects=…`). If `valid=false`,
-read which contract check failed (`exito(value=go)` = goal verifier,
-`exito(value=cu)` = convergence) and re-run after addressing it — that
-is the "until done" loop, with you (or the self-healing Runtime) closing
-it.
+`dhnt conductor` runs the phases and prints the attestation
+(`outcome=… valid=… consistent=… passed=… failed=… effects=…`). If
+`valid=false`, read which contract check failed (`exito(value=go)` /
+`meto(value=go)` = goal, `exito(value=cu)` = convergence,
+`exito(value=vi)` = review) — under the blockers policy these are
+reported and the run still exits 0; address them and re-invoke. That is
+the "until done" loop, closed by you (or, with `--adapt`, the
+self-healing Runtime).
 
 The concrete `ycode weave` argv, the verifier, and the roster live in
 the **Spec** (runtime config), so this skill stays portable and free of
@@ -123,10 +153,10 @@ For dhnt-aware runtimes — execute this; it re-parses to the same skill
 and yields the identity below:
 
 ```
-sokilili coniducatoro efefecato reada wurite neto sopenida time fini enisure exito value go fini enisure exito value cu fini sotepo sa rune value pa fini wuheni exito value bo sotepo si rune latitude judage value re fini fini sotepo so rune value fa fini sotepo su rune latitude judage value wo fini sotepo ta rune value vo fini sotepo te rune value ru fini fini
+sokilili coniducatoro efefecato reada wurite neto sopenida time fini enisure exito value go fini enisure exito value cu fini enisure exito value vi fini sotepo sa rune value pa fini wuheni exito value bo sotepo si rune latitude judage value re fini fini sotepo so rune value fa fini sotepo su rune latitude judage value wo fini sotepo ta rune value vo fini sotepo te rune value ru fini onifaili balocakeroso fini fini
 ```
 
-identity: `h2a3d6657e61f6fcb05f4cf59dc3928a52d9fda13d5adff4654e67dadaebe6fa6`
+identity: `hee2694a7deea6ed3154041bb8f27a0d7dc8afa6995d44ec4c6c30ddb6b13c9c3`
 
 > Source: this skill is authored as a runnable dhnt skill in
 > `github.com/dhnt/dhnt` (`skills/dev/conductor.go`: `ConductorSkill` +
