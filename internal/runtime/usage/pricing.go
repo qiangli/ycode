@@ -36,11 +36,13 @@ var PricingTable = map[string]ModelPricing{
 	// Google Gemini
 	"gemini-2.5-pro":   {InputPerM: 1.25, OutputPerM: 10.0, CacheWritePerM: 0, CacheReadPerM: 0.315},
 	"gemini-2.5-flash": {InputPerM: 0.15, OutputPerM: 0.60, CacheWritePerM: 0, CacheReadPerM: 0.0375},
-	// DeepSeek (cache read = cache-hit input price)
-	"deepseek-chat":     {InputPerM: 0.27, OutputPerM: 1.10, CacheWritePerM: 0, CacheReadPerM: 0.07},
-	"deepseek-reasoner": {InputPerM: 0.55, OutputPerM: 2.19, CacheWritePerM: 0, CacheReadPerM: 0.14},
-	"deepseek-v4-flash": {InputPerM: 0.27, OutputPerM: 1.10, CacheWritePerM: 0, CacheReadPerM: 0.07},
-	"deepseek-v4-pro":   {InputPerM: 0.55, OutputPerM: 2.19, CacheWritePerM: 0, CacheReadPerM: 0.14},
+	// DeepSeek (cache read = cache-hit input price). deepseek-chat /
+	// deepseek-reasoner are deprecated (2026/07/24) and map to the
+	// non-thinking / thinking modes of deepseek-v4-flash, sharing its price.
+	"deepseek-chat":     {InputPerM: 0.14, OutputPerM: 0.28, CacheWritePerM: 0, CacheReadPerM: 0.0028},
+	"deepseek-reasoner": {InputPerM: 0.14, OutputPerM: 0.28, CacheWritePerM: 0, CacheReadPerM: 0.0028},
+	"deepseek-v4-flash": {InputPerM: 0.14, OutputPerM: 0.28, CacheWritePerM: 0, CacheReadPerM: 0.0028},
+	"deepseek-v4-pro":   {InputPerM: 0.435, OutputPerM: 0.87, CacheWritePerM: 0, CacheReadPerM: 0.003625},
 	// Local models (Ollama) — zero cost.
 	"local": {InputPerM: 0, OutputPerM: 0},
 	// Fallback
