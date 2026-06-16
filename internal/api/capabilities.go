@@ -86,6 +86,8 @@ func openaiCapabilities(model string) ProviderCapabilities {
 		caps.MaxContextTokens = 128_000
 	case strings.Contains(lower, "o3"), strings.Contains(lower, "o4"):
 		caps.MaxContextTokens = 200_000
+	case strings.Contains(lower, "deepseek"):
+		caps.MaxContextTokens = 128_000
 	default:
 		caps.MaxContextTokens = 128_000
 	}

@@ -37,6 +37,8 @@ func DetectProviderFromModel(model string) string {
 		return "dashscope"
 	case strings.HasPrefix(lower, "kimi") || strings.HasPrefix(lower, "moonshot"):
 		return "moonshot"
+	case strings.HasPrefix(lower, "deepseek"):
+		return "deepseek"
 	default:
 		return "unknown"
 	}
@@ -83,6 +85,10 @@ var envKeyModels = []struct {
 	}},
 	{"KIMI_API_KEY", "moonshot", []string{
 		"kimi-k2.5",
+	}},
+	{"DEEPSEEK_API_KEY", "deepseek", []string{
+		"deepseek-chat",
+		"deepseek-reasoner",
 	}},
 }
 

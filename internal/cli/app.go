@@ -530,7 +530,7 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 	}
 
 	if a.provider == nil {
-		return fmt.Errorf("no LLM provider configured; set ANTHROPIC_API_KEY, OPENAI_API_KEY, MOONSHOT_API_KEY, or KIMI_API_KEY")
+		return fmt.Errorf("no LLM provider configured; set ANTHROPIC_API_KEY, OPENAI_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, or DEEPSEEK_API_KEY")
 	}
 
 	// Check for high-confidence builtin intent before the expensive agentic loop.
@@ -740,7 +740,7 @@ func (a *App) RunTurn(ctx context.Context, messages []api.Message) (*conversatio
 // Returns the result, recovery info (if compaction occurred), and any error.
 func (a *App) RunTurnWithRecovery(ctx context.Context, messages []api.Message) (*conversation.TurnResult, *conversation.RecoveryResult, error) {
 	if a.provider == nil {
-		return nil, nil, fmt.Errorf("no LLM provider configured; set ANTHROPIC_API_KEY, OPENAI_API_KEY, MOONSHOT_API_KEY, or KIMI_API_KEY")
+		return nil, nil, fmt.Errorf("no LLM provider configured; set ANTHROPIC_API_KEY, OPENAI_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, or DEEPSEEK_API_KEY")
 	}
 	rt := a.conversationRuntime()
 	a.turnIndex++
@@ -757,7 +757,7 @@ func (a *App) RunTurnWithRecoveryStreaming(
 	onEvent func(eventType string, data map[string]any),
 ) (*conversation.TurnResult, *conversation.RecoveryResult, error) {
 	if a.provider == nil {
-		return nil, nil, fmt.Errorf("no LLM provider configured; set ANTHROPIC_API_KEY, OPENAI_API_KEY, MOONSHOT_API_KEY, or KIMI_API_KEY")
+		return nil, nil, fmt.Errorf("no LLM provider configured; set ANTHROPIC_API_KEY, OPENAI_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, or DEEPSEEK_API_KEY")
 	}
 	rt := a.conversationRuntime()
 	if onEvent != nil {

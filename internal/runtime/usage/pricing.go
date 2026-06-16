@@ -36,6 +36,9 @@ var PricingTable = map[string]ModelPricing{
 	// Google Gemini
 	"gemini-2.5-pro":   {InputPerM: 1.25, OutputPerM: 10.0, CacheWritePerM: 0, CacheReadPerM: 0.315},
 	"gemini-2.5-flash": {InputPerM: 0.15, OutputPerM: 0.60, CacheWritePerM: 0, CacheReadPerM: 0.0375},
+	// DeepSeek (cache read = cache-hit input price)
+	"deepseek-chat":     {InputPerM: 0.27, OutputPerM: 1.10, CacheWritePerM: 0, CacheReadPerM: 0.07},
+	"deepseek-reasoner": {InputPerM: 0.55, OutputPerM: 2.19, CacheWritePerM: 0, CacheReadPerM: 0.14},
 	// Local models (Ollama) — zero cost.
 	"local": {InputPerM: 0, OutputPerM: 0},
 	// Fallback

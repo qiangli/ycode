@@ -17,6 +17,8 @@ var ModelAliases = map[string]string{
 	"kimi":         "kimi-k2.5",
 	"gemini-pro":   "gemini-2.5-pro",
 	"gemini-flash": "gemini-2.5-flash",
+	"deepseek":     "deepseek-chat",
+	"deepseek-r1":  "deepseek-reasoner",
 }
 
 // ProviderConfig holds provider-specific settings for client creation.
@@ -169,6 +171,14 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 			BaseURL: envNonEmpty("KIMI_BASE_URL", "https://api.moonshot.ai/v1"),
 		}, nil
 	}
+	if key := envNonEmpty("DEEPSEEK_API_KEY"); key != "" {
+		return &ProviderConfig{
+			Kind:        ProviderOpenAI,
+			DisplayName: "deepseek",
+			APIKey:      key,
+			BaseURL:     envNonEmpty("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
+		}, nil
+	}
 	if key := envNonEmpty("GOOGLE_API_KEY"); key != "" {
 		return &ProviderConfig{
 			Kind:        ProviderGemini,
@@ -195,7 +205,7 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 		}, nil
 	}
 
-	return nil, fmt.Errorf("no API key found; set one of: DHNT_BASE_URL (+ DHNT_API_KEY) for cloudbox-pooled Ollama, ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY\nor run: ycode login")
+	return nil, fmt.Errorf("no API key found; set one of: DHNT_BASE_URL (+ DHNT_API_KEY) for cloudbox-pooled Ollama, ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, DEEPSEEK_API_KEY\nor run: ycode login")
 }
 
 // NewProvider creates a Provider from a ProviderConfig.
@@ -300,6 +310,16 @@ func detectFromModel(model string) (*ProviderConfig, bool) {
 				DisplayName: "gemini",
 				APIKey:      key,
 				BaseURL:     envNonEmpty("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai"),
+			}, true
+		}
+		return nil, true
+	case strings.HasPrefix(lower, "deepseek"):
+		if key := envNonEmpty("DEEPSEEK_API_KEY"); key != "" {
+			return &ProviderConfig{
+				Kind:        ProviderOpenAI,
+				DisplayName: "deepseek",
+				APIKey:      key,
+				BaseURL:     envNonEmpty("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
 			}, true
 		}
 		return nil, true

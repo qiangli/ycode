@@ -216,6 +216,7 @@ func TestDiscoverEnvAndCloudbox_NilLister(t *testing.T) {
 	for _, k := range []string{
 		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY",
 		"XAI_API_KEY", "DASHSCOPE_API_KEY", "MOONSHOT_API_KEY", "KIMI_API_KEY",
+		"DEEPSEEK_API_KEY",
 	} {
 		t.Setenv(k, "")
 	}

@@ -1142,6 +1142,9 @@ var doctorCmd = &cobra.Command{
 				if os.Getenv("KIMI_API_KEY") != "" {
 					return "KIMI_API_KEY set", true
 				}
+				if os.Getenv("DEEPSEEK_API_KEY") != "" {
+					return "DEEPSEEK_API_KEY set", true
+				}
 				if token, err := oauth.LoadCredentials(); err == nil {
 					if token.IsExpired() {
 						return "OAuth token expired (run: ycode login)", false

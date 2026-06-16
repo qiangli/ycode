@@ -59,7 +59,8 @@ func newModelCurrentCmd() *cobra.Command {
 // Equivalent to `ycode config set model <name>`. Provider is auto-
 // detected from the model name prefix (claude-* → ANTHROPIC_API_KEY,
 // gpt-* → OPENAI_API_KEY, qwen* → DASHSCOPE_API_KEY or local Ollama,
-// kimi/moonshot* → MOONSHOT_API_KEY, ...). See internal/api/provider.go.
+// kimi/moonshot* → MOONSHOT_API_KEY, deepseek* → DEEPSEEK_API_KEY, ...).
+// See internal/api/provider.go.
 func newModelUseCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "use <model>",
@@ -72,7 +73,8 @@ Examples:
   ycode model use claude-sonnet-4-6   # ANTHROPIC_API_KEY (or ` + "`ycode login`" + `)
   ycode model use gpt-4o-mini         # OPENAI_API_KEY
   ycode model use qwen3.5:9b          # local Ollama (run ` + "`ycode model list`" + `)
-  ycode model use kimi-k2.5           # MOONSHOT_API_KEY / KIMI_API_KEY`,
+  ycode model use kimi-k2.5           # MOONSHOT_API_KEY / KIMI_API_KEY
+  ycode model use deepseek-chat       # DEEPSEEK_API_KEY`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path, err := userConfigPath()
