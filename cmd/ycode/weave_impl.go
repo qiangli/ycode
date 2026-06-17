@@ -124,16 +124,19 @@ type weaveItem struct {
 	// VerifyOutput (last 2000 bytes) as evidence. Verify never changes
 	// the terminal state itself; `weave pull` refuses to merge
 	// submitted items whose VerifyExit is set and non-zero.
-	VerifyCommand  string `json:"verify_command,omitempty"`
-	VerifyExit     *int   `json:"verify_exit,omitempty"`
-	VerifyOutput   string `json:"verify_output,omitempty"`
-	VerifyTree     string `json:"verify_tree,omitempty"`
-	Dirty          bool   `json:"dirty"`
-	DirtyFiles     int    `json:"dirty_files,omitempty"`
-	UntrackedFiles int    `json:"untracked_files,omitempty"`
-	ExitCode       *int   `json:"exit_code,omitempty"`
-	KilledBy       string `json:"killed_by,omitempty"`
-	LogPath        string `json:"log_path,omitempty"`
+	VerifyCommand   string `json:"verify_command,omitempty"`
+	VerifyExit      *int   `json:"verify_exit,omitempty"`
+	VerifyOutput    string `json:"verify_output,omitempty"`
+	VerifyTree      string `json:"verify_tree,omitempty"`
+	SuiteGate       string `json:"suite_gate,omitempty"`
+	SuiteGateExit   *int   `json:"suite_gate_exit,omitempty"`
+	SuiteGateOutput string `json:"suite_gate_output,omitempty"`
+	Dirty           bool   `json:"dirty"`
+	DirtyFiles      int    `json:"dirty_files,omitempty"`
+	UntrackedFiles  int    `json:"untracked_files,omitempty"`
+	ExitCode        *int   `json:"exit_code,omitempty"`
+	KilledBy        string `json:"killed_by,omitempty"`
+	LogPath         string `json:"log_path,omitempty"`
 	// WrapperPid is the PID of the `ycode weave start` process
 	// supervising this item (NOT the subagent's PID — the wrapper
 	// is the session leader after auto-setsid and signals propagate
@@ -510,6 +513,24 @@ func weaveCollectVerifyEvidence(sandbox, command string, dirty bool, dirtyFiles 
 	return &ve, vo, verifyTree
 }
 
+func weaveSuiteGateCommand(root string, it *weaveItem) string {
+	if it.SuiteGate != "" {
+		return it.SuiteGate
+	}
+	b, err := os.ReadFile(filepath.Join(root, ".agents", "weave", "suite-gate"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func weaveRunSuiteGate(root, command string) (int, string) {
+	if command == "" {
+		return 0, ""
+	}
+	return weaveRunVerify(root, command)
+}
+
 func findWeaveItem(q *weaveQueue, id int64) *weaveItem {
 	for _, it := range q.Items {
 		if it.ID == id {
@@ -564,19 +585,19 @@ func ec(code int) error {
 // issue in one queue transaction. Points used to be stamped in a
 // second read-modify-write after add returned; that made add --points
 // sensitive to concurrent queue writers and to "last item" races.
-func runWeaveAddPointed(cmd *cobra.Command, title, body, priority, verify string, points int, flags *weaveOutputFlags) error {
+func runWeaveAddPointed(cmd *cobra.Command, title, body, priority, verify, suiteGate string, points int, flags *weaveOutputFlags) error {
 	if points != 0 && !weaveValidPoints(points) {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), flags.mode(), "weave add",
 			weavecli.ExitInvalidArg, fmt.Errorf("points must be one of 1,2,3,5,8")))
 	}
-	return runWeaveAddWithPoints(cmd, title, body, priority, verify, points, flags)
+	return runWeaveAddWithPoints(cmd, title, body, priority, verify, suiteGate, points, flags)
 }
 
 func runWeaveAdd(cmd *cobra.Command, title, body, priority, verify string, flags *weaveOutputFlags) error {
-	return runWeaveAddWithPoints(cmd, title, body, priority, verify, 0, flags)
+	return runWeaveAddWithPoints(cmd, title, body, priority, verify, "", 0, flags)
 }
 
-func runWeaveAddWithPoints(cmd *cobra.Command, title, body, priority, verify string, points int, flags *weaveOutputFlags) error {
+func runWeaveAddWithPoints(cmd *cobra.Command, title, body, priority, verify, suiteGate string, points int, flags *weaveOutputFlags) error {
 	mode := flags.mode()
 	if title == "" {
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave add",
@@ -606,6 +627,7 @@ func runWeaveAddWithPoints(cmd *cobra.Command, title, body, priority, verify str
 			Priority:      prio,
 			State:         "todo",
 			VerifyCommand: verify,
+			SuiteGate:     suiteGate,
 			Points:        points,
 			Created:       time.Now().UTC(),
 		}
@@ -1883,10 +1905,12 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags, issueID int64, is
 	dir, _ := weaveQueueDir(root)
 	base := weaveBaseBranch(root)
 	type result struct {
-		Issue  int64  `json:"issue"`
-		Branch string `json:"branch"`
-		Status string `json:"status"`
-		Detail string `json:"detail,omitempty"`
+		Issue           int64  `json:"issue"`
+		Branch          string `json:"branch"`
+		Status          string `json:"status"`
+		Detail          string `json:"detail,omitempty"`
+		SuiteGateExit   *int   `json:"suite_gate_exit,omitempty"`
+		SuiteGateOutput string `json:"suite_gate_output,omitempty"`
 	}
 	var results []result
 	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
@@ -1975,6 +1999,12 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags, issueID int64, is
 				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "empty"})
 				continue
 			}
+			preMergeOut, err := gitOut(root, "rev-parse", "HEAD")
+			if err != nil {
+				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "skipped", Detail: err.Error()})
+				continue
+			}
+			preMergeSHA := strings.TrimSpace(preMergeOut)
 			mergeMsg := fmt.Sprintf("weave: merge issue #%d — %s", it.ID, it.Title)
 			mc := exec.Command("git", "-C", root, "merge", "--no-ff", "-m", mergeMsg, it.Branch)
 			out, err := mc.CombinedOutput()
@@ -1982,6 +2012,32 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags, issueID int64, is
 				_ = exec.Command("git", "-C", root, "merge", "--abort").Run()
 				results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "conflict", Detail: strings.TrimSpace(string(out))})
 				continue
+			}
+			suiteGate := weaveSuiteGateCommand(root, it)
+			var suiteGateExit *int
+			var suiteGateOutput string
+			if suiteGate != "" {
+				sgExit, sgOutput := weaveRunSuiteGate(root, suiteGate)
+				it.SuiteGateExit = &sgExit
+				it.SuiteGateOutput = sgOutput
+				suiteGateExit = &sgExit
+				suiteGateOutput = sgOutput
+				if sgExit != 0 {
+					_, resetErr := gitOut(root, "reset", "--hard", preMergeSHA)
+					detail := sgOutput
+					if resetErr != nil {
+						detail = strings.TrimSpace(detail + "\n[weave: failed to reset base to pre-merge SHA " + preMergeSHA + ": " + resetErr.Error() + "]")
+					}
+					results = append(results, result{
+						Issue:           it.ID,
+						Branch:          it.Branch,
+						Status:          "suite-gate-failed",
+						Detail:          detail,
+						SuiteGateExit:   &sgExit,
+						SuiteGateOutput: sgOutput,
+					})
+					continue
+				}
 			}
 			// Sandbox is a full clone (not a worktree) — use safeRemoveAll with
 			// containment check to prevent accidental deletion outside the queue dir.
@@ -1995,7 +2051,13 @@ func runWeavePull(cmd *cobra.Command, flags *weaveOutputFlags, issueID int64, is
 			_ = exec.Command("git", "-C", root, "branch", "-d", it.Branch).Run()
 			it.State = "done"
 			it.Sandbox = ""
-			results = append(results, result{Issue: it.ID, Branch: it.Branch, Status: "merged"})
+			results = append(results, result{
+				Issue:           it.ID,
+				Branch:          it.Branch,
+				Status:          "merged",
+				SuiteGateExit:   suiteGateExit,
+				SuiteGateOutput: suiteGateOutput,
+			})
 		}
 		return nil
 	})

@@ -28,6 +28,7 @@ func newWeaveAddCmd() *cobra.Command {
 	var title, body, tool, priority string
 	var fromFile string
 	var verify string
+	var suiteGate string
 	var points int
 	cmd := &cobra.Command{
 		Use:   `add "<title>"`,
@@ -44,7 +45,7 @@ according to the priority sort order.`,
 			if fromFile != "" {
 				return runWeaveAddFromFile(cmd, fromFile, priority, &flags)
 			}
-			return runWeaveAddPointed(cmd, title, body, priority, verify, points, &flags)
+			return runWeaveAddPointed(cmd, title, body, priority, verify, suiteGate, points, &flags)
 		},
 	}
 	flags.attach(cmd)
@@ -54,6 +55,7 @@ according to the priority sort order.`,
 	cmd.Flags().IntVar(&points, "points", 0, "Story points (1,2,3,5,8; 8 = ~30m cap — split bigger work)")
 	cmd.Flags().StringVar(&fromFile, "from-file", "", "Bulk seed: markdown (`- [ ] title`) or JSON list of {title,body,priority}")
 	cmd.Flags().StringVar(&verify, "verify", "", "Verify command the wrapper runs (`bash -c`) in the sandbox at terminal time; verify_exit/verify_output recorded on the item, non-zero blocks `weave pull`")
+	cmd.Flags().StringVar(&suiteGate, "suite-gate", "", "Integration suite command run (`bash -c`) at the base repo root after merge; non-zero resets the merge and records suite_gate_exit/suite_gate_output")
 	return cmd
 }
 
