@@ -108,13 +108,26 @@ Reflecting seven dogfood rounds:
   change regresses the metric); headless exec exits clean.
 - **claude**: strongest on deep multi-file work (delivered both fixture flips);
   TUI needs trust-dialog answer + graceful /exit stop.
-- **opencode**: best as verification judge; ingests `say` steering while
-  headless; check artifacts not exit codes. ROOT CAUSE of its silent
-  exit-0 no-ops confirmed: with no `permission` config it REJECTS its
-  own edit/bash tools and exits green — always pre-seed the sandbox
-  opencode.json (see defense-in-depth matrix). Even with permissions
-  fixed, its one rehab dev attempt regressed the metric and left work
-  uncommitted: keep it on judge/doc lanes; dev only as last resort.
+- **opencode**: model-dependent — a real dev candidate when paired with a
+  strong model, weak otherwise. Always a good verification judge; ingests
+  `say` steering while headless; check artifacts not exit codes. ROOT CAUSE
+  of its silent exit-0 no-ops confirmed: with no `permission` config it
+  REJECTS its own edit/bash tools and exits green — always pre-seed the
+  sandbox opencode.json (see defense-in-depth matrix). With kimi it no-op'd
+  on hard dev work even with permissions fixed. With DeepSeek (capability
+  retest) it was night-and-day: ran a full ~35m on a hard gated task,
+  decomposed it, explored the source deeply (even spawned an Explore
+  Agent), made a regressing change and RECOGNIZED+REVERTED it, wrote
+  root-cause fixes (not source-text heuristics), self-ran its gate +
+  cross-checked against real bash, and committed clean. BUT the delivered
+  change was a NET REGRESSION: it hit its task gate while breaking two
+  sibling test files OUTSIDE its guard set — the classic overfit trap,
+  caught only by the full-suite sweep. Verdict: promote to first-class
+  WORKER (dev + judge); do NOT make it the primary orchestrator — it has
+  no long-horizon session track record, its `external_directory` rejection
+  fights the out-of-tree sandbox traversal an orchestrator needs, and it
+  just demonstrated the over-trust-a-narrow-gate failure an orchestrator
+  must never have. Fine as a bounded deputy or judge.
 - **aider**: passed probation on a gated 3-pointer (sh new-exp
   anchored-substitution fix, −21 diff lines, zero collateral, ~$0.02).
   Reliable surgical edits when the issue body pins exact cases and
@@ -274,7 +287,7 @@ Per-tool matrix (this machine, update as versions change):
 | claude TUI | none for trust (--dangerously-skip-permissions ≠ trust) | `~/.claude.json` → `projects.<sandbox>.hasTrustDialogAccepted=true` (+ hasCompletedProjectOnboarding) | "trust" dialog → say "1" |
 | codex exec | `--skip-git-repo-check --sandbox workspace-write` (no prompts in exec mode) | `~/.codex/config.toml` → `[projects."<sandbox>"]\ntrust_level = "trusted"` (needed for TUI mode) | TUI: directory-trust → say "1" |
 | gemini | `--yolo --skip-trust` (covers everything) | n/a | usage-limit menus (it stalls there) |
-| opencode | NO flags; headless `run` silently REJECTS un-permitted tools and exits 0 — the no-op-with-green-exit failure mode | write `opencode.json` into the sandbox root at prep: `{"permission":{"edit":"allow","bash":"allow","webfetch":"allow"}}` (never commit it) | artifacts, not prompts: zero commits + clean exit = rejection happened |
+| opencode | NO `--dangerously-skip-permissions` equivalent — config-only; headless `run` silently REJECTS un-permitted tools and exits 0 — the no-op-with-green-exit failure mode | write `opencode.json` into the sandbox root at prep: `{"permission":{"edit":"allow","bash":"allow","webfetch":"allow","external_directory":"allow"}}` (never commit it). The `external_directory` key is SEPARATE and gates ANY path outside the project tree (e.g. `/tmp`) even with `bash:allow` — omitting it auto-rejects out-of-workspace reads and causes the no-op; also prefer writing fixtures/diffs INSIDE the sandbox | artifacts, not prompts: zero commits + clean exit = rejection happened |
 | aider | `--yes-always` (covers all confirmations) | n/a (model/keys via ~/.aider.conf.yml + ~/.env) | reasoning loops ("Already done…" repetition) — kill, don't wait |
 
 Pre-seed snippets (run during Phase 2 prep, $SANDBOX = absolute path):
@@ -290,7 +303,7 @@ Pre-seed snippets (run during Phase 2 prep, $SANDBOX = absolute path):
     # codex (TUI mode only; exec mode needs no seed)
     printf '\n[projects."%s"]\ntrust_level = "trusted"\n' "$SANDBOX" >> ~/.codex/config.toml
     # opencode
-    printf '{"permission":{"edit":"allow","bash":"allow","webfetch":"allow"}}' > "$SANDBOX/opencode.json"
+    printf '{"permission":{"edit":"allow","bash":"allow","webfetch":"allow","external_directory":"allow"}}' > "$SANDBOX/opencode.json"
 
 Per tool:
 
@@ -335,11 +348,16 @@ Per tool:
   sandbox — never stage those. Interactive mode exits on /exit.
 - **opencode**: `opencode run "<body>"` — streams live, exits clean,
   and DOES ingest `weave say` lines mid-run (steerable while
-  headless). Two caveats: its own permission system auto-rejects
-  file-tool reads that resolve through symlinks to outside the
-  project — tell it to use bash cat/grep for linked corpora — and a
-  rejected tool call can end the run with EXIT 0 and no deliverable:
-  always check for the artifact, never trust the exit code alone.
+  headless). Two caveats: its own permission system auto-rejects ANY
+  path outside the project tree — file-tool reads through symlinks AND
+  bash tool calls touching e.g. `/tmp` (the `external_directory`
+  permission, separate from `bash`; log line `permission requested:
+  external_directory (...); auto-rejecting`). Grant
+  `"external_directory":"allow"` in opencode.json AND write
+  fixtures/diffs INSIDE the sandbox, not `/tmp` (a `/tmp`-resident diff
+  is exactly what no-op'd it once) — and a rejected tool call can end
+  the run with EXIT 0 and no deliverable: always check for the artifact,
+  never trust the exit code alone.
   CONTAINMENT WARNING: opencode keeps persistent per-project state;
   if it has ever worked in the origin repo it gravitates back to it
   by absolute path — even with the sandbox's `origin` remote removed
