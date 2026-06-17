@@ -36,6 +36,9 @@ type weaveQueue struct {
 	// are keyed by a path-mangled tag that can't be reversed; Root
 	// lets `weave list` name nearby queues in its empty-queue hint.
 	Root string `json:"root,omitempty"`
+	// PausedOrchestratorLease preserves the autopilot lease across a
+	// campaign pause so resume can restore the same holder/tool lease.
+	PausedOrchestratorLease *weaveOrchestratorLease `json:"paused_orchestrator_lease,omitempty"`
 }
 
 // weaveOtherActiveQueues scans sibling queue dirs for queues with
@@ -154,6 +157,18 @@ type weaveItem struct {
 	// inject a line into the subagent's stdin. Set at claim time,
 	// cleared on terminal state.
 	CtlSock string `json:"ctl_sock,omitempty"`
+	// LaunchSpec is the durable command/watchdog recipe needed to
+	// relaunch the same worker in the same sandbox after `weave pause`.
+	LaunchSpec *weaveLaunchSpec `json:"launch_spec,omitempty"`
+}
+
+type weaveLaunchSpec struct {
+	Tool        string        `json:"tool"`
+	Argv        []string      `json:"argv,omitempty"`
+	MaxRuntime  time.Duration `json:"max_runtime,omitempty"`
+	MemLimit    string        `json:"mem_limit,omitempty"`
+	IdleTimeout time.Duration `json:"idle_timeout,omitempty"`
+	PTY         string        `json:"pty,omitempty"`
 }
 
 // weaveCtlSockPath returns the per-issue control socket path,
@@ -776,7 +791,7 @@ func weaveQueueSummaries(w io.Writer, skipDir string, activeOnly bool) int {
 			continue
 		}
 		summary := fmt.Sprintf("  %-12s %d total", name, len(q.Items))
-		order := []string{"working", "allocated", "todo", "submitted", "killed", "failed", "done", "abandoned"}
+		order := []string{"working", "paused", "allocated", "todo", "submitted", "killed", "failed", "done", "abandoned"}
 		for _, st := range order {
 			if counts[st] > 0 {
 				summary += fmt.Sprintf(", %d %s", counts[st], st)
@@ -954,6 +969,261 @@ func runWeaveList(cmd *cobra.Command, includeHistory bool, flags *weaveOutputFla
 	return nil
 }
 
+type weavePauseResult struct {
+	Issue       int64  `json:"issue"`
+	Tool        string `json:"tool,omitempty"`
+	Head        string `json:"head,omitempty"`
+	WrapperPid  int    `json:"wrapper_pid,omitempty"`
+	State       string `json:"state"`
+	Reason      string `json:"reason,omitempty"`
+	AlreadyDead bool   `json:"already_dead,omitempty"`
+}
+
+type weaveResumeResult struct {
+	Issue      int64  `json:"issue"`
+	Tool       string `json:"tool,omitempty"`
+	WrapperPid int    `json:"wrapper_pid,omitempty"`
+	State      string `json:"state"`
+	Detail     string `json:"detail,omitempty"`
+}
+
+func runWeavePause(cmd *cobra.Command, reason string, flags *weaveOutputFlags) error {
+	mode := flags.mode()
+	cwd, _ := os.Getwd()
+	root, err := weaveRepoRoot(cwd)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave pause",
+			weavecli.ExitPrecondFail, err))
+	}
+	dir, _ := weaveQueueDir(root)
+
+	type target struct {
+		id  int64
+		pid int
+	}
+	var targets []target
+	targetIDs := map[int64]bool{}
+	if q, err := loadWeaveQueue(dir); err == nil {
+		for _, it := range q.Items {
+			if it.State == "working" {
+				targets = append(targets, target{id: it.ID, pid: it.WrapperPid})
+				targetIDs[it.ID] = true
+			}
+		}
+	}
+	for _, t := range targets {
+		if t.pid > 0 && pidAlive(t.pid) {
+			weaveStopWrapper(t.pid)
+		}
+	}
+
+	var results []weavePauseResult
+	var releasedLease *weaveOrchestratorLease
+	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
+		if l, ok, err := loadWeaveAutopilotLease(dir); err != nil {
+			return err
+		} else if ok {
+			releasedLease = &l
+			q.PausedOrchestratorLease = &l
+			if err := os.Remove(weaveAutopilotLeasePath(dir)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+		for _, it := range q.Items {
+			if !targetIDs[it.ID] {
+				continue
+			}
+			alreadyDead := it.WrapperPid > 0 && !pidAlive(it.WrapperPid)
+			head := ""
+			if it.Sandbox != "" {
+				if out, err := exec.Command("git", "-C", it.Sandbox, "rev-parse", "HEAD").Output(); err == nil {
+					head = strings.TrimSpace(string(out))
+				}
+			}
+			it.State = "paused"
+			it.Head = head
+			it.WrapperPid = 0
+			it.CtlSock = ""
+			results = append(results, weavePauseResult{
+				Issue:       it.ID,
+				Tool:        it.Tool,
+				Head:        head,
+				State:       it.State,
+				Reason:      reason,
+				AlreadyDead: alreadyDead,
+			})
+		}
+		return nil
+	})
+	if lockErr != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave pause",
+			weavecli.ExitGenericFail, lockErr))
+	}
+	if mode == weavecli.OutputJSON {
+		res := map[string]any{"paused": results}
+		if releasedLease != nil {
+			res["released_orchestrator_lease"] = releasedLease
+		}
+		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave pause", res))
+	}
+	if len(results) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "weave pause: no working items")
+		return nil
+	}
+	for _, r := range results {
+		fmt.Fprintf(cmd.OutOrStdout(), "weave pause: issue #%d paused tool=%s head=%s\n", r.Issue, r.Tool, r.Head)
+	}
+	if releasedLease != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "weave pause: released orchestrator lease holder=%s tool=%s\n", releasedLease.Holder, releasedLease.Tool)
+	}
+	return nil
+}
+
+func runWeaveResume(cmd *cobra.Command, issueID int64, flags *weaveOutputFlags) error {
+	mode := flags.mode()
+	cwd, _ := os.Getwd()
+	root, err := weaveRepoRoot(cwd)
+	if err != nil {
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave resume",
+			weavecli.ExitPrecondFail, err))
+	}
+	dir, _ := weaveQueueDir(root)
+
+	var paused []*weaveItem
+	var restoredLease *weaveOrchestratorLease
+	lockErr := withWeaveQueueLock(dir, func(q *weaveQueue) error {
+		if issueID > 0 && findWeaveItem(q, issueID) == nil {
+			return fmt.Errorf("issue #%d not found%s", issueID, weaveOtherActiveQueuesHintSuffix(dir))
+		}
+		if q.PausedOrchestratorLease != nil {
+			l := *q.PausedOrchestratorLease
+			now := time.Now().UTC()
+			ttl := l.ExpiresAt.Sub(l.HeartbeatAt)
+			if ttl <= 0 {
+				ttl = 30 * time.Second
+			}
+			l.PID = os.Getpid()
+			l.HeartbeatAt = now
+			l.ExpiresAt = now.Add(ttl)
+			if err := saveWeaveAutopilotLease(dir, l); err != nil {
+				return err
+			}
+			restoredLease = &l
+			q.PausedOrchestratorLease = nil
+		}
+		for _, it := range q.Items {
+			if issueID > 0 && it.ID != issueID {
+				continue
+			}
+			if it.State == "paused" {
+				cp := *it
+				paused = append(paused, &cp)
+			}
+		}
+		return nil
+	})
+	if lockErr != nil {
+		code := weavecli.ExitGenericFail
+		if strings.Contains(lockErr.Error(), "not found") {
+			code = weavecli.ExitInvalidArg
+		}
+		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave resume", code, lockErr))
+	}
+
+	var results []weaveResumeResult
+	for _, it := range paused {
+		if it.LaunchSpec == nil || it.LaunchSpec.Tool == "" {
+			results = append(results, weaveResumeResult{Issue: it.ID, State: it.State, Detail: "missing launch_spec"})
+			continue
+		}
+		pid, err := weaveSpawnResumeWrapper(dir, it.ID, it.LaunchSpec)
+		if err != nil {
+			results = append(results, weaveResumeResult{Issue: it.ID, Tool: it.Tool, State: it.State, Detail: err.Error()})
+			continue
+		}
+		results = append(results, weaveResumeResult{Issue: it.ID, Tool: it.LaunchSpec.Tool, WrapperPid: pid, State: "working"})
+	}
+	if mode == weavecli.OutputJSON {
+		res := map[string]any{"resumed": results}
+		if restoredLease != nil {
+			res["restored_orchestrator_lease"] = restoredLease
+		}
+		return ec(weavecli.EmitOK(cmd.OutOrStdout(), mode, "weave resume", res))
+	}
+	if len(results) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "weave resume: no paused items")
+		return nil
+	}
+	for _, r := range results {
+		if r.Detail != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "weave resume: issue #%d skipped: %s\n", r.Issue, r.Detail)
+			continue
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "weave resume: issue #%d relaunched tool=%s wrapper_pid=%d\n", r.Issue, r.Tool, r.WrapperPid)
+	}
+	if restoredLease != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "weave resume: restored orchestrator lease holder=%s tool=%s\n", restoredLease.Holder, restoredLease.Tool)
+	}
+	return nil
+}
+
+func weaveSpawnResumeWrapper(dir string, issueID int64, spec *weaveLaunchSpec) (int, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return 0, err
+	}
+	args := []string{"weave", "start", "--resume", "--issue", strconv.FormatInt(issueID, 10)}
+	if spec.IdleTimeout > 0 {
+		args = append(args, "--idle-timeout", spec.IdleTimeout.String())
+	}
+	if spec.MaxRuntime > 0 {
+		args = append(args, "--max-runtime", spec.MaxRuntime.String())
+	}
+	if spec.MemLimit != "" {
+		args = append(args, "--mem-limit", spec.MemLimit)
+	}
+	if spec.PTY != "" {
+		args = append(args, "--pty", spec.PTY)
+	}
+	args = append(args, "--")
+	args = append(args, spec.Tool)
+	args = append(args, spec.Argv...)
+
+	c := exec.Command(exe, args...)
+	c.Stdin = nil
+	var logFile *os.File
+	logsDir := filepath.Join(dir, "logs")
+	if err := os.MkdirAll(logsDir, 0o755); err == nil {
+		if f, err := os.OpenFile(filepath.Join(logsDir, fmt.Sprintf("issue-%d-wrapper.log", issueID)), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+			logFile = f
+			c.Stdout = f
+			c.Stderr = f
+		}
+	}
+	if err := c.Start(); err != nil {
+		if logFile != nil {
+			_ = logFile.Close()
+		}
+		return 0, err
+	}
+	if logFile != nil {
+		_ = logFile.Close()
+	}
+	pid := c.Process.Pid
+	_ = c.Process.Release()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		q, err := loadWeaveQueue(dir)
+		if err == nil {
+			if it := findWeaveItem(q, issueID); it != nil && it.State == "working" && it.WrapperPid > 0 {
+				return it.WrapperPid, nil
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return pid, nil
+}
+
 // weavePrintReclaimableFooter emits the one-line clutter hint when
 // terminal items still hold sandbox clones on disk.
 func weavePrintReclaimableFooter(w io.Writer, reclaimable int) {
@@ -1081,6 +1351,20 @@ func (o weaveStartOptions) ptyMode() string {
 	}
 }
 
+func weaveLaunchSpecFromArgs(toolArgs []string, opts weaveStartOptions) *weaveLaunchSpec {
+	if len(toolArgs) == 0 {
+		return nil
+	}
+	return &weaveLaunchSpec{
+		Tool:        toolArgs[0],
+		Argv:        append([]string(nil), toolArgs[1:]...),
+		MaxRuntime:  opts.maxRuntime,
+		MemLimit:    opts.memLimit,
+		IdleTimeout: opts.idleTimeout,
+		PTY:         opts.ptyMode(),
+	}
+}
+
 func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs []string, opts weaveStartOptions, flags *weaveOutputFlags) error {
 	mode := flags.mode()
 	if len(toolArgs) == 0 && toolFlag != "" {
@@ -1090,6 +1374,7 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 		return ec(weavecli.EmitError(cmd.ErrOrStderr(), mode, "weave start",
 			weavecli.ExitInvalidArg, fmt.Errorf("provide trailing '-- <tool> [args...]' or --tool <name> (or pass --no-spawn to allocate only)")))
 	}
+	launchSpec := weaveLaunchSpecFromArgs(toolArgs, opts)
 	cwd, _ := os.Getwd()
 	root, err := weaveRepoRoot(cwd)
 	if err != nil {
@@ -1185,6 +1470,7 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			freshIt.UntrackedFiles = 0
 			if len(toolArgs) > 0 {
 				freshIt.Tool = filepath.Base(toolArgs[0])
+				freshIt.LaunchSpec = launchSpec
 			}
 			it = freshIt
 			return nil
@@ -1267,6 +1553,7 @@ func runWeaveStart(cmd *cobra.Command, issueID int64, toolFlag string, toolArgs 
 			freshIt.StartedAt = time.Now().UTC()
 			if len(toolArgs) > 0 {
 				freshIt.Tool = filepath.Base(toolArgs[0])
+				freshIt.LaunchSpec = launchSpec
 			}
 			it = freshIt
 			return nil

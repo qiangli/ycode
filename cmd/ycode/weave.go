@@ -50,6 +50,8 @@ See docs/loom-v2-plan.md for the full design.`,
 	cmd.AddCommand(newWeavePrioCmd())
 	cmd.AddCommand(newWeavePointCmd())
 	cmd.AddCommand(newWeaveListCmd())
+	cmd.AddCommand(newWeavePauseCmd())
+	cmd.AddCommand(newWeaveResumeCmd())
 	cmd.AddCommand(newWeaveAutopilotCmd())
 	cmd.AddCommand(newWeaveStatusCmd())
 	cmd.AddCommand(newWeaveLogCmd())

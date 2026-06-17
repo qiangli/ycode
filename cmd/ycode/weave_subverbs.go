@@ -204,6 +204,36 @@ func newWeaveListCmd() *cobra.Command {
 	return cmd
 }
 
+func newWeavePauseCmd() *cobra.Command {
+	var flags weaveOutputFlags
+	var reason string
+	cmd := &cobra.Command{
+		Use:   "pause",
+		Short: "Cleanly suspend every running weave worker",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runWeavePause(cmd, reason, &flags)
+		},
+	}
+	flags.attach(cmd)
+	cmd.Flags().StringVar(&reason, "reason", "", "Optional reason recorded in the pause manifest")
+	return cmd
+}
+
+func newWeaveResumeCmd() *cobra.Command {
+	var flags weaveOutputFlags
+	var issue int64
+	cmd := &cobra.Command{
+		Use:   "resume",
+		Short: "Relaunch paused weave workers from their recorded launch specs",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runWeaveResume(cmd, issue, &flags)
+		},
+	}
+	flags.attach(cmd)
+	cmd.Flags().Int64Var(&issue, "issue", 0, "Resume only one paused issue")
+	return cmd
+}
+
 func newWeaveAutopilotCmd() *cobra.Command {
 	var flags weaveOutputFlags
 	var fleet, brief string
