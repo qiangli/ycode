@@ -847,6 +847,139 @@ func TestWeaveE2E_Pull_MergesCommittedWork(t *testing.T) {
 	}
 }
 
+func TestWeaveE2E_Pull_SuiteGate(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+
+	t.Run("passing item suite gate keeps merge", func(t *testing.T) {
+		repo, home := weaveSetupRepo(t)
+		if _, ee := runWeave(t, repo, home, "add", "suite green", "--suite-gate", "test -f integrated.txt"); envExitCode(ee) != 0 {
+			t.Fatalf("add --suite-gate failed")
+		}
+		script := `set -e; echo ok > integrated.txt; git add integrated.txt; git commit -qm "feat: integrated"`
+		if out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script); envExitCode(ee) != 0 {
+			t.Fatalf("start exited non-zero; out=%s", out)
+		}
+		prePull, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatalf("rev-parse pre-pull: %v", err)
+		}
+		out, ee := runWeave(t, repo, home, "pull")
+		if got := envExitCode(ee); got != 0 {
+			t.Fatalf("pull exited %d; out=%s", got, out)
+		}
+		results := parseEnvelope(t, out)["result"].(map[string]any)["results"].([]any)
+		if len(results) != 1 || results[0].(map[string]any)["status"] != "merged" {
+			t.Fatalf("expected status=merged, got %v", results)
+		}
+		if got := int(results[0].(map[string]any)["suite_gate_exit"].(float64)); got != 0 {
+			t.Fatalf("expected suite_gate_exit=0, got %v", results[0])
+		}
+		postPull, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatalf("rev-parse post-pull: %v", err)
+		}
+		if strings.TrimSpace(string(prePull)) == strings.TrimSpace(string(postPull)) {
+			t.Fatalf("expected base HEAD to advance after passing suite gate")
+		}
+		if _, err := os.Stat(filepath.Join(repo, "integrated.txt")); err != nil {
+			t.Fatalf("expected integrated.txt on main after pull: %v", err)
+		}
+		out, _ = runWeave(t, repo, home, "list", "--history", "--json")
+		item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+		if item["state"] != "done" {
+			t.Fatalf("expected state=done after passing suite gate, got %v", item["state"])
+		}
+		if got := int(item["suite_gate_exit"].(float64)); got != 0 {
+			t.Fatalf("expected list suite_gate_exit=0, got %v", item)
+		}
+	})
+
+	t.Run("failing repo default suite gate reverts merge", func(t *testing.T) {
+		repo, home := weaveSetupRepo(t)
+		if err := os.MkdirAll(filepath.Join(repo, ".agents", "weave"), 0o755); err != nil {
+			t.Fatalf("mkdir suite gate dir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, ".agents", "weave", "suite-gate"), []byte("echo suite-default-failed; exit 17\n"), 0o644); err != nil {
+			t.Fatalf("write suite gate: %v", err)
+		}
+		if _, ee := runWeave(t, repo, home, "add", "suite red"); envExitCode(ee) != 0 {
+			t.Fatalf("add failed")
+		}
+		script := `set -e; echo bad > rejected.txt; git add rejected.txt; git commit -qm "feat: rejected"`
+		if out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script); envExitCode(ee) != 0 {
+			t.Fatalf("start exited non-zero; out=%s", out)
+		}
+		prePull, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatalf("rev-parse pre-pull: %v", err)
+		}
+		out, ee := runWeave(t, repo, home, "pull")
+		if got := envExitCode(ee); got != 0 {
+			t.Fatalf("pull exited %d; out=%s", got, out)
+		}
+		results := parseEnvelope(t, out)["result"].(map[string]any)["results"].([]any)
+		if len(results) != 1 || results[0].(map[string]any)["status"] != "suite-gate-failed" {
+			t.Fatalf("expected status=suite-gate-failed, got %v", results)
+		}
+		row := results[0].(map[string]any)
+		if got := int(row["suite_gate_exit"].(float64)); got != 17 {
+			t.Fatalf("expected suite_gate_exit=17, got %v", row)
+		}
+		if !strings.Contains(fmt.Sprint(row["suite_gate_output"]), "suite-default-failed") ||
+			!strings.Contains(fmt.Sprint(row["detail"]), "suite-default-failed") {
+			t.Fatalf("suite gate output/detail did not include failure tail: %v", row)
+		}
+		postPull, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatalf("rev-parse post-pull: %v", err)
+		}
+		if strings.TrimSpace(string(prePull)) != strings.TrimSpace(string(postPull)) {
+			t.Fatalf("expected base HEAD unchanged after failing suite gate; before=%s after=%s", prePull, postPull)
+		}
+		if _, err := os.Stat(filepath.Join(repo, "rejected.txt")); err == nil {
+			t.Fatalf("suite-gate-failed work remained in base tree")
+		}
+		out, _ = runWeave(t, repo, home, "list", "--json")
+		item := parseEnvelope(t, out)["result"].(map[string]any)["items"].([]any)[0].(map[string]any)
+		if item["state"] != "submitted" {
+			t.Fatalf("expected item to remain submitted after suite-gate-failed pull, got %v", item["state"])
+		}
+		if got := int(item["suite_gate_exit"].(float64)); got != 17 {
+			t.Fatalf("expected list suite_gate_exit=17, got %v", item)
+		}
+		if !strings.Contains(fmt.Sprint(item["suite_gate_output"]), "suite-default-failed") {
+			t.Fatalf("expected list suite_gate_output to include failure, got %v", item)
+		}
+	})
+
+	t.Run("no suite gate behaves as today", func(t *testing.T) {
+		repo, home := weaveSetupRepo(t)
+		if _, ee := runWeave(t, repo, home, "add", "no suite"); envExitCode(ee) != 0 {
+			t.Fatalf("add failed")
+		}
+		script := `set -e; echo plain > plain.txt; git add plain.txt; git commit -qm "feat: plain"`
+		if out, ee := runWeave(t, repo, home, "start", "--issue", "1", "--", "bash", "-c", script); envExitCode(ee) != 0 {
+			t.Fatalf("start exited non-zero; out=%s", out)
+		}
+		out, ee := runWeave(t, repo, home, "pull")
+		if got := envExitCode(ee); got != 0 {
+			t.Fatalf("pull exited %d; out=%s", got, out)
+		}
+		results := parseEnvelope(t, out)["result"].(map[string]any)["results"].([]any)
+		if len(results) != 1 || results[0].(map[string]any)["status"] != "merged" {
+			t.Fatalf("expected status=merged, got %v", results)
+		}
+		if _, ok := results[0].(map[string]any)["suite_gate_exit"]; ok {
+			t.Fatalf("no-gate result should not include suite_gate_exit: %v", results[0])
+		}
+		if _, err := os.Stat(filepath.Join(repo, "plain.txt")); err != nil {
+			t.Fatalf("expected plain.txt on main after pull: %v", err)
+		}
+	})
+}
+
 // TestWeaveE2E_Pull_IssueArgSkipsLiveWorkingBystander reproduces a
 // dogfood incident where `weave pull <other-issue>` still swept a
 // live working item, fetched its stale sandbox branch, and removed
