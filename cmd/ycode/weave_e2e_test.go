@@ -1141,6 +1141,117 @@ sleep 600`
 	}
 }
 
+func TestWeaveE2E_PauseResume(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e skipped in -short")
+	}
+	repo, home := weaveSetupRepo(t)
+	if _, ee := runWeave(t, repo, home, "add", "pause resume target"); envExitCode(ee) != 0 {
+		t.Fatalf("add failed")
+	}
+	script := `set -e
+if [ ! -f first.ready ]; then
+  echo checkpoint > checkpoint.txt
+  git add checkpoint.txt
+  git commit -qm "checkpoint work"
+  touch first.ready
+fi
+sleep 600`
+	bg := startWeaveAsync(t, repo, home, "start", "--issue", "1",
+		"--max-runtime", "10m", "--idle-timeout", "2m", "--mem-limit", "64m", "--pty", "never",
+		"--", "bash", "-c", script)
+	defer func() { _ = bg.Process.Kill(); _ = bg.Wait() }()
+
+	oldWrapper := waitIssueWrapperPid(t, repo, home)
+	if oldWrapper == 0 {
+		t.Fatalf("wrapper_pid never landed in queue")
+	}
+	sandbox := issueSandbox(t, repo, home)
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(filepath.Join(sandbox, "first.ready")); err == nil {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if _, err := os.Stat(filepath.Join(sandbox, "first.ready")); err != nil {
+		t.Fatalf("worker never committed checkpoint: %v", err)
+	}
+	headBeforeBytes, err := exec.Command("git", "-C", sandbox, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse before pause: %v", err)
+	}
+	headBefore := strings.TrimSpace(string(headBeforeBytes))
+
+	out, ee := runWeave(t, repo, home, "pause", "--reason", "test move", "--json")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("pause exited %d; out=%s", got, out)
+	}
+	paused := parseEnvelope(t, out)["result"].(map[string]any)["paused"].([]any)
+	if len(paused) != 1 {
+		t.Fatalf("expected one paused item, got %v", paused)
+	}
+	if paused[0].(map[string]any)["head"] != headBefore {
+		t.Fatalf("pause manifest head=%v, want %s", paused[0].(map[string]any)["head"], headBefore)
+	}
+	_ = bg.Wait()
+	if !pidGone(oldWrapper) {
+		t.Fatalf("old wrapper pid %d still alive after pause", oldWrapper)
+	}
+
+	item := weaveIssueItem(t, repo, home, 1)
+	if item["state"] != "paused" {
+		t.Fatalf("expected state=paused, got %v", item["state"])
+	}
+	if _, err := os.Stat(filepath.Join(sandbox, "checkpoint.txt")); err != nil {
+		t.Fatalf("committed work missing after pause: %v", err)
+	}
+	headAfterBytes, err := exec.Command("git", "-C", sandbox, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse after pause: %v", err)
+	}
+	if got := strings.TrimSpace(string(headAfterBytes)); got != headBefore {
+		t.Fatalf("pause changed sandbox HEAD: got %s want %s", got, headBefore)
+	}
+	spec := item["launch_spec"].(map[string]any)
+	argv := spec["argv"].([]any)
+	if spec["tool"] != "bash" || len(argv) != 2 || argv[0] != "-c" || argv[1] != script {
+		t.Fatalf("launch_spec did not preserve command: %v", spec)
+	}
+	if spec["mem_limit"] != "64m" {
+		t.Fatalf("launch_spec mem_limit=%v, want 64m", spec["mem_limit"])
+	}
+
+	out, ee = runWeave(t, repo, home, "resume", "--issue", "1", "--json")
+	if got := envExitCode(ee); got != 0 {
+		t.Fatalf("resume exited %d; out=%s", got, out)
+	}
+	resumed := parseEnvelope(t, out)["result"].(map[string]any)["resumed"].([]any)
+	if len(resumed) != 1 {
+		t.Fatalf("expected one resumed item, got %v", resumed)
+	}
+	newWrapper := waitIssueWrapperPid(t, repo, home)
+	if newWrapper == 0 {
+		t.Fatalf("resume did not launch a new wrapper")
+	}
+	if newWrapper == oldWrapper {
+		t.Fatalf("resume reused old wrapper pid %d", newWrapper)
+	}
+	item = weaveIssueItem(t, repo, home, 1)
+	if item["state"] != "working" {
+		t.Fatalf("expected state=working after resume, got %v", item["state"])
+	}
+	spec2 := item["launch_spec"].(map[string]any)
+	argv2 := spec2["argv"].([]any)
+	if spec2["tool"] != "bash" || len(argv2) != 2 || argv2[1] != script {
+		t.Fatalf("resume changed launch_spec: %v", spec2)
+	}
+
+	if out, ee := runWeave(t, repo, home, "kill", "1", "--reason", "pause-resume cleanup"); envExitCode(ee) != 0 {
+		t.Fatalf("cleanup kill failed: %s", out)
+	}
+}
+
 func TestWeaveE2E_Kill_VerifiesCommittedWork(t *testing.T) {
 	if testing.Short() {
 		t.Skip("e2e skipped in -short")
