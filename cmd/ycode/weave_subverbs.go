@@ -202,6 +202,44 @@ func newWeaveListCmd() *cobra.Command {
 	return cmd
 }
 
+func newWeaveAutopilotCmd() *cobra.Command {
+	var flags weaveOutputFlags
+	var fleet, brief string
+	var standby bool
+	var leaseTTL, heartbeat, backoff time.Duration
+	cmd := &cobra.Command{
+		Use:   "autopilot --orchestrator-fleet claude,codex[,gemini...]",
+		Short: "Run a failover-capable weave orchestrator loop",
+		Long: `autopilot holds a queue-scoped orchestration lease and launches one
+agent CLI from the configured fleet as the active orchestrator. If the
+orchestrator exits non-zero or emits overload/rate-limit output,
+autopilot rotates to the next fleet member and resumes from the same
+durable weave queue.
+
+With --standby, autopilot waits for the active holder's heartbeat to
+expire before taking over. This supports a second process or machine as
+a cold standby for unattended campaigns.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runWeaveAutopilot(cmd, weaveAutopilotOptions{
+				fleetCSV:  fleet,
+				briefPath: brief,
+				standby:   standby,
+				leaseTTL:  leaseTTL,
+				heartbeat: heartbeat,
+				backoff:   backoff,
+			}, &flags)
+		},
+	}
+	flags.attach(cmd)
+	cmd.Flags().StringVar(&fleet, "orchestrator-fleet", "", "Comma-separated preferred orchestrator tools, e.g. claude,codex,gemini")
+	cmd.Flags().StringVar(&brief, "brief", "", "Optional orchestration brief file to prepend to the queue context")
+	cmd.Flags().BoolVar(&standby, "standby", false, "Wait for the orchestration lease to expire, then take over")
+	cmd.Flags().DurationVar(&leaseTTL, "lease-ttl", 30*time.Second, "Orchestrator lease TTL")
+	cmd.Flags().DurationVar(&heartbeat, "heartbeat", 5*time.Second, "Lease heartbeat interval while the orchestrator is alive")
+	cmd.Flags().DurationVar(&backoff, "backoff", 10*time.Second, "Backoff after a full failed fleet rotation")
+	return cmd
+}
+
 func newWeaveLogCmd() *cobra.Command {
 	var flags weaveOutputFlags
 	var follow bool
