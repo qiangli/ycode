@@ -92,10 +92,19 @@ Run `dhnt conductor` (below) — or drive the phases by hand with
    **or** tasks that share an implementation route to **SEQUENTIAL** — one
    worker grinding + resuming. Parallel agents on shared source produce
    competing rewrites that collide irreconcilably at merge.
-4. **STEER** — watch and unblock: `ycode weave list`, `ycode weave log N`,
-   inject keystrokes with `ycode weave say N "<msg>"`. _(judgement allowed)_
-   Then an **ESCALATE** branch fires *only when* workers are stuck/blocked —
-   it nudges them (`weave say`) to continue or write a BLOCKERS note.
+4. **STEER** — watch and unblock, PROACTIVELY: `ycode weave list`,
+   `ycode weave log N`, inject keystrokes with `ycode weave say N "<msg>"`.
+   _(judgement allowed)_ Judge each worker against the GOAL, not its state:
+   a `submitted`/exited worker has often done only PART of the assignment
+   (headless tools especially exit after a couple of easy fixes, frequently
+   uncommitted) — re-measure the target before trusting "submitted". The
+   **ESCALATE** branch fires when a worker is stuck/blocked **or stopped
+   early with the goal unmet**: nudge it (`weave say`), or RESUME it with a
+   harder, explicitly-iterative prompt (measure → fix next cluster → gate →
+   commit → repeat) that forbids stopping until the goal is met or each
+   remainder is documented in a BLOCKERS note. Keep reminding; one partial
+   submit is a checkpoint, not the deliverable. Re-drive as many rounds as
+   needed.
 5. **CONVERGE** — wait for the fleet, then merge **verified** work back:
    `ycode weave wait` then `ycode weave pull`. Re-run the goal verifier
    by hand before trusting a merge (the `/weave` Phase 7 discipline).

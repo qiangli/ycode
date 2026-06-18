@@ -386,6 +386,31 @@ Never measure benchmarks/suites on the host while subagents compile
 in parallel — per-test timeouts flake under load and read as
 regressions.
 
+EARLY-STOP / PARTIAL-COMPLETION PROTOCOL — proactively monitor; a
+worker reaching `submitted` (or a headless tool exiting) does NOT mean
+the assignment is done. Agents routinely stop after fixing only PART of
+the goal — codex exec especially submits after one or two easy clusters,
+often with the work UNCOMMITTED. Judge against the GOAL, not the state:
+on each poll, and always before accepting an outcome, RE-MEASURE the
+target metric in the worker's sandbox — never trust "submitted". If the
+goal isn't met (target not at 0, only a partial reduction, failures
+remain), the worker stopped early — RE-DRIVE it, don't accept the
+partial:
+
+    ycode weave start --resume --issue N ... -- <tool> "<harder prompt>"
+
+The harder prompt must (a) state exactly how far it got vs the goal
+("you're at 52, only fixed 2; your work is also uncommitted"), (b) make
+the loop EXPLICIT and iterative — measure → read EVERY remaining failure
+→ fix the next cluster → gate (full suite + unit tests) → COMMIT → repeat
+— and (c) forbid stopping until the metric hits the goal or each
+remaining item is documented in a BLOCKERS note with a concrete reason.
+Reinforce mid-run with `weave say N "keep going; commit each cluster"`.
+Resume as many rounds as needed: one partial submit is a checkpoint, not
+the deliverable. (Pairs with the dirty-sandbox / "submitted ≠ committed"
+check in Phase 7 — salvage and commit the tree before re-driving, so the
+partial progress isn't lost when you resume.)
+
 BLOCKED-AGENT PROTOCOL — TUI agents stall on dialogs, and a status
 question typed into a menu is noise. Watch for waiting-screens in
 the capture tail (selection menus `● 1.`/`❯ 1.`, "Enter to
