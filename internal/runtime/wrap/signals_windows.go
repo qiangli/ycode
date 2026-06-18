@@ -2,7 +2,10 @@
 
 package wrap
 
-import "os/exec"
+import (
+	"os"
+	"os/exec"
+)
 
 // forwardSignalsToChild on Windows is a no-op. Ctrl-C handling on
 // Windows is its own ecosystem (GenerateConsoleCtrlEvent, job
@@ -11,4 +14,11 @@ import "os/exec"
 // call site identical to the Unix path.
 func forwardSignalsToChild(_ *exec.Cmd) func() {
 	return func() {}
+}
+
+func killProcessGroup(proc *os.Process) error {
+	if proc == nil {
+		return os.ErrProcessDone
+	}
+	return proc.Kill()
 }

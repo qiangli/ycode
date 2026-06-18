@@ -3,6 +3,7 @@
 package wrap
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -57,9 +58,10 @@ func forwardSignalsToChild(cmd *exec.Cmd) func() {
 				// Forward to the process group so any descendants the
 				// agent spawned also get the signal — Setpgid makes
 				// negative PID address the whole group on Unix.
-				pgid := -cmd.Process.Pid
 				if usig, ok := sig.(syscall.Signal); ok {
-					_ = syscall.Kill(pgid, usig)
+					reapLeakedDescendants(os.Getpid())
+					_ = signalProcessGroup(cmd.Process, usig)
+					reapLeakedDescendants(os.Getpid())
 				}
 				if sig == syscall.SIGINT || sig == syscall.SIGTERM {
 					// Schedule a SIGKILL escalation; the child may
@@ -70,7 +72,9 @@ func forwardSignalsToChild(cmd *exec.Cmd) func() {
 						defer timer.Stop()
 						select {
 						case <-timer.C:
-							_ = syscall.Kill(pgid, syscall.SIGKILL)
+							reapLeakedDescendants(os.Getpid())
+							_ = killProcessGroup(cmd.Process)
+							reapLeakedDescendants(os.Getpid())
 						case <-stop:
 						}
 					}()
@@ -82,4 +86,19 @@ func forwardSignalsToChild(cmd *exec.Cmd) func() {
 	}()
 
 	return stopper
+}
+
+func signalProcessGroup(proc *os.Process, sig syscall.Signal) error {
+	if proc == nil {
+		return os.ErrProcessDone
+	}
+	err := syscall.Kill(-proc.Pid, sig)
+	if errors.Is(err, syscall.ESRCH) {
+		return os.ErrProcessDone
+	}
+	return err
+}
+
+func killProcessGroup(proc *os.Process) error {
+	return signalProcessGroup(proc, syscall.SIGKILL)
 }

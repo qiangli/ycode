@@ -376,14 +376,24 @@ func Run(ctx context.Context, opts Options) (int, error) {
 	// forwarding can address descendants and SIGKILL escalation
 	// reaches every spawned subprocess.
 	cmd.SysProcAttr = newProcessGroupAttr()
+	cmd.Cancel = func() error {
+		reapLeakedDescendants(os.Getpid())
+		err := killProcessGroup(cmd.Process)
+		reapLeakedDescendants(os.Getpid())
+		return err
+	}
 
 	if err := cmd.Start(); err != nil {
 		finish(0, err)
 		return 1, fmt.Errorf("wrap.Run: start %s: %w", bin, err)
 	}
+	descendants := startLeakedDescendantTracker(os.Getpid())
 	stopSignals := forwardSignalsToChild(cmd)
 	err = cmd.Wait()
 	stopSignals()
+	reapLeakedDescendants(os.Getpid())
+	reapLeakedPIDs(os.Getpid(), descendants.stopAndSnapshot())
+	reapLeakedDescendants(os.Getpid())
 
 	exitCode := 0
 	if cmd.ProcessState != nil {
