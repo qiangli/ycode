@@ -95,7 +95,7 @@ self-orchestration is safe). From a user goal:
 Tool cheat-sheet (details + caveats in Phase 3):
 
     claude    claude --dangerously-skip-permissions "<body>"        # TUI; pre-seed trust in ~/.claude.json (see Per tool) or say N "1"
-    codex     codex exec --full-auto "<body>"                       # headless, exits clean
+    codex     codex exec --skip-git-repo-check --sandbox workspace-write "<body>"   # headless; --full-auto is deprecated AND fails "not a trusted dir"
     gemini    gemini --yolo --skip-trust -i "<body>"                # TUI; no trust dialog
     opencode  opencode run "<body>"                                 # headless; check artifacts, not exit code
     aider     aider --yes-always --no-check-update --message "<body>"  # headless; auto-commits; model from ~/.aider.conf.yml
@@ -307,8 +307,11 @@ Pre-seed snippets (run during Phase 2 prep, $SANDBOX = absolute path):
 
 Per tool:
 
-- **codex, headless**: `codex exec --full-auto "<body>"` — exits
-  cleanly on completion; the easy default.
+- **codex, headless**: `codex exec --skip-git-repo-check --sandbox
+  workspace-write "<body>"` — exits cleanly on completion. NOTE:
+  `--full-auto` is deprecated and, on current codex, exec aborts with
+  "Not inside a trusted directory and --skip-git-repo-check was not
+  specified" (exit 1, 0s) — always pass `--skip-git-repo-check`.
 - **codex, steerable TUI**: `codex -s workspace-write -a never
   "<body>"` — answers nothing by itself: expect the directory-trust
   prompt and clear it with `weave say N "1"`. Does not exit when
