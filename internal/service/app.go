@@ -54,7 +54,7 @@ type AppBackend interface {
 	// publish a permission.request bus event and wait for the client's
 	// permission.response, instead of prompting an in-process TUI. Used by
 	// the `ycode serve` API stack when the consumer is a remote client
-	// (web UI, VS Code extension, ...).
+	// (web UI, thin TUI client, ...).
 	InstallRemotePermissionPrompter(requester PermissionRequester)
 
 	// Lifecycle.

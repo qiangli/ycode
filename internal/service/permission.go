@@ -11,7 +11,7 @@ import (
 )
 
 // PermissionRequester routes a tool's permission check to a remote client
-// (web UI, VS Code extension, etc.) and waits for the response.
+// (web UI, thin TUI client, etc.) and waits for the response.
 //
 // An App's tool registry calls this via InstallRemotePermissionPrompter
 // instead of an in-process TUI prompter. The mode is the required

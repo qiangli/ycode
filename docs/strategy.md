@@ -32,7 +32,7 @@ ycode already has more raw capability than the popular ones (50+ tools, 5-layer 
 
 1. **No wedge.** Without a sharp positioning that names something the others can't do, ycode is "another AI coding agent."
 2. **No proof.** No public benchmark scores, no demo videos, no leaderboard presence — investors and developers can't verify the depth that's already there.
-3. **No on-ramp.** Build-from-source onboarding kills evaluation; no editor extension means devs never even see it.
+3. **No on-ramp.** Build-from-source onboarding kills evaluation — would-be users never get to a first useful run.
 
 This document picks **one wedge** ycode can credibly own, then uses leaderboards as the proof channel and tier-1 ergonomics as the on-ramp. Most tier-1 work is **surfacing and polishing what already exists**, not building new features.
 
@@ -70,7 +70,7 @@ Why it's risky: the "teams of agents" market is speculative — most developers 
 
 **Long-term ceiling (Option A+):** as Option A matures, the wedge naturally expands from "local-first coding agent" to "**local-first developer cockpit** — code, ops, comms, knowledge. One binary. Runs offline. Your data stays yours." See the [Portal vision](#portal-vision) section. This is **not the immediate wedge** — earning category-defining language requires being undeniably best at coding first. But it's the 10-year ceiling that justifies the long-term investment, and it makes the local-first story dramatically sharper: "your code stays local" is a moat; "your code, email, calendar, drive, and reading list all stay local" is a category.
 
-Everything in the rest of this document should feed the wedge: leaderboards prove it, the install path showcases it, the editor extension surfaces it, the cost UX makes the offline mode discoverable.
+Everything in the rest of this document should feed the wedge: leaderboards prove it, the install path showcases it, the cost UX makes the offline mode discoverable.
 
 ---
 
@@ -80,7 +80,7 @@ Everything in the rest of this document should feed the wedge: leaderboards prov
 |---|---|---|---|
 | "Will it break my code?" | Anxiety on every long task | Has VFS boundaries, permission tiers | No diff-preview, no per-tool checkpoint+rollback, plan-first not first-class |
 | "How much is this costing me?" | Watching the bill tick | Has token tracking | No live $ meter, no budget cap, no auto-router cheap↔expensive |
-| "I live in VS Code / JetBrains / Neovim" | Tab-switching to a TUI is friction | TUI + HTTP server, no editor plugin | **Largest single adoption lever** |
+| "I live in VS Code / JetBrains / Neovim" | Tab-switching to a TUI is friction | TUI + HTTP server + embedded web UI | Native editor plugins are out of scope; the HTTP server + embedded web UI is the integration surface |
 | "Installing took an hour" | `make init` + submodules + gzip is a non-starter | Source build only | No `brew`, no `go install`, no prebuilt release artifacts surfaced |
 | "It forgot what we were doing" | Lost context between sessions | Episodic memory exists | No `ycode resume <id>`, no per-branch session, no PR-as-thread |
 | "Tests broke and it didn't notice" | Manual test/lint after every change | Has bash, can run tests | No auto-watch loop, no auto-revert on red |
@@ -95,7 +95,7 @@ Everything in the rest of this document should feed the wedge: leaderboards prov
 
 In a crowded market, **a bundle of half-cooked features is worse than a smaller bundle of finished ones.** Developers comparing 10 options dismiss any tool where the first thing they try doesn't work. One stub poisons the whole impression — they don't say "interesting, but that one feature is rough," they say "another half-finished agent" and close the tab. Investors do the same with one extra step: they ask power users, hear "it has a lot of stubs," and pass.
 
-This precondition has to land **before** the tier-1 levers, because everything else (leaderboards, VS Code extension, demo GIFs, README rewrite) just amplifies whatever surface area exists today. Amplifying half-finished surface area is negative ROI.
+This precondition has to land **before** the tier-1 levers, because everything else (leaderboards, demo GIFs, README rewrite) just amplifies whatever surface area exists today. Amplifying half-finished surface area is negative ROI.
 
 ### Known half-baked surface (audit baseline as of this doc's first commit)
 
@@ -110,7 +110,7 @@ This precondition has to land **before** the tier-1 levers, because everything e
 
 ### The rule going forward
 
-**Nothing ships in the README, leaderboard demo, or VS Code extension until it has:**
+**Nothing ships in the README or leaderboard demo until it has:**
 1. An integration test that exercises the happy path
 2. Hands-on dogfooding — used by ycode itself, on a real ycode PR, with the result visible in `git log`
 3. A documented failure mode (what happens when it breaks, how the user recovers)
@@ -250,9 +250,9 @@ Until those check, no leaderboard submission, no marketplace publish, no investo
 
 ---
 
-## Recommended approach: 6 tier-1 levers
+## Recommended approach: 5 tier-1 levers
 
-The wedge is positioning. These six are how the wedge converts to adoption. Each maps to existing scaffolding so we're amplifying the codebase, not rewriting it.
+The wedge is positioning. These five are how the wedge converts to adoption. Each maps to existing scaffolding so we're amplifying the codebase, not rewriting it.
 
 ### 0. Public leaderboards + visible proof — the dual-audience wedge
 
@@ -290,25 +290,7 @@ Each successive improvement = another news cycle. Leaderboards are a **renewable
 
 **Cost:** maybe 2–4 weeks of focused eval-tuning + one weekend for the dashboard. Highest ROI line in this entire plan.
 
-### 1. VS Code extension (and Neovim/JetBrains via the same protocol)
-
-**Why it matters most.** 70%+ of professional devs use VS Code. A TUI-only product self-selects to terminal natives. ycode already runs an HTTP/WebSocket server (`ycode serve`); the extension is a thin client over that.
-
-**What to build:**
-- Sidebar panel: chat, plan, diff preview, tool log
-- Inline `Apply` / `Reject` buttons on every proposed edit (code lens)
-- Status bar: model, session cost, current tool, agent state
-- Reuses existing permission flow over WebSocket
-
-**Entry points:**
-- Server side already lives in `internal/cli/serve.go` and the WebSocket layer
-- Permission integration TODO already noted in `internal/cli/tui.go` (`_ = reqID // TODO: wire RespondPermission via client`)
-- Existing Playwright e2e harness in `e2e/` validates the wire protocol — extension can reuse it
-- New repo: `ycode-vscode/` (separate marketplace publish cadence)
-
-Neovim and JetBrains piggy-back on the same JSON-RPC the extension uses — one protocol, three clients.
-
-### 2. Cost UX: live meter, budgets, auto-router
+### 1. Cost UX: live meter, budgets, auto-router
 
 **Why it matters.** Token cost is the #1 anxiety for daily AI-agent users. Claude Code's flat-rate Pro plan was the single biggest reason it captured the market — it removed the meter. ycode is BYOK by design (correct), so the answer is **transparent, controllable cost**, not hidden cost.
 
@@ -324,7 +306,7 @@ Neovim and JetBrains piggy-back on the same JSON-RPC the extension uses — one 
 - Embedded Ollama: `internal/inference/` — already auto-downloads; just route to it for cheap ops
 - TUI status bar: `internal/cli/tui.go`
 
-### 3. Trust UX: plan-first default, per-tool checkpoint, one-key rollback, dry-run
+### 2. Trust UX: plan-first default, per-tool checkpoint, one-key rollback, dry-run
 
 **Why it matters.** The biggest reason a developer won't let an agent run unattended is fear of unrecoverable state. Most existing tools handle this by being timid (always asking). The better answer: **make recovery trivial so boldness is safe.**
 
@@ -341,7 +323,7 @@ Neovim and JetBrains piggy-back on the same JSON-RPC the extension uses — one 
 - Plan mode infrastructure exists — generalize it
 - Tool dispatch: `internal/runtime/conversation/runtime.go`
 
-### 4. Onboarding cliff: prebuilt binaries, one-line install, first-run wizard
+### 3. Onboarding cliff: prebuilt binaries, one-line install, first-run wizard
 
 **Why it matters.** Discovery → first useful run is where 90% of would-be users drop off. `make init && make build` is fatal for a "let me try it" developer. The README quickstart is for contributors, not users.
 
@@ -363,7 +345,7 @@ Neovim and JetBrains piggy-back on the same JSON-RPC the extension uses — one 
 - `/init` skill exists embedded
 - README.md needs a top-of-fold rewrite for users (move build/dev docs below)
 
-### 5. Session resume + PR-as-conversation + per-branch continuity
+### 4. Session resume + PR-as-conversation + per-branch continuity
 
 **Why it matters.** Real dev work spans hours, days, branches, PRs. Today's agents reset every session. ycode has episodic memory in `pkg/memex/memory/` — exposing it via session UX turns it from "feature" into "the reason I picked ycode."
 
@@ -403,7 +385,6 @@ Neovim and JetBrains piggy-back on the same JSON-RPC the extension uses — one 
 | Lever | Files |
 |---|---|
 | Leaderboards (proof) | `evals/specs/` (SWE-bench, Aider, Terminal-Bench harnesses), new `.github/workflows/benchmarks.yml`, new `ycode.dev` static site, README badges |
-| VS Code extension | New repo `ycode-vscode/`; existing server `internal/cli/serve.go`, WebSocket layer; permission TODO at `internal/cli/tui.go` |
 | Cost UX | `internal/api/provider.go` (router), `internal/api/` (token tracking surface), `internal/cli/tui.go` (status bar), `internal/inference/` (cheap-op routing) |
 | Trust UX | `internal/runtime/permission/`, `internal/runtime/conversation/runtime.go` (dispatch hook), `internal/runtime/toolexec/` (stash native func), `internal/cli/tui.go` (rollback keybind) |
 | Onboarding | `.github/workflows/release.yml` (publish from `make cross`), README.md rewrite, `internal/cli/doctor.go` → wizard, embed `/init` skill |
@@ -418,13 +399,12 @@ The whole point of this plan: every tier-1 lever has scaffolding already in the 
 - **Episodic JSONL sessions** (`pkg/memex/memory/`) — resume is exposing existing data
 - **`make cross`** already cross-compiles — release publishing is the missing step, not the build
 - **`doctor` command** — extend to wizard rather than building one fresh
-- **HTTP/WebSocket server** (`internal/cli/serve.go`) — VS Code extension is a client of this, no new server
+- **HTTP/WebSocket server** (`internal/cli/serve.go`) — the embedded web UI and thin TUI client are clients of this, no new server
 
 ## Verification (how we measure "developers flock")
 
 Strategy plans don't ship code, but each lever has a measurable outcome:
 
-- **VS Code extension:** marketplace install count; >5k installs in 90 days = traction signal
 - **Cost UX:** session-cost variance reduction; user surveys — "do you trust running ycode unattended?"
 - **Trust UX:** % of sessions completed without manual abort; # of rollback invocations (high = feature working)
 - **Onboarding:** time from `brew install` to first successful task; <5 min target. README → first command bounce rate.
@@ -435,9 +415,7 @@ End-to-end smoke test for tier-1 once shipped:
 
 ```bash
 brew install ycode/tap/ycode                           # onboarding
-code .                                                  # editor integration
-# In VS Code sidebar: "fix the failing test"
-# Observe: plan rendered, cost meter ticking, diff preview, Apply button
+ycode "fix the failing test"                            # TUI: plan rendered, cost meter ticking, diff preview, Apply
 ycode resume                                            # list sessions
 ycode pr 42                                             # PR-as-thread
 ```
@@ -609,17 +587,15 @@ This is the **strategic** roadmap. For the tactical feature-gap inventory (P0/P1
 - [ ] `go install github.com/.../ycode/cmd/ycode@latest` validated
 - [ ] `npx ycode` wrapper that downloads platform binary on first run
 - [ ] First-run wizard (extends `doctor`): detects creds, runs `/init`, builds repomap, suggests 3 starter prompts
-- [ ] VS Code extension v0.1: sidebar chat, plan view, diff preview, Apply/Reject code lenses, status bar
-- [ ] Reuse VS Code extension's wire protocol for a Neovim plugin v0.1
 - [ ] Landing page (could be `ycode.dev`) with single command demo
 
-**Exit gate:** 30-second video: open VS Code, install extension, paste API key, type a prompt, see a real code change applied. From a fresh machine, no `make`, no source build.
+**Exit gate:** 30-second video: install the binary (`brew` / `npx`), paste API key, type a prompt, see a real code change applied. From a fresh machine, no `make`, no source build.
 
 ### Phase 3 — Daily ergonomics (Weeks 8–14, overlaps Phase 2)
 
 **Goal:** Convert installs into retention. Address the daily anxieties: cost, trust, continuity.
 
-- [ ] Live cost meter in TUI status bar + VS Code status bar (in/out tokens × price, session running total, cache-hit %)
+- [ ] Live cost meter in TUI status bar (in/out tokens × price, session running total, cache-hit %)
 - [ ] Soft budget cap per task (`--budget 5.00`, prompt-to-continue)
 - [ ] Auto-router: cheap model (Haiku / local Ollama) for read/list/grep, expensive for design/edit
 - [ ] Auto git-stash before each mutation; tagged with tool-call ID
@@ -697,7 +673,7 @@ Sequenced sub-phases:
 |---|---|---|---|---|
 | 0 — Credibility floor | W1–2 | 2026-05-05 | 2026-05-05 | **complete (7/7)**. Strategy doc, feature-tier mechanism + CI gate, chat-adapter stubs gated, TUI permission flow wired (with regression test), full tool audit (27 stable entries with descriptions), README auto-gen + drift CI gate. |
 | 1 — Wedge & proof | W3–6 | — | — | |
-| 2 — On-ramp | W5–10 | 2026-05-05 | — | **v0.1.0 released** (linux-amd64 + darwin-arm64 binaries published with SHA256SUMS). Release workflow has dryrun mode (`workflow_dispatch` / PR) so future fixes validate before tagging. Remaining: brew tap, `go install` verification, npx wrapper, first-run wizard, VS Code extension, README rewrite. |
+| 2 — On-ramp | W5–10 | 2026-05-05 | — | **v0.1.0 released** (linux-amd64 + darwin-arm64 binaries published with SHA256SUMS). Release workflow has dryrun mode (`workflow_dispatch` / PR) so future fixes validate before tagging. Remaining: brew tap, `go install` verification, npx wrapper, first-run wizard, README rewrite. |
 | 3 — Daily ergonomics | W8–14 | — | — | |
 | 4 — Differentiators | W14+ | — | — | |
 | 5 — Compounding | Ongoing | — | — | |
@@ -760,7 +736,6 @@ Don't write what we can adopt:
 - Badges: shields.io
 - Docs site: GitHub Pages + a static generator, not a custom site
 - Telemetry: PostHog or similar, not a homegrown stack
-- VS Code extension scaffolding: copy proven patterns from Continue / Cline, don't invent
 
 Reserve "build it ourselves" for the wedge — local-first runtime, single-binary, offline mode. Everything else: integrate, don't reinvent.
 
@@ -794,7 +769,7 @@ ycode is a **better engine than most popular agents.** In a crowded market that 
 
 1. **Wedge** — pick "local-first, single-binary, runs offline" and bet the marketing on it. It's the one position the popular cloud-tied agents structurally cannot copy.
 2. **Proof** — public leaderboards (SWE-bench Verified, Aider polyglot, Terminal-Bench, plus an "offline-mode" benchmark only ycode can win). This is the single highest-ROI investment for both developer trust and investor attention. Each new score is a free news cycle.
-3. **On-ramp** — prebuilt binaries, brew/go-install/npx paths, VS Code extension, first-run wizard. Today the on-ramp is `make init`; that has to die.
+3. **On-ramp** — prebuilt binaries, brew/go-install/npx paths, first-run wizard. Today the on-ramp is `make init`; that has to die.
 4. **Daily ergonomics** — cost meter, checkpoint/rollback, session resume. These keep developers once they arrive.
 
 Order of operations matters:

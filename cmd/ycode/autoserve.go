@@ -85,10 +85,9 @@ func detectServer() (baseURL string, ok bool) {
 // ensureServer returns the base URL of a reachable ycode server, or
 // ErrServerNotRunning if none is reachable. It never spawns a server —
 // the bare CLI used to auto-fork `ycode serve --auto` here, but that left
-// orphaned daemons accumulating across sessions (and, in the companion
-// VSCode extension, leaked stderr into the extension-host heap). Callers
-// must handle ErrServerNotRunning by either degrading to in-process mode
-// or surfacing a clear message to the user.
+// orphaned daemons accumulating across sessions. Callers must handle
+// ErrServerNotRunning by either degrading to in-process mode or surfacing
+// a clear message to the user.
 func ensureServer() (string, error) {
 	if baseURL, ok := detectServer(); ok {
 		return baseURL, nil

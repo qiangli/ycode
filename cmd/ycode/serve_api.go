@@ -63,8 +63,8 @@ func buildAPIStack(noNATS bool) (*apiStack, error) {
 	)
 
 	// The remote permission prompter routes elevated-tool checks over the bus
-	// to whichever client is attached to the session (web UI, VS Code
-	// extension, ...). multiSvc is created below; we capture it via a pointer
+	// to whichever client is attached to the session (web UI, thin TUI client,
+	// ...). multiSvc is created below; we capture it via a pointer
 	// so the closure can be installed on apps before multiSvc exists. By the
 	// time a tool actually invokes the prompter, multiSvc is set.
 	var multiSvc *service.MultiService

@@ -1149,7 +1149,7 @@ func (a *App) SetAgentEventFunc(fn func(eventType string, data map[string]any)) 
 // InstallRemotePermissionPrompter wires a service-level permission requester
 // into the App's tool registry. Used by the API server (`ycode serve`) to
 // route permission checks for elevated tools over the bus to remote clients
-// (web UI, VS Code extension) instead of prompting the local TUI. Called
+// (web UI, etc.) instead of prompting the local TUI. Called
 // after the App is constructed and before the agent runs any tools.
 func (a *App) InstallRemotePermissionPrompter(requester service.PermissionRequester) {
 	if a.toolRegistry == nil {
