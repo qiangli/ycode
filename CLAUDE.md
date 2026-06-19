@@ -10,7 +10,7 @@ ycode — pure Go CLI agent harness. Single static binary, Go 1.26+, permissive-
 
 - Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one-shot.
 - Core loop: `internal/runtime/conversation/runtime.go` — assemble request → provider → dispatch tool calls → repeat.
-- This checkout usually lives inside the **`dhnt/` umbrella** as a git submodule. Sibling-path replaces in `go.mod` resolve `../sh` and `../nadir` to flat siblings — inside the umbrella those are real submodules; for standalone clones, `scripts/bootstrap-siblings.sh` reads `.sibling-pins` and clones them at the pinned SHAs.
+- This checkout usually lives inside the **`dhnt/` umbrella** as a git submodule. Sibling-path replaces in `go.mod` resolve `../sh`, `../nadir`, and `../coreutils` to flat siblings — inside the umbrella those are real submodules; for standalone clones, `scripts/bootstrap-siblings.sh` reads `.sibling-pins` and clones them at the pinned SHAs. `../coreutils` is the shared AgentOS hub: it now owns the code-intel engines (`pkg/{treesitter,repomap,codegraph}`, which ycode's `internal/runtime/{treesitter,repomap,codegraph}` re-export via thin alias shims) and the pure-Go git that loom/weave runs on.
 - Root `go.work` defines the workspace: the main module plus `pkg/oci`, `pkg/ollm`, `pkg/otel`, with workspace-level replaces pointing the big vendored deps (podman, ollama, jaeger, victorialogs, perses) at `external/`. To iterate on a `qiangli/*` dep alongside ycode, clone it under `peers/<name>` (gitignored) and add `./peers/<name>` to the `use` directive.
 
 ## First-time setup
@@ -131,19 +131,19 @@ Full deep dive: `docs/architecture.md`. Strategy and feature-tier policy (stable
 
 ## Multi-agent orchestration — Weave and Foreman
 
-**Weave** (`ycode weave …`) is the v2 front-door to Loom (the git-workspace substrate): it fans a queue of independent issues out to parallel subagent CLIs (claude, codex, opencode, gemini, …), each in an isolated git-clone sandbox with no origin-path breadcrumbs, then converges with verification. CLI in `cmd/ycode/weave*.go` + `internal/cli/weavecli/`; Gitea backend in `internal/gitserver/weave{api,setup,board}/`.
+**Weave** fans a queue of independent issues out to parallel subagent CLIs (claude, codex, opencode, gemini, …), each in an isolated git-clone sandbox, then converges with verification. **It has been re-homed out of ycode into the AgentOS hub** (`coreutils/pkg/weave`, pure-filesystem, no Gitea) and is now driven from the AgentOS shell as **`bashy weave …`**. `ycode weave` is a deprecation stub (`cmd/ycode/weave_deprecated.go`) that errors and points at `bashy weave` — intentionally, to force the migration and surface stale callers.
 
 ```bash
-ycode weave add "title"                  # file an issue into the queue
-ycode weave start [--issue N] [-- tool]  # claim, allocate sandbox, launch tool
-ycode weave list                         # active weaves (TOOL / STARTED / DUR)
-ycode weave log <N> [-f]                 # live PTY capture
-ycode weave say <N> "msg"                # inject keystrokes into a worker's PTY
-ycode weave pull                         # merge submitted work back to main
-ycode weave kill|abandon|shell|wait|reset
+bashy weave add "title"                  # file an issue into the queue
+bashy weave start [--issue N] [-- tool]  # claim, allocate sandbox, launch tool
+bashy weave list                         # active weaves (TOOL / STARTED / DUR)
+bashy weave log <N> [-f]                 # live PTY capture
+bashy weave pull                         # merge submitted work back to main
 ```
 
-The operating playbook (blocked-agent protocol, verify-a-prompt-is-live-before-answering, full-suite regression gate after every round) is the `skills/ycode-weave` skill. Design: `docs/loom-v2-plan.md`; worked example: `docs/weave-runbook.md`.
+The **loom** substrate is a *separate* thing that stays in ycode: `pkg/loom` (the Gitea-backed git-workspace service) + `internal/gitserver/{loom,weave{api,setup,board}}/`, consumed by `serve`/autopilot/MCP. Its client-side git (`internal/gitserver/loom/giteabackend.go`) runs **pure-Go-first** through `coreutils/git` via the `gitRun` helper, falling back to host `git` only for cases the pure-Go layer declines (e.g. a conflict-leaving rebase).
+
+The operating playbook (blocked-agent protocol, verify-a-prompt-is-live-before-answering, full-suite regression gate after every round) is the `skills/ycode-weave` skill (update its `ycode weave` → `bashy weave` references). Design: `docs/loom-v2-plan.md`; worked example: `docs/weave-runbook.md`.
 
 **Foreman/Worker** is the older model, invoked through `/foreman` skills. The active session is the **Foreman** — full privileges, full source tree, backlog at `~/.agents/ycode/projects/<id>/backlog/`. Workers are sandboxed subprocesses, each pinned to one Gitea issue and one Loom workspace.
 

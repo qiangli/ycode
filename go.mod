@@ -99,7 +99,7 @@ require (
 	go.podman.io/common v0.67.2-0.20260423135811-cbaa5f41e643
 	golang.org/x/crypto v0.50.0
 	golang.org/x/net v0.53.0
-	golang.org/x/term v0.42.0
+	golang.org/x/term v0.44.0
 	google.golang.org/grpc v1.80.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.50.1
