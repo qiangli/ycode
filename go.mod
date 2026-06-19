@@ -66,14 +66,12 @@ require (
 	github.com/nats-io/nats-server/v2 v2.12.6
 	github.com/nats-io/nats.go v1.50.0
 	github.com/nguyenthenguyen/docx v0.0.0-20230621112118-9c8e795a11db
-	github.com/odvcencio/gotreesitter v0.16.0
 	github.com/ollama/ollama v0.21.2
 	github.com/philippgille/chromem-go v0.7.0
 	github.com/prometheus/common v0.67.5
 	github.com/prometheus/prometheus v0.311.2
 	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
 	github.com/qiangli/bonsai v0.0.0-20260505184649-a3cb69dbf211
-	github.com/qiangli/gfy v0.0.0-20260504062854-764095a2877d
 	github.com/qiangli/nadir v0.0.0-20260513032315-67009486cf9c
 	github.com/qiangli/ycode/pkg/oci v0.0.0-00010101000000-000000000000
 	github.com/qiangli/ycode/pkg/ollm v0.0.0-00010101000000-000000000000
@@ -106,6 +104,11 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.50.1
 	mvdan.cc/sh/v3 v3.13.1
+)
+
+require (
+	github.com/odvcencio/gotreesitter v0.16.0 // indirect
+	github.com/qiangli/gfy v0.0.0-20260504062854-764095a2877d // indirect
 )
 
 require (
