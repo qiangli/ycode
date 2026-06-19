@@ -220,7 +220,7 @@ tidy: ## Run mod tidy, fmt, and vet
 clean: ## Remove build artifacts
 	rm -rf bin/ dist/
 
-install: build ## Install ycode + drop-in shims (ollama, podman, docker) to ~/bin/
+install: build ## Install the ycode binary to ~/bin/ (no shims — opt in via scripts/shims/)
 	@mkdir -p ~/bin
 	@# Unlink before copy so the new binary lands on a fresh inode. On macOS,
 	@# overwriting a signed Mach-O in place leaves the kernel's per-vnode
@@ -230,21 +230,15 @@ install: build ## Install ycode + drop-in shims (ollama, podman, docker) to ~/bi
 	@rm -f ~/bin/ycode
 	@cp bin/ycode ~/bin/ycode
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - ~/bin/ycode 2>/dev/null || true; fi
-	@# The `bash` shim is intentionally excluded: dropping it into ~/bin in
-	@# front of /bin/bash hijacks every shell — interactive prompts, system
-	@# scripts, and CI runners alike — which has caused real mayhem in past
-	@# sessions. If you want bash routed through ycode, opt in explicitly
-	@# (e.g. `cp scripts/shims/bash ~/.local/bin/bash` or wire a per-tool
-	@# PATH wrapper) rather than blanket-installing it here.
-	@# rm -f before cp so an existing symlink (e.g. ~/bin/podman pointing
-	@# at /opt/homebrew/bin/podman from a prior brew install) is replaced
-	@# rather than followed — cp follows symlinks on write, which would
-	@# overwrite the homebrew target and permission-deny on protected paths.
-	@for shim in ollama podman docker; do \
-		rm -f ~/bin/$$shim; \
-		cp scripts/shims/$$shim ~/bin/$$shim && chmod +x ~/bin/$$shim; \
-	done
-	@echo "Installed ycode + shims (ollama, podman, docker) to ~/bin/"
+	@# Drop-in shims (ollama, podman, docker, bash) are intentionally NOT
+	@# installed here. Routing those commands through ycode hijacks any tool
+	@# that polls them — e.g. an editor's container extension calling
+	@# `podman context ls` on a timer routes into a slow `ycode podman` and
+	@# piles up runaway processes; a `bash` shim in front of /bin/bash
+	@# hijacks every shell. Opt in explicitly only where you want it:
+	@# `cp scripts/shims/<name> ~/bin/<name>` (or wire a per-tool PATH
+	@# wrapper) — never blanket-install bash.
+	@echo "Installed ycode to ~/bin/ (shims not installed; see scripts/shims/ to opt in)"
 	@echo 'Make sure ~/bin is in your PATH: export PATH="$$HOME/bin:$$PATH"'
 
 all: build ## Full quality gate (alias for build)
