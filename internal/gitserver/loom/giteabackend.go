@@ -8,6 +8,7 @@
 package loom
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,6 +19,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	cgit "github.com/qiangli/coreutils/git"
 
 	"github.com/qiangli/ycode/internal/gitserver"
 	"github.com/qiangli/ycode/internal/gitserver/agents"
@@ -525,18 +528,23 @@ func (b *GiteaBackend) RebaseSandbox(ctx context.Context, sandboxPath, baseBranc
 
 	// Rebase. A non-zero exit indicates either a real failure or a
 	// conflict; we distinguish by inspecting `git diff` afterward
-	// rather than parsing exit codes (clearer and stable).
-	rebaseCmd := exec.CommandContext(ctx, "git", "rebase", "origin/"+baseBranch)
-	rebaseCmd.Dir = sandboxPath
-	rebaseOut, rebaseErr := rebaseCmd.CombinedOutput()
+	// rather than parsing exit codes (clearer and stable). gitRun is
+	// pure-Go-first and falls back to host git for the conflict case,
+	// where git leaves a conflicted worktree the probe below detects.
+	rebaseStdout, rebaseStderr, rebaseCode, rebaseRunErr := gitRun(ctx, sandboxPath, []string{"rebase", "origin/" + baseBranch})
+	rebaseFailed := rebaseRunErr != nil || rebaseCode != 0
+	rebaseDetail := strings.TrimSpace(rebaseStderr)
+	if rebaseDetail == "" {
+		rebaseDetail = strings.TrimSpace(rebaseStdout)
+	}
 
 	// Probe for conflicts regardless of rebase exit status.
 	conflicts, err := captureGit(ctx, sandboxPath, "diff", "--name-only", "--diff-filter=U")
 	if err != nil {
 		// If even `git diff` fails the sandbox is in a weird state;
 		// surface the original rebase error if any.
-		if rebaseErr != nil {
-			return nil, fmt.Errorf("loom: rebase: %w: %s", rebaseErr, strings.TrimSpace(string(rebaseOut)))
+		if rebaseFailed {
+			return nil, fmt.Errorf("loom: rebase: %v: %s", rebaseRunErr, rebaseDetail)
 		}
 		return nil, fmt.Errorf("loom: detect rebase conflicts: %w", err)
 	}
@@ -545,9 +553,9 @@ func (b *GiteaBackend) RebaseSandbox(ctx context.Context, sandboxPath, baseBranc
 		// Conflicts present — return them; rebase exit is expected non-zero.
 		return files, nil
 	}
-	if rebaseErr != nil {
+	if rebaseFailed {
 		// Non-zero exit with no conflict files means a real failure.
-		return nil, fmt.Errorf("loom: rebase origin/%s: %w: %s", baseBranch, rebaseErr, strings.TrimSpace(string(rebaseOut)))
+		return nil, fmt.Errorf("loom: rebase origin/%s: %v: %s", baseBranch, rebaseRunErr, rebaseDetail)
 	}
 	return nil, nil
 }
@@ -566,43 +574,81 @@ func splitConflictFiles(out string) []string {
 	return files
 }
 
-// runGit executes a git subcommand in dir, discarding stdout. Returns
-// any stderr in the error.
-func runGit(ctx context.Context, dir string, args ...string) error {
+// gitRun runs a git subcommand pure-Go-first: it tries the in-process
+// coreutils/git layer and only falls back to the host git binary when the
+// pure-Go layer declines the case (ErrUnsupported) — e.g. a rebase that
+// hits conflicts, which git resolves by leaving a conflicted worktree the
+// pure-Go linear rebase doesn't model. A non-zero exit is returned via
+// exitCode (not as a Go error); err is reserved for spawn/internal
+// failures so callers can interpret command-level failures themselves.
+func gitRun(ctx context.Context, dir string, args []string) (stdout, stderr string, exitCode int, err error) {
+	res, ferr := cgit.Exec(ctx, dir, args)
+	if ferr == nil {
+		return res.Stdout, res.Stderr, res.ExitCode, nil
+	}
+	if !errors.Is(ferr, cgit.ErrUnsupported) {
+		return "", "", -1, ferr
+	}
+	// Pure-Go layer can't handle this case; defer to the host git binary.
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
+	var outb, errb bytes.Buffer
+	cmd.Stdout = &outb
+	cmd.Stderr = &errb
+	rerr := cmd.Run()
+	code := 0
+	if cmd.ProcessState != nil {
+		code = cmd.ProcessState.ExitCode()
+	}
+	if rerr != nil {
+		var ee *exec.ExitError
+		if errors.As(rerr, &ee) {
+			return outb.String(), errb.String(), code, nil
+		}
+		return outb.String(), errb.String(), -1, rerr
+	}
+	return outb.String(), errb.String(), 0, nil
+}
+
+// runGit executes a git subcommand in dir, discarding stdout. Returns any
+// stderr in the error. Pure-Go-first via gitRun.
+func runGit(ctx context.Context, dir string, args ...string) error {
+	out, errOut, code, err := gitRun(ctx, dir, args)
 	if err != nil {
-		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	if code != 0 {
+		detail := strings.TrimSpace(errOut)
+		if detail == "" {
+			detail = strings.TrimSpace(out)
+		}
+		return fmt.Errorf("git %s: exit %d: %s", strings.Join(args, " "), code, detail)
 	}
 	return nil
 }
 
-// captureGit runs a git subcommand and returns its stdout.
+// captureGit runs a git subcommand and returns its stdout. Pure-Go-first
+// via gitRun.
 func captureGit(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, errOut, code, err := gitRun(ctx, dir, args)
 	if err != nil {
 		return "", err
 	}
-	return string(out), nil
+	if code != 0 {
+		return "", fmt.Errorf("git %s: exit %d: %s", strings.Join(args, " "), code, strings.TrimSpace(errOut))
+	}
+	return out, nil
 }
 
 // hasStagedChanges reports whether `git diff --cached` would produce
 // any output. Used to skip empty commits in CommitAndPush.
 func hasStagedChanges(ctx context.Context, dir string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet")
-	cmd.Dir = dir
-	if err := cmd.Run(); err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			// Exit code 1 from diff --quiet means there ARE changes.
-			if ee.ExitCode() == 1 {
-				return true, nil
-			}
-		}
+	// Pure-Go-first via captureGit; list staged paths and check for any.
+	// (Avoids depending on `diff --quiet`'s exit-code-1-means-changes
+	// convention, which not every git layer mirrors.)
+	out, err := captureGit(ctx, dir, "diff", "--cached", "--name-only")
+	if err != nil {
 		return false, fmt.Errorf("git diff --cached: %w", err)
 	}
-	return false, nil
+	return strings.TrimSpace(out) != "", nil
 }
