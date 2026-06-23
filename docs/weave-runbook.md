@@ -172,7 +172,7 @@ Expected output:
 
 ```
 weave: claimed issue #123 "fix null deref in cache" (p0, top of todo)
-weave: sandbox at ~/.agents/ycode/gitea/loom/sandboxes/ab12cd34/
+weave: workspace at ~/.agents/ycode/gitea/loom/workspaces/ab12cd34/
 weave: launching codex...
 ```
 
@@ -185,7 +185,7 @@ ycode weave start -- opencode
 
 ```
 weave: claimed issue #124 "refactor user service for testability" (p1, top of todo)
-weave: sandbox at ~/.agents/ycode/gitea/loom/sandboxes/ef56gh78/
+weave: workspace at ~/.agents/ycode/gitea/loom/workspaces/ef56gh78/
 weave: launching opencode...
 ```
 
@@ -198,11 +198,11 @@ ycode weave start -- claude-code
 
 ```
 weave: claimed issue #125 "add dark mode toggle" (p2, top of todo)
-weave: sandbox at ~/.agents/ycode/gitea/loom/sandboxes/ij90kl12/
+weave: workspace at ~/.agents/ycode/gitea/loom/workspaces/ij90kl12/
 weave: launching claude-code...
 ```
 
-Three agents now run in three isolated sandboxes. The atomic-claim guarantee meant each `weave start` picked a different card even though the calls were near-simultaneous. None of the sandboxes can see the others' files, branches, stashes, hooks, or in-progress commits (per the sandbox-isolation invariant in the plan doc).
+Three agents now run in three isolated workspaces. The atomic-claim guarantee meant each `weave start` picked a different card even though the calls were near-simultaneous. None of the workspaces can see the others' files, branches, stashes, hooks, or in-progress commits (per the workspace-isolation invariant in the plan doc).
 
 ### Even simpler: omit the tool too
 
@@ -218,9 +218,9 @@ Three terminals × one bare command. This is the minimum-friction shape.
 
 ### What each agent sees
 
-Inside its sandbox, each tool has:
+Inside its workspace, each tool has:
 
-- `cwd` = the sandbox path (a full `git clone --reference` of myapp).
+- `cwd` = the workspace path (a full `git clone --reference` of myapp).
 - Environment:
   - `YCODE_LOOM_ID=loom-...`
   - `YCODE_LOOM_BRANCH=agent/agent-loom-issue-123-.../free-...`
@@ -251,10 +251,10 @@ ycode weave list --watch
 Live-updating TUI:
 
 ```
-ISSUE  PRIO  SOURCE  TOOL          STATE          SANDBOX                       HEARTBEAT  ACTION
-#123   p0    human   codex         working        .../sandboxes/ab12cd34        2s         editing
-#124   p1    human   opencode      submitted      .../sandboxes/ef56gh78        4m         CI running
-#125   p2    human   claude-code   working        .../sandboxes/ij90kl12        1s         editing
+ISSUE  PRIO  SOURCE  TOOL          STATE          WORKSPACE                       HEARTBEAT  ACTION
+#123   p0    human   codex         working        .../workspaces/ab12cd34        2s         editing
+#124   p1    human   opencode      submitted      .../workspaces/ef56gh78        4m         CI running
+#125   p2    human   claude-code   working        .../workspaces/ij90kl12        1s         editing
 ```
 
 `--watch` streams state transitions over the `loom://project` MCP resource — no polling.
@@ -284,7 +284,7 @@ One say = one submitted line. The issue must be `working` with a live wrapper; t
 ycode weave open --issues
 ```
 
-Gitea's issue list shows the three issues with their current state labels (`loom:working` / `loom:submitted` / etc.) color-coded. Refresh as work progresses; click any issue → standard Gitea issue page with comments, PR link, CI status, sticky loom comment showing sandbox path and heartbeat. Filter URLs (`?labels=loom:working`, `?labels=loom:p0`) carry the bookmark state.
+Gitea's issue list shows the three issues with their current state labels (`loom:working` / `loom:submitted` / etc.) color-coded. Refresh as work progresses; click any issue → standard Gitea issue page with comments, PR link, CI status, sticky loom comment showing workspace path and heartbeat. Filter URLs (`?labels=loom:working`, `?labels=loom:p0`) carry the bookmark state.
 
 For programmatic monitoring (e.g., from a script or higher-level orchestrator):
 
@@ -297,7 +297,7 @@ ycode weave list --watch --json | jq -c '. | {issue: .result.issue, from: .resul
 
 ## Phase 4 — Convergence (autonomous)
 
-As each agent finishes its work, it calls `loom_submit`. (If a tool exits cleanly without calling submit, the wrap layer auto-submits its sandbox state — selfinit-installed handler.)
+As each agent finishes its work, it calls `loom_submit`. (If a tool exits cleanly without calling submit, the wrap layer auto-submits its workspace state — selfinit-installed handler.)
 
 What happens behind the scenes for each:
 
@@ -315,7 +315,7 @@ Suppose #123 and #124 both touch `internal/cache/cache.go`. The merger:
 
 1. Merges #123 first (it arrived first).
 2. Tries to rebase #124 → conflict.
-3. Rebases #124's branch onto new `main` in the sandbox, leaves conflict markers in `cache.go`.
+3. Rebases #124's branch onto new `main` in the workspace, leaves conflict markers in `cache.go`.
 4. Issue label flips to `loom:conflict`.
 5. `loom_submit` returns `{state: conflict, files: ["internal/cache/cache.go"]}` to the agent.
 6. Agent edits the conflicted file using its normal tools, calls `loom_submit` again.
@@ -327,13 +327,13 @@ If the agent already exited (some tools stop after a `loom_submit`), you can rea
 ycode weave start --resume --issue 124 -- opencode
 ```
 
-This drops a fresh OpenCode session into the same sandbox, where the conflict is sitting ready to resolve.
+This drops a fresh OpenCode session into the same workspace, where the conflict is sitting ready to resolve.
 
 If you want to fix it yourself:
 
 ```bash
 ycode weave shell 124
-# drops into a shell already in the sandbox with author identity active
+# drops into a shell already in the workspace with author identity active
 $ git status
 # you see the conflict
 $ $EDITOR internal/cache/cache.go
@@ -399,7 +399,7 @@ a3f9b2 <previous commit>
 ...
 ```
 
-Three commits, properly attributed (committers are `agent-loom-issue-123-...@ycode.local` etc.), all clean, all on `main`. Each commit's body contains `Fixes #N` for the local Gitea issue plus a footer linking the original sandbox lease and the merge PR for traceability.
+Three commits, properly attributed (committers are `agent-loom-issue-123-...@ycode.local` etc.), all clean, all on `main`. Each commit's body contains `Fixes #N` for the local Gitea issue plus a footer linking the original workspace lease and the merge PR for traceability.
 
 ## Phase 6 — Push to GitHub
 
@@ -422,27 +422,27 @@ Done. Three issues' worth of work, three different agents, one push.
 
 The reaper handles most of it:
 
-- Merged leases are torn down within the grace window. Sandbox directories removed. Branches preserved in Gitea for audit (deletable later via `ycode loom prune` if you care about disk).
+- Merged leases are torn down within the grace window. Workspace directories removed. Branches preserved in Gitea for audit (deletable later via `ycode loom prune` if you care about disk).
 - Closed (merged) issues remain in Gitea with their `loom:merged` label as history; Gitea's default issue list filter hides closed by default but they're a click away.
 
 If you want to nuke everything for this project explicitly:
 
 ```bash
 ycode weave reset
-# Confirm: remove 3 leases, 3 branches, 0 sandboxes (all reaped), preserve labels and issues? [y/N]
+# Confirm: remove 3 leases, 3 branches, 0 workspaces (all reaped), preserve labels and issues? [y/N]
 ```
 
 ## Common situations cheat sheet
 
 ### Tool crashed mid-work
 
-Wrap detected the exit. Sandbox is intact for 30 minutes idle grace. Re-attach:
+Wrap detected the exit. Workspace is intact for 30 minutes idle grace. Re-attach:
 
 ```bash
 ycode weave start --resume --issue 124 -- opencode
 ```
 
-The same sandbox, same branch, same author identity. Whatever the tool had committed locally is still there.
+The same workspace, same branch, same author identity. Whatever the tool had committed locally is still there.
 
 ### You want to take over manually
 
@@ -450,7 +450,7 @@ The same sandbox, same branch, same author identity. Whatever the tool had commi
 ycode weave shell 124
 ```
 
-Drops into a shell inside the sandbox with the lease's author identity already configured in `git config user.email`. Edit, commit, submit:
+Drops into a shell inside the workspace with the lease's author identity already configured in `git config user.email`. Edit, commit, submit:
 
 ```bash
 $ vim ...
@@ -468,7 +468,7 @@ Kill it cleanly:
 ycode weave abandon 124 --reason "going to redo with different prompt"
 ```
 
-Sandbox removed, branch removed (since no PR open), lease closed, issue label flips to `loom:abandoned`. Start fresh:
+Workspace removed, branch removed (since no PR open), lease closed, issue label flips to `loom:abandoned`. Start fresh:
 
 ```bash
 ycode weave start --issue 124 -- codex      # try a different tool
@@ -506,7 +506,7 @@ Nothing stops you. After Phase 5.2 (whether one PR or three have merged), `git p
 
 ### An agent discovers related work while fixing something else
 
-Codex, fixing #123, notices a separate race condition in the eviction path. Inside its sandbox, it calls `weave_add` via MCP:
+Codex, fixing #123, notices a separate race condition in the eviction path. Inside its workspace, it calls `weave_add` via MCP:
 
 ```
 weave_add(
@@ -535,20 +535,20 @@ ycode weave prio 127 p0   # I disagree, this one's urgent
 
 Heartbeats stopped. After 30 min idle (default), the reaper:
 
-- Tears down sandboxes whose leases have no open PR.
-- Leaves sandboxes whose leases have an open PR alone (merger may still need them).
+- Tears down workspaces whose leases have no open PR.
+- Leaves workspaces whose leases have an open PR alone (merger may still need them).
 - Preserves all branches in Gitea.
 
-When you come back: `ycode weave list` shows what's still active. `ycode weave list --history` shows what was reaped. Lost work surface = zero (everything that was committed in the sandbox is preserved as a Gitea branch).
+When you come back: `ycode weave list` shows what's still active. `ycode weave list --history` shows what was reaped. Lost work surface = zero (everything that was committed in the workspace is preserved as a Gitea branch).
 
 ## What you never had to do
 
 - Configure CI for the local Gitea (auto-detected from your project files).
 - Set up per-agent identity, tokens, or branch naming conventions.
 - Choose a backend mode (auto-selected: `forge` since you had `npm test`).
-- Manage sandbox lifetimes or TTLs.
+- Manage workspace lifetimes or TTLs.
 - Coordinate the three agents to avoid stepping on each other.
-- Resolve a merge conflict in your working tree (the merger handles it in the sandboxes).
+- Resolve a merge conflict in your working tree (the merger handles it in the workspaces).
 - Touch the Gitea UI for anything other than glancing at the filtered issue list.
 
 The contract was: three terminals, one command per, walk away, pull, push. Everything else is the substrate's problem.

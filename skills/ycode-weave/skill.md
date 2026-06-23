@@ -1,13 +1,13 @@
 ---
 name: weave
-description: Orchestrate parallel subagent CLIs (codex, claude, opencode, ...) against a queue of issues — isolated sandboxes, live steering, recovery, verified convergence
+description: Orchestrate parallel subagent CLIs (codex, claude, opencode, ...) against a queue of issues — isolated workspaces, live steering, recovery, verified convergence
 user_invocable: true
 ---
 
 # /weave — Multi-Agent Orchestration Playbook
 
 Drive `ycode weave` as an orchestrator: file issues, fan out one
-subagent CLI per issue in isolated git-clone sandboxes, watch and
+subagent CLI per issue in isolated git-clone workspaces, watch and
 steer them, recover from kills, and merge verified work back. Every
 rule below was earned in dogfooding; the failure it prevents is
 named where that helps.
@@ -47,14 +47,14 @@ if evidence is absent, write `MISSING`. For improvement work, require
 both a passing gate and queue evidence that `commits_ahead > 0`.
 
 Operational invariant: keep five things aligned with observable
-evidence — the queue, the sandboxes, the workers, the verification
+evidence — the queue, the workspaces, the workers, the verification
 gates, and the merged checkout. If any two disagree, stop and
 diagnose before continuing.
 
 ## Authoring --verify commands
 
 The wrapper runs them with a hermetic `bash --noprofile --norc -c`
-in the sandbox (10m ceiling). Still: never `bash -l` inside (user
+in the workspace (10m ceiling). Still: never `bash -l` inside (user
 dotfiles), never `set -e` around a `diff` pipeline (exit 1 means
 "files differ", not failure), anchor `ROOT=$PWD` before any `cd` into
 symlinked corpora, always `echo` the measured number (it lands in
@@ -79,7 +79,7 @@ self-orchestration is safe). From a user goal:
     #    Complex round? Run the optional Phase 1.5 planning poker.
     ycode weave add "<title>" --priority p0 --body "<body>"   # × N
     # 2. PREPARE (only if the build needs untracked corpora — Phase 2):
-    ycode weave start --no-spawn --issue <N> && ln -s <corpus> <sandbox>/
+    ycode weave start --no-spawn --issue <N> && ln -s <corpus> <workspace>/
     # 3. LAUNCH one worker per issue, backgrounded, watchdogs ON
     #    (tool recipes in Phase 3 — pick per tool, including your own):
     ycode weave start --resume --issue <N> --max-runtime 45m --mem-limit 5g \
@@ -95,7 +95,7 @@ self-orchestration is safe). From a user goal:
 Tool cheat-sheet (details + caveats in Phase 3):
 
     claude    claude --dangerously-skip-permissions "<body>"        # TUI; pre-seed trust in ~/.claude.json (see Per tool) or say N "1"
-    codex     codex exec --skip-git-repo-check --sandbox workspace-write "<body>"   # headless; --full-auto is deprecated AND fails "not a trusted dir"
+    codex     codex exec --skip-git-repo-check --workspace workspace-write "<body>"   # headless; --full-auto is deprecated AND fails "not a trusted dir"
     gemini    gemini --yolo --skip-trust -i "<body>"                # TUI; no trust dialog
     opencode  opencode run "<body>"                                 # headless; check artifacts, not exit code
     aider     aider --yes-always --no-check-update --message "<body>"  # headless; auto-commits; model from ~/.aider.conf.yml
@@ -113,7 +113,7 @@ Reflecting seven dogfood rounds:
   `say` steering while headless; check artifacts not exit codes. ROOT CAUSE
   of its silent exit-0 no-ops confirmed: with no `permission` config it
   REJECTS its own edit/bash tools and exits green — always pre-seed the
-  sandbox opencode.json (see defense-in-depth matrix). With kimi it no-op'd
+  workspace opencode.json (see defense-in-depth matrix). With kimi it no-op'd
   on hard dev work even with permissions fixed. With DeepSeek (capability
   retest) it was night-and-day: ran a full ~35m on a hard gated task,
   decomposed it, explored the source deeply (even spawned an Explore
@@ -125,7 +125,7 @@ Reflecting seven dogfood rounds:
   caught only by the full-suite sweep. Verdict: promote to first-class
   WORKER (dev + judge); do NOT make it the primary orchestrator — it has
   no long-horizon session track record, its `external_directory` rejection
-  fights the out-of-tree sandbox traversal an orchestrator needs, and it
+  fights the out-of-tree workspace traversal an orchestrator needs, and it
   just demonstrated the over-trust-a-narrow-gate failure an orchestrator
   must never have. Fine as a bounded deputy or judge.
 - **aider**: passed probation on a gated 3-pointer (sh new-exp
@@ -154,9 +154,9 @@ first round; skim the rest and return on demand.
 - `cd` to the target repo root. Queues are per-repo, keyed by cwd;
   an empty `weave list` elsewhere now hints where the action is.
 - Identify anything the task's build/repro needs that is NOT in git
-  (vendored corpora, symlinked fixtures, generated assets). Sandbox
+  (vendored corpora, symlinked fixtures, generated assets). Workspace
   clones contain ONLY tracked files — a missing corpus is why one
-  dogfood agent escaped its sandbox hunting for fixtures and another
+  dogfood agent escaped its workspace hunting for fixtures and another
   couldn't verify at all.
 - In submodule umbrellas, run weave against the actual repo being
   changed, not the umbrella, unless the issue is explicitly about
@@ -167,13 +167,13 @@ first round; skim the rest and return on demand.
 
 One issue per independent task. Every body carries, in order:
 
-1. **Sandbox contract** (verbatim-ish): "Your cwd is your isolated
-   sandbox — a full git clone. Stay inside it; use only relative
+1. **Workspace contract** (verbatim-ish): "Your cwd is your isolated
+   workspace — a full git clone. Stay inside it; use only relative
    paths; never follow git remotes. Your branch is checked out and
    your git identity is pre-set."
 2. **GOAL** — one measurable outcome.
 3. **REPRO** — the exact command that measures it, runnable from the
-   sandbox. If the canonical harness applies filters/env, embed them.
+   workspace. If the canonical harness applies filters/env, embed them.
    Anchor binaries BEFORE entering linked corpora: `BIN=$PWD/bin/tool`
    at the repo root, never `realpath ../..` from inside a symlinked
    directory — it resolves to the symlink target's checkout and the
@@ -212,7 +212,7 @@ used, timebox the whole phase to a few minutes.
    unblocking effect. Return STRICT JSON:
    [{id, points, priority, split: [titles...]|null, note}]."
 2. Fan the brief out as CHEAP HEADLESS one-shots — these are
-   advisory calls, not sandboxed issues (no repo access needed):
+   advisory calls, not workspaceed issues (no repo access needed):
        codex exec "<brief>"          claude -p "<brief>"
        gemini -p "<brief>"           opencode run "<brief>"
    All four in parallel; collect within minutes.
@@ -228,13 +228,13 @@ used, timebox the whole phase to a few minutes.
    from points (8 → 30m + small margin), biggest issues to the
    strongest tool first.
 
-## Phase 2 — Allocate and prepare sandboxes
+## Phase 2 — Allocate and prepare workspaces
 
 When the repro needs untracked content, allocate first, link, then
-launch into the prepared sandbox:
+launch into the prepared workspace:
 
     ycode weave start --no-spawn --issue N
-    ln -s /abs/path/to/corpus  <sandbox>/corpus     # whatever Phase 0 found
+    ln -s /abs/path/to/corpus  <workspace>/corpus     # whatever Phase 0 found
     ycode weave start --resume --issue N ... -- <tool> "<body>"
 
 Skip this phase when the repo is self-contained.
@@ -272,7 +272,7 @@ levels, in order, for every launch:
 
 1. **CLI flag** — use it when it exists.
 2. **Pre-seed config** — when no flag covers it, write the tool's own
-   trust/permission cache for the sandbox path during prep (the exact
+   trust/permission cache for the workspace path during prep (the exact
    key the tool's dialog would write).
 3. **Monitor + `weave say`** — ALWAYS, even with 1+2: for the first
    ~90s of any TUI launch, poll `weave log N -n 6` for prompt
@@ -284,16 +284,16 @@ Per-tool matrix (this machine, update as versions change):
 
 | tool | 1) flags | 2) pre-seed | 3) watch for |
 |---|---|---|---|
-| claude TUI | none for trust (--dangerously-skip-permissions ≠ trust) | `~/.claude.json` → `projects.<sandbox>.hasTrustDialogAccepted=true` (+ hasCompletedProjectOnboarding) | "trust" dialog → say "1" |
-| codex exec | `--skip-git-repo-check --sandbox workspace-write` (no prompts in exec mode) | `~/.codex/config.toml` → `[projects."<sandbox>"]\ntrust_level = "trusted"` (needed for TUI mode) | TUI: directory-trust → say "1" |
+| claude TUI | none for trust (--dangerously-skip-permissions ≠ trust) | `~/.claude.json` → `projects.<workspace>.hasTrustDialogAccepted=true` (+ hasCompletedProjectOnboarding) | "trust" dialog → say "1" |
+| codex exec | `--skip-git-repo-check --workspace workspace-write` (no prompts in exec mode) | `~/.codex/config.toml` → `[projects."<workspace>"]\ntrust_level = "trusted"` (needed for TUI mode) | TUI: directory-trust → say "1" |
 | gemini | `--yolo --skip-trust` (covers everything) | n/a | usage-limit menus (it stalls there) |
-| opencode | NO `--dangerously-skip-permissions` equivalent — config-only; headless `run` silently REJECTS un-permitted tools and exits 0 — the no-op-with-green-exit failure mode | write `opencode.json` into the sandbox root at prep: `{"permission":{"edit":"allow","bash":"allow","webfetch":"allow","external_directory":"allow"}}` (never commit it). The `external_directory` key is SEPARATE and gates ANY path outside the project tree (e.g. `/tmp`) even with `bash:allow` — omitting it auto-rejects out-of-workspace reads and causes the no-op; also prefer writing fixtures/diffs INSIDE the sandbox | artifacts, not prompts: zero commits + clean exit = rejection happened |
+| opencode | NO `--dangerously-skip-permissions` equivalent — config-only; headless `run` silently REJECTS un-permitted tools and exits 0 — the no-op-with-green-exit failure mode | write `opencode.json` into the workspace root at prep: `{"permission":{"edit":"allow","bash":"allow","webfetch":"allow","external_directory":"allow"}}` (never commit it). The `external_directory` key is SEPARATE and gates ANY path outside the project tree (e.g. `/tmp`) even with `bash:allow` — omitting it auto-rejects out-of-workspace reads and causes the no-op; also prefer writing fixtures/diffs INSIDE the workspace | artifacts, not prompts: zero commits + clean exit = rejection happened |
 | aider | `--yes-always` (covers all confirmations) | n/a (model/keys via ~/.aider.conf.yml + ~/.env) | reasoning loops ("Already done…" repetition) — kill, don't wait |
 
-Pre-seed snippets (run during Phase 2 prep, $SANDBOX = absolute path):
+Pre-seed snippets (run during Phase 2 prep, $WORKSPACE = absolute path):
 
     # claude
-    python3 - "$SANDBOX" << 'EOF'
+    python3 - "$WORKSPACE" << 'EOF'
     import json,sys,os
     p=os.path.expanduser('~/.claude.json'); d=json.load(open(p))
     d.setdefault('projects',{}).setdefault(sys.argv[1],{}).update(
@@ -301,13 +301,13 @@ Pre-seed snippets (run during Phase 2 prep, $SANDBOX = absolute path):
     json.dump(d,open(p,'w'),indent=2)
     EOF
     # codex (TUI mode only; exec mode needs no seed)
-    printf '\n[projects."%s"]\ntrust_level = "trusted"\n' "$SANDBOX" >> ~/.codex/config.toml
+    printf '\n[projects."%s"]\ntrust_level = "trusted"\n' "$WORKSPACE" >> ~/.codex/config.toml
     # opencode
-    printf '{"permission":{"edit":"allow","bash":"allow","webfetch":"allow","external_directory":"allow"}}' > "$SANDBOX/opencode.json"
+    printf '{"permission":{"edit":"allow","bash":"allow","webfetch":"allow","external_directory":"allow"}}' > "$WORKSPACE/opencode.json"
 
 Per tool:
 
-- **codex, headless**: `codex exec --skip-git-repo-check --sandbox
+- **codex, headless**: `codex exec --skip-git-repo-check --workspace
   workspace-write "<body>"` — exits cleanly on completion. NOTE:
   `--full-auto` is deprecated and, on current codex, exec aborts with
   "Not inside a trusted directory and --skip-git-repo-check was not
@@ -321,12 +321,12 @@ Per tool:
   injected keystrokes). Use `claude --dangerously-skip-permissions
   --verbose --output-format stream-json -p "<body>"` for a streaming
   headless run, or accept fire-and-forget and read its transcript
-  under `~/.claude/projects/<sandbox-slug>/` for progress.
+  under `~/.claude/projects/<workspace-slug>/` for progress.
 - **claude TUI trust dialog**: there is NO flag to pre-trust a folder
   (`--dangerously-skip-permissions` does not cover it; only `-p` mode
-  skips trust). PRE-SEED the per-directory cache during sandbox prep
+  skips trust). PRE-SEED the per-directory cache during workspace prep
   instead — upsert into `~/.claude.json`:
-      python3 - "$SANDBOX" << 'EOF'
+      python3 - "$WORKSPACE" << 'EOF'
       import json,sys,os
       p=os.path.expanduser('~/.claude.json'); d=json.load(open(p))
       d.setdefault('projects',{}).setdefault(sys.argv[1],{}).update(
@@ -348,7 +348,7 @@ Per tool:
   ~/.aider.conf.yml (this machine: DeepSeek-only by owner directive —
   do NOT pass --model); requires DEEPSEEK_API_KEY in the environment.
   Litter caveat: it creates/edits .gitignore and .aider* files in the
-  sandbox — never stage those. Interactive mode exits on /exit.
+  workspace — never stage those. Interactive mode exits on /exit.
 - **opencode**: `opencode run "<body>"` — streams live, exits clean,
   and DOES ingest `weave say` lines mid-run (steerable while
   headless). Two caveats: its own permission system auto-rejects ANY
@@ -357,16 +357,16 @@ Per tool:
   permission, separate from `bash`; log line `permission requested:
   external_directory (...); auto-rejecting`). Grant
   `"external_directory":"allow"` in opencode.json AND write
-  fixtures/diffs INSIDE the sandbox, not `/tmp` (a `/tmp`-resident diff
+  fixtures/diffs INSIDE the workspace, not `/tmp` (a `/tmp`-resident diff
   is exactly what no-op'd it once) — and a rejected tool call can end
   the run with EXIT 0 and no deliverable: always check for the artifact,
   never trust the exit code alone.
   CONTAINMENT WARNING: opencode keeps persistent per-project state;
   if it has ever worked in the origin repo it gravitates back to it
-  by absolute path — even with the sandbox's `origin` remote removed
-  (observed twice: committed to the real checkout's master, sandbox
-  branch left empty). Prefer codex/claude when sandbox containment
-  matters; if you do use opencode, check `git -C <sandbox> log` AND
+  by absolute path — even with the workspace's `origin` remote removed
+  (observed twice: committed to the real checkout's master, workspace
+  branch left empty). Prefer codex/claude when workspace containment
+  matters; if you do use opencode, check `git -C <workspace> log` AND
   the origin repo's HEAD at completion before trusting state.
 
 Background each start (`&`); the wrapper auto-setsids.
@@ -383,7 +383,7 @@ Background each start (`&`); the wrapper auto-setsids.
 commits already landed in the base branch (merged out-of-band, not via
 `weave pull`) shows as `done` and is swept by `weave prune` — no more
 stranded items that only `abandon` could clear. A footer flags terminal
-items still holding sandbox clones on disk (`weave prune` to reclaim).
+items still holding workspace clones on disk (`weave prune` to reclaim).
 
 Never measure benchmarks/suites on the host while subagents compile
 in parallel — per-test timeouts flake under load and read as
@@ -395,7 +395,7 @@ the assignment is done. Agents routinely stop after fixing only PART of
 the goal — codex exec especially submits after one or two easy clusters,
 often with the work UNCOMMITTED. Judge against the GOAL, not the state:
 on each poll, and always before accepting an outcome, RE-MEASURE the
-target metric in the worker's sandbox — never trust "submitted". If the
+target metric in the worker's workspace — never trust "submitted". If the
 goal isn't met (target not at 0, only a partial reduction, failures
 remain), the worker stopped early — RE-DRIVE it, don't accept the
 partial:
@@ -410,7 +410,7 @@ the loop EXPLICIT and iterative — measure → read EVERY remaining failure
 remaining item is documented in a BLOCKERS note with a concrete reason.
 Reinforce mid-run with `weave say N "keep going; commit each cluster"`.
 Resume as many rounds as needed: one partial submit is a checkpoint, not
-the deliverable. (Pairs with the dirty-sandbox / "submitted ≠ committed"
+the deliverable. (Pairs with the dirty-workspace / "submitted ≠ committed"
 check in Phase 7 — salvage and commit the tree before re-driving, so the
 partial progress isn't lost when you resume.)
 
@@ -465,8 +465,8 @@ WHAT THE SCREEN ASKS:
 
 - Wrapper died / machine restarted: `weave list` flags stale items →
   `weave start --resume --issue N -- <tool> "<follow-up body>"`.
-  Resume works from any state with a preserved sandbox.
-- Watchdog killed mid-work: the sandbox survives. Inspect
+  Resume works from any state with a preserved workspace.
+- Watchdog killed mid-work: the workspace survives. Inspect
   uncommitted changes — they are often real progress (one killed run
   held a 3x diff reduction uncommitted). Verify, commit them as the
   orchestrator, then resume with a short follow-up prompt listing
@@ -474,8 +474,8 @@ WHAT THE SCREEN ASKS:
 - Agent finished but claimed results you can't see: NEVER trust the
   claim — re-run the issue's REPRO yourself before merging. Park
   unverifiable work on a branch; re-file with a hardened prompt.
-- **WARNING**: resumed sandboxes keep their ORIGINAL base commit — work
-  resumed after sibling merges lands on a stale base; rebase in the sandbox
+- **WARNING**: resumed workspaces keep their ORIGINAL base commit — work
+  resumed after sibling merges lands on a stale base; rebase in the workspace
   or expect conflicts at pull.
 
 ## Phase 7 — Converge and verify
@@ -484,15 +484,15 @@ WHAT THE SCREEN ASKS:
     ycode weave list --json               # read state/exit/commits/dirty/verify fields
     ycode weave pull N                    # targeted: one clean, committed, verified item
 
-- **Check for a dirty sandbox BEFORE pull**: `git -C <sandbox> status
+- **Check for a dirty workspace BEFORE pull**: `git -C <workspace> status
   --porcelain` (ignore `.aider*`/`GEMINI.md` litter). The wrapper's
   verify runs against the WORKING TREE, but pull merges only COMMITS —
   an agent that commits an interim state and keeps improving
   uncommitted gets a green gate attesting work that never merges, and
-  sandbox cleanup destroys it (this shipped a silently-regressed
+  workspace cleanup destroys it (this shipped a silently-regressed
   master once: gate said redir=0, merged commit measured redir=4).
   If dirty with real changes: resume the agent with "commit your
-  work", or commit it yourself in the sandbox, and re-verify.
+  work", or commit it yourself in the workspace, and re-verify.
 
 - **Enforce the cap — split, don't extend.** 8 points ≈ 30 min. When
   a run hits ~1.5× its cap with the core deliverable already
@@ -510,9 +510,9 @@ WHAT THE SCREEN ASKS:
   Only a non-responding tool gets force-killed, recorded as
   `killed` (its own state — never promoted) with wrapper-measured
   evidence (`commits_ahead`, `head`) on the item. If you are not in
-  the command role, record the state and leave the sandbox intact.
+  the command role, record the state and leave the workspace intact.
   If you are in the command role, inspect, re-verify, commit any real
-  residue in the sandbox, and prefer `ycode weave pull N` once the
+  residue in the workspace, and prefer `ycode weave pull N` once the
   item is clean and attested. Manual fetch/merge is salvage of last
   resort, not normal convergence, and must be reported as salvage.
 - After pull: rebuild, run the canonical measurement, then run the
@@ -523,7 +523,7 @@ WHAT THE SCREEN ASKS:
   touch. Bisect any regression against the pre-merge commit before
   accepting the round.
 - Escaped commit (work landed on the ORIGIN repo's branch instead
-  of the sandbox): don't reflex-revert. Verify it canonically in
+  of the workspace): don't reflex-revert. Verify it canonically in
   place — exact repro, full package tests, inspect any test
   deletions for legitimacy. Keep it if real (record via
   `weave abandon N --reason`), reset and park on a branch if not.
@@ -534,7 +534,7 @@ WHAT THE SCREEN ASKS:
   require explicit per-action human authorization.
 
 For multi-issue rounds, finish with a JUDGE pass (the runbook's
-Pattern B): after merging, file one more issue on a fresh sandbox
+Pattern B): after merging, file one more issue on a fresh workspace
 off the merged state — independently re-measure every claim, run
 the full suite, audit each commit for test deletions/scope spills,
 and commit a verdict report. A judge round caught nothing the
@@ -547,7 +547,7 @@ surfaced a reconciliation worth recording.
 |---|---|---|
 | `weave list` empty | wrong cwd | follow the hint; cd to the repo |
 | capture empty, agent "working" | tool buffers (claude -p) | read its transcript; next time use streaming mode |
-| agent cites paths outside sandbox | corpus missing in clone, or remote followed | Phase 2 links; origin is removed from sandboxes — verify `git remote` is empty |
+| agent cites paths outside workspace | corpus missing in clone, or remote followed | Phase 2 links; origin is removed from workspaces — verify `git remote` is empty |
 | claimed improvement won't reproduce | agent measured differently | re-run the issue's exact REPRO; park the branch |
 | state=failed after a kill you issued | kill bookkeeping | branch is intact; inspect, re-verify, then prefer targeted `weave pull N`; manual fetch/merge is command-role salvage only |
-| exit 143, no commits | watchdog kill | check sandbox for uncommitted progress before re-filing |
+| exit 143, no commits | watchdog kill | check workspace for uncommitted progress before re-filing |
