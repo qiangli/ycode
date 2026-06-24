@@ -627,6 +627,31 @@ This is the host-side complement to E1: E1 fails over MODELS/backends inside
 the gateway on a clean 429; E2 fails over TOOLS in the conductor when the
 throttle is invisible to the gateway.
 
+### Tool throttling & cooldown (automatic re-engage)
+
+Weave now closes the loop so you don't babysit the reset:
+
+1. **Fail over NOW (E2).** On a `throttled` item, re-launch the SAME issue
+   with the next *available* fleet tool (the move above). Query availability
+   with **`weave fleet`** (or `weave fleet --json`) — it lists each tool as
+   `available` or `cooling until HH:MM`, so you skip a tool that is still
+   capped instead of bouncing off it again.
+2. **Weave records the cooldown.** When a run terminates throttled and the
+   message carries a parseable reset ("try again at 11:41 AM", "in 5
+   minutes", "Retry-After: N"), `weave start` writes the tool's available-at
+   to a per-queue cooldown store (best-effort — it never fails the run).
+   `weave fleet` reads it. Limitation: when the tool was launched via a
+   `bash -c '<tool> …'` wrapper, weave best-effort recovers the inner tool
+   name from the throttle log; if it can't, the cooldown is keyed coarsely
+   under `bash` (still nudges a switch).
+3. **Re-engage automatically.** The throttle is per-rolling-window, so once
+   `weave fleet` shows the tool `available` again, put it back in rotation —
+   no manual timer. Local Ollama remains the un-throttleable floor.
+
+So the conductor loop is: `weave fleet` → assign an available tool → on
+throttle, fail over + let weave record the cooldown → re-check `weave fleet`
+next round and re-engage the recovered tool.
+
 ## Conformance / fidelity campaign patterns (learned 2026-06-24, bash-5.3 drive 86%→90%)
 
 - **Gate around a RED base.** If the target repo's full suite is red on `main` for
