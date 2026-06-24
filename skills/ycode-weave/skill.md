@@ -593,6 +593,40 @@ resumes without re-applying.
   driving; you have been handed off. (This is what makes automatic
   failover safe: a resumed old orchestrator cannot double-drive.)
 
+## Tool-level failover (HITL-v2 E2) — switch the tool, not the model
+
+Subscription-billed CLIs (claude/codex Pro/Max) hit rolling-window + weekly
+caps that emit NO clean HTTP 429 — they print a usage-limit message and
+exit. The cloudbox gateway's 429-aware failover (E1) CANNOT see this (no
+429 on the wire), so the **conductor** must detect it and switch the whole
+TOOL, not just the model.
+
+**The signal.** When a worker terminates, weave classifies its PTY-log tail
+and records two fields on the item (visible in `weave list --json` /
+`weave log`): `throttled: true` + `throttle_signal: "<matched phrase>"`
+(e.g. "usage limit", "rate limit", "429", "weekly limit"). A bare non-zero
+exit with no throttle phrase is a CRASH, not a throttle — it is NOT marked
+(so an ordinary failure doesn't waste a tool switch).
+
+**The move.** On a `throttled` item, re-launch the SAME issue with the NEXT
+tool in the fallback order, using that tool's Phase-3 recipe:
+
+    claude → codex → opencode → aider → local (ollama)
+
+    weave start --issue N -- <next-tool> <recipe...>
+
+Record the switch (`weave note "issue N: claude throttled (<signal>) →
+codex"`, or a session `directive` if bound to a shared session). Walk the
+order until a tool completes or the list is exhausted; **local Ollama is
+the un-throttleable floor** — it never hits a subscription cap, so the task
+always has somewhere to land. Don't re-pick a tool already throttled this
+round. The throttle is per-rolling-window, so a tool that throttled may
+recover later — fine to put it back at the end of the next round.
+
+This is the host-side complement to E1: E1 fails over MODELS/backends inside
+the gateway on a clean 429; E2 fails over TOOLS in the conductor when the
+throttle is invisible to the gateway.
+
 ## Failure modes, condensed
 
 | Symptom | Likely cause | Move |
