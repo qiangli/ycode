@@ -1,4 +1,4 @@
-# `ycode weave` runbook — three agents, three issues, end to end
+# `bashy weave` runbook — three agents, three issues, end to end
 
 > **Status (2026-06-10):** the MVP flow described here works **today**
 > against the local backend (`queue.json` + `git worktree` + `git
@@ -82,12 +82,12 @@ This registers ycode's MCP servers and the `weave`-aware launch hooks into `~/.c
 
 ## Phase 1 — Seed the queue (and trigger first-run setup)
 
-You file issues into the queue with `ycode weave add`. The very first `weave add` in this repo bootstraps the whole Gitea side; subsequent ones are sub-second.
+You file issues into the queue with `bashy weave add`. The very first `weave add` in this repo bootstraps the whole Gitea side; subsequent ones are sub-second.
 
 ### 1.1 First `add` (first-run setup happens implicitly)
 
 ```bash
-ycode weave add "fix null deref in cache" --priority p0 --body "Stack trace in #log/2026-06-09.log; reproduces on cold cache."
+bashy weave add "fix null deref in cache" --priority p0 --body "Stack trace in #log/2026-06-09.log; reproduces on cold cache."
 ```
 
 Expected output (first run only):
@@ -107,8 +107,8 @@ weave add: issue #123 created (priority p0, source human, label loom:todo)
 ### 1.2 Add the rest
 
 ```bash
-ycode weave add "refactor user service for testability"
-ycode weave add "add dark mode toggle" --priority p2
+bashy weave add "refactor user service for testability"
+bashy weave add "add dark mode toggle" --priority p2
 ```
 
 ```
@@ -123,7 +123,7 @@ Three issues are now queued (each carrying `loom:todo`), sorted by priority: #12
 If you'd rather hand the prioritization to an LLM:
 
 ```bash
-ycode weave prio --auto
+bashy weave prio --auto
 ```
 
 ```
@@ -136,24 +136,24 @@ weave prio --auto: re-ranked 3 issues
 Or set one explicitly:
 
 ```bash
-ycode weave prio 124 p1
+bashy weave prio 124 p1
 ```
 
 ### 1.4 (Optional) Inspect the queue
 
 ```bash
-ycode weave open --issues
+bashy weave open --issues
 # opens http://127.0.0.1:5743/gitea/admin/myapp/issues?labels=loom:todo&state=open
 ```
 
 You'll see all three issues in Gitea's list view, color-coded by priority label. Filter further by clicking labels in the sidebar; the URL bar carries the filter state if you want to bookmark a particular view.
 
-If you prefer a kanban: run `ycode weave init-board` once (it's a separate, opt-in setup that creates a Gitea project board via the web routes). Loom does not auto-sync card positions, so if you go that route you'll drag cards manually. For most workflows the filtered list view is enough.
+If you prefer a kanban: run `bashy weave init-board` once (it's a separate, opt-in setup that creates a Gitea project board via the web routes). Loom does not auto-sync card positions, so if you go that route you'll drag cards manually. For most workflows the filtered list view is enough.
 
 To preview what the next `weave start` will claim:
 
 ```bash
-ycode weave next
+bashy weave next
 # → #123  p0  "fix null deref in cache"  (picked_by: priority)
 ```
 
@@ -165,7 +165,7 @@ Open three terminals. One command each. **No `--issue` flag** — `weave start` 
 
 ```bash
 cd ~/projects/myapp
-ycode weave start -- codex
+bashy weave start -- codex
 ```
 
 Expected output:
@@ -180,7 +180,7 @@ weave: launching codex...
 
 ```bash
 cd ~/projects/myapp
-ycode weave start -- opencode
+bashy weave start -- opencode
 ```
 
 ```
@@ -193,7 +193,7 @@ weave: launching opencode...
 
 ```bash
 cd ~/projects/myapp
-ycode weave start -- claude-code
+bashy weave start -- claude-code
 ```
 
 ```
@@ -209,9 +209,9 @@ Three agents now run in three isolated workspaces. The atomic-claim guarantee me
 If you don't pass `-- <tool>`, `weave start` resolves the tool from the issue's `tool:X` label (if any), then from `default_tool` in `.ycode/loom.yaml`. So if every issue should go to `codex`:
 
 ```bash
-ycode weave start              # claims top of todo, uses default_tool
-ycode weave start              # claims next, same tool
-ycode weave start              # claims next, same tool
+bashy weave start              # claims top of todo, uses default_tool
+bashy weave start              # claims next, same tool
+bashy weave start              # claims next, same tool
 ```
 
 Three terminals × one bare command. This is the minimum-friction shape.
@@ -240,12 +240,12 @@ codex> work on the issue described in $YCODE_LOOM_ISSUE_BODY; the title is "$YCO
 
 You can let the agents run untouched. To peek at progress, two options.
 
-### Option A — Terminal: `ycode weave list`
+### Option A — Terminal: `bashy weave list`
 
 In any fourth terminal:
 
 ```bash
-ycode weave list --watch
+bashy weave list --watch
 ```
 
 Live-updating TUI:
@@ -262,8 +262,8 @@ ISSUE  PRIO  SOURCE  TOOL          STATE          WORKSPACE                     
 To watch what a specific subagent is printing (any number of watchers, human or agent):
 
 ```bash
-ycode weave log 123 -f          # stream issue #123's PTY capture live
-ycode weave log 123 -n 100      # just the last 100 lines
+bashy weave log 123 -f          # stream issue #123's PTY capture live
+bashy weave log 123 -n 100      # just the last 100 lines
 ```
 
 The capture is recorded whenever the `weave start` parent wasn't a TTY (orchestrator pipe, `&`); it persists after the run as the post-mortem artifact. Tools that buffer in non-interactive modes (`claude -p`) leave it empty until exit.
@@ -271,9 +271,9 @@ The capture is recorded whenever the `weave start` parent wasn't a TTY (orchestr
 You can also steer a running subagent — `weave say` types a line into its PTY (keystrokes + Enter, via the wrapper's control socket):
 
 ```bash
-ycode weave say 123 "/btw what's your status? summarize in one line"
-ycode weave say 123 "stop exploring; commit what passes and exit"
-ycode weave log 123 -f          # watch the reaction
+bashy weave say 123 "/btw what's your status? summarize in one line"
+bashy weave say 123 "stop exploring; commit what passes and exit"
+bashy weave log 123 -f          # watch the reaction
 ```
 
 One say = one submitted line. The issue must be `working` with a live wrapper; tools that ignore terminal input in their non-interactive modes (`claude -p`) receive but ignore the keystrokes — use a TUI/streaming mode for steerable runs.
@@ -281,7 +281,7 @@ One say = one submitted line. The issue must be `working` with a live wrapper; t
 ### Option B — Browser: Gitea filtered issue list
 
 ```bash
-ycode weave open --issues
+bashy weave open --issues
 ```
 
 Gitea's issue list shows the three issues with their current state labels (`loom:working` / `loom:submitted` / etc.) color-coded. Refresh as work progresses; click any issue → standard Gitea issue page with comments, PR link, CI status, sticky loom comment showing workspace path and heartbeat. Filter URLs (`?labels=loom:working`, `?labels=loom:p0`) carry the bookmark state.
@@ -289,7 +289,7 @@ Gitea's issue list shows the three issues with their current state labels (`loom
 For programmatic monitoring (e.g., from a script or higher-level orchestrator):
 
 ```bash
-ycode weave list --watch --json | jq -c '. | {issue: .result.issue, from: .result.from, to: .result.to}'
+bashy weave list --watch --json | jq -c '. | {issue: .result.issue, from: .result.from, to: .result.to}'
 # {"issue":124,"from":"working","to":"submitted"}
 # {"issue":124,"from":"submitted","to":"merged"}
 # ...
@@ -324,7 +324,7 @@ Suppose #123 and #124 both touch `internal/cache/cache.go`. The merger:
 If the agent already exited (some tools stop after a `loom_submit`), you can reattach:
 
 ```bash
-ycode weave start --resume --issue 124 -- opencode
+bashy weave start --resume --issue 124 -- opencode
 ```
 
 This drops a fresh OpenCode session into the same workspace, where the conflict is sitting ready to resolve.
@@ -332,13 +332,13 @@ This drops a fresh OpenCode session into the same workspace, where the conflict 
 If you want to fix it yourself:
 
 ```bash
-ycode weave shell 124
+bashy weave shell 124
 # drops into a shell already in the workspace with author identity active
 $ git status
 # you see the conflict
 $ $EDITOR internal/cache/cache.go
 $ git add internal/cache/cache.go
-$ ycode weave submit 124         # CLI shortcut for loom_submit
+$ bashy weave submit 124         # CLI shortcut for loom_submit
 ```
 
 ### What if CI fails?
@@ -352,7 +352,7 @@ Your original `~/projects/myapp/` checkout has been completely untouched through
 ### 5.1 Check state
 
 ```bash
-ycode weave list
+bashy weave list
 ```
 
 ```
@@ -368,7 +368,7 @@ All green. (If anything is still `working` or `conflict`, address it before pull
 
 ```bash
 cd ~/projects/myapp
-ycode weave pull
+bashy weave pull
 ```
 
 Expected output:
@@ -428,7 +428,7 @@ The reaper handles most of it:
 If you want to nuke everything for this project explicitly:
 
 ```bash
-ycode weave reset
+bashy weave reset
 # Confirm: remove 3 leases, 3 branches, 0 workspaces (all reaped), preserve labels and issues? [y/N]
 ```
 
@@ -439,7 +439,7 @@ ycode weave reset
 Wrap detected the exit. Workspace is intact for 30 minutes idle grace. Re-attach:
 
 ```bash
-ycode weave start --resume --issue 124 -- opencode
+bashy weave start --resume --issue 124 -- opencode
 ```
 
 The same workspace, same branch, same author identity. Whatever the tool had committed locally is still there.
@@ -447,7 +447,7 @@ The same workspace, same branch, same author identity. Whatever the tool had com
 ### You want to take over manually
 
 ```bash
-ycode weave shell 124
+bashy weave shell 124
 ```
 
 Drops into a shell inside the workspace with the lease's author identity already configured in `git config user.email`. Edit, commit, submit:
@@ -456,7 +456,7 @@ Drops into a shell inside the workspace with the lease's author identity already
 $ vim ...
 $ git add -p
 $ git commit -m "rebalance under load"
-$ ycode weave submit 124
+$ bashy weave submit 124
 $ exit                            # back to your normal shell
 ```
 
@@ -465,13 +465,13 @@ $ exit                            # back to your normal shell
 Kill it cleanly:
 
 ```bash
-ycode weave abandon 124 --reason "going to redo with different prompt"
+bashy weave abandon 124 --reason "going to redo with different prompt"
 ```
 
 Workspace removed, branch removed (since no PR open), lease closed, issue label flips to `loom:abandoned`. Start fresh:
 
 ```bash
-ycode weave start --issue 124 -- codex      # try a different tool
+bashy weave start --issue 124 -- codex      # try a different tool
 ```
 
 ### You want to merge #125's PR before #124's
@@ -479,7 +479,7 @@ ycode weave start --issue 124 -- codex      # try a different tool
 By default the merger goes in arrival order. To prioritize:
 
 ```bash
-ycode weave open --issue 125         # opens the PR in Gitea
+bashy weave open --issue 125         # opens the PR in Gitea
 # In Gitea, click "Merge now" — bypasses the queue
 ```
 
@@ -522,13 +522,13 @@ A new issue #126 appears in the queue, labeled `loom:source:agent:codex` and `lo
 ### Let an agent rank everything for me
 
 ```bash
-ycode weave prio --auto
+bashy weave prio --auto
 ```
 
 LLM reads all `todo` issues, ranks them by impact, and applies `loom:p0`–`loom:p3` labels. You can override any single one afterward:
 
 ```bash
-ycode weave prio 127 p0   # I disagree, this one's urgent
+bashy weave prio 127 p0   # I disagree, this one's urgent
 ```
 
 ### You closed all three terminals and walked away
@@ -539,7 +539,7 @@ Heartbeats stopped. After 30 min idle (default), the reaper:
 - Leaves workspaces whose leases have an open PR alone (merger may still need them).
 - Preserves all branches in Gitea.
 
-When you come back: `ycode weave list` shows what's still active. `ycode weave list --history` shows what was reaped. Lost work surface = zero (everything that was committed in the workspace is preserved as a Gitea branch).
+When you come back: `bashy weave list` shows what's still active. `bashy weave list --history` shows what was reaped. Lost work surface = zero (everything that was committed in the workspace is preserved as a Gitea branch).
 
 ## What you never had to do
 
@@ -561,27 +561,27 @@ If you're an orchestrator agent instead of a human at a keyboard, the same workf
 export YCODE_AGENT=1     # forces --json, no prompts, no colors
 
 # Phase 1 — seed the queue from a planning step (LLM emitted tasks.json)
-ycode weave add --from-file tasks.json --json
+bashy weave add --from-file tasks.json --json
 
 # (Optional) Re-rank everything via the orchestrator's own LLM strategy.
 # Equivalent to a single weave_prioritize MCP call.
-ycode weave prio --auto --json
+bashy weave prio --auto --json
 
 # Phase 2 — spawn N workers. Each weave start atomically claims top-of-queue.
 for i in 1 2 3; do
-  ycode weave start --tool codex --json &
+  bashy weave start --tool codex --json &
 done
 wait
 
 # Phase 3 — watch transitions as NDJSON
-ycode weave list --watch --json &
+bashy weave list --watch --json &
 WATCH_PID=$!
 
 # Phase 4 wait — block until everything claimed-and-started is terminal
-ycode weave wait --all --timeout 1h --json
+bashy weave wait --all --timeout 1h --json
 
 # Phase 5 — pull
-ycode weave pull --json
+bashy weave pull --json
 
 kill $WATCH_PID
 ```

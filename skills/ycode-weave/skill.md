@@ -6,15 +6,15 @@ user_invocable: true
 
 # /weave — Multi-Agent Orchestration Playbook
 
-Drive `ycode weave` as an orchestrator: file issues, fan out one
+Drive `bashy weave` as an orchestrator: file issues, fan out one
 subagent CLI per issue in isolated git-clone workspaces, watch and
 steer them, recover from kills, and merge verified work back. Every
 rule below was earned in dogfooding; the failure it prevents is
 named where that helps.
 
-This skill is self-contained: it assumes only the `ycode weave` command
+This skill is self-contained: it assumes only the `bashy weave` command
 set (available wherever `ycode` is installed) plus whatever worker CLIs
-you choose to launch. Run `ycode weave --help` (and `ycode weave
+you choose to launch. Run `bashy weave --help` (and `bashy weave
 <subcommand> --help`) for the exact subcommands and flags on your machine.
 
 Use this when you have N independent pieces of work for peer agent
@@ -37,7 +37,7 @@ decide which role you can actually hold in your current runtime:
 If unsure, drop one role. A round that fails visibly is cheaper than a
 round that silently no-ops.
 
-The queue is the source of truth. Re-read `ycode weave list --json`
+The queue is the source of truth. Re-read `bashy weave list --json`
 before any decision to file, launch, steer, kill, judge, pull, report,
 or abandon work. Treat `state`, `exit`, `commits_ahead`, `dirty`,
 `verify_exit`, `verify_output`, `verify_tree`, and `killed_by` as
@@ -77,18 +77,18 @@ self-orchestration is safe). From a user goal:
     # 1. DECOMPOSE the goal into N independent issues with DISJOINT
     #    file scopes; write each body per the Phase 1 contract below.
     #    Complex round? Run the optional Phase 1.5 planning poker.
-    ycode weave add "<title>" --priority p0 --body "<body>"   # × N
+    bashy weave add "<title>" --priority p0 --body "<body>"   # × N
     # 2. PREPARE (only if the build needs untracked corpora — Phase 2):
-    ycode weave start --no-spawn --issue <N> && ln -s <corpus> <workspace>/
+    bashy weave start --no-spawn --issue <N> && ln -s <corpus> <workspace>/
     # 3. LAUNCH one worker per issue, backgrounded, watchdogs ON
     #    (tool recipes in Phase 3 — pick per tool, including your own):
-    ycode weave start --resume --issue <N> --max-runtime 45m --mem-limit 5g \
+    bashy weave start --resume --issue <N> --max-runtime 45m --mem-limit 5g \
         -- <tool> <tool-flags> "<body>" &
     # 4. MONITOR: `weave list` (TOOL/STARTED/DUR), `weave log <N> -f`,
     #    blocked-agent protocol (Phase 4); steer with `weave say`.
-    ycode weave wait --all --timeout 50m
+    bashy weave wait --all --timeout 50m
     # 5. CONVERGE: verify each claim, then merge + re-measure (Phase 7):
-    ycode weave pull <N>                 # targeted; one verified item at a time
+    bashy weave pull <N>                 # targeted; one verified item at a time
     # 6. JUDGE: file one more issue on the merged state for an
     #    independent verification agent (end of Phase 7).
 
@@ -220,8 +220,8 @@ used, timebox the whole phase to a few minutes.
    points per issue; any tool-to-tool spread wider than one Fib
    step, or any split proposal, means the issue is under-specified
    — break it down and re-add the pieces. Record the outcome:
-       ycode weave point <issue> <1|2|3|5|8>
-       ycode weave prio  <issue> <p0..p3>
+       bashy weave point <issue> <1|2|3|5|8>
+       bashy weave prio  <issue> <p0..p3>
    (or file with `weave add --points N` directly). PTS shows in
    `weave list`.
 4. Assign per the report card and the points: budget --max-runtime
@@ -233,9 +233,9 @@ used, timebox the whole phase to a few minutes.
 When the repro needs untracked content, allocate first, link, then
 launch into the prepared workspace:
 
-    ycode weave start --no-spawn --issue N
+    bashy weave start --no-spawn --issue N
     ln -s /abs/path/to/corpus  <workspace>/corpus     # whatever Phase 0 found
-    ycode weave start --resume --issue N ... -- <tool> "<body>"
+    bashy weave start --resume --issue N ... -- <tool> "<body>"
 
 Skip this phase when the repo is self-contained.
 
@@ -373,11 +373,11 @@ Background each start (`&`); the wrapper auto-setsids.
 
 ## Phase 4 — Monitor
 
-    ycode weave list             # TOOL + STARTED + DUR: who works what, since when
-    ycode weave log N -f         # live PTY capture (any number of watchers)
-    ycode weave log N --summary  # compact outcome: state/exit/verify/commits/merged
-    ycode weave status N         # where one issue stands + merged-into-main yes/no
-    ycode weave list --watch --json   # NDJSON state transitions
+    bashy weave list             # TOOL + STARTED + DUR: who works what, since when
+    bashy weave log N -f         # live PTY capture (any number of watchers)
+    bashy weave log N --summary  # compact outcome: state/exit/verify/commits/merged
+    bashy weave status N         # where one issue stands + merged-into-main yes/no
+    bashy weave list --watch --json   # NDJSON state transitions
 
 `weave list` reconciles state against git: a `submitted` item whose
 commits already landed in the base branch (merged out-of-band, not via
@@ -400,7 +400,7 @@ goal isn't met (target not at 0, only a partial reduction, failures
 remain), the worker stopped early — RE-DRIVE it, don't accept the
 partial:
 
-    ycode weave start --resume --issue N ... -- <tool> "<harder prompt>"
+    bashy weave start --resume --issue N ... -- <tool> "<harder prompt>"
 
 The harder prompt must (a) state exactly how far it got vs the goal
 ("you're at 52, only fixed 2; your work is also uncommitted"), (b) make
@@ -446,7 +446,7 @@ WHAT THE SCREEN ASKS:
 
 ## Phase 5 — Steer (weave say)
 
-    ycode weave say N "btw, status check: one line — current measured
+    bashy weave say N "btw, status check: one line — current measured
     number and what you're working on — then continue."
 
 - One say = one typed line + Enter. Injected text is keystrokes; the
@@ -480,9 +480,9 @@ WHAT THE SCREEN ASKS:
 
 ## Phase 7 — Converge and verify
 
-    ycode weave wait --all --timeout 50m
-    ycode weave list --json               # read state/exit/commits/dirty/verify fields
-    ycode weave pull N                    # targeted: one clean, committed, verified item
+    bashy weave wait --all --timeout 50m
+    bashy weave list --json               # read state/exit/commits/dirty/verify fields
+    bashy weave pull N                    # targeted: one clean, committed, verified item
 
 - **Check for a dirty workspace BEFORE pull**: `git -C <workspace> status
   --porcelain` (ignore `.aider*`/`GEMINI.md` litter). The wrapper's
@@ -512,7 +512,7 @@ WHAT THE SCREEN ASKS:
   evidence (`commits_ahead`, `head`) on the item. If you are not in
   the command role, record the state and leave the workspace intact.
   If you are in the command role, inspect, re-verify, commit any real
-  residue in the workspace, and prefer `ycode weave pull N` once the
+  residue in the workspace, and prefer `bashy weave pull N` once the
   item is clean and attested. Manual fetch/merge is salvage of last
   resort, not normal convergence, and must be reported as salvage.
 - After pull: rebuild, run the canonical measurement, then run the
