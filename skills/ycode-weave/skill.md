@@ -541,6 +541,58 @@ and commit a verdict report. A judge round caught nothing the
 orchestrator missed exactly once so far; every other time it
 surfaced a reconciliation worth recording.
 
+## Shared session (HITL-v2) — remote participants, directives, handoff
+
+OPTIONAL layer. When the work is bound to a cloudbox **Task** (a shared
+"working session"), other humans/tools on other hosts can join to observe,
+inject info, steer, or take over as orchestrator. Local single-host
+orchestration (Phases 0–7) is unchanged; this adds a remote control plane.
+The session is a cloudbox Task + its append-only event log; the
+orchestrator-of-record is the Task's drive **lease** holder.
+
+**Verbs** (all over the joined session; `weave join` writes a session
+pointer in the repo's queue state so the rest need no task id):
+
+- `weave sessions` — list joinable sessions (owned + shared-with-me).
+- `weave join [<task-id>]` — no arg = the current session; prints the
+  continuity record (summary + history) and tails the live feed.
+- `weave note "<text>"` — append a `note` (new info for the fleet).
+- `weave steer <run> "<text>"` — append a `directive` `{run, verb:"say",
+  arg}` aimed at the agent on issue `<run>` (the remote analogue of the
+  local `weave say`).
+- `weave take [--as <tool@host>] [--force]` — claim the orchestrator lease
+  (become the driver); `--force` preempts a dead/throttled holder.
+- `weave handoff --to <tool@host>` — graceful: checkpoint the summary,
+  release the lease; the successor runs `weave take --as <that>`.
+- `weave roster` — who's joined + the current lease holder.
+
+**Conductor duty — consume directives.** When you hold the session, run
+
+    weave conduct [--interval 3s]
+
+ALONGSIDE `weave start` (a second long-lived process). It polls the
+session feed for `directive`/`note` events since a persisted cursor
+(`<queueDir>/directive-cursor`) and applies each directive to the LOCAL
+queue via the same primitives as `weave say`/`add`/`prio`/`kill`, then
+appends an `ack`. So a remote `weave steer 3 "use the v2 endpoint"` lands
+as a live `say` into the agent on issue #3, and an `ack` shows up in the
+feed on every host. Unknown verbs are ack'd `unknown_verb` and skipped
+(the loop never aborts); `note` events are informational (skipped, cursor
+advances). The cursor is the idempotency guard — a restarted `conduct`
+resumes without re-applying.
+
+**Handoff + preemption (the three modes).**
+- *Graceful*: holder `weave handoff --to X` (checkpoints + releases);
+  successor `weave take --as X` resumes from the continuity record — no
+  in-flight state needed, the log IS the state.
+- *Forced*: `weave take --force` preempts a holder that can't release
+  (throttled/dead). This bumps the session's **fencing epoch**.
+- *Tolerate being preempted*: if you were force-claimed, your writes start
+  failing with a stale-epoch conflict (HTTP 409 `stale_epoch`). That is
+  NOT a transient error to retry — it means a takeover replaced you. Stop
+  driving; you have been handed off. (This is what makes automatic
+  failover safe: a resumed old orchestrator cannot double-drive.)
+
 ## Failure modes, condensed
 
 | Symptom | Likely cause | Move |
