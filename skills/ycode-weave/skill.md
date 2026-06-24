@@ -627,6 +627,34 @@ This is the host-side complement to E1: E1 fails over MODELS/backends inside
 the gateway on a clean 429; E2 fails over TOOLS in the conductor when the
 throttle is invisible to the gateway.
 
+## Conformance / fidelity campaign patterns (learned 2026-06-24, bash-5.3 drive 86%→90%)
+
+- **Gate around a RED base.** If the target repo's full suite is red on `main` for
+  ENVIRONMENT reasons (sh's `TestParseConfirm`/`TestRunnerRunConfirm` shell out to the host's
+  bash 3.2 on macOS), a round gated on the bare suite false-FAILS good work. Set `--verify` to
+  skip them (`go test ./... -skip 'TestParseConfirm|TestRunnerRunConfirm'`); judge a round by
+  NEW failures vs the base, never absolute green.
+- **Specificity drives yield.** A generic "make X match bash" closes ~1 case/round; embedding
+  the EXACT per-case `expected-vs-actual` DIFFs closes ~3×. Paste the concrete failing cases
+  (binary-safe extraction — probe output has multibyte/control chars, use python not awk/grep
+  -o), point the worker at the on-disk case scripts, and give it the oracle command to
+  self-verify.
+- **Decompose STRUCTURAL clusters by root cause — don't spray cases.** When a big cluster
+  resists even a sharp per-case round (closes ~2 of N), it's not the spec — it's several
+  distinct ROOT gaps in one bucket. Do a one-pass investigation (group failures by signature),
+  then weave ONE round per root cause with that hypothesis. (array: one-blob round −2/35;
+  decomposed into sparse / unset / arith-subscript / shopt → −17.)
+- **Cross-repo measurement.** Fix in an engine repo, metric downstream (sh fix, bashy probe):
+  gate the round on the ENGINE's own unit tests; the ORCHESTRATOR measures the downstream
+  metric post-merge (rebuild downstream + run the probe). Give the worker a self-verify path
+  (build the engine's standalone binary + diff vs the oracle) so it isn't fixing blind.
+- **Entangled clusters: parallel execution, SEQUENTIAL gated merge.** Rounds that share a
+  source file run concurrently but merge one at a time, full-suite re-gate each, conflicts
+  resolved by COMBINING fix-sets — then re-run ALL touched clusters' tests (a clean textual
+  merge can silently regress one cluster; this caught a var-op rewrite that broke assign's
+  dynamic-subscript case). "Just weave it" = `weave add` + `weave start`: queue the issue,
+  enlist an idle tool.
+
 ## Failure modes, condensed
 
 | Symptom | Likely cause | Move |
