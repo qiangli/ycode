@@ -131,7 +131,7 @@ Full deep dive: `docs/architecture.md`. Strategy and feature-tier policy (stable
 
 ## Multi-agent orchestration — Weave and Foreman
 
-**Weave** fans a queue of independent issues out to parallel subagent CLIs (claude, codex, opencode, gemini, …), each in an isolated git-clone sandbox, then converges with verification. **It has been re-homed out of ycode into the AgentOS hub** (`coreutils/pkg/weave`, pure-filesystem, no Gitea) and is now driven from the AgentOS shell as **`bashy weave …`**. `ycode weave` is a deprecation stub (`cmd/ycode/weave_deprecated.go`) that errors and points at `bashy weave` — intentionally, to force the migration and surface stale callers.
+**Weave** fans a queue of independent issues out to parallel subagent CLIs (claude, codex, opencode, gemini, …), each in an isolated git-clone sandbox, then converges with verification. **It has been re-homed out of ycode into the AgentOS hub** (`coreutils/pkg/weave`, pure-filesystem, no Gitea) and is now driven from the AgentOS shell as **`bashy weave …`**. Weave is **fully removed from ycode** — there is no `ycode weave` command. Its conductor playbook + runbook moved with the tool to `coreutils/pkg/weave/{CONDUCTOR-PLAYBOOK,WEAVE-RUNBOOK}.md`, and the terse discoverable version is `bashy weave guide`.
 
 ```bash
 bashy weave add "title"                  # file an issue into the queue
@@ -143,7 +143,7 @@ bashy weave pull                         # merge submitted work back to main
 
 The **loom** substrate is a *separate* thing that stays in ycode: `pkg/loom` (the Gitea-backed git-workspace service) + `internal/gitserver/{loom,weave{api,setup,board}}/`, consumed by `serve`/autopilot/MCP. Its client-side git (`internal/gitserver/loom/giteabackend.go`) runs **pure-Go-first** through `coreutils/git` via the `gitRun` helper, falling back to host `git` only for cases the pure-Go layer declines (e.g. a conflict-leaving rebase).
 
-The operating playbook (blocked-agent protocol, verify-a-prompt-is-live-before-answering, full-suite regression gate after every round) is the `skills/ycode-weave` skill (update its `ycode weave` → `bashy weave` references). Design: `docs/loom-v2-plan.md`; worked example: `docs/weave-runbook.md`.
+The operating playbook (blocked-agent protocol, verify-a-prompt-is-live-before-answering, full-suite regression gate after every round) lives **with the tool** now: `bashy weave guide` (terse, discoverable by any tool) + `coreutils/pkg/weave/{CONDUCTOR-PLAYBOOK,WEAVE-RUNBOOK}.md` (the rich playbook + worked example). Loom design: `docs/loom-v2-plan.md`.
 
 **Foreman/Worker** is the older model, invoked through `/foreman` skills. The active session is the **Foreman** — full privileges, full source tree, backlog at `~/.agents/ycode/projects/<id>/backlog/`. Workers are sandboxed subprocesses, each pinned to one Gitea issue and one Loom workspace.
 
@@ -167,7 +167,7 @@ phases are steps, and a run emits a verifiable attestation. The
 
 ## Skills
 
-Bundled skills live at top-level `skills/` (`ycode-weave`, `ycode-foreman`, `ycode-autopilot`, `ycode-conductor`, `ycode-tab`, …), are embedded in the binary via `skills/embed.go`, and install user-globally. Edit them there — not in `.agents/ycode/skills/`, which is the installed copy. Note: `ycode-conductor` is *generated* — it is the SKILL.md export of the dhnt `ConductorSkill` in `github.com/dhnt/dhnt`; edit the dhnt source and re-export rather than hand-editing the canonical block.
+Bundled skills live at top-level `skills/` (`ycode-foreman`, `ycode-autopilot`, `ycode-conductor`, `ycode-tab`, …), are embedded in the binary via `skills/embed.go`, and install user-globally. Edit them there — not in `.agents/ycode/skills/`, which is the installed copy. Note: `ycode-conductor` is *generated* — it is the SKILL.md export of the dhnt `ConductorSkill` in `github.com/dhnt/dhnt`; edit the dhnt source and re-export rather than hand-editing the canonical block.
 
 ## Umbrella interaction
 
@@ -182,7 +182,6 @@ When this checkout is inside `dhnt/`, the parent `dhnt/CLAUDE.md` governs cross-
 - `docs/backlog.md` — Boss → Foreman → Worker protocol
 - `docs/pipeline.md` — six-step pipeline for non-trivial work (research → plan → build/test → evaluate → commit → codify)
 - `docs/loom-v2-plan.md` / `docs/loom-v2-implementation.md` — weave/loom v2 design and implementation status
-- `docs/weave-runbook.md` — end-to-end three-agent weave walkthrough
 - `docs/shell-agent.md` — agent-mode shell integration recipes and the hint engine
 - `docs/release.md` — release procedure and the per-platform asset matrix
 - `external/gitea/AGENTS.md`, `external/podman/AGENTS.md` — embedded subsystem guidance

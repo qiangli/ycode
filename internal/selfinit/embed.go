@@ -43,12 +43,6 @@ var SkillInventory = []SkillInventoryEntry{
 		When:     "you start a session with no specific user task; pick up the next prioritized item from the project backlog (`ycode backlog list`) and ship it",
 	},
 	{
-		Name:     "/weave",
-		Summary:  "Orchestrate parallel subagent CLIs against a queue of issues",
-		BodyPath: "~/.config/ycode/skills/ycode-weave/skill.md",
-		When:     "you have N independent tasks to fan out to peer agent CLIs (codex, claude, opencode) in isolated sandboxes and merge verified work back",
-	},
-	{
 		Name:     "/autopilot",
 		Summary:  "Autonomously execute a development task through a research-plan-build-test-fix-commit loop",
 		BodyPath: "~/.config/ycode/skills/ycode-autopilot/skill.md",

@@ -43,7 +43,7 @@ func Names() []string {
 }
 
 // Body returns the embedded skill.md body for a skill. The name may be
-// the directory form ("ycode-weave") or the bare form ("weave").
+// the directory form ("ycode-foreman") or the bare form ("foreman").
 func Body(name string) (string, bool) {
 	dir := name
 	if !strings.HasPrefix(dir, "ycode-") {
