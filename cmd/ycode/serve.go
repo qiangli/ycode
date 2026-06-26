@@ -26,8 +26,9 @@ import (
 	"github.com/qiangli/ycode/internal/gitserver"
 	"github.com/qiangli/ycode/internal/gitserver/backlog"
 	"github.com/qiangli/ycode/internal/gitserver/projects"
+	"github.com/qiangli/coreutils/external/ollama"
+	runnerEmbed "github.com/qiangli/coreutils/external/ollama/runner_embed"
 	"github.com/qiangli/ycode/internal/inference"
-	runnerEmbed "github.com/qiangli/ycode/internal/inference/runner_embed"
 	"github.com/qiangli/ycode/internal/observability"
 	"github.com/qiangli/ycode/internal/observability/dashboards"
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -911,7 +912,7 @@ type stackComponents struct {
 	mgr           *observability.StackManager
 	memos         *observability.MemosComponent
 	bonsai        *observability.BonsaiComponent
-	ollama        *inference.OllamaComponent
+	ollama        *ollama.OllamaComponent
 	containers    *container.ContainerComponent
 	gitServer     *gitserver.GitServerComponent
 	loom          *loomComponent // workspace substrate; nil if gitserver disabled
@@ -1024,13 +1025,18 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 	mgr.AddComponent(bonsaiComp)
 
 	// Ollama — local inference engine (optional managed runner).
-	var ollamaComp *inference.OllamaComponent
+	var ollamaComp *ollama.OllamaComponent
 	if inferCfg.IsEnabled() {
-		ollamaComp = inference.NewOllamaComponent(inferCfg, filepath.Join(dataDir, "inference"))
+		compCfg := &ollama.Config{
+			Enabled:   inferCfg.Enabled,
+			ModelsDir: inferCfg.ModelsDir,
+			UseSystem: inferCfg.UseSystem,
+		}
+		ollamaComp = ollama.NewOllamaComponent(compCfg, filepath.Join(dataDir, "inference"))
 		mgr.AddComponent(ollamaComp)
 	} else {
 		// Always register the Ollama management UI — auto-detects standalone Ollama.
-		mgr.AddComponent(inference.NewOllamaUIComponent())
+		mgr.AddComponent(ollama.NewOllamaUIComponent())
 	}
 
 	// Container isolation — Podman-based agent sandboxing (optional).

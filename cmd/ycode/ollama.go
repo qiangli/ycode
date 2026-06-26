@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/coreutils/external/ollama"
-	"github.com/qiangli/ycode/internal/inference"
 )
 
 // newOllamaCmd constructs the ollama command using the shared coreutils/external/ollama
@@ -34,7 +33,7 @@ func newOllamaCmd() *cobra.Command {
 
 			// nil cfg → OllamaComponent uses defaults; OLLAMA_HOST / OLLAMA_MODELS
 			// from the environment still take effect via ollama's envconfig.
-			comp := inference.NewOllamaComponent(nil, inferenceDataDir)
+			comp := ollama.NewOllamaComponent(nil, inferenceDataDir)
 
 			startCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
@@ -44,7 +43,7 @@ func newOllamaCmd() *cobra.Command {
 
 			baseURL := comp.BaseURL()
 			if baseURL == "" {
-				baseURL = inference.DefaultOllamaURL()
+				baseURL = ollama.DefaultURL()
 			}
 			fmt.Printf("Ollama server listening on %s\n", baseURL)
 			fmt.Println("Press Ctrl-C to stop.")

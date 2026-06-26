@@ -34,7 +34,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiangli/ycode/internal/inference"
+	"github.com/qiangli/coreutils/external/ollama"
 )
 
 // TestReleaseSmoke_OllamaPullAndChat starts the in-process ollama
@@ -48,7 +48,7 @@ func TestReleaseSmoke_OllamaPullAndChat(t *testing.T) {
 	}
 
 	dataDir := filepath.Join(t.TempDir(), "inference")
-	comp := inference.NewOllamaComponent(&inference.Config{}, dataDir)
+	comp := ollama.NewOllamaComponent(&ollama.Config{}, dataDir)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()

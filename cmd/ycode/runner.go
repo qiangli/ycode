@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	runnerEmbed "github.com/qiangli/ycode/internal/inference/runner_embed"
+	runnerEmbed "github.com/qiangli/coreutils/external/ollama/runner_embed"
 )
 
 // newRunnerCmd adds the `ycode runner` subcommand. It exists so ollama's

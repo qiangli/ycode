@@ -3,13 +3,14 @@ package inference
 import (
 	"fmt"
 
+	"github.com/qiangli/coreutils/external/ollama"
 	"github.com/qiangli/ycode/internal/api"
 )
 
 // NewLocalProvider creates an API provider backed by the running Ollama
 // instance. It wraps the existing OpenAICompatClient, pointed at the
 // local runner's /v1/ endpoint with no API key.
-func NewLocalProvider(comp *OllamaComponent) (api.Provider, error) {
+func NewLocalProvider(comp *ollama.OllamaComponent) (api.Provider, error) {
 	if comp == nil || !comp.Healthy() {
 		return nil, fmt.Errorf("inference: ollama component not healthy")
 	}

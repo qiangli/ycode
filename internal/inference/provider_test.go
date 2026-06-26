@@ -3,6 +3,7 @@ package inference
 import (
 	"testing"
 
+	"github.com/qiangli/coreutils/external/ollama"
 	"github.com/qiangli/ycode/internal/api"
 )
 
@@ -28,7 +29,7 @@ func TestNewLocalProvider_NilComponent(t *testing.T) {
 }
 
 func TestNewLocalProvider_UnhealthyComponent(t *testing.T) {
-	comp := NewOllamaComponent(&Config{}, t.TempDir())
+	comp := ollama.NewOllamaComponent(&ollama.Config{}, t.TempDir())
 	// Component is not started, so not healthy.
 	_, err := NewLocalProvider(comp)
 	if err == nil {
