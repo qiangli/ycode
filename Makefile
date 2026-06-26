@@ -45,7 +45,7 @@ comma := ,
 #                                  Linux where podman uses its native
 #                                  socket directly). Added automatically
 #                                  when the gz exists.
-TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata$(if $(wildcard internal/runtime/wrap/spawn_embed/ycode-spawn.gz),$(comma)embed_spawn)$(if $(wildcard internal/inference/runner_embed/ycode-runner.gz),$(comma)embed_runner)$(if $(wildcard internal/container/vfkit_embed/vfkit.gz),$(comma)embed_vfkit)$(if $(wildcard internal/container/podman_embed/podman.gz),$(comma)embed_podman)$(if $(wildcard internal/container/gvproxy_embed/gvproxy.gz),$(comma)embed_gvproxy)
+TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata$(if $(wildcard internal/runtime/wrap/spawn_embed/ycode-spawn.gz),$(comma)embed_spawn)$(if $(wildcard ../coreutils/external/ollama/runner_embed/ycode-runner.gz),$(comma)embed_runner)$(if $(wildcard internal/container/vfkit_embed/vfkit.gz),$(comma)embed_vfkit)$(if $(wildcard internal/container/podman_embed/podman.gz),$(comma)embed_podman)$(if $(wildcard internal/container/gvproxy_embed/gvproxy.gz),$(comma)embed_gvproxy)
 TAGS := -tags "$(TAG_LIST)"
 PACKAGES := $(shell go list ./... | grep -v '/priorart/')
 
@@ -345,12 +345,12 @@ runner-build-thin: ## Build thin runner and compress for embedding into ycode
 #      absent on non-darwin/arm64.
 # Release CI sets BUILD_EMBEDS_FROM_SOURCE=1 and skips step 2 entirely.
 runner-build-if-missing:
-	@if [ ! -f internal/inference/runner_embed/ycode-runner.gz ]; then \
+	@if [ ! -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then \
 		if [ -z "$$BUILD_EMBEDS_FROM_SOURCE" ]; then \
 			./scripts/embed-fetch.sh runner; \
 		fi; \
 	fi
-	@if [ ! -f internal/inference/runner_embed/ycode-runner.gz ]; then \
+	@if [ ! -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then \
 		./scripts/build-runner-thin.sh; \
 	fi
 

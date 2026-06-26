@@ -9,14 +9,12 @@ replace github.com/jaegertracing/jaeger => ./external/jaeger
 
 replace github.com/perses/perses => ./external/perses
 
-replace github.com/ollama/ollama => ./external/ollama
+replace github.com/ollama/ollama => ../coreutils/external/ollama/src
 
 replace go.podman.io/podman/v6 => ./external/podman
 
 // Local pkg/ facade modules (workspace members).
 replace github.com/qiangli/ycode/pkg/oci => ./pkg/oci
-
-replace github.com/qiangli/ycode/pkg/ollm => ./pkg/ollm
 
 replace github.com/qiangli/ycode/pkg/otel => ./pkg/otel
 
@@ -66,7 +64,7 @@ require (
 	github.com/nats-io/nats-server/v2 v2.12.6
 	github.com/nats-io/nats.go v1.50.0
 	github.com/nguyenthenguyen/docx v0.0.0-20230621112118-9c8e795a11db
-	github.com/ollama/ollama v0.21.2
+	github.com/ollama/ollama v0.21.2 // indirect
 	github.com/philippgille/chromem-go v0.7.0
 	github.com/prometheus/common v0.67.5
 	github.com/prometheus/prometheus v0.311.2
@@ -74,7 +72,6 @@ require (
 	github.com/qiangli/bonsai v0.0.0-20260505184649-a3cb69dbf211
 	github.com/qiangli/nadir v0.0.0-20260513032315-67009486cf9c
 	github.com/qiangli/ycode/pkg/oci v0.0.0-00010101000000-000000000000
-	github.com/qiangli/ycode/pkg/ollm v0.0.0-00010101000000-000000000000
 	github.com/qiangli/ycode/pkg/otel v0.0.0-00010101000000-000000000000
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2

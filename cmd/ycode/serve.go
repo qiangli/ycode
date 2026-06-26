@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/otel"
 
 	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/docs"
@@ -522,6 +523,16 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 			slog.Warn("API stack not available", "error", err)
 			fmt.Printf("Web UI:            not available (%s)\n", err)
 		} else {
+			if api.app != nil && stack.ollama != nil {
+				convOTEL := api.app.OTEL()
+				if convOTEL != nil {
+					inference.WireTelemetry(stack.ollama, &inference.OTELConfig{
+						Tracer: convOTEL.Tracer,
+						Meter:  otel.Meter("ycode.inference"),
+						Inst:   convOTEL.Inst,
+					})
+				}
+			}
 			if !serveNoAPI && api.handler != nil {
 				// Add web UI as a late component — the proxy is already running,
 				// so we use AddLateComponent to register the handler on the mux.

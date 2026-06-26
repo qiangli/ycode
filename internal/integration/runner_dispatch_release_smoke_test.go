@@ -28,7 +28,7 @@ import (
 	"syscall"
 	"testing"
 
-	runnerEmbed "github.com/qiangli/ycode/internal/inference/runner_embed"
+	runnerEmbed "github.com/qiangli/coreutils/external/ollama/runner_embed"
 )
 
 func TestMain(m *testing.M) {

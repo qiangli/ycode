@@ -18,8 +18,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OLLAMA_SRC="${REPO_ROOT}/external/ollama"
-OUT_DIR="${REPO_ROOT}/internal/inference/runner_embed"
+OLLAMA_SRC="${REPO_ROOT}/../coreutils/external/ollama/src"
+OUT_DIR="${REPO_ROOT}/../coreutils/external/ollama/runner_embed"
 BIN_DIR="${REPO_ROOT}/bin"
 BINARY="${BIN_DIR}/ycode-runner"
 

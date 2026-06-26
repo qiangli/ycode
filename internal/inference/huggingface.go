@@ -12,7 +12,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/qiangli/ycode/pkg/ollm"
+	"github.com/qiangli/coreutils/pkg/ollm"
 )
 
 // HFModel represents a model from the Hugging Face Hub API.

@@ -1275,3 +1275,7 @@ func (a *App) Close() error {
 	}
 	return nil
 }
+
+func (a *App) OTEL() *conversation.OTELConfig {
+	return a.convOTEL
+}

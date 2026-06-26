@@ -41,7 +41,7 @@ PLATFORM="${GOOS_FETCH}-${GOARCH_FETCH}"
 # this script works under macOS bash 3.2 (no `declare -A`).
 embed_path() {
     case "$1" in
-        runner)  echo "internal/inference/runner_embed/ycode-runner.gz" ;;
+        runner)  echo "../coreutils/external/ollama/runner_embed/ycode-runner.gz" ;;
         podman)  echo "internal/container/podman_embed/podman.gz" ;;
         vfkit)   echo "internal/container/vfkit_embed/vfkit.gz" ;;
         gvproxy) echo "internal/container/gvproxy_embed/gvproxy.gz" ;;
