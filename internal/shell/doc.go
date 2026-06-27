@@ -21,5 +21,5 @@
 // mode validators (V01–V12) are not applied. Validators belong to the
 // agent executor (`internal/runtime/bash` exec handler), not the shell.
 //
-// See plan §11–§13 in /Users/qiangli/.claude/plans for the full design.
+// See plan §11–§13 in /Users/you/.claude/plans for the full design.
 package shell

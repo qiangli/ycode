@@ -5,7 +5,7 @@ import (
 )
 
 func TestExtractIdentifiers_FilePaths(t *testing.T) {
-	text := `Read the file /Users/qiangli/projects/ycode/internal/api/provider.go and also ./cmd/ycode/main.go`
+	text := `Read the file /Users/you/projects/ycode/internal/api/provider.go and also ./cmd/ycode/main.go`
 	ids := ExtractIdentifiers(text)
 
 	paths := filterKind(ids, "file_path")

@@ -259,7 +259,7 @@ func TestSuggestNoFalseFire(t *testing.T) {
 func TestSuggestSkipsRemoteSSH(t *testing.T) {
 	remotes := []string{
 		`ssh user@host 'echo foo | grep bar'`,
-		`/usr/bin/env ssh -o ConnectTimeout=10 -o BatchMode=yes noviadmin@novicortex.local 'echo "== mem ==" && grep -r MemTotal /proc/meminfo'`,
+		`/usr/bin/env ssh -o ConnectTimeout=10 -o BatchMode=yes alice@host-b.local 'echo "== mem ==" && grep -r MemTotal /proc/meminfo'`,
 		`env LANG=C ssh host 'tree -L 2'`,
 		`nohup ssh host 'curl https://example.com'`,
 		`PATH=/usr/bin ssh host 'wget https://example.com'`,

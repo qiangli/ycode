@@ -5,7 +5,7 @@
 // The cache sits in front of the model call as a context injector: a
 // hit adds a <recent-answer> block to the prompt; the LLM still runs.
 // This is the "inject as context, not short-circuit" policy chosen for
-// the memory plan — see /Users/qiangli/.claude/plans/best-in-class-memory-snazzy-cocoa.md
+// the memory plan — see /Users/you/.claude/plans/best-in-class-memory-snazzy-cocoa.md
 // for the rationale.
 package qacache
 
