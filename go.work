@@ -10,7 +10,10 @@ use (
 // Workspace-level replace directives override sub-module replaces
 // to use local external/ paths during development.
 replace (
-	go.podman.io/podman/v6 => ./external/podman
+	// Podman engine + fork now live in coreutils (AgentOS Phase 4); ycode's
+	// internal/container is a thin alias-shim re-exporting coreutils' engine.
+	go.podman.io/podman/v6 => ../coreutils/external/podman/src
+	github.com/qiangli/coreutils/pkg/oci => ../coreutils/pkg/oci
 	github.com/ollama/ollama => ../coreutils/external/ollama/src
 	github.com/jaegertracing/jaeger => ./external/jaeger
 	github.com/VictoriaMetrics/VictoriaLogs => ./external/victorialogs

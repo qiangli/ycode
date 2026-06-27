@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/container"
-	"github.com/qiangli/ycode/internal/container/podman_embed"
+	"github.com/qiangli/coreutils/external/podman/engine/podman_embed"
 )
 
 // newPodmanCmd is a thin pass-through to the embedded upstream

@@ -11,9 +11,15 @@ replace github.com/perses/perses => ./external/perses
 
 replace github.com/ollama/ollama => ../coreutils/external/ollama/src
 
-replace go.podman.io/podman/v6 => ./external/podman
+// Podman engine + fork now live in coreutils (AgentOS Phase 4); ycode's
+// internal/container is a thin alias-shim re-exporting coreutils' engine.
+replace go.podman.io/podman/v6 => ../coreutils/external/podman/src
 
-// Local pkg/ facade modules (workspace members).
+replace github.com/qiangli/coreutils/pkg/oci => ../coreutils/pkg/oci
+
+// Local pkg/ facade modules (workspace members). pkg/oci is now only consumed by
+// cmd/ycode/podman_machine.go + examples (the engine moved to coreutils); kept
+// until the ycode-revisit pass repoints those and drops it.
 replace github.com/qiangli/ycode/pkg/oci => ./pkg/oci
 
 replace github.com/qiangli/ycode/pkg/otel => ./pkg/otel
