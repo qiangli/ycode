@@ -24,9 +24,6 @@ import (
 	"github.com/qiangli/ycode/internal/docs"
 	"github.com/qiangli/ycode/internal/extractmcp"
 	"github.com/qiangli/ycode/internal/gateway"
-	"github.com/qiangli/ycode/internal/gitserver"
-	"github.com/qiangli/ycode/internal/gitserver/backlog"
-	"github.com/qiangli/ycode/internal/gitserver/projects"
 	"github.com/qiangli/coreutils/external/ollama"
 	runnerEmbed "github.com/qiangli/coreutils/external/ollama/runner_embed"
 	"github.com/qiangli/ycode/internal/inference"
@@ -46,7 +43,6 @@ import (
 	_ "github.com/qiangli/ycode/internal/shell/agentmode"
 	_ "github.com/qiangli/ycode/internal/shell/builtins"
 	"github.com/qiangli/ycode/internal/tools"
-	loompkg "github.com/qiangli/ycode/pkg/loom"
 	memorypkg "github.com/qiangli/ycode/pkg/memex/memory"
 )
 
@@ -55,10 +51,6 @@ var (
 	serveDetach bool
 	serveAuto   bool // auto-started by TUI; enables idle shutdown
 )
-
-// overrideGitServerURL is set by runAllServices to communicate the embedded
-// Gitea URL to buildPromptContext (which runs later inside newApp).
-var overrideGitServerURL string
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
@@ -361,7 +353,7 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	}
 
 	// 1. Build and start observability stack first (no dependencies on API).
-	stack, err := buildStackManager(cfg, dataDir, fullCfg.Inference, fullCfg.Container, fullCfg.GitServer)
+	stack, err := buildStackManager(cfg, dataDir, fullCfg.Inference, fullCfg.Container)
 	if err != nil {
 		return fmt.Errorf("build stack: %w", err)
 	}
@@ -379,10 +371,10 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	defer stopGateway(stack.gw)
 
 	// Collected MCP sub-handlers fanned out by the composite /mcp/ endpoint
-	// (G6). Each capability family (gitea, loom, pulse, future memex/repomap/
-	// inference) appends its mcp.ServerHandler here. The composite is built
-	// once at the bottom of this function, after every family has had its
-	// chance to register.
+	// (G6). Each capability family (pulse, future memex/repomap/inference)
+	// appends its mcp.ServerHandler here. The composite is built once at the
+	// bottom of this function, after every family has had its chance to
+	// register.
 	var compositeMCP []mcppkg.ServerHandler
 
 	// Propagate the dynamically-allocated collector gRPC address so that
@@ -415,91 +407,6 @@ func runAllServices(ctx context.Context, fullCfg *config.Config, cfg *config.Obs
 	// failures are logged and the Cascade falls back to its TF-IDF
 	// primary when the LLM isn't ready.
 	warmSkillRouterModel(ctx, stack)
-
-	// Wire Git server client for agent collaboration tools.
-	if stack.gitServer != nil && stack.gitServer.Healthy() {
-		token, err := resolveGitServerToken(ctx, home, fullCfg.GitServer.Token, stack.gitServer)
-		if err != nil {
-			slog.Warn("gitserver: token bootstrap failed; API calls will be unauthenticated", "error", err)
-		}
-		giteaClient := gitserver.NewClient(stack.gitServer.BaseURL(), token)
-		tools.SetGitServer(giteaClient)
-		overrideGitServerURL = fmt.Sprintf("http://127.0.0.1:%d/git/", port)
-		fmt.Printf("Git server at      %s\n", overrideGitServerURL)
-
-		// Backlog reconciler (backlog markdown ↔ Gitea issues). The backlog
-		// lives at ~/.agents/ycode/projects/<id>/backlog/ — see
-		// docs/backlog.md. Two checkouts of the same repo share one
-		// backlog because the id is logical (git remote / explicit), not
-		// keyed by cwd path.
-		if cwd, err := os.Getwd(); err == nil {
-			if reg, err := projects.NewRegistry(filepath.Join(home, ".agents", "ycode", "gitea")); err == nil {
-				if proj, err := reg.Resolve(ctx, cwd); err == nil {
-					if _, err := projects.EnsureRepo(ctx, giteaClient, proj); err == nil {
-						bdir, derr := backlogDir()
-						if derr != nil {
-							slog.Warn("backlog: resolve dir", "error", derr)
-						} else {
-							if err := backlog.MigrateLegacy(filepath.Join(cwd, "docs", "backlog"), bdir, slog.Default()); err != nil {
-								slog.Warn("backlog: legacy migration failed", "error", err)
-							}
-							if err := startBacklogReconciler(ctx, slog.Default(), bdir, giteaClient, proj); err != nil {
-								slog.Warn("backlog: reconciler not started", "error", err)
-							}
-						}
-						// Foreman state migration: <cwd>/.agents/ycode/foreman → user-home.
-						if fdir, ferr := foremanDir(); ferr == nil {
-							if err := migrateLegacyForemanDir(filepath.Join(cwd, ".agents", "ycode", "foreman"), fdir, slog.Default()); err != nil {
-								slog.Warn("foreman: legacy migration failed", "error", err)
-							}
-						}
-					} else {
-						slog.Warn("backlog: ensure repo", "error", err)
-					}
-				} else {
-					slog.Warn("backlog: project resolve", "error", err)
-				}
-			} else {
-				slog.Warn("backlog: project registry", "error", err)
-			}
-		}
-
-		// Discovery files for the `ycode tasks` / `ycode collab` CLIs to
-		// find the live Gitea without parsing settings.json.
-		_ = os.WriteFile(filepath.Join(home, ".agents", "ycode", "gitea.url"),
-			[]byte(stack.gitServer.BaseURL()), 0o644)
-		if token != "" {
-			_ = os.WriteFile(filepath.Join(home, ".agents", "ycode", "gitea.token"),
-				[]byte(token), 0o600)
-		}
-
-		// Gitea MCP handler — fanned out by the composite /mcp/ endpoint.
-		giteaMCPHandler := gitserver.NewGiteaMCPHandler(giteaClient)
-		compositeMCP = append(compositeMCP, giteaMCPHandler)
-
-		// Loom — workspace-isolation substrate for foreign agentic tools.
-		// Hands each foreign sub-agent an isolated clone+branch+author so
-		// N parallel sub-agents converge through the merger/CI gate
-		// without stepping on each other. See docs/loom.md. Registered as
-		// a lifecycle component (merger pool, service close on shutdown);
-		// its MCP handler is exposed via the composite /mcp/ endpoint, not
-		// a per-family route.
-		giteaDataDir := filepath.Join(dataDir, "gitea")
-		loomComp, loomSvc, err := buildLoomComponent(ctx, giteaClient, token, giteaDataDir)
-		if err != nil {
-			slog.Warn("Loom not available", "error", err)
-		} else {
-			if err := mgr.AddLateComponent(ctx, loomComp); err != nil {
-				slog.Warn("Loom not available", "error", err)
-			} else {
-				stack.loom = loomComp
-				stack.loomSvc = loomSvc
-				if h := loomComp.MCPHandler(); h != nil {
-					compositeMCP = append(compositeMCP, h)
-				}
-			}
-		}
-	}
 
 	// Experimental ycode-native browser modes (live / probe / solo).
 	// The hub for live mode is durable — bind it here so the Chrome
@@ -925,9 +832,6 @@ type stackComponents struct {
 	bonsai        *observability.BonsaiComponent
 	ollama        *ollama.OllamaComponent
 	containers    *container.ContainerComponent
-	gitServer     *gitserver.GitServerComponent
-	loom          *loomComponent // workspace substrate; nil if gitserver disabled
-	loomSvc       *loompkg.Service
 	collectorAddr string // actual gRPC address of the embedded collector (e.g. "127.0.0.1:54321")
 
 	// gw is the per-process localhost gateway that fronts ollama + the
@@ -939,7 +843,7 @@ type stackComponents struct {
 // buildStackManager creates and configures a StackManager with all embedded components.
 // All internal ports are allocated dynamically to avoid conflicts when running
 // multiple instances. Only the proxy port (--port) is user-specified.
-func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg *config.InferenceConfig, containerCfg *config.ContainerConfig, gitServerCfg *config.GitServerConfig) (*stackComponents, error) {
+func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg *config.InferenceConfig, containerCfg *config.ContainerConfig) (*stackComponents, error) {
 	// Normalize nil sub-configs to empty structs. IsEnabled() is already
 	// nil-safe (returns true on nil receiver per the default-on policy),
 	// so the conditional branches enter — and then immediately dereferenced
@@ -953,9 +857,6 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 	}
 	if containerCfg == nil {
 		containerCfg = &config.ContainerConfig{}
-	}
-	if gitServerCfg == nil {
-		gitServerCfg = &config.GitServerConfig{}
 	}
 
 	mgr := observability.NewStackManager(cfg, dataDir)
@@ -1076,27 +977,12 @@ func buildStackManager(cfg *config.ObservabilityConfig, dataDir string, inferCfg
 		mgr.AddComponent(containerComp)
 	}
 
-	// Git server — embedded Gitea for agent coordination (optional).
-	var gitComp *gitserver.GitServerComponent
-	if gitServerCfg.IsEnabled() {
-		gitComp = gitserver.NewGitServerComponent(&gitserver.ComponentConfig{
-			Enabled:       true,
-			DataDir:       gitServerCfg.DataDir,
-			AppName:       gitServerCfg.AppName,
-			HTTPOnly:      gitServerCfg.HTTPOnly,
-			Token:         gitServerCfg.Token,
-			PublicRootURL: fmt.Sprintf("http://127.0.0.1:%d/git/", proxyPort),
-		}, filepath.Join(dataDir, "gitea"))
-		mgr.AddComponent(gitComp)
-	}
-
 	return &stackComponents{
 		mgr:           mgr,
 		memos:         memosComp,
 		bonsai:        bonsaiComp,
 		ollama:        ollamaComp,
 		containers:    containerComp,
-		gitServer:     gitComp,
 		collectorAddr: coll.GRPCAddr(),
 	}, nil
 }
@@ -1300,7 +1186,7 @@ func init() {
 	serveCmd.Flags().StringSliceVar(&serveToolsAllowlist, "tools-allowlist", nil, "Register only these built-in tool names (process-wide; mutually exclusive with --tools-blocklist)")
 	serveCmd.Flags().StringSliceVar(&serveToolsBlocklist, "tools-blocklist", nil, "Register every built-in tool except these (process-wide; ignored when --tools-allowlist is set)")
 	serveCmd.Flags().StringVar(&serveMCPPermission, "mcp-permission", "danger-full-access", "Server-side MCP permission ceiling: read-only | workspace-write | danger-full-access")
-	serveCmd.Flags().StringVar(&serveWorkspacePolicy, "workspace-policy", "per-session", "Web-session workspace policy: per-session (default; allocates ~/.agents/ycode/workspaces/<owner>/<id>/ per new session), cwd (server's startup dir; single-user dev), loom (opt-in git lease).")
+	serveCmd.Flags().StringVar(&serveWorkspacePolicy, "workspace-policy", "per-session", "Web-session workspace policy: per-session (default; allocates ~/.agents/ycode/workspaces/<owner>/<id>/ per new session), cwd (server's startup dir; single-user dev).")
 	_ = serveCmd.Flags().MarkHidden("auto")
 	serveCmd.Flags().IntVar(&apiNATSPort, "nats-port", 4222, "Port for the embedded NATS server")
 
@@ -1340,36 +1226,4 @@ func init() {
 		&cobra.Command{Use: "reset", Short: "Remove all Pulse data", RunE: serveResetCmd.RunE},
 	)
 	rootCmd.AddCommand(pulseCmd)
-}
-
-// resolveGitServerToken returns a Gitea API token, in order of preference:
-//  1. The explicit token from settings.json (if non-empty).
-//  2. A persisted token from ~/.agents/ycode/gitea/admin.token.
-//  3. A freshly bootstrapped token via EnsureAdmin + IssueToken,
-//     persisted to admin.token for future starts.
-//
-// Returns "" + error only if bootstrap fails; serve.go logs the warning
-// and continues with an unauthenticated client (broken, but at least the
-// rest of the stack still boots).
-func resolveGitServerToken(ctx context.Context, home, configToken string, comp *gitserver.GitServerComponent) (string, error) {
-	if configToken != "" {
-		return configToken, nil
-	}
-	persistPath := filepath.Join(home, ".agents", "ycode", "gitea", "admin.token")
-	if data, err := os.ReadFile(persistPath); err == nil {
-		if t := strings.TrimSpace(string(data)); t != "" {
-			return t, nil
-		}
-	}
-	tok, err := comp.Bootstrap(ctx, "admin", "admin@ycode.local", gitserver.RandomPassword(), "ycode-admin")
-	if err != nil {
-		return "", fmt.Errorf("gitserver bootstrap: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(persistPath), 0o755); err != nil {
-		return tok, fmt.Errorf("persist admin token: %w", err)
-	}
-	if err := os.WriteFile(persistPath, []byte(tok), 0o600); err != nil {
-		return tok, fmt.Errorf("persist admin token: %w", err)
-	}
-	return tok, nil
 }

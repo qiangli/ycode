@@ -35,9 +35,6 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 		"otlpHTTP": "http://127.0.0.1:4318",
 		"nats":     natsURL,
 	}
-	if stack.gitServer != nil && stack.gitServer.Healthy() {
-		endpoints["git"] = proxy + "/git/"
-	}
 	if stack.bonsai != nil && stack.bonsai.Healthy() {
 		endpoints["graph"] = proxy + "/graph/"
 	}
@@ -97,19 +94,6 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 		manifest["gateway"] = gw
 	}
 
-	if stack.loom != nil && stack.loom.Healthy() {
-		manifest["loom"] = map[string]any{
-			"mcp":                        proxy + "/mcp/",
-			"leaseTTLDefaultSeconds":     3600,
-			"leaseTTLMaxSeconds":         28800,
-			"subAgentIdentityConvention": "agent-loom-<label>",
-			"cloneURLTemplate":           proxy + "/git/admin/{slug}.git",
-			"tokenFile":                  filepath.Join(home, ".agents", "ycode", "gitea", "admin.token"),
-			"sandboxRoot":                filepath.Join(home, ".agents", "ycode", "gitea", "loom", "sandboxes"),
-			"branchNamePattern":          "agent/agent-loom-<label>-<id8>/free-<rand>",
-		}
-	}
-
 	// Canvas block — agent-rendered generative UI service. Foreign agents
 	// discover the A2UI op format ycode speaks, the bus event types that
 	// carry it, the MCP tools that publish, the canvas route to subscribe
@@ -157,16 +141,6 @@ func publicServeManifest(full map[string]any) map[string]any {
 			"scheme":  auth["scheme"],
 			"header":  auth["header"],
 			"enabled": auth["enabled"],
-		}
-	}
-	if loom, ok := full["loom"].(map[string]any); ok {
-		out["loom"] = map[string]any{
-			"mcp":                        loom["mcp"],
-			"leaseTTLDefaultSeconds":     loom["leaseTTLDefaultSeconds"],
-			"leaseTTLMaxSeconds":         loom["leaseTTLMaxSeconds"],
-			"subAgentIdentityConvention": loom["subAgentIdentityConvention"],
-			"cloneURLTemplate":           loom["cloneURLTemplate"],
-			"branchNamePattern":          loom["branchNamePattern"],
 		}
 	}
 	if canvas, ok := full["canvas"].(map[string]any); ok {

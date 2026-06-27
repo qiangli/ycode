@@ -19,14 +19,10 @@ entry point to every ycode capability that exposes a verb you can call.
 - **tab** — drive the user's currently-open Chrome tab in live mode
   (extract / screenshot / navigate / click / type / scroll). The
   bridge to surfaces a headless browser can't reach.
-- **weave** — orchestrate parallel agentic subagents (codex,
-  claude-code, opencode, …) via a local queue + git worktrees.
-  Add issues → background `start`s → `wait --all` → `pull`. Two
-  exact-call patterns: parallel-impl-only and parallel-impl +
-  judge-validation. Default backend; no `ycode serve` needed.
 - **loom** — v1 substrate underneath weave: per-call MCP verbs
-  for lease / push / merge / release. Most orchestrators want
-  the weave CLI above instead.
+  for lease / push / merge / release. The local parallel subagent
+  surface is now the sibling `bashy weave` command, not a ycode
+  subcommand.
 - **outcomes** — taxonomy reference for the `outcome_class` field on
   every browser_* result.
 - **sandbox** — `yc sandbox` podman-isolated command execution.
@@ -55,6 +51,8 @@ entry point to every ycode capability that exposes a verb you can call.
   `yc manifest`.
 - For **live endpoint discovery** (URLs, ports, tokens for a running
   `ycode serve`), read `~/.agents/ycode/manifest.json`.
+- For **parallel subagent orchestration**, use the sibling AgentOS shell
+  surface: `bashy weave guide`.
 
 The docs registry and the cobra help tree cross-reference each other
 but never share content. If a fact about a verb appears in both places

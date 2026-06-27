@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -15,11 +14,6 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
 	"github.com/qiangli/ycode/internal/runtime/origin"
-	"github.com/qiangli/ycode/internal/runtime/projectid"
-	"github.com/qiangli/ycode/internal/runtime/selfheal/backlogsink"
-	"github.com/qiangli/ycode/internal/runtime/selfheal/daemon"
-	"github.com/qiangli/ycode/internal/runtime/selfheal/detector"
-	"github.com/qiangli/ycode/internal/runtime/selfheal/workspace"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 	"github.com/qiangli/ycode/internal/tools"
@@ -233,32 +227,6 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 	// Create OTELSink and wire it into existing telemetry pipelines.
 	_ = yotel.NewOTELSink(otelProvider)
 
-	// Phase 1 selfheal observer: register a SpanProcessor that watches
-	// every emitted span for ycode-bug-shaped failures and appends them
-	// to a JSONL log. Pure observation — no backlog synth, no worker,
-	// no git. Opt-out via `selfHeal.enabled: false`. Failures here
-	// must never break OTel itself, so we log and continue on error.
-	selfHealShutdown := func() {}
-	if cfg.SelfHeal.IsEnabled() {
-		obs, dmn, err := startSelfHeal(ctx, cfg.SelfHeal, otelProvider)
-		if err != nil {
-			slog.Warn("selfheal: init failed; continuing without it", "err", err)
-		} else {
-			selfHealShutdown = func() {
-				stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				// Stop daemon first (waits for in-flight workers) so
-				// any final span goes through the still-live observer.
-				if dmn != nil {
-					dmn.Stop(stopCtx)
-				}
-				if err := obs.Stop(stopCtx); err != nil {
-					slog.Warn("selfheal: observer shutdown error", "err", err)
-				}
-			}
-		}
-	}
-
 	// Apply OTEL tool middleware (captures full input/output for self-healing).
 	tracer := otelProvider.Tracer("ycode.tools")
 	mw := yotel.ToolMiddleware(tracer, otelProvider.Instruments)
@@ -325,11 +293,6 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 
 	return &otelResult{
 		shutdown: func() {
-			// Stop the selfheal observer FIRST so its consumer drains
-			// pending spans through the still-live BSP. Then shut down
-			// OTel (which itself stops the SpanProcessors including
-			// ours).
-			selfHealShutdown()
 			// Short timeout: file exports are fast; if gRPC can't flush in 2s
 			// (e.g. collector unreachable), waiting longer won't help.
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -340,117 +303,6 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 		},
 		convOTEL: convCfg,
 	}
-}
-
-// startSelfHeal builds the observer + (when the per-project backlog
-// dir is resolvable) the worker daemon. Returns both so the caller
-// can drive shutdown order: daemon first so its workers drain into
-// the still-live observer.
-func startSelfHeal(ctx context.Context, cfg *config.SelfHealConfig, provider *yotel.Provider) (*detector.Observer, *daemon.Daemon, error) {
-	obs, err := startSelfHealObserver(ctx, cfg, provider)
-	if err != nil {
-		return nil, nil, err
-	}
-	dmn, err := startSelfHealDaemon(ctx)
-	if err != nil {
-		// Observer is already running; surface but keep going.
-		slog.Warn("selfheal: daemon init skipped", "err", err)
-		return obs, nil, nil
-	}
-	return obs, dmn, nil
-}
-
-// startSelfHealDaemon resolves the per-project backlog dir + repo
-// URL, then spawns the worker daemon. Returns an error if the
-// backlog dir can't be resolved — without it the daemon has nothing
-// to scan.
-func startSelfHealDaemon(ctx context.Context) (*daemon.Daemon, error) {
-	backlogDir, err := resolveBacklogDir(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("backlog dir: %w", err)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	baseDir := filepath.Join(home, ".agents", "ycode", "selfheal")
-	if err := os.MkdirAll(baseDir, 0o755); err != nil {
-		return nil, fmt.Errorf("mkdir base: %w", err)
-	}
-	cwd, _ := os.Getwd()
-	repoURL, err := workspace.New().DiscoverFork(ctx, cwd)
-	if err != nil {
-		return nil, fmt.Errorf("discover fork: %w", err)
-	}
-	skillsDir := filepath.Join(home, ".agents", "ycode", "skills")
-	dmn := daemon.New(daemon.Config{
-		BaseDir:          baseDir,
-		BacklogDir:       backlogDir,
-		RepoURL:          repoURL,
-		SkillRegistryDir: skillsDir,
-	})
-	dmn.Start(ctx)
-	slog.Info("selfheal: daemon started", "base", baseDir, "repo", repoURL)
-	if n, msg := localOnlyCount(ctx); n > 0 {
-		fmt.Fprintln(os.Stderr, msg)
-	}
-	return dmn, nil
-}
-
-// startSelfHealObserver builds the observer, registers its
-// SpanProcessor on the given provider's TracerProvider, and starts
-// the consumer goroutine. Returns the observer so the caller owns
-// the shutdown order.
-//
-// Sinks composed in order:
-//
-//  1. JSONLineSink — always-on raw observation log at
-//     ~/.agents/ycode/selfheal/observations.jsonl (Phase 1)
-//  2. BacklogSink — synthesizes a docs/backlog/selfheal-<sig>-<slug>.md
-//     entry for each first-seen signature (Phase 2). Skipped silently
-//     when the per-project backlog dir can't be resolved (e.g. running
-//     outside any project root) — the JSONL log still records the
-//     observation so nothing is lost.
-func startSelfHealObserver(ctx context.Context, cfg *config.SelfHealConfig, provider *yotel.Provider) (*detector.Observer, error) {
-	sinkPath := ""
-	if cfg != nil {
-		sinkPath = cfg.SinkPath
-	}
-	if sinkPath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		sinkPath = filepath.Join(home, ".agents", "ycode", "selfheal", "observations.jsonl")
-	}
-	jsonlSink, err := detector.NewJSONLineSink(sinkPath)
-	if err != nil {
-		return nil, err
-	}
-	sinks := []detector.Sink{jsonlSink}
-	if backlogDir, err := resolveBacklogDir(ctx); err == nil {
-		sinks = append(sinks, backlogsink.NewBacklogSink(backlogDir))
-		slog.Info("selfheal: backlog sink wired", "dir", backlogDir)
-	} else {
-		slog.Debug("selfheal: backlog sink skipped (no project id)", "err", err)
-	}
-	obs := detector.NewObserverWithSink(detector.Config{SinkPath: sinkPath}, detector.NewMultiSink(sinks...))
-	provider.TracerProvider.RegisterSpanProcessor(obs.Processor())
-	obs.Start(ctx)
-	slog.Info("selfheal: observer started", "jsonl", sinkPath, "sinks", len(sinks))
-	return obs, nil
-}
-
-// resolveBacklogDir returns the per-project backlog dir using the
-// same chain as cmd/ycode/backlog.go:backlogDir. Returns an error
-// when no project id can be resolved — selfheal still runs without
-// the backlog sink in that case.
-func resolveBacklogDir(ctx context.Context) (string, error) {
-	dir, err := projectStateDir(ctx)
-	if err != nil {
-		return "", err
-	}
-	return projectid.BacklogDir(dir), nil
 }
 
 // teeLogHandler forwards log records to two handlers.

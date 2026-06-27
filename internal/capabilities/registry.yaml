@@ -136,26 +136,6 @@ capabilities:
     http: ["/ycode/api/embed", "/ycode/api/embed/batch", "/ycode/api/embed/dimensions"]
     config: [Inference.DefaultModel]
 
-  - id: gitea
-    summary: embedded Gitea server for agent coordination
-    audience: [agent, human]
-    cli: []
-    mcp: [list_repos, create_repo, list_branches, create_branch, create_pull_request, list_pull_requests, merge_pull_request, create_issue, list_issues, get_issue, push_to_branch]
-    http: ["/git/"]
-    config: [GitServer.DataDir, GitServer.Token]
-    gaps:
-      - "stdio MCP intentionally lacks this family — requires ycode serve"
-
-  - id: loom
-    summary: ephemeral git workspaces with auto-merge
-    audience: [agent, human]
-    cli: [weave]
-    mcp: [loom_lease, loom_push, loom_merge, loom_status, loom_release]
-    http: ["/mcp/"]
-    config: []
-    gaps:
-      - "stdio MCP intentionally lacks this family — requires ycode serve"
-
   - id: pulse
     summary: observability stack (traces, logs, metrics, dashboards)
     audience: [agent, human]
@@ -211,7 +191,7 @@ capabilities:
   - id: orchestration
     summary: multi-agent task queue + autopilot loops
     audience: [human, agent]
-    cli: [serve, prompt, loop, ralph, auto, autopilot, foreman, backlog, collab, mesh, sprint, tasks]
+    cli: [serve, prompt, loop, ralph, auto, mesh, sprint]
     mcp: []
     http: ["/ycode/api/sessions", "/ycode/api/groups", "/ycode/api/commands", "/chat/"]
     config: [Tasks.CICommand, Tasks.AutoMerge, Chat.Enabled]
@@ -247,7 +227,7 @@ capabilities:
   - id: dev_lifecycle
     summary: operator commands (health, login, training, eval, healing)
     audience: [human]
-    cli: [doctor, login, logout, heal, selfheal, train, eval, features, version, batch, netscan, runner, config, tools]
+    cli: [doctor, login, logout, heal, train, eval, features, version, batch, netscan, runner, config, tools]
     mcp: []
     http: ["/ycode/api/health", "/ycode/api/status", "/debug/pprof/"]
     config: [SelfHeal.SinkPath]

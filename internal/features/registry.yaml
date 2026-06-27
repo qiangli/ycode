@@ -99,15 +99,6 @@ features:
       dogfood_weeks: 8
       failure_mode_doc: false
 
-  - name: gitea-server
-    tier: stable
-    description: "embedded Gitea git server — no external git host needed for agent workspaces"
-    files: [internal/gitserver]
-    graduation:
-      integration_test: true
-      dogfood_weeks: 4
-      failure_mode_doc: false
-
   - name: github-tools
     tier: stable
     description: "PR / issue / review / CI-checks via GitHub API — no `gh` binary, auth via GITHUB_TOKEN or ~/.config/gh"
