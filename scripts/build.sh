@@ -5,16 +5,8 @@ set -euo pipefail
 
 TAG_LIST="${TAG_LIST:-sqlite,sqlite_unlock_notify,bindata}"
 
-# vfkit embed is darwin-only. Build it once if missing — the standard
-# `make build` then auto-picks up the embed_vfkit tag via the Makefile's
-# wildcard probe, so the binary works on macOS hosts without a separate
-# krunkit / brew-podman install. On Linux or Windows the embed is
-# irrelevant (kubelet talks to containerd directly on Linux; Windows
-# needs a different mechanism), so we skip it.
-if [ "$(uname)" = "Darwin" ] && [ ! -f internal/container/vfkit_embed/vfkit.gz ]; then
-    echo "=== Step 0: Generating vfkit embed (macOS one-time setup) ==="
-    ./scripts/embed-vfkit.sh
-fi
+# podman/vfkit/gvproxy embeds moved to coreutils (AgentOS Phase 4) — ycode no
+# longer ships podman/ollama. `bashy podman` carries those embeds now.
 
 echo "=== Step 1: Dependency hygiene ==="
 go mod tidy

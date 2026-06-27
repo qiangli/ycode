@@ -121,17 +121,17 @@ capabilities:
     config: []
 
   - id: container
-    summary: podman sandbox (network=none, cwd-mounted)
-    audience: [agent, human]
-    cli: [podman]
+    summary: podman sandbox MCP tool (engine now in coreutils; `ycode podman` CLI removed — use `bashy podman`)
+    audience: [agent]
+    cli: []
     mcp: [sandbox_exec]
     http: []
     config: [Container.SocketPath, Container.Image, Container.Network, Container.ReadOnlyRoot, Container.PoolSize]
 
   - id: inference
-    summary: embedded Ollama + multi-provider routing
+    summary: multi-provider routing (ollama via coreutils; `ycode ollama` CLI removed — use `bashy ollama`)
     audience: [agent, human]
-    cli: [ollama, model]
+    cli: [model]
     mcp: [ollama_list_models, ollama_chat, ollama_embed]
     http: ["/ycode/api/embed", "/ycode/api/embed/batch", "/ycode/api/embed/dimensions"]
     config: [Inference.DefaultModel]

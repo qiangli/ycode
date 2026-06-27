@@ -118,18 +118,14 @@ features:
       failure_mode_doc: false
 
   # ─── execution & runtime ──────────────────────────────────────────────────
-  - name: container-runtime
-    tier: stable
-    description: "embedded podman for sandboxed bash execution and per-agent isolation (cgroups, network namespace, overlay FS)"
-    files: [internal/container]
-    graduation:
-      integration_test: true
-      dogfood_weeks: 4
-      failure_mode_doc: false
+  # podman sandbox engine moved to coreutils (AgentOS Phase 4); ycode consumes
+  # coreutils/external/podman/engine and no longer ships a podman runtime. Use
+  # `bashy podman`. The sandbox_exec MCP tool stays (see the `container`
+  # capability in internal/capabilities/registry.yaml).
 
   - name: ollama-runtime
     tier: stable
-    description: "embedded Ollama inference runner for fully-local model execution (HuggingFace GGUF supported)"
+    description: "local model inference via the coreutils ollama hub (HuggingFace GGUF supported)"
     files: [internal/inference]
     graduation:
       integration_test: true

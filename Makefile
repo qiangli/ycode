@@ -45,7 +45,7 @@ comma := ,
 #                                  Linux where podman uses its native
 #                                  socket directly). Added automatically
 #                                  when the gz exists.
-TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata$(if $(wildcard internal/runtime/wrap/spawn_embed/ycode-spawn.gz),$(comma)embed_spawn)$(if $(wildcard ../coreutils/external/ollama/runner_embed/ycode-runner.gz),$(comma)embed_runner)$(if $(wildcard internal/container/vfkit_embed/vfkit.gz),$(comma)embed_vfkit)$(if $(wildcard internal/container/podman_embed/podman.gz),$(comma)embed_podman)$(if $(wildcard internal/container/gvproxy_embed/gvproxy.gz),$(comma)embed_gvproxy)
+TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata$(if $(wildcard internal/runtime/wrap/spawn_embed/ycode-spawn.gz),$(comma)embed_spawn)$(if $(wildcard ../coreutils/external/ollama/runner_embed/ycode-runner.gz),$(comma)embed_runner)
 TAGS := -tags "$(TAG_LIST)"
 PACKAGES := $(shell go list ./... | grep -v '/priorart/')
 
@@ -64,7 +64,7 @@ ifeq ($(shell uname),Darwin)
 export CGO_LDFLAGS += -Wl,-no_warn_duplicate_libraries
 endif
 
-.PHONY: help init sync priorart-list priorart-sync spawn-embed compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-release-smoke test-all vet tidy clean all chrome-extension cross runner-build runner-build-thin runner-build-if-missing runner-check podman-embed podman-embed-if-missing vfkit-embed vfkit-embed-if-darwin gvproxy-embed gvproxy-embed-if-applicable ensure-embeds _compile-inner build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
+.PHONY: help init sync priorart-list priorart-sync spawn-embed compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-release-smoke test-all vet tidy clean all chrome-extension cross runner-build runner-build-thin runner-build-if-missing runner-check ensure-embeds _compile-inner build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
 
 .DEFAULT_GOAL := help
 
@@ -96,7 +96,7 @@ priorart-sync: ## Pull latest changes for all priorart repos
 
 # ─── Build ──────────────────────────────────────────────────────────────────
 
-ensure-embeds: spawn-embed vfkit-embed-if-darwin runner-build-if-missing podman-embed-if-missing gvproxy-embed-if-applicable
+ensure-embeds: spawn-embed runner-build-if-missing
 
 # ycode-spawn is a stdlib-only micro shim inside this repo (cmd/ycode-spawn);
 # unlike the other embeds it always builds (no fetch track, no soft-skip)
@@ -357,63 +357,9 @@ runner-build-if-missing:
 runner-check: ## Verify runner binary exists and responds to health check
 	@./scripts/check-runner.sh
 
-podman-embed: ## Compress podman binary for embedding into ycode
-	@./scripts/embed-podman.sh
-
-# Internal target: run podman-embed once if the gz is missing.
-# Two-track like runner-build-if-missing (fetch first, source build
-# second). Source-build via embed-podman.sh prefers a system upstream
-# podman, falls back to building from external/podman/cmd/podman/
-# (Apache-2.0), and skip-cleans (exit 0) if neither works so
-# non-container devs aren't blocked.
-podman-embed-if-missing:
-	@if [ ! -f internal/container/podman_embed/podman.gz ]; then \
-		if [ -z "$$BUILD_EMBEDS_FROM_SOURCE" ]; then \
-			./scripts/embed-fetch.sh podman; \
-		fi; \
-	fi
-	@if [ ! -f internal/container/podman_embed/podman.gz ]; then \
-		./scripts/embed-podman.sh; \
-	fi
-
-vfkit-embed: ## Compress vfkit binary for embedding into ycode (macOS only)
-	@./scripts/embed-vfkit.sh
-
-# Internal target: run vfkit-embed once on macOS if the gz is missing.
-# Two-track like the others. Other platforms (Linux, Windows) are
-# no-ops — the embedded vfkit only helps macOS hosts of
-# `ycode podman machine`.
-vfkit-embed-if-darwin:
-	@if [ "$$(uname)" = "Darwin" ] && [ ! -f internal/container/vfkit_embed/vfkit.gz ]; then \
-		if [ -z "$$BUILD_EMBEDS_FROM_SOURCE" ]; then \
-			./scripts/embed-fetch.sh vfkit; \
-		fi; \
-	fi
-	@if [ "$$(uname)" = "Darwin" ] && [ ! -f internal/container/vfkit_embed/vfkit.gz ]; then \
-		./scripts/embed-vfkit.sh; \
-	fi
-
-gvproxy-embed: ## Build gvproxy from module cache and gzip for embedding
-	@./scripts/embed-gvproxy.sh
-
-# Internal target: run gvproxy-embed once if the gz is missing AND the
-# platform actually needs it. gvproxy is the user-mode network proxy
-# `podman machine` forwards through; only relevant where machine
-# auto-provisions a VM (macOS + Windows). Linux uses podman's native
-# socket directly, so embedding gvproxy there would just bloat the
-# binary.
-gvproxy-embed-if-applicable:
-	@case "$$(uname)" in \
-		Darwin|MINGW*|MSYS*|CYGWIN*) \
-			if [ ! -f internal/container/gvproxy_embed/gvproxy.gz ]; then \
-				if [ -z "$$BUILD_EMBEDS_FROM_SOURCE" ]; then \
-					./scripts/embed-fetch.sh gvproxy; \
-				fi; \
-			fi; \
-			if [ ! -f internal/container/gvproxy_embed/gvproxy.gz ]; then \
-				./scripts/embed-gvproxy.sh; \
-			fi ;; \
-	esac
+# podman / vfkit / gvproxy embeds moved to coreutils (AgentOS Phase 4): they are
+# built by coreutils/scripts/embed-*.sh and embedded into `bashy podman`. ycode
+# no longer ships podman/ollama, so it has no podman embed targets.
 
 build-single: compile ## Alias for `make compile` — kept for back-compat. The standard `compile` target now produces a single self-contained binary with every embed auto-built (runner via build-runner-thin, podman via embed-podman, vfkit via embed-vfkit on darwin, gvproxy via embed-gvproxy on darwin/windows) when its .gz isn't already present
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
