@@ -89,7 +89,7 @@ make runner-build        # full Ollama build from source (requires C++ toolchain
 make runner-check        # verify a system ollama binary is reachable (for --use-system-binaries)
 ```
 
-`make build` auto-produces `internal/inference/runner_embed/ycode-runner.gz`
+`make build` auto-produces `../coreutils/external/ollama/runner_embed/ycode-runner.gz`
 on first run via `runner-build-if-missing`. On darwin/arm64 no extra
 toolchain is needed (Metal in-tree); other platforms need CMake. Without
 the toolchain the script warns and skip-cleans — ycode still builds but

@@ -149,7 +149,7 @@ End users who already run upstream `ollama` and `podman` and prefer them over yc
 
 ```bash
 git pull origin main && git submodule update --init --recursive
-rm -f internal/inference/runner_embed/ycode-runner.gz \
+rm -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz \
       internal/container/{podman,vfkit,gvproxy}_embed/*.gz
 BUILD_EMBEDS_FROM_SOURCE=1 make build       # exercise the source path CI uses
 ./bin/ycode ollama serve &                   # confirm 11434 binds
@@ -165,7 +165,7 @@ After the tag is published and CI uploads the embeds, sanity-check the dev fast-
 git clone <repo> /tmp/ycode-smoke && cd /tmp/ycode-smoke
 git submodule update --init --recursive
 make build                                   # should fetch (~30s), NOT source-build
-ls -lh internal/inference/runner_embed/ycode-runner.gz
+ls -lh ../coreutils/external/ollama/runner_embed/ycode-runner.gz
 ./bin/ycode ollama serve                     # verifies the released runner works
 ```
 

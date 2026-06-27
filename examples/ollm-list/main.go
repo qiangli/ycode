@@ -1,4 +1,4 @@
-// Example: list models from a local Ollama server using pkg/ollm.
+// Example: list models from a local Ollama server using coreutils/pkg/ollm.
 //
 // Usage:
 //
@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/qiangli/ycode/pkg/ollm"
+	"github.com/qiangli/coreutils/pkg/ollm"
 )
 
 func main() {

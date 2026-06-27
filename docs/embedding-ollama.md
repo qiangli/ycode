@@ -8,8 +8,10 @@ Ollama is embedded as a **managed external process** — the Go management layer
 
 ```
 ycode binary
-├── external/ollama/           ← git submodule (upstream: ollama/ollama)
-│   └── embed/embed.go         ← pure-Go wrapper, re-exports API types
+├── ../coreutils/
+│   ├── external/ollama/src/   ← git submodule (upstream: ollama/ollama)
+│   ├── external/ollama/runner_embed/ycode-runner.gz
+│   └── pkg/ollm              ← pure-Go wrapper, re-exports API types
 ├── internal/inference/
 │   ├── ollama.go              ← OllamaComponent (observability.Component)
 │   ├── runner.go              ← RunnerManager (process lifecycle)
@@ -23,11 +25,11 @@ ycode binary
 ## Submodule Pattern
 
 ```
-go.mod:   replace github.com/ollama/ollama => ./external/ollama
-import:   "github.com/ollama/ollama/embed" → resolves to external/ollama/embed/
+go.mod:   replace github.com/ollama/ollama => ../coreutils/external/ollama/src
+import:   "github.com/qiangli/coreutils/pkg/ollm" → resolves to ../coreutils/pkg/ollm
 ```
 
-The `embed` package deliberately avoids importing Ollama's `server/`, `discover/`, `llm/`, `llama/`, and `x/` packages which require CGo. It re-exports only pure-Go packages: API types, model management, manifest handling, template rendering, and configuration.
+The `coreutils/pkg/ollm` package deliberately keeps ycode behind a small pure-Go client boundary. It imports Ollama's API/embed packages from `../coreutils/external/ollama/src` and avoids pulling the server/runner implementation into ycode itself.
 
 ## Component Interface
 
@@ -116,7 +118,7 @@ Three-tier merge: user (`~/.config/ycode/settings.json`) > project (`.agents/yco
 
 | File | Purpose |
 |------|---------|
-| `external/ollama/embed/embed.go` | Pure-Go API wrapper (re-exports types) |
+| `../coreutils/pkg/ollm/ollm.go` | Pure-Go API wrapper (re-exports types) |
 | `internal/inference/ollama.go` | OllamaComponent (Component interface) |
 | `internal/inference/runner.go` | RunnerManager (process lifecycle, health, restart) |
 | `internal/inference/otel.go` | OTEL gauges, spans, metrics |

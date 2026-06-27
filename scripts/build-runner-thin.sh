@@ -7,7 +7,7 @@
 #
 # Requirements: Go, CMake (except on darwin/arm64 where Metal is in-tree),
 # C/C++ compiler.
-# Output: internal/inference/runner_embed/ycode-runner.gz
+# Output: ../coreutils/external/ollama/runner_embed/ycode-runner.gz
 #
 # Soft-skip policy: this script is invoked as a prereq of `make compile`
 # (via runner-build-if-missing). On platforms that need CMake but don't
@@ -55,7 +55,7 @@ echo "Requirements: Go, CMake, C/C++ compiler"
 cd "${OLLAMA_SRC}"
 
 # Ensure go.work doesn't redirect us back into ycode's workspace, where
-# external/ollama isn't a `use` entry and ./... resolves the wrong way.
+# coreutils/external/ollama isn't a `use` entry and ./... resolves the wrong way.
 # Must be exported BEFORE go generate, not just before go build — the
 # previous ordering broke since ycode added its own go.work, which is
 # why `make build` no longer produced a working runner.
