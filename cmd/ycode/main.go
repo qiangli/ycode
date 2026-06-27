@@ -18,11 +18,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
+	container "github.com/qiangli/coreutils/external/podman/engine"
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/buildinfo"
 	"github.com/qiangli/ycode/internal/cli"
 	"github.com/qiangli/ycode/internal/commands"
-	container "github.com/qiangli/coreutils/external/podman/engine"
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/runtime/bash"
 	"github.com/qiangli/ycode/internal/runtime/browser"
