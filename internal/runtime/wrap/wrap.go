@@ -99,26 +99,10 @@ type Options struct {
 	// boundary check.
 	Permission string
 
-	// Loom selects the Loom workspace mode. "off" (default) runs in
-	// WorkDir as-is; "auto"/"on" delegates workspace allocation to
-	// LoomLeaser (when configured), which is the v2 auto-attach path.
-	// When LoomLeaser is nil, a one-line warn is logged and the wrap
-	// proceeds without leasing.
+	// Loom is accepted for CLI compatibility but is now a no-op: the
+	// Loom workspace substrate was removed from ycode, so the wrap
+	// always runs in WorkDir as-is regardless of this value.
 	Loom string
-
-	// LoomLeaser, when non-nil and Loom == "auto"/"on", allocates a
-	// fresh Loom workspace before launching the foreign agent. The
-	// returned env vars (YCODE_LOOM_*) are merged into the agent's
-	// environment, and WorkDir is overridden to the sandbox path; the
-	// agent therefore wakes up inside its isolated workspace without
-	// knowing Loom exists. The Release callback is invoked when the
-	// agent exits (cleanly or not).
-	//
-	// The interface is pluggable so the wrap parent can be embedded in
-	// `ycode serve` (calls pkg/loom.Service directly), the standalone
-	// `ycode wrap` CLI (calls Service via HTTP-MCP against a running
-	// serve), and tests (fake leaser asserting the env shape).
-	LoomLeaser LoomLeaser
 
 	// AllowedDirs is reserved for the Phase 2 VFS boundary that the
 	// shim dispatcher will consult before exec'ing. Today it is
@@ -188,35 +172,6 @@ func Run(ctx context.Context, opts Options) (int, error) {
 			return 1, fmt.Errorf("wrap.Run: getwd: %w", err)
 		}
 		opts.WorkDir = wd
-	}
-	if opts.Loom != "" && opts.Loom != "off" {
-		if opts.LoomLeaser == nil {
-			slog.Warn("wrap: --loom=auto/on requested but no LoomLeaser configured; running without Loom workspace",
-				"loom", opts.Loom)
-		} else {
-			label := inferLoomLabel(opts.AgentArgs)
-			loomID, sandbox, branch, leaseEnv, release, err := opts.LoomLeaser.LeaseForWrap(ctx, opts.WorkDir, label)
-			if err != nil {
-				return 1, fmt.Errorf("wrap: loom lease: %w", err)
-			}
-			defer release()
-			opts.WorkDir = sandbox
-			env := opts.Env
-			if env == nil {
-				env = os.Environ()
-			}
-			env = append(env,
-				"YCODE_LOOM_ID="+loomID,
-				"YCODE_LOOM_BRANCH="+branch,
-				"YCODE_LOOM_LABEL="+label,
-			)
-			for k, v := range leaseEnv {
-				env = append(env, k+"="+v)
-			}
-			opts.Env = env
-			slog.Info("wrap: loom workspace attached",
-				"loom_id", loomID, "sandbox", sandbox, "branch", branch, "label", label)
-		}
 	}
 
 	// Resolve a per-agent profile and merge its defaults into opts.

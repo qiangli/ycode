@@ -69,16 +69,6 @@ func selfHealEnabled() bool {
 
 func main() {
 	buildinfo.Set(version, commit)
-	// Intercept Gitea-generated git hook invocations before cobra parses.
-	// Gitea's bare repos contain pre-receive/update/post-receive scripts
-	// that exec `<binary> --config=<app.ini> hook <stage>` — those args
-	// would confuse cobra. Delegate to Gitea's CLI machinery instead, so
-	// the hooks call back to the running Gitea via its internal HTTP
-	// API and update PR/issue state correctly. See docs/agent-collab.md.
-	if maybeHandleGiteaHook() {
-		return
-	}
-
 	// Intercept `ycode wrap` shim invocations. When the ycode binary is
 	// exec'd via a symlink named `bash`/`rg`/`git`/... that lives in a
 	// wrap-managed shim directory (argv[0]!="ycode" AND YCODE_WRAP_SHIM=1),
@@ -462,7 +452,6 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	tools.RegisterConfigHandler(toolReg, cfg)
 	tools.RegisterSemanticSearchHandler(toolReg)
 	tools.RegisterGitHandlers(toolReg, &tools.GitToolsDeps{WorkDir: cwd})
-	tools.RegisterGitServerHandlers(toolReg)
 	tools.RegisterTestRunnerHandler(toolReg, cwd)
 
 	// LSP: auto-detect available language servers and register them.
@@ -761,11 +750,6 @@ func buildPromptContext(workDir, model string, configInstructions []string, memM
 	// Fallback: use workDir as project root if not a git repo.
 	if ctx.ProjectRoot == "" {
 		ctx.ProjectRoot = workDir
-	}
-
-	// Git server URL (set by serve command when Gitea is running).
-	if overrideGitServerURL != "" {
-		ctx.GitServerURL = overrideGitServerURL
 	}
 
 	// Discover instruction files, load memories, and generate repo map concurrently.
@@ -1395,9 +1379,6 @@ func init() {
 	healCmd.AddCommand(healStatusCmd, healTestCmd)
 	rootCmd.AddCommand(healCmd)
 
-	// Selfheal (Phase 5 outcome CLI for the tool-failure autoloop)
-	rootCmd.AddCommand(newSelfHealCmd())
-
 	// Model management commands
 	rootCmd.AddCommand(newModelCmd())
 	rootCmd.AddCommand(newConfigCmd())
@@ -1455,18 +1436,6 @@ func init() {
 	// the in-process tool registry and CLI surface. Operator complement
 	// to `ycode docs` (which is curated for agents).
 	rootCmd.AddCommand(newToolsCmd())
-
-	// Multi-agent collaboration task queue. See docs/agent-collab.md.
-	rootCmd.AddCommand(newTasksCmd())
-
-	// Self-bootstrap protocol — Boss → Foreman → Worker. See docs/backlog.md.
-	rootCmd.AddCommand(newBacklogCmd())
-	rootCmd.AddCommand(newAutopilotCmd())
-
-	rootCmd.AddCommand(newForemanCmd())
-
-	// Multi-agent collaboration orchestrator. See docs/agent-collab.md.
-	rootCmd.AddCommand(newCollabCmd())
 
 	// MCP browser backends (playwright / devtools / browsermcp).
 	// Stable build adds a stub explaining how to enable; experimental
