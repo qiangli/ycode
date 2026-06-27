@@ -20,7 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel"
 
-	"github.com/qiangli/ycode/internal/container"
+	container "github.com/qiangli/coreutils/external/podman/engine"
 	"github.com/qiangli/ycode/internal/docs"
 	"github.com/qiangli/ycode/internal/extractmcp"
 	"github.com/qiangli/ycode/internal/gateway"

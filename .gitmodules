@@ -10,6 +10,3 @@
 	path = external/perses
 	url = https://github.com/qiangli/perses.git
 	branch = ycode
-[submodule "external/podman"]
-	path = external/podman
-	url = https://github.com/qiangli/podman.git

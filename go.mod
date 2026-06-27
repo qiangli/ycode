@@ -17,11 +17,8 @@ replace go.podman.io/podman/v6 => ../coreutils/external/podman/src
 
 replace github.com/qiangli/coreutils/pkg/oci => ../coreutils/pkg/oci
 
-// Local pkg/ facade modules (workspace members). pkg/oci is now only consumed by
-// cmd/ycode/podman_machine.go + examples (the engine moved to coreutils); kept
-// until the ycode-revisit pass repoints those and drops it.
-replace github.com/qiangli/ycode/pkg/oci => ./pkg/oci
-
+// Local pkg/ facade module (workspace member). pkg/oci is gone — podman/ollama
+// now live entirely in coreutils; ycode consumes coreutils/external/podman/engine.
 replace github.com/qiangli/ycode/pkg/otel => ./pkg/otel
 
 replace mvdan.cc/sh/v3 => ../sh
@@ -66,9 +63,8 @@ require (
 	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
 	github.com/qiangli/bonsai v0.0.0-20260505184649-a3cb69dbf211
 	github.com/qiangli/nadir v0.0.0-20260513032315-67009486cf9c
-	github.com/qiangli/ycode/pkg/oci v0.0.0-00010101000000-000000000000
 	github.com/qiangli/ycode/pkg/otel v0.0.0-00010101000000-000000000000
-	github.com/sirupsen/logrus v1.9.4
+	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/spf13/cobra v1.10.2
 	github.com/xuri/excelize/v2 v2.10.1
 	go.etcd.io/bbolt v1.4.3
@@ -88,7 +84,7 @@ require (
 	go.opentelemetry.io/otel/sdk/log v0.19.0
 	go.opentelemetry.io/otel/sdk/metric v1.43.0
 	go.opentelemetry.io/otel/trace v1.43.0
-	go.podman.io/common v0.67.2-0.20260423135811-cbaa5f41e643
+	go.podman.io/common v0.67.2-0.20260423135811-cbaa5f41e643 // indirect
 	golang.org/x/crypto v0.50.0
 	golang.org/x/net v0.53.0
 	golang.org/x/term v0.44.0
@@ -100,6 +96,7 @@ require (
 
 require (
 	github.com/odvcencio/gotreesitter v0.16.0 // indirect
+	github.com/qiangli/coreutils/pkg/oci v0.0.0-00010101000000-000000000000 // indirect
 	github.com/qiangli/gfy v0.0.0-20260504062854-764095a2877d // indirect
 )
 

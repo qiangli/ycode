@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/qiangli/ycode/internal/container"
+	container "github.com/qiangli/coreutils/external/podman/engine"
 	"github.com/qiangli/ycode/internal/runtime/astgrep"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
 )

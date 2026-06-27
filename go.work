@@ -2,7 +2,6 @@ go 1.26.2
 
 use (
 	.
-	./pkg/oci
 
 	./pkg/otel
 )

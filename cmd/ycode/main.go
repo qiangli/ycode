@@ -22,7 +22,7 @@ import (
 	"github.com/qiangli/ycode/internal/buildinfo"
 	"github.com/qiangli/ycode/internal/cli"
 	"github.com/qiangli/ycode/internal/commands"
-	"github.com/qiangli/ycode/internal/container"
+	container "github.com/qiangli/coreutils/external/podman/engine"
 	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/runtime/bash"
 	"github.com/qiangli/ycode/internal/runtime/browser"
@@ -1383,11 +1383,8 @@ func init() {
 	rootCmd.AddCommand(newModelCmd())
 	rootCmd.AddCommand(newConfigCmd())
 
-	// Container management commands (podman/docker)
-	rootCmd.AddCommand(newPodmanCmd())
-
-	// Ollama-compatible shim (drop-in for the upstream `ollama` CLI).
-	rootCmd.AddCommand(newOllamaCmd())
+	// podman + ollama subcommands moved entirely to bashy (the AgentOS host):
+	// `bashy podman …` / `bashy ollama …`. ycode no longer ships them.
 
 	// Embedded inference runner — internal protocol with ollama's scheduler.
 	// Hidden from help; exec-replaces into the extracted ycode-runner.

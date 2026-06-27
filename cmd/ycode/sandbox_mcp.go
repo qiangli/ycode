@@ -1,4 +1,4 @@
-package container
+package main
 
 import (
 	"context"
@@ -7,19 +7,15 @@ import (
 	"os"
 	"time"
 
+	container "github.com/qiangli/coreutils/external/podman/engine"
+
 	"github.com/qiangli/ycode/internal/runtime/mcp"
 	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
-// MCPHandler exposes ycode's podman-isolated execution to external
-// coding agents over MCP. Mirrors the `yc sandbox -- <cmd>` shell
-// built-in: alpine by default, cwd mounted at /workspace, network
-// disabled. One-shot — the container is removed on exit.
-//
-// Foreign agents typically call this when they need to execute
-// untrusted code (e.g. AI-generated scripts) without giving the model
-// access to the host filesystem or network. Backed by the embedded
-// Podman engine — no external `podman` binary required.
+// MCPHandler exposes podman-isolated execution to external coding agents over
+// MCP (the `sandbox_exec` tool). The engine itself now lives in coreutils
+// (external/podman/engine); this is the ycode-specific MCP glue that stays here.
 type MCPHandler struct{}
 
 func NewMCPHandler() *MCPHandler { return &MCPHandler{} }
@@ -48,10 +44,6 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 
 func (h *MCPHandler) ListResources() []mcp.Resource { return nil }
 
-// RequiredMode: sandbox_exec can run arbitrary commands inside the
-// container. The host is isolated by podman, but from the agent's
-// permission perspective this is still arbitrary code execution —
-// classify as DangerFullAccess so the gate stays explicit.
 func (h *MCPHandler) RequiredMode(_ string) mcp.PermissionMode {
 	return mcp.ModeDangerFullAccess
 }
@@ -97,16 +89,16 @@ func (h *MCPHandler) HandleToolCall(ctx context.Context, name string, input json
 		defer cancel()
 	}
 
-	eng, err := SharedEngine(ctx)
+	eng, err := container.SharedEngine(ctx)
 	if err != nil {
 		return "", fmt.Errorf("container engine unavailable: %w", err)
 	}
 
-	cfg := &ContainerConfig{
+	cfg := &container.ContainerConfig{
 		Image:   image,
 		Network: network,
 		WorkDir: "/workspace",
-		Mounts: []Mount{{
+		Mounts: []container.Mount{{
 			Source: workdir,
 			Target: "/workspace",
 		}},

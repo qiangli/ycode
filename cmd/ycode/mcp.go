@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/docs"
 	"github.com/qiangli/ycode/internal/extractmcp"
 	"github.com/qiangli/ycode/internal/inference"
@@ -150,7 +149,7 @@ func newMcpServeCmd() *cobra.Command {
 				// one-shot `podman run --rm` with cwd mounted at
 				// /workspace, network disabled. DangerFullAccess
 				// since arbitrary code runs inside the container.
-				container.NewMCPHandler(),
+				NewMCPHandler(),
 
 				// Family E: GitHub. PRs / issues / CI checks via
 				// go-github. Auth from GITHUB_TOKEN / GH_TOKEN /

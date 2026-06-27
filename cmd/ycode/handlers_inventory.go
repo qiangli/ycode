@@ -1,7 +1,6 @@
 package main
 
 import (
-	"github.com/qiangli/ycode/internal/container"
 	"github.com/qiangli/ycode/internal/docs"
 	"github.com/qiangli/ycode/internal/extractmcp"
 	"github.com/qiangli/ycode/internal/inference"
@@ -51,7 +50,7 @@ func alwaysOnMCPHandlers() []mcp.ServerHandler {
 		extractmcp.NewDocumentHandler(),
 		repomap.NewMCPHandler(),
 		codegraph.NewMCPHandler(),
-		container.NewMCPHandler(),
+		NewMCPHandler(),
 		gh.NewMCPHandler(),
 		inference.NewMCPHandler(""),
 		browsermcp.NewMCPHandler(nil),
