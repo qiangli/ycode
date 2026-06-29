@@ -1,6 +1,6 @@
 module github.com/qiangli/ycode
 
-go 1.26.2
+go 1.26.4
 
 // Submodule dependencies — local paths for in-process embedding.
 replace github.com/VictoriaMetrics/VictoriaLogs => ./external/victorialogs
