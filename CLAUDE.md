@@ -163,12 +163,14 @@ does not replace weave/foreman/autopilot — it delegates to them. Unlike
 those prose playbooks, conductor is authored as a runnable **dhnt skill**
 (`github.com/dhnt/dhnt`, `skills/dev/conductor.go`, driven by
 `dhnt conductor --goal "…" --verify "…"`): the goal is the contract, the
-phases are steps, and a run emits a verifiable attestation. The
-`skills/ycode-conductor` skill is the exported, human-readable face.
+phases are steps, and a run emits a verifiable attestation. The general,
+human-readable conductor playbook now lives in **bashy**
+(`bashy/skills/conductor`), driving `bashy weave`/`bashy sprint` — it is no
+longer bundled here.
 
 ## Skills
 
-Bundled skills live at top-level `skills/` (`ycode-foreman`, `ycode-autopilot`, `ycode-conductor`, `ycode-tab`, …), are embedded in the binary via `skills/embed.go`, and install user-globally. Edit them there — not in `.agents/ycode/skills/`, which is the installed copy. Note: `ycode-conductor` is *generated* — it is the SKILL.md export of the dhnt `ConductorSkill` in `github.com/dhnt/dhnt`; edit the dhnt source and re-export rather than hand-editing the canonical block.
+Bundled skills live at top-level `skills/` (`ycode-foreman`, `ycode-autopilot`, `ycode-tab`, …), are embedded in the binary via `skills/embed.go`, and install user-globally. Edit them there — not in `.agents/ycode/skills/`, which is the installed copy. (The general conductor playbook moved to `bashy/skills/conductor`; ycode can still drive the runnable dhnt `ConductorSkill` via `dhnt conductor`.)
 
 ## Umbrella interaction
 
