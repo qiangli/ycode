@@ -523,13 +523,13 @@ Effects: write
 set -e
 DOCKER="${DOCKER:-$(command -v docker 2>/dev/null || command -v podman)}"
 CI_IMAGE="${CI_IMAGE:-ycode-builder}"
-${DOCKER} run --rm "${CI_IMAGE}" make compile
-${DOCKER} run --rm "${CI_IMAGE}" make vet
-${DOCKER} run --rm "${CI_IMAGE}" make test
-${DOCKER} run --rm "${CI_IMAGE}" make verify-features
+${DOCKER} run --rm "${CI_IMAGE}" go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/
+${DOCKER} run --rm "${CI_IMAGE}" go vet -tags "sqlite,sqlite_unlock_notify,bindata" $(go list ./... | grep -v '/priorart/')
+${DOCKER} run --rm "${CI_IMAGE}" go test -short -race -tags "sqlite,sqlite_unlock_notify,bindata" $(go list ./... | grep -v '/priorart/')
+${DOCKER} run --rm "${CI_IMAGE}" go test -count=1 ./internal/features/...
 ${DOCKER} run --rm "${CI_IMAGE}" go test -short -race ./internal/features/...
-${DOCKER} run --rm "${CI_IMAGE}" make test-tui
-${DOCKER} run --rm "${CI_IMAGE}" make test-tui-e2e
+${DOCKER} run --rm "${CI_IMAGE}" go test -tags integration -count=1 -timeout 60s ./internal/cli/...
+${DOCKER} run --rm "${CI_IMAGE}" go test -tags e2e -count=1 -timeout 120s ./internal/cli/...
 echo "=== CI parity PASSED ==="
 ```
 
@@ -544,7 +544,7 @@ if [ -z "${DOCKER}" ]; then
   exit 1
 fi
 CI_IMAGE="${CI_IMAGE:-ycode-builder}"
-${DOCKER} run --rm "${CI_IMAGE}" make verify-features
+${DOCKER} run --rm "${CI_IMAGE}" go test -count=1 ./internal/features/...
 ${DOCKER} run --rm "${CI_IMAGE}" go test -short -race ./internal/features/...
 echo "=== ci-fast PASSED ==="
 ```
