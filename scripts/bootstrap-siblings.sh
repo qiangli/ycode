@@ -37,6 +37,13 @@ repo_url() {
     esac
 }
 
+ensure_submodules() {
+    target=$1
+    if [ -f "$target/.gitmodules" ]; then
+        git -C "$target" submodule update --init --recursive
+    fi
+}
+
 while IFS= read -r line; do
     case "$line" in
         ''|'#'*) continue ;;
@@ -50,7 +57,8 @@ while IFS= read -r line; do
 
     target=$root/../$name
     if [ -e "$target/.git" ]; then
-        echo "bootstrap-siblings: $name -> $(cd "$target" && git rev-parse --short HEAD) (already present, leaving alone)"
+        echo "bootstrap-siblings: $name -> $(cd "$target" && git rev-parse --short HEAD) (already present)"
+        ensure_submodules "$target"
         continue
     fi
 
@@ -58,5 +66,5 @@ while IFS= read -r line; do
     echo "bootstrap-siblings: cloning $url -> $target @ ${sha:0:12}"
     git clone --quiet "$url" "$target"
     git -C "$target" checkout --quiet "$sha"
-    git -C "$target" submodule update --init --recursive
+    ensure_submodules "$target"
 done < "$pins"
