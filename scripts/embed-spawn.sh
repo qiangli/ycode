@@ -21,7 +21,9 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
 (cd "${REPO_ROOT}" && go build -trimpath -ldflags="-s -w" -o "${TMP}/ycode-spawn" ./cmd/ycode-spawn/)
-gzip -n -9 -c "${TMP}/ycode-spawn" > "${TMP}/ycode-spawn.gz"
+GZIP_BIN="/usr/bin/gzip"
+[ ! -x "$GZIP_BIN" ] && GZIP_BIN="/bin/gzip"
+"$GZIP_BIN" -n -9 -c "${TMP}/ycode-spawn" > "${TMP}/ycode-spawn.gz"
 
 if cmp -s "${TMP}/ycode-spawn.gz" "${OUT_GZ}" 2>/dev/null; then
     exit 0
