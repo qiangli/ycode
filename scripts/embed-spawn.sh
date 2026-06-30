@@ -30,7 +30,7 @@ else
       GZIP_BIN="$path"
       break
     fi
-  fi
+  done
 fi
 
 if [ -n "$GZIP_BIN" ]; then
