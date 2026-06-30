@@ -30,6 +30,8 @@ Initialize submodules, fetch plugins, and prepare embedded assets.
 Effects: write
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 git submodule init 2>&1 | grep -v 'already registered' || true
 git submodule update --recursive 2>&1 | grep -v '^From \|^Submodule path\| \* branch' || true
 ./scripts/fetch-perses-plugins.sh
@@ -78,6 +80,8 @@ Generates: ../coreutils/external/ollama/runner_embed/ycode-runner.gz
 Effects: write
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 if [ ! -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
   if [ -z "${BUILD_EMBEDS_FROM_SOURCE:-}" ]; then
     ./scripts/embed-fetch.sh runner
@@ -102,6 +106,8 @@ Generates: bin/ycode
 Effects: write
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 mkdir -p bin
 VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
 COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
@@ -130,6 +136,8 @@ echo "compile complete"
 Verify the feature registry structure (paths exist, no malformed entries).
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -count=1 ./internal/features/...
 ```
 
@@ -145,6 +153,8 @@ Compile with debug symbols (for profiling/debugging).
 Effects: write
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 mkdir -p bin
 VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
 COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
@@ -167,6 +177,8 @@ Requires: ensure-embeds
 Effects: write
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
 COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
 PACKAGES="${PACKAGES:-$(go list ./... | grep -v '/priorart/')}"
@@ -188,6 +200,8 @@ Run unit tests with race detector (-short flag).
 Effects: read
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 PACKAGES="${PACKAGES:-$(go list ./... | grep -v '/priorart/')}"
 TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
 if [ -f internal/runtime/wrap/spawn_embed/ycode-spawn.gz ]; then
@@ -204,6 +218,8 @@ go test -short -race -tags "${TAG_LIST}" ${PACKAGES}
 Run Go integration tests (requires running server).
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -tags integration -v -count=1 ./internal/integration/...
 ```
 
@@ -211,6 +227,8 @@ go test -tags integration -v -count=1 ./internal/integration/...
 Run container integration tests (requires podman).
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -tags integration -race -count=1 -timeout 180s -v ./internal/container/...
 ```
 
@@ -219,6 +237,8 @@ Fast e2e: ollama pull/run + podman build/pull/run (gates releases).
 Effects: read
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
 if [ -f internal/runtime/wrap/spawn_embed/ycode-spawn.gz ]; then
   TAG_LIST="${TAG_LIST},embed_spawn"
@@ -234,6 +254,8 @@ go test -tags "${TAG_LIST},release_smoke,embed_runner" -count=1 -timeout 600s -v
 Run OCI self-build integration test (requires podman).
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -tags integration -race -count=1 -timeout 600s -v ./internal/container/... -run TestOCIBuildSelf
 ```
 
@@ -241,6 +263,8 @@ go test -tags integration -race -count=1 -timeout 600s -v ./internal/container/.
 Run git server workspace integration tests.
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -tags "integration,sqlite,sqlite_unlock_notify,bindata" -race -count=1 -timeout 240s -v ./internal/gitserver/...
 ```
 
@@ -255,6 +279,8 @@ cd e2e && npx playwright test
 Run TUI integration tests (direct Update + teatest lifecycle).
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -tags integration -count=1 -timeout 60s ./internal/cli/...
 ```
 
@@ -263,6 +289,8 @@ Run TUI E2E tests in a PTY (requires compiled binary).
 Requires: compile
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -tags e2e -count=1 -timeout 120s ./internal/cli/...
 ```
 
@@ -271,6 +299,8 @@ Run TUI fuzz tests for 30s each.
 Effects: read
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -run='^$' -fuzz=FuzzToolDetail -fuzztime=30s ./internal/cli/
 go test -run='^$' -fuzz=FuzzTUIUpdate -fuzztime=30s ./internal/cli/
 ```
@@ -286,6 +316,8 @@ echo "all tests passed"
 Validate AGENTS.md quality (static analysis, no LLM).
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -v -run TestAnalyze -race ./internal/eval/agentsmd/...
 ```
 
@@ -293,6 +325,8 @@ go test -v -run TestAnalyze -race ./internal/eval/agentsmd/...
 Run /init E2E benchmark.
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -tags benchmark -count=1 -timeout 35m -v ./internal/eval/benchmark/...
 ```
 
@@ -300,6 +334,8 @@ go test -tags benchmark -count=1 -timeout 35m -v ./internal/eval/benchmark/...
 Run contract-tier evals (no LLM, deterministic, fast).
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -short -race ./internal/eval/...
 ```
 
@@ -307,6 +343,8 @@ go test -short -race ./internal/eval/...
 Run smoke-tier evals (real LLM, pass@k, requires provider).
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -tags eval -count=1 -timeout 5m ./internal/eval/smoke/...
 ```
 
@@ -314,6 +352,8 @@ go test -tags eval -count=1 -timeout 5m ./internal/eval/smoke/...
 Run behavioral evals (trajectory analysis, requires provider).
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -tags eval_behavioral -count=1 -timeout 30m ./internal/eval/behavioral/...
 ```
 
@@ -321,6 +361,8 @@ go test -tags eval_behavioral -count=1 -timeout 30m ./internal/eval/behavioral/.
 Run E2E evals (full coding tasks, requires provider).
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -tags eval_e2e -count=1 -timeout 45m ./internal/eval/e2e/...
 ```
 
@@ -329,6 +371,8 @@ Replay /init via aperio (offline; skips if cassette unrecorded).
 Requires: compile
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -count=1 -timeout 120s ./internal/eval/init/...
 ```
 
@@ -343,6 +387,8 @@ echo "all evaluation tiers completed"
 Memory retrieval quality benchmarks (no LLM, fast).
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -run TestBenchmark -v -count=1 ./internal/runtime/memory/...
 ```
 
@@ -350,6 +396,8 @@ go test -run TestBenchmark -v -count=1 ./internal/runtime/memory/...
 Comprehensive memory quality (large corpus, context metrics).
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -run 'TestBenchmark_Quality|TestContextMetrics' -v -count=1 -timeout 2m ./internal/runtime/memory/...
 ```
 
@@ -357,6 +405,8 @@ go test -run 'TestBenchmark_Quality|TestContextMetrics' -v -count=1 -timeout 2m 
 Competitive benchmark (LoCoMo subset, fusion ablation, latency).
 Effects: read
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -run TestCompetitive -v -count=1 -timeout 5m ./internal/runtime/memory/...
 ```
 
@@ -365,6 +415,8 @@ Memory and storage operation latency benchmarks.
 Effects: read
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 go test -bench BenchmarkRecall -benchmem -count=3 ./internal/runtime/memory/...
 go test -bench 'BenchmarkBleve|BenchmarkVector' -benchmem -count=3 ./internal/storage/...
 ```
@@ -381,6 +433,8 @@ Run static analysis.
 Effects: read
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 PACKAGES="${PACKAGES:-$(go list ./... | grep -v '/priorart/')}"
 TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
 if [ -f internal/runtime/wrap/spawn_embed/ycode-spawn.gz ]; then
@@ -397,6 +451,10 @@ go vet -tags "${TAG_LIST}" ${PACKAGES}
 Run mod tidy, fmt, and vet.
 Effects: write
 ```bash
+set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
+export PACKAGES="${PACKAGES:-$(go list ./... | grep -v '/priorart/')}"
 ./scripts/tidy.sh
 ```
 
@@ -504,6 +562,8 @@ Generates: dist/ycode-linux-amd64
 Effects: write
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
 COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
 LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}"
@@ -525,6 +585,8 @@ Generates: dist/ycode-linux-arm64
 Effects: write
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
 COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
 LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}"
@@ -546,6 +608,8 @@ Generates: dist/ycode-darwin-amd64
 Effects: write
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
 COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
 LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}"
@@ -568,6 +632,8 @@ Generates: dist/ycode-darwin-arm64
 Effects: write
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
 COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
 LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}"
@@ -590,6 +656,8 @@ Generates: dist/ycode-windows-amd64.exe
 Effects: write
 ```bash
 set -e
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
 COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
 LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}"
@@ -616,6 +684,8 @@ echo "cross compile complete"
 Build Ollama runner from source (requires C++ toolchain).
 Effects: write
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 ./scripts/build-runner.sh
 ```
 
@@ -630,6 +700,8 @@ Effects: write
 Build thin runner and compress for embedding.
 Effects: write
 ```bash
+export GOROOT="$(bashy go env GOROOT)"
+export PATH="$GOROOT/bin:$PATH"
 ./scripts/build-runner-thin.sh
 ```
 
