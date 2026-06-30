@@ -1,4 +1,4 @@
-// A web chat server using ycode as a Go module with local Ollama models.
+// A web chat server using ycode as a Go module.
 // ycode runs as the full agentic agent with tools, memory, and all features.
 //
 // Usage:
@@ -6,7 +6,8 @@
 //	go run -tags "sqlite,sqlite_unlock_notify,bindata" .
 //
 // Then open http://localhost:8080 in your browser.
-// Requires Ollama running locally with a model pulled (e.g. ollama pull qwen3:8b).
+// Requires normal ycode provider credentials such as ANTHROPIC_API_KEY or
+// OPENAI_API_KEY. Set YCODE_MODEL to override the default model.
 package main
 
 import (
@@ -16,6 +17,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -31,15 +33,17 @@ var upgrader = websocket.Upgrader{
 }
 
 func main() {
-	// Create a ycode agent using local Ollama.
+	// Create a ycode agent using normal provider auto-detection.
 	// This gives you the full agent: tools (bash, file ops, search), memory, and more.
-	model := "qwen3:8b"
+	model := os.Getenv("YCODE_MODEL")
+	if model == "" {
+		model = "claude-sonnet-4-20250514"
+	}
 	agent, err := ycode.NewAgent(
 		ycode.WithModel(model),
-		ycode.WithOllama(""),
 	)
 	if err != nil {
-		log.Fatalf("Failed to create agent: %v\nMake sure Ollama is running: ollama serve", err)
+		log.Fatalf("Failed to create agent: %v", err)
 	}
 
 	// WebSocket chat endpoint — streams agent responses.

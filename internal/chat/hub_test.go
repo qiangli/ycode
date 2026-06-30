@@ -222,7 +222,7 @@ func TestHub_ListModels_WithLister(t *testing.T) {
 	// Set a model lister that returns test data.
 	hub.SetModelLister(func(ctx context.Context) ([]byte, error) {
 		return json.Marshal([]map[string]string{
-			{"id": "llama3.2:3b", "provider": "ollama", "source": "ollama", "size": "2.0 GB"},
+			{"id": "qwen2.5-coder:32b", "provider": "openai-compatible", "source": "cloudbox"},
 			{"id": "claude-sonnet-4-6-20250514", "provider": "anthropic", "source": "builtin", "alias": "sonnet"},
 		})
 	})
@@ -242,8 +242,8 @@ func TestHub_ListModels_WithLister(t *testing.T) {
 	if len(models) != 2 {
 		t.Fatalf("got %d models, want 2", len(models))
 	}
-	if models[0]["id"] != "llama3.2:3b" {
-		t.Errorf("first model id: got %q, want llama3.2:3b", models[0]["id"])
+	if models[0]["id"] != "qwen2.5-coder:32b" {
+		t.Errorf("first model id: got %q, want qwen2.5-coder:32b", models[0]["id"])
 	}
 	if models[1]["alias"] != "sonnet" {
 		t.Errorf("second model alias: got %q, want sonnet", models[1]["alias"])

@@ -6,21 +6,11 @@ import (
 	"testing"
 )
 
-// Mirror of observability_default_test.go for the four other intrinsic
-// feature flags. The contract for every IsEnabled() is identical:
-// nil receiver, nil Enabled, or pointer-to-true → enabled. Only an
-// explicit pointer-to-false opts out. This matches the ycode
-// convention that bundled services (Ollama runner, Podman sandbox,
-// embedded Gitea, NATS bus, chat hub) are intrinsic infrastructure.
+// Mirror of observability_default_test.go for the remaining intrinsic
+// services.
 
-func TestFeatureDefaults_DefaultConfigEnablesIntrinsicServices(t *testing.T) {
+func TestFeatureDefaults_DefaultConfigEnablesLeanIntrinsicServices(t *testing.T) {
 	cfg := DefaultConfig()
-	if !cfg.Inference.IsEnabled() {
-		t.Error("DefaultConfig().Inference should be enabled (intrinsic)")
-	}
-	if !cfg.Container.IsEnabled() {
-		t.Error("DefaultConfig().Container should be enabled (intrinsic)")
-	}
 	if !cfg.GitServer.IsEnabled() {
 		t.Error("DefaultConfig().GitServer should be enabled (intrinsic)")
 	}
@@ -33,24 +23,16 @@ func TestFeatureDefaults_DefaultConfigEnablesIntrinsicServices(t *testing.T) {
 }
 
 func TestFeatureDefaults_NilReceiverEnabled(t *testing.T) {
-	var inf *InferenceConfig
-	var cont *ContainerConfig
 	var gs *GitServerConfig
 	var nats *NATSConfig
 	var chat *ChatConfig
-	if !inf.IsEnabled() || !cont.IsEnabled() || !gs.IsEnabled() || !nats.IsEnabled() || !chat.IsEnabled() {
-		t.Fatal("nil receivers should report enabled=true for every intrinsic feature")
+	if !gs.IsEnabled() || !nats.IsEnabled() || !chat.IsEnabled() {
+		t.Fatal("nil receivers should report enabled=true for remaining intrinsic features")
 	}
 }
 
-func TestFeatureDefaults_ExplicitFalseOptsOut(t *testing.T) {
+func TestFeatureDefaults_ExplicitFalseDisables(t *testing.T) {
 	f := false
-	if (&InferenceConfig{Enabled: &f}).IsEnabled() {
-		t.Error("InferenceConfig with Enabled=&false should be disabled")
-	}
-	if (&ContainerConfig{Enabled: &f}).IsEnabled() {
-		t.Error("ContainerConfig with Enabled=&false should be disabled")
-	}
 	if (&GitServerConfig{Enabled: &f}).IsEnabled() {
 		t.Error("GitServerConfig with Enabled=&false should be disabled")
 	}
@@ -67,8 +49,6 @@ func TestFeatureDefaults_ExplicitFalseOptsOut(t *testing.T) {
 func TestFeatureDefaults_OptOutViaSettingsJSON(t *testing.T) {
 	dir := t.TempDir()
 	body := []byte(`{
-		"inference":  {"enabled": false},
-		"container":  {"enabled": false},
 		"gitServer":  {"enabled": false},
 		"nats":       {"enabled": false},
 		"chat":       {"enabled": false}
@@ -83,12 +63,6 @@ func TestFeatureDefaults_OptOutViaSettingsJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if cfg.Inference.IsEnabled() {
-		t.Error("Inference should be disabled after settings.json override")
-	}
-	if cfg.Container.IsEnabled() {
-		t.Error("Container should be disabled after settings.json override")
-	}
 	if cfg.GitServer.IsEnabled() {
 		t.Error("GitServer should be disabled after settings.json override")
 	}
@@ -100,8 +74,8 @@ func TestFeatureDefaults_OptOutViaSettingsJSON(t *testing.T) {
 	}
 }
 
-// An absent block leaves the default-on behavior intact for every flag.
-func TestFeatureDefaults_AbsentBlocksKeepDefaultOn(t *testing.T) {
+// An absent block leaves lean defaults intact.
+func TestFeatureDefaults_AbsentBlocksKeepLeanDefaults(t *testing.T) {
 	dir := t.TempDir()
 	body := []byte(`{"model":"some-model"}`)
 	if err := os.WriteFile(filepath.Join(dir, "settings.json"), body, 0o644); err != nil {
@@ -114,12 +88,6 @@ func TestFeatureDefaults_AbsentBlocksKeepDefaultOn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !cfg.Inference.IsEnabled() {
-		t.Error("Inference should remain enabled when absent")
-	}
-	if !cfg.Container.IsEnabled() {
-		t.Error("Container should remain enabled when absent")
-	}
 	if !cfg.GitServer.IsEnabled() {
 		t.Error("GitServer should remain enabled when absent")
 	}

@@ -9,10 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
-
-	"github.com/qiangli/coreutils/pkg/ollm"
 )
 
 // HFModel represents a model from the Hugging Face Hub API.
@@ -29,6 +26,12 @@ type HFClient struct {
 	token    string // HF API token (for gated models)
 	cacheDir string // download cache directory
 	client   *http.Client
+}
+
+// HFConfig configures Hugging Face Hub access for model search/download.
+type HFConfig struct {
+	Token    string
+	CacheDir string
 }
 
 // NewHFClient creates a Hugging Face Hub client.
@@ -160,12 +163,6 @@ func (c *HFClient) DownloadGGUF(ctx context.Context, repo, filename string, prog
 	return localPath, nil
 }
 
-// GenerateModelfile creates an Ollama Modelfile for a downloaded GGUF.
-// This allows importing the model into Ollama's local registry.
-func GenerateModelfile(ggufPath string) string {
-	return fmt.Sprintf("FROM %s\n", ggufPath)
-}
-
 // ParseHFRef parses a "hf://owner/repo/filename.gguf" or "hf://owner/repo" reference.
 // Returns (repo, filename). If filename is empty, the caller should list GGUF files.
 func ParseHFRef(ref string) (repo, filename string, err error) {
@@ -179,82 +176,4 @@ func ParseHFRef(ref string) (repo, filename string, err error) {
 		filename = parts[2]
 	}
 	return repo, filename, nil
-}
-
-// ImportGGUFToOllama imports a downloaded GGUF file into Ollama's local registry.
-// The model becomes immediately runnable after this call returns.
-func ImportGGUFToOllama(ctx context.Context, ollamaBaseURL, modelName, ggufPath string, progress func(status string)) error {
-	client, err := ollm.NewClient(ollamaBaseURL)
-	if err != nil {
-		return err
-	}
-	return client.Import(ctx, modelName, ggufPath, progress)
-}
-
-// DeriveModelName generates an Ollama-friendly model name from a HF reference.
-// Example: "bartowski/Llama-3-8B-GGUF", "Llama-3-8B-Q4_K_M.gguf" → "llama-3-8b-q4-k-m"
-func DeriveModelName(repo, filename string) string {
-	// Strip extension.
-	name := strings.TrimSuffix(filename, ".gguf")
-	name = strings.TrimSuffix(name, ".GGUF")
-
-	// Lowercase.
-	name = strings.ToLower(name)
-
-	// Replace underscores with hyphens.
-	name = strings.ReplaceAll(name, "_", "-")
-
-	// Collapse repeated hyphens and strip non-alphanumeric (except hyphen/dot/colon).
-	name = regexp.MustCompile(`[^a-z0-9.\-:]`).ReplaceAllString(name, "-")
-	name = regexp.MustCompile(`-{2,}`).ReplaceAllString(name, "-")
-	name = strings.Trim(name, "-")
-
-	if name == "" {
-		// Fallback to repo name.
-		parts := strings.Split(repo, "/")
-		name = strings.ToLower(parts[len(parts)-1])
-	}
-
-	return name
-}
-
-// DetectOllamaServer checks if an Ollama server is reachable at the given URL.
-func DetectOllamaServer(ctx context.Context, baseURL string) bool {
-	return ollm.Detect(ctx, baseURL)
-}
-
-// DefaultOllamaURL returns the default Ollama server URL.
-func DefaultOllamaURL() string {
-	return ollm.DefaultURL()
-}
-
-// OllamaListModels lists models from a running Ollama server.
-func OllamaListModels(ctx context.Context, baseURL string) ([]ollm.Model, error) {
-	client, err := ollm.NewClient(baseURL)
-	if err != nil {
-		return nil, err
-	}
-	return client.List(ctx)
-}
-
-// OllamaPullModel pulls a model from the Ollama registry.
-func OllamaPullModel(ctx context.Context, baseURL, modelName string, progress func(status string, completed, total int64)) error {
-	client, err := ollm.NewClient(baseURL)
-	if err != nil {
-		return err
-	}
-	return client.Pull(ctx, modelName, func(p ollm.PullProgress) {
-		if progress != nil {
-			progress(p.Status, p.Completed, p.Total)
-		}
-	})
-}
-
-// OllamaDeleteModel deletes a model from the Ollama server.
-func OllamaDeleteModel(ctx context.Context, baseURL, modelName string) error {
-	client, err := ollm.NewClient(baseURL)
-	if err != nil {
-		return err
-	}
-	return client.Delete(ctx, modelName)
 }

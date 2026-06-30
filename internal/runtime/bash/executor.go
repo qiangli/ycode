@@ -2,14 +2,10 @@ package bash
 
 import (
 	"context"
-	"fmt"
-
-	container "github.com/qiangli/coreutils/external/podman/engine"
 )
 
 // Executor defines the interface for executing bash commands.
-// Implementations include HostExecutor (direct execution) and
-// ContainerExecutor (execution inside a container).
+// Implementations run commands through the host-local execution layer.
 type Executor interface {
 	Execute(ctx context.Context, params ExecParams) (*ExecResult, error)
 }
@@ -29,29 +25,6 @@ type HostExecutor struct{}
 // Execute runs a command on the host.
 func (h *HostExecutor) Execute(ctx context.Context, params ExecParams) (*ExecResult, error) {
 	return Execute(ctx, params)
-}
-
-// ContainerExecutor runs commands inside a container via podman exec.
-type ContainerExecutor struct {
-	Container *container.Container
-}
-
-// Execute runs a command inside the container.
-func (ce *ContainerExecutor) Execute(ctx context.Context, params ExecParams) (*ExecResult, error) {
-	if ce.Container == nil {
-		return nil, fmt.Errorf("container executor: no container configured")
-	}
-
-	result, err := ce.Container.Exec(ctx, params.Command, params.WorkDir)
-	if err != nil {
-		return nil, err
-	}
-
-	return &ExecResult{
-		Stdout:   result.Stdout,
-		Stderr:   result.Stderr,
-		ExitCode: result.ExitCode,
-	}, nil
 }
 
 // ExecuteWith runs a command using the provided executor, falling back to

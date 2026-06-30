@@ -127,22 +127,21 @@ func TestDetectProvider_OpenAIBaseURL(t *testing.T) {
 		t.Errorf("Kind = %v, want %v", cfg.Kind, ProviderOpenAI)
 	}
 	if cfg.BaseURL != "http://localhost:11434/v1" {
-		t.Errorf("BaseURL = %q, want Ollama URL", cfg.BaseURL)
+		t.Errorf("BaseURL = %q, want OpenAI-compatible URL", cfg.BaseURL)
 	}
 }
 
 // TestDetectProvider_DHNTBaseURL pins the dhnt-namespaced override:
 // when DHNT_BASE_URL is set, ycode routes through it as an
 // OpenAI-compatible provider with DHNT_API_KEY as the bearer. The
-// model name passes through verbatim — even Ollama-style colon tags
-// like "qwen3.5:9b" route via DHNT (rather than triggering the
-// model-prefix heuristic) because DHNT_BASE_URL is checked first.
+// model name passes through verbatim because DHNT_BASE_URL is checked
+// before generic OPENAI_* fallback.
 func TestDetectProvider_DHNTBaseURL(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("DHNT_BASE_URL", "https://ai.dhnt.io/v1")
 	t.Setenv("DHNT_API_KEY", "eyJ-cloudbox-bearer")
 
-	cfg, err := DetectProvider("qwen3.5:9b")
+	cfg, err := DetectProvider("custom-model")
 	if err != nil {
 		t.Fatal(err)
 	}

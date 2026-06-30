@@ -92,18 +92,16 @@ func ResolveModelWithAliases(model string, configAliases map[string]string) stri
 // precedence over OPENAI_* so a user who has OPENAI_API_KEY exported
 // for direct OpenAI access from another tool can ALSO set
 // DHNT_BASE_URL + DHNT_API_KEY to route ycode through cloudbox's
-// pooled Ollama (https://ai.dhnt.io/v1) without disturbing the other
-// tool in the same shell. The two paths are independent — neither
-// clobbers the other.
+// pooled models (https://ai.dhnt.io/v1) without disturbing the other tool
+// in the same shell. The two paths are independent — neither clobbers
+// the other.
 func DetectProvider(model string) (*ProviderConfig, error) {
 	resolved := ResolveModel(model)
 
 	// 1. Check model name for provider hints with available credentials.
 	// When the model matches a known provider AND the corresponding API
 	// key is set, route directly — the user's explicit per-provider key
-	// beats the cloudbox override. Ollama-style models (colon tags) that
-	// don't require an API key are intentionally excluded here; they
-	// fall through to DHNT when it is configured.
+	// beats the cloudbox override.
 	cfg, modelMatched := detectFromModel(resolved)
 	if modelMatched && cfg != nil && (cfg.APIKey != "" || cfg.BearerToken != "") {
 		return cfg, nil
@@ -111,12 +109,10 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 
 	// 1b. Model matched a commercial provider prefix (deepseek-*, gpt-*,
 	// claude-*, …) but its API key is not set. Do NOT fall through to the
-	// DHNT cloudbox pool — the pool serves Ollama-tagged local models, never
-	// commercial cloud model IDs, so it would 404 with a cryptic
+	// DHNT cloudbox pool — commercial cloud model IDs would 404 with a cryptic
 	// "no reachable backend has model <name>". Report a clear, actionable
 	// error naming the key to set. A nil cfg here means "matched but no
-	// creds"; the local Ollama colon-tag case returns a non-nil ProviderLocal
-	// cfg and is intentionally allowed to fall through to DHNT below.
+	// creds".
 	if modelMatched && cfg == nil {
 		if envKey := providerEnvKey(DetectProviderFromModel(resolved)); envKey != "" {
 			return nil, fmt.Errorf("model %q requires %s; set it (or `ycode login`), or pick a model your configured provider serves", model, envKey)
@@ -233,7 +229,7 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 		}, nil
 	}
 
-	return nil, fmt.Errorf("no API key found; set one of: DHNT_BASE_URL (+ DHNT_API_KEY) for cloudbox-pooled Ollama, ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, DEEPSEEK_API_KEY\nor run: ycode login")
+	return nil, fmt.Errorf("no API key found; set one of: DHNT_BASE_URL (+ DHNT_API_KEY), ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, DEEPSEEK_API_KEY\nor run: ycode login")
 }
 
 // NewProvider creates a Provider from a ProviderConfig.
@@ -251,7 +247,7 @@ func NewProvider(cfg *ProviderConfig) Provider {
 	case ProviderGemini:
 		return NewOpenAICompatClient(cfg.APIKey, cfg.BaseURL)
 	case ProviderLocal:
-		// Local Ollama-compatible provider — no API key needed.
+		// External OpenAI-compatible provider with no API key.
 		return NewOpenAICompatClient("", cfg.BaseURL)
 	default:
 		return NewOpenAICompatClient(cfg.APIKey, cfg.BaseURL)
@@ -266,17 +262,6 @@ func detectFromModel(model string) (*ProviderConfig, bool) {
 	lower := strings.ToLower(model)
 
 	switch {
-	// Ollama-style tagged models (`name:variant`, e.g. `qwen2.5:0.5b`,
-	// `llama3.2:3b`, `gemma2:2b`). Distinct from cloud model IDs, which
-	// don't use colons. Checked first so `qwen2.5:0.5b` doesn't fall
-	// into the cloud `qwen` branch and demand a DashScope key.
-	case strings.Contains(lower, ":") && !strings.Contains(lower, "://"):
-		baseURL := envNonEmpty("OPENAI_BASE_URL", envNonEmpty("OLLAMA_HOST", "http://127.0.0.1:11434")+"/v1")
-		return &ProviderConfig{
-			Kind:        ProviderLocal,
-			DisplayName: "ollama",
-			BaseURL:     baseURL,
-		}, true
 	case strings.HasPrefix(lower, "claude-") || isClaudeAlias(lower):
 		if key := envNonEmpty("ANTHROPIC_API_KEY"); key != "" {
 			return &ProviderConfig{

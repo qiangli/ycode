@@ -9,43 +9,8 @@ comma := ,
 # Build tag layers (see docs/strategy.md#feature-tiers):
 #   sqlite + sqlite_unlock_notify  embedded Gitea / SQLite
 #   bindata                        Gitea bundled assets
-#   embed_runner (auto)            llama.cpp inference runner — added
-#                                  automatically when the gz exists.
-#                                  `make build` produces it on first run
-#                                  via `runner-build-if-missing` (which
-#                                  delegates to `scripts/build-runner-thin.sh`).
-#                                  On darwin/arm64 no extra toolchain is
-#                                  needed (Metal is in-tree); other
-#                                  platforms need CMake + a C/C++ compiler.
-#                                  If the toolchain is missing the script
-#                                  warns and exits 0 — the binary still
-#                                  builds, ollama features degrade to
-#                                  ErrRunnerNotInstalled at runtime.
-#   embed_vfkit (auto)             Apple Virtualization Framework helper
-#                                  for podman machine on macOS. Added
-#                                  automatically when the gz exists.
-#                                  Run `make vfkit-embed` to produce it;
-#                                  without it `ycode podman machine
-#                                  start` defaults to libkrun and aborts
-#                                  with "krunkit: executable file not
-#                                  found" on macOS hosts without a
-#                                  separately-installed krunkit.
-#   embed_podman (auto)            containers/podman client binary (built
-#                                  with -tags remote on macOS/Windows,
-#                                  native on Linux). Added automatically
-#                                  when the gz exists. Produced by
-#                                  `make build` via podman-embed-if-missing,
-#                                  which calls scripts/embed-podman.sh
-#                                  (prefers an upstream system podman,
-#                                  falls back to building from
-#                                  external/podman/cmd/podman/).
-#   embed_gvproxy (auto)           containers/gvisor-tap-vsock user-mode
-#                                  network proxy for podman machine
-#                                  (macOS + Windows; not needed on
-#                                  Linux where podman uses its native
-#                                  socket directly). Added automatically
-#                                  when the gz exists.
-TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata$(if $(wildcard internal/runtime/wrap/spawn_embed/ycode-spawn.gz),$(comma)embed_spawn)$(if $(wildcard ../coreutils/external/ollama/runner_embed/ycode-runner.gz),$(comma)embed_runner)
+#   embed_spawn (auto)             small process shim used by wrapper tools.
+TAG_LIST ?= sqlite,sqlite_unlock_notify,bindata$(if $(wildcard internal/runtime/wrap/spawn_embed/ycode-spawn.gz),$(comma)embed_spawn)
 TAGS := -tags "$(TAG_LIST)"
 PACKAGES := $(shell go list ./... | grep -v '/priorart/')
 
@@ -64,7 +29,7 @@ ifeq ($(shell uname),Darwin)
 export CGO_LDFLAGS += -Wl,-no_warn_duplicate_libraries
 endif
 
-.PHONY: help init sync priorart-list priorart-sync spawn-embed compile compile-full compile-debug build test test-integration test-container test-oci test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-release-smoke test-all vet tidy clean all chrome-extension cross runner-build runner-build-thin runner-build-if-missing runner-check ensure-embeds _compile-inner build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
+.PHONY: help init sync priorart-list priorart-sync spawn-embed compile compile-full compile-debug build test test-integration test-gitserver test-ui test-tui test-tui-e2e test-tui-fuzz test-all vet tidy clean all chrome-extension cross ensure-embeds _compile-inner build-single collector deploy deploy-local deploy-remote validate validate-ui validate-all eval-agentsmd bench-init eval-contract eval-smoke eval-behavioral eval-e2e eval-init eval-all-evals bench-memory bench-memory-quality bench-memory-competitive bench-memory-latency bench-memory-all
 
 .DEFAULT_GOAL := help
 
@@ -73,11 +38,9 @@ help: ## Show this help
 
 # ─── Source Management ──────────────────────────────────────────────────────
 
-init: ## Initialize submodules, fetch plugins, and prepare embedded assets
+init: ## Initialize submodules and prepare embedded Gitea assets
 	@git submodule init 2>&1 | grep -v 'already registered' || true
 	@git submodule update --recursive 2>&1 | grep -v '^From \|^Submodule path\| \* branch' || true
-	@./scripts/fetch-perses-plugins.sh
-	@./scripts/gzip-embeds.sh
 	@./scripts/build-gitea-frontend.sh
 	@echo "Generating Gitea bindata..."
 	@cd external/gitea && go run build/generate-bindata.go options modules/options/bindata.dat 2>&1
@@ -96,7 +59,7 @@ priorart-sync: ## Pull latest changes for all priorart repos
 
 # ─── Build ──────────────────────────────────────────────────────────────────
 
-ensure-embeds: spawn-embed runner-build-if-missing
+ensure-embeds: spawn-embed
 
 # ycode-spawn is a stdlib-only micro shim inside this repo (cmd/ycode-spawn);
 # unlike the other embeds it always builds (no fetch track, no soft-skip)
@@ -137,17 +100,6 @@ test: ## Run unit tests with race detector (-short flag)
 test-integration: ## Run Go integration tests (requires running server)
 	go test -tags integration -v -count=1 ./internal/integration/...
 
-test-container: ## Run container integration tests (requires podman)
-	go test -tags integration -race -count=1 -timeout 180s -v ./internal/container/...
-
-test-release-smoke: ## Fast e2e: ollama pull/run + podman build/pull/run (gates releases)
-	@echo "Release smoke — pulls a tiny model and a tiny image to verify both substrates work end-to-end."
-	@echo "Skips legs cleanly if podman/ollama prerequisites are missing."
-	go test -tags "$(TAG_LIST),release_smoke,embed_runner" -count=1 -timeout 600s -v ./internal/integration/ -run 'TestReleaseSmoke_'
-
-test-oci: ## Run OCI self-build integration test (requires podman)
-	go test -tags integration -race -count=1 -timeout 600s -v ./internal/container/... -run TestOCIBuildSelf
-
 test-gitserver: ## Run git server workspace integration tests
 	go test -tags "integration,sqlite,sqlite_unlock_notify,bindata" -race -count=1 -timeout 240s -v ./internal/gitserver/...
 
@@ -167,7 +119,7 @@ test-tui-fuzz: ## Run TUI fuzz tests for 30s each
 	go test -run='^$$' -fuzz=FuzzToolDetail -fuzztime=30s ./internal/cli/
 	go test -run='^$$' -fuzz=FuzzTUIUpdate -fuzztime=30s ./internal/cli/
 
-test-all: test test-container test-gitserver test-tui test-tui-e2e test-integration test-ui ## Run all tests: unit + container + gitserver + TUI + integration + browser
+test-all: test test-gitserver test-tui test-tui-e2e test-integration test-ui ## Run all tests: unit + gitserver + TUI + integration + browser
 
 # ─── Evaluation ────────────────────────────────────────────────────────────
 
@@ -319,49 +271,7 @@ dist/ycode-darwin-arm64:
 dist/ycode-windows-amd64.exe:
 	GOOS=windows GOARCH=amd64 go build -trimpath $(TAGS) $(LDFLAGS) -o $@ ./cmd/ycode/
 
-# ─── Inference Runner ──────────────────────────────────────────────────────
-
-runner-build: ## Build Ollama runner from source (requires C++ toolchain)
-	@./scripts/build-runner.sh
-
-# Two-track build dev fast-path. By default the *-if-missing wrappers
-# try `embed-fetch` first (downloads prebuilt blobs from the latest
-# GitHub release for the current platform — ~30s, no CMake/cgo work)
-# and fall through to the source-build script only if the fetch
-# didn't produce the .gz. Set BUILD_EMBEDS_FROM_SOURCE=1 to skip the
-# fetch entirely and always build from source — what release CI does.
-embed-fetch: ## Download prebuilt embed blobs (runner+podman+vfkit+gvproxy) from the latest GitHub release for the current platform
-	@./scripts/embed-fetch.sh
-
-runner-build-thin: ## Build thin runner and compress for embedding into ycode
-	@./scripts/build-runner-thin.sh
-
-# Idempotent wrapper called from `compile`. Two-track:
-#   1. If .gz is already present, no-op.
-#   2. Else, unless BUILD_EMBEDS_FROM_SOURCE=1 is set, try fetching
-#      a prebuilt blob from the latest GitHub release (~30s).
-#   3. If fetch didn't produce the .gz, fall back to the source build
-#      (build-runner-thin.sh), which itself skip-cleans when CMake is
-#      absent on non-darwin/arm64.
-# Release CI sets BUILD_EMBEDS_FROM_SOURCE=1 and skips step 2 entirely.
-runner-build-if-missing:
-	@if [ ! -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then \
-		if [ -z "$$BUILD_EMBEDS_FROM_SOURCE" ]; then \
-			./scripts/embed-fetch.sh runner; \
-		fi; \
-	fi
-	@if [ ! -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then \
-		./scripts/build-runner-thin.sh; \
-	fi
-
-runner-check: ## Verify runner binary exists and responds to health check
-	@./scripts/check-runner.sh
-
-# podman / vfkit / gvproxy embeds moved to coreutils (AgentOS Phase 4): they are
-# built by coreutils/scripts/embed-*.sh and embedded into `bashy podman`. ycode
-# no longer ships podman/ollama, so it has no podman embed targets.
-
-build-single: compile ## Alias for `make compile` — kept for back-compat. The standard `compile` target now produces a single self-contained binary with every embed auto-built (runner via build-runner-thin, podman via embed-podman, vfkit via embed-vfkit on darwin, gvproxy via embed-gvproxy on darwin/windows) when its .gz isn't already present
+build-single: compile ## Alias for `make compile` — kept for back-compat
 	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
 	@echo ""
 	@echo "=== Single binary ready: bin/ycode (tags: $(TAG_LIST)) ==="

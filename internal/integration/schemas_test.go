@@ -96,32 +96,4 @@ func TestSchemas(t *testing.T) {
 		}
 	})
 
-	t.Run("ProxiedComponentHealth", func(t *testing.T) {
-		// Verify key proxied components serve valid responses.
-		components := []struct {
-			name string
-			path string
-		}{
-			{"prometheus", "/prometheus/-/healthy"},
-			{"jaeger", "/traces/"},
-			{"victoria-logs", "/logs/health"},
-			{"perses", "/dashboard/api/v1/health"},
-		}
-
-		for _, c := range components {
-			t.Run(c.name, func(t *testing.T) {
-				t.Parallel()
-				url := base + c.path
-				resp, err := httpClient().Get(url)
-				if err != nil {
-					t.Fatalf("GET %s: %v", url, err)
-				}
-				defer resp.Body.Close()
-				if resp.StatusCode < 200 || resp.StatusCode >= 400 {
-					body, _ := readBody(resp)
-					t.Errorf("%s returned %d; body: %s", c.name, resp.StatusCode, body)
-				}
-			})
-		}
-	})
 }

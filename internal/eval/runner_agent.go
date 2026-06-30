@@ -135,7 +135,7 @@ func (r *trajectoryRecorder) turnCount() int {
 }
 
 // ProviderFromEnv creates an API provider from environment variables.
-// Supports EVAL_PROVIDER (ollama, anthropic, openai) and EVAL_MODEL.
+// Supports EVAL_PROVIDER (anthropic, openai) and EVAL_MODEL.
 func ProviderFromEnv() (api.Provider, string, error) {
 	providerName := os.Getenv("EVAL_PROVIDER")
 	if providerName == "" {
@@ -145,20 +145,6 @@ func ProviderFromEnv() (api.Provider, string, error) {
 	model := os.Getenv("EVAL_MODEL")
 
 	switch providerName {
-	case "ollama", "local":
-		baseURL := os.Getenv("OLLAMA_HOST")
-		if baseURL == "" {
-			baseURL = "http://127.0.0.1:11434"
-		}
-		p := api.NewProvider(&api.ProviderConfig{
-			Kind:    api.ProviderLocal,
-			BaseURL: baseURL + "/v1",
-		})
-		if model == "" {
-			model = "qwen2.5-coder:7b"
-		}
-		return p, model, nil
-
 	case "anthropic":
 		key := os.Getenv("ANTHROPIC_API_KEY")
 		if key == "" {
@@ -190,6 +176,6 @@ func ProviderFromEnv() (api.Provider, string, error) {
 		return p, model, nil
 
 	default:
-		return nil, "", fmt.Errorf("unknown provider %q (use ollama, anthropic, or openai)", providerName)
+		return nil, "", fmt.Errorf("unknown provider %q (use anthropic or openai)", providerName)
 	}
 }

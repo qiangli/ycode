@@ -93,7 +93,7 @@ func WithPermissionPrompter(p PermissionPrompter) Option {
 // WithEmbeddingProvider configures the provider used by (*Agent).Embed and
 // EmbedBatch. When unset, the Agent lazily falls back to
 // embedding.DetectProvider() — the same env-var precedence ladder used
-// internally (YCODE_EMBEDDING_API → YCODE_OLLAMA_EMBEDDING → TF-IDF).
+// internally (YCODE_EMBEDDING_API → TF-IDF).
 //
 // Chat and embeddings are independent providers; coupling them would force a
 // single model family on both.

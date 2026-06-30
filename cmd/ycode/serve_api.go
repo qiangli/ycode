@@ -13,7 +13,6 @@ import (
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/cli"
-	"github.com/qiangli/ycode/internal/inference"
 	internalserver "github.com/qiangli/ycode/internal/server"
 	"github.com/qiangli/ycode/internal/service"
 )
@@ -55,7 +54,6 @@ func buildAPIStack(noNATS bool) (*apiStack, error) {
 	}
 
 	memBus := bus.NewMemoryBus()
-	ollamaLister := inference.NewOllamaLister()
 	cloudboxLister := api.NewCloudboxLister(
 		os.Getenv("DHNT_BASE_URL"),
 		os.Getenv("DHNT_API_KEY"),
@@ -94,7 +92,6 @@ func buildAPIStack(noNATS bool) (*apiStack, error) {
 
 	// Create the multi-session service.
 	multiSvc = service.NewMultiService(pool, memBus)
-	multiSvc.SetOllamaLister(ollamaLister)
 	multiSvc.SetCloudboxLister(cloudboxLister)
 
 	// Workspace resolver — decides what working directory a new web

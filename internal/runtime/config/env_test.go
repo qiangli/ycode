@@ -10,10 +10,6 @@ func TestCamelToScreamingSnake(t *testing.T) {
 		{"MaxTokens", "MAX_TOKENS"},
 		{"SampleRate", "SAMPLE_RATE"},
 		{"HTTPOnly", "HTTP_ONLY"},
-		// Consecutive acronyms can't be split without a dictionary; see
-		// camelToScreamingSnake LIMITATION comment.
-		{"OTLPGRPCPort", "OTLPGRPC_PORT"},
-		{"OTLPHTTPPort", "OTLPHTTP_PORT"},
 		{"ProjectID", "PROJECT_ID"},
 		{"AutoMemoryEnabled", "AUTO_MEMORY_ENABLED"},
 		{"", ""},
@@ -55,7 +51,6 @@ func TestApplyEnvOverridesPrimitives(t *testing.T) {
 
 func TestApplyEnvOverridesNestedStruct(t *testing.T) {
 	t.Setenv("YCODE_OBSERVABILITY_SAMPLE_RATE", "0.25")
-	t.Setenv("YCODE_OBSERVABILITY_PROXY_PORT", "39999")
 	t.Setenv("YCODE_OBSERVABILITY_COLLECTOR_ADDR", "127.0.0.1:5555")
 
 	cfg := DefaultConfig()
@@ -66,9 +61,6 @@ func TestApplyEnvOverridesNestedStruct(t *testing.T) {
 	}
 	if cfg.Observability.SampleRate != 0.25 {
 		t.Errorf("SampleRate = %v, want 0.25", cfg.Observability.SampleRate)
-	}
-	if cfg.Observability.ProxyPort != 39999 {
-		t.Errorf("ProxyPort = %d, want 39999", cfg.Observability.ProxyPort)
 	}
 	if cfg.Observability.CollectorAddr != "127.0.0.1:5555" {
 		t.Errorf("CollectorAddr = %q", cfg.Observability.CollectorAddr)

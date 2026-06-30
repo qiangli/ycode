@@ -475,7 +475,7 @@ func TestTUI_ModelPicker_Navigation(t *testing.T) {
 	m := newTestTUIModel(t)
 
 	// Open model picker.
-	m.modelPicker.open("test-model", api.DiscoverModels(context.Background(), nil, nil, nil))
+	m.modelPicker.open("test-model", api.DiscoverModels(context.Background(), nil, nil))
 	if !m.modelPicker.visible {
 		t.Fatal("expected model picker visible")
 	}

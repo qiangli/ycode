@@ -25,16 +25,6 @@ func TestHostExecutor(t *testing.T) {
 	}
 }
 
-func TestContainerExecutorNilContainer(t *testing.T) {
-	exec := &ContainerExecutor{Container: nil}
-	_, err := exec.Execute(context.Background(), ExecParams{
-		Command: "echo hello",
-	})
-	if err == nil {
-		t.Error("expected error for nil container")
-	}
-}
-
 func TestExecuteWithNilExecutor(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping in short mode")

@@ -1,23 +1,6 @@
 go 1.26.4
 
-use (
-	.
-
-	./pkg/otel
-)
-
-// Workspace-level replace directives override sub-module replaces
-// to use local external/ paths during development.
-replace (
-	github.com/VictoriaMetrics/VictoriaLogs => ./external/victorialogs
-	github.com/jaegertracing/jaeger => ./external/jaeger
-	github.com/ollama/ollama => ../coreutils/external/ollama/src
-	github.com/perses/perses => ./external/perses
-	github.com/qiangli/coreutils/pkg/oci => ../coreutils/pkg/oci
-	// Podman engine + fork now live in coreutils (AgentOS Phase 4); ycode's
-	// internal/container is a thin alias-shim re-exporting coreutils' engine.
-	go.podman.io/podman/v6 => ../coreutils/external/podman/src
-)
+use .
 
 // peers/ convention (gitignored): clone qiangli/* repos under peers/<name>
 // when you need to iterate on them alongside ycode. To activate a peer,

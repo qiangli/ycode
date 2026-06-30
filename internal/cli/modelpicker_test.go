@@ -13,7 +13,7 @@ func testModels() []api.ModelInfo {
 		{ID: "claude-opus-4-6-20250415", Alias: "opus", Provider: "anthropic", Source: "builtin"},
 		{ID: "gemini-2.5-pro", Alias: "gemini-pro", Provider: "gemini", Source: "builtin"},
 		{ID: "gpt-4.1", Provider: "openai", Source: "env"},
-		{ID: "llama3.2:3b", Provider: "ollama", Source: "ollama", Size: "2.0 GB"},
+		{ID: "qwen2.5-coder:32b", Provider: "openai-compatible", Source: "cloudbox"},
 	}
 }
 
@@ -62,18 +62,20 @@ func TestModelPickerFilterBySource(t *testing.T) {
 	var mp modelPickerState
 	mp.open("claude-sonnet-4-6-20250514", testModels())
 
+	mp.typeChar('c')
+	mp.typeChar('l')
 	mp.typeChar('o')
-	mp.typeChar('l')
-	mp.typeChar('l')
-	mp.typeChar('a')
-	mp.typeChar('m')
-	mp.typeChar('a')
+	mp.typeChar('u')
+	mp.typeChar('d')
+	mp.typeChar('b')
+	mp.typeChar('o')
+	mp.typeChar('x')
 
 	if len(mp.filtered) != 1 {
-		t.Errorf("expected 1 ollama item, got %d", len(mp.filtered))
+		t.Errorf("expected 1 cloudbox item, got %d", len(mp.filtered))
 	}
-	if len(mp.filtered) > 0 && mp.filtered[0].Source != "ollama" {
-		t.Errorf("expected ollama source, got %q", mp.filtered[0].Source)
+	if len(mp.filtered) > 0 && mp.filtered[0].Source != "cloudbox" {
+		t.Errorf("expected cloudbox source, got %q", mp.filtered[0].Source)
 	}
 }
 
@@ -127,19 +129,19 @@ func TestModelPickerCurrentModelSelected(t *testing.T) {
 
 func TestBuildModelPickerItems(t *testing.T) {
 	models := testModels()
-	items := buildModelPickerItems("llama3.2:3b", models)
+	items := buildModelPickerItems("qwen2.5-coder:32b", models)
 
 	if len(items) != 5 {
 		t.Fatalf("expected 5 items, got %d", len(items))
 	}
 
-	// Check that the ollama model is marked current.
+	// Check that the cloudbox model is marked current.
 	var currentCount int
 	for _, item := range items {
 		if item.Current {
 			currentCount++
-			if item.ID != "llama3.2:3b" {
-				t.Errorf("expected llama3.2:3b as current, got %q", item.ID)
+			if item.ID != "qwen2.5-coder:32b" {
+				t.Errorf("expected qwen2.5-coder:32b as current, got %q", item.ID)
 			}
 		}
 	}

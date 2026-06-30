@@ -11,15 +11,11 @@ import (
 type ModelInfo struct {
 	ID       string `json:"id"`                // full model ID (e.g. "claude-opus-4-6-20250415", "llama3.2:3b")
 	Alias    string `json:"alias,omitempty"`   // short alias if any (e.g. "opus")
-	Provider string `json:"provider"`          // provider name (e.g. "anthropic", "ollama")
-	Source   string `json:"source"`            // "builtin", "config", "env", "ollama", "cloudbox"
-	Size     string `json:"size,omitempty"`    // human-readable size (Ollama models only)
+	Provider string `json:"provider"`          // provider name (e.g. "anthropic", "openai")
+	Source   string `json:"source"`            // "builtin", "config", "env", "cloudbox"
+	Size     string `json:"size,omitempty"`    // human-readable size when a provider reports it
 	Current  bool   `json:"current,omitempty"` // true if this is the active model
 }
-
-// OllamaLister is a callback that returns locally available Ollama models.
-// Implementations should use a short timeout and return nil on failure.
-type OllamaLister func(ctx context.Context) []ModelInfo
 
 // DetectProviderFromModel guesses provider from a model name prefix.
 func DetectProviderFromModel(model string) string {
@@ -117,17 +113,15 @@ var envKeyModels = []struct {
 	}},
 }
 
-// DiscoverModels aggregates all available models from five sources:
+// DiscoverModels aggregates all available models from four sources:
 //  1. Built-in aliases (hardcoded defaults)
 //  2. Config file aliases (user-defined in settings.json)
 //  3. Env-detected models (API keys present in environment)
-//  4. Ollama local models (dynamically queried via ollamaLister callback)
-//  5. Cloudbox-pooled models (dynamically queried via cloudboxLister callback)
+//  4. Cloudbox-pooled models (dynamically queried via cloudboxLister callback)
 //
 // The configAliases parameter should be config.Aliases (may be nil).
-// The ollamaLister and cloudboxLister parameters are optional; pass nil to
-// skip the respective source.
-func DiscoverModels(ctx context.Context, configAliases map[string]string, ollamaLister OllamaLister, cloudboxLister CloudboxLister) []ModelInfo {
+// The cloudboxLister parameter is optional; pass nil to skip that source.
+func DiscoverModels(ctx context.Context, configAliases map[string]string, cloudboxLister CloudboxLister) []ModelInfo {
 	seen := make(map[string]bool) // track model IDs to avoid duplicates
 	var models []ModelInfo
 
@@ -161,18 +155,7 @@ func DiscoverModels(ctx context.Context, configAliases map[string]string, ollama
 	// 3. Env-detected models.
 	models = appendEnvModels(models, seen)
 
-	// 4. Ollama local models.
-	if ollamaLister != nil {
-		for _, om := range ollamaLister(ctx) {
-			if seen[om.ID] {
-				continue
-			}
-			models = append(models, om)
-			seen[om.ID] = true
-		}
-	}
-
-	// 5. Cloudbox-pooled models.
+	// 4. Cloudbox-pooled models.
 	if cloudboxLister != nil {
 		for _, cm := range cloudboxLister(ctx) {
 			if seen[cm.ID] {
@@ -203,7 +186,7 @@ func DiscoverCloudboxOnly(ctx context.Context, cloudboxLister CloudboxLister) []
 // DiscoverEnvAndCloudbox returns env-detected flagship models merged with
 // cloudbox-pooled models, deduped by ID. Used by the TUI /model picker:
 // env (local) + cloudbox, intentionally excluding built-in aliases, config
-// aliases, and the local Ollama daemon.
+// aliases.
 func DiscoverEnvAndCloudbox(ctx context.Context, cloudboxLister CloudboxLister) []ModelInfo {
 	seen := make(map[string]bool)
 	var models []ModelInfo

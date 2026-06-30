@@ -63,11 +63,6 @@ type RuntimeDeps struct {
 	// ModelSwitcher switches the active model at runtime.
 	ModelSwitcher func(name string) (string, error)
 
-	// OllamaLister is the callback used by /model (no-args) to surface
-	// locally-installed Ollama models alongside builtin / config / env
-	// sources. May be nil — DiscoverModels treats nil as "skip Ollama".
-	OllamaLister api.OllamaLister
-
 	// CloudboxLister is the callback used by /model (no-args) to surface
 	// cloudbox-pooled models alongside the other sources. May be nil —
 	// DiscoverModels treats nil as "skip cloudbox".
@@ -234,7 +229,7 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			if deps.Config != nil {
 				aliases = deps.Config.Aliases
 			}
-			models := api.DiscoverModels(ctx, aliases, deps.OllamaLister, deps.CloudboxLister)
+			models := api.DiscoverModels(ctx, aliases, deps.CloudboxLister)
 
 			var b strings.Builder
 			fmt.Fprintf(&b, "Model: %s (%s)\n", current, provider)
@@ -247,7 +242,6 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 				{"builtin", "Built-in"},
 				{"config", "Config"},
 				{"env", "Env (from *_API_KEY)"},
-				{"ollama", "Ollama (local)"},
 				{"cloudbox", "Cloudbox (pooled)"},
 			}
 			for _, l := range labels {

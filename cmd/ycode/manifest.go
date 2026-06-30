@@ -29,17 +29,10 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 	}
 
 	endpoints := map[string]string{
-		"proxy":    proxy,
-		"api":      apiBase,
-		"otlpGRPC": stack.collectorAddr,
-		"otlpHTTP": "http://127.0.0.1:4318",
-		"nats":     natsURL,
-	}
-	if stack.bonsai != nil && stack.bonsai.Healthy() {
-		endpoints["graph"] = proxy + "/graph/"
-	}
-	if stack.memos != nil && stack.memos.Healthy() {
-		endpoints["memos"] = proxy + "/memos/"
+		"proxy": proxy,
+		"api":   apiBase,
+		"mcp":   proxy + "/mcp/",
+		"nats":  natsURL,
 	}
 
 	// Composite endpoint — the single URL every foreign agent points at
@@ -78,20 +71,10 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 			"http": mcpHTTP,
 		},
 		"discoveryFiles": map[string]string{
-			"pid":           filepath.Join(dir, "serve.pid"),
-			"port":          filepath.Join(dir, "serve.port"),
-			"token":         filepath.Join(dir, "server.token"),
-			"collectorAddr": filepath.Join(dir, "collector.addr"),
+			"pid":   filepath.Join(dir, "serve.pid"),
+			"port":  filepath.Join(dir, "serve.port"),
+			"token": filepath.Join(dir, "server.token"),
 		},
-	}
-	// Gateway block — the localhost endpoints that front ollama + the
-	// podman socket. Paired clients and `yc` shell builtins read this
-	// to find DOCKER_HOST/CONTAINER_HOST/OLLAMA_HOST values, and to
-	// know whether they're talking to an in-process daemon (mode=
-	// "embedded") or a cloudbox-proxied remote (mode="remote").
-	// Only advertised when at least one backend is up.
-	if gw := gatewayManifest(stack.gw); gw != nil {
-		manifest["gateway"] = gw
 	}
 
 	// Canvas block — agent-rendered generative UI service. Foreign agents

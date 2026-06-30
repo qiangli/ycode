@@ -8,27 +8,20 @@ import (
 	"path/filepath"
 	"strings"
 
-	container "github.com/qiangli/coreutils/external/podman/engine"
-	"github.com/qiangli/ycode/internal/runtime/astgrep"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
 )
 
 // ASTSearchDeps holds dependencies for the ast_search tool handler.
 type ASTSearchDeps struct {
-	WorkDir         string
-	ContainerEngine *container.Engine // optional fallback
+	WorkDir string
 }
 
 // RegisterASTSearchHandler registers the ast_search tool for structural
-// code search using tree-sitter AST patterns. Uses in-process tree-sitter
-// as primary search engine, falling back to containerized ast-grep when
-// tree-sitter cannot handle the query.
+// code search using in-process tree-sitter AST patterns.
 func RegisterASTSearchHandler(r *Registry, deps *ASTSearchDeps) {
 	workDir := ""
-	var containerEngine *container.Engine
 	if deps != nil {
 		workDir = deps.WorkDir
-		containerEngine = deps.ContainerEngine
 	}
 
 	parser := treesitter.NewParser()
@@ -57,7 +50,7 @@ func RegisterASTSearchHandler(r *Registry, deps *ASTSearchDeps) {
 				},
 				"rewrite": {
 					"type": "string",
-					"description": "Optional rewrite pattern for structural code transformation (requires container)"
+					"description": "Optional rewrite pattern for structural code transformation (not supported in this lean build)"
 				}
 			},
 			"required": ["pattern", "language"]
@@ -74,22 +67,19 @@ func RegisterASTSearchHandler(r *Registry, deps *ASTSearchDeps) {
 				return "", fmt.Errorf("parse ast_search input: %w", err)
 			}
 
-			// Rewrite requires the full ast-grep container.
 			if params.Rewrite != "" {
-				return searchWithContainer(ctx, containerEngine, workDir, params.Pattern, params.Language, params.Path, params.Rewrite)
+				return "", fmt.Errorf("ast_search rewrite is not available in this lean build")
 			}
 
-			// Try in-process tree-sitter first (available when built with CGO).
 			if treesitter.IsSupported(params.Language) {
 				matches, err := searchWithTreeSitter(ctx, parser, workDir, params.Pattern, params.Language, params.Path)
 				if err == nil {
 					return formatMatches(matches), nil
 				}
-				// Fall through to container on tree-sitter error.
+				return "", err
 			}
 
-			// Fallback to container.
-			return searchWithContainer(ctx, containerEngine, workDir, params.Pattern, params.Language, params.Path, "")
+			return "", fmt.Errorf("unsupported language for ast_search: %s", params.Language)
 		},
 	})
 }
@@ -140,41 +130,6 @@ func searchWithTreeSitter(ctx context.Context, parser *treesitter.Parser, workDi
 	}
 
 	return allMatches, nil
-}
-
-func searchWithContainer(ctx context.Context, engine *container.Engine, workDir, pattern, language, searchPath, rewrite string) (string, error) {
-	if engine == nil {
-		return "ast_search container is not available. " +
-			"Use grep_search for text-based search instead.", nil
-	}
-
-	searchInput := astgrep.SearchInput{
-		Pattern:  pattern,
-		Language: language,
-		Rewrite:  rewrite,
-	}
-	if searchPath != "" {
-		searchInput.Paths = []string{searchPath}
-	}
-
-	matches, err := astgrep.Search(ctx, workDir, engine, searchInput)
-	if err != nil {
-		return "", fmt.Errorf("ast_search container: %w", err)
-	}
-
-	if len(matches) == 0 {
-		return "No structural matches found.", nil
-	}
-
-	var sb strings.Builder
-	for _, m := range matches {
-		if m.Rewritten != "" {
-			fmt.Fprintf(&sb, "%s:%d: %s -> %s\n", m.File, m.Line, m.MatchedCode, m.Rewritten)
-		} else {
-			fmt.Fprintf(&sb, "%s:%d: %s\n", m.File, m.Line, m.MatchedCode)
-		}
-	}
-	return sb.String(), nil
 }
 
 func formatMatches(matches []treesitter.Match) string {

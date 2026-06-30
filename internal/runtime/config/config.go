@@ -61,20 +61,14 @@ type Config struct {
 	// Provider capability overrides (e.g., force caching on/off).
 	ProviderCapabilities *ProviderCapabilitiesConfig `json:"providerCapabilities,omitempty"`
 
-	// Observability settings (OTEL + Prometheus stack)
+	// Observability settings (OTEL client export + local JSONL files)
 	Observability *ObservabilityConfig `json:"observability,omitempty"`
-
-	// Local inference engine settings (Ollama-based)
-	Inference *InferenceConfig `json:"inference,omitempty"`
 
 	// NATS server settings
 	NATS *NATSConfig `json:"nats,omitempty"`
 
 	// Chat hub settings
 	Chat *ChatConfig `json:"chat,omitempty"`
-
-	// Container isolation settings (Podman-based)
-	Container *ContainerConfig `json:"container,omitempty"`
 
 	// Embedded git server settings (Gitea-based)
 	GitServer *GitServerConfig `json:"gitServer,omitempty"`
@@ -188,7 +182,7 @@ func (c *SelfHealConfig) IsEnabled() bool {
 	return *c.Enabled
 }
 
-// ObservabilityConfig controls OTEL instrumentation and the embedded observability stack.
+// ObservabilityConfig controls OTEL instrumentation and export.
 //
 // Convention: ycode features are ON by default and opt-out. The
 // `Enabled` field is a *bool so the JSON loader can distinguish
@@ -199,23 +193,8 @@ type ObservabilityConfig struct {
 	// OTEL SDK — on by default. Set `observability.enabled: false`
 	// in settings.json to disable.
 	Enabled       *bool   `json:"enabled,omitempty"`
-	CollectorAddr string  `json:"collectorAddr"` // default "127.0.0.1:4317" (embedded collector)
+	CollectorAddr string  `json:"collectorAddr"` // optional external OTLP gRPC endpoint
 	SampleRate    float64 `json:"sampleRate"`    // default 1.0
-
-	// Embedded server (use --no-otel flag to disable, --port to set port)
-	ProxyPort     int    `json:"proxyPort"`     // reverse proxy port, default selfinit.DefaultPort (31415)
-	ProxyBindAddr string `json:"proxyBindAddr"` // default "127.0.0.1"
-
-	// OTLP ingress ports — pinned to well-known defaults so any third-party
-	// OTLP client can publish to ycode without configuration. Set to a
-	// non-zero value to override; set to a negative value to opt back into
-	// ephemeral allocation.
-	OTLPGRPCPort int `json:"otlpGRPCPort,omitempty"` // default 4317
-	OTLPHTTPPort int `json:"otlpHTTPPort,omitempty"` // default 4318
-
-	// Remote gateway
-	RemoteWrite []RemoteWriteTarget `json:"remoteWrite,omitempty"`
-	Federation  []FederationTarget  `json:"federation,omitempty"`
 
 	// Local persistence under DataDir
 	DataDir          string `json:"dataDir"`          // default "~/.agents/ycode/otel"
@@ -225,12 +204,9 @@ type ObservabilityConfig struct {
 	PersistTraces    bool   `json:"persistTraces"`    // write traces to disk, default true when enabled
 	PersistMetrics   bool   `json:"persistMetrics"`   // write metrics to disk, default true when enabled
 	PersistLogs      bool   `json:"persistLogs"`      // write structured logs to disk, default true when enabled
-
-	// Auto-start: fork a detached `ycode serve` if no collector is running.
-	AutoPulse bool `json:"autoPulse,omitempty"`
 }
 
-// IsEnabled reports whether the observability stack is on. Treats nil
+// IsEnabled reports whether OTEL instrumentation/export is on. Treats nil
 // (the absent / never-set case) as enabled — that's the ycode default.
 // Returns false only when the user explicitly set
 // `observability.enabled: false` in settings.json.
@@ -242,156 +218,6 @@ func (c *ObservabilityConfig) IsEnabled() bool {
 		return true
 	}
 	return *c.Enabled
-}
-
-// InferenceConfig controls the embedded Ollama-based inference engine.
-//
-// On by default. The runner is part of ycode's agent-OS substrate;
-// without it `bin/ycode model use ...` and any local-model workflow
-// degrade. Opt-out: set `inference.enabled: false` in settings.json.
-type InferenceConfig struct {
-	Enabled      *bool  `json:"enabled,omitempty"`
-	DefaultModel string `json:"defaultModel,omitempty"` // pre-load model on startup
-	ModelsDir    string `json:"modelsDir,omitempty"`    // model storage directory
-	GPULayers    int    `json:"gpuLayers,omitempty"`    // GPU offload layers (-1 = auto)
-	MaxVRAMMB    int    `json:"maxVramMB,omitempty"`    // limit GPU memory usage
-
-	// UseSystem makes ycode defer to a user-installed upstream `ollama`
-	// binary on $PATH instead of extracting/spawning the embedded
-	// ycode-runner. Default false. Also toggled by the global
-	// --use-system-binaries CLI flag (which sets both this and
-	// ContainerConfig.UseSystem at runtime). When true and ollama isn't
-	// on $PATH (or its daemon isn't reachable on $OLLAMA_HOST), ycode
-	// surfaces a clean error instead of falling back to the embed —
-	// the user opted in explicitly.
-	UseSystem *bool `json:"useSystem,omitempty"`
-
-	// Gateway controls the per-process localhost gateway that fronts
-	// ollama. When Mode is "remote", outbound calls are proxied through
-	// cloudbox to a remote ollama running on another machine; agents and
-	// tools that read OLLAMA_HOST see the same local URL either way.
-	// Omit / leave Mode empty to default to "embedded".
-	Gateway InferenceGatewayConfig `json:"gateway,omitempty"`
-}
-
-// InferenceGatewayConfig is the per-process localhost gateway settings
-// for ollama. URL + TokenFile are only consulted when Mode == "remote".
-type InferenceGatewayConfig struct {
-	Mode      string `json:"mode,omitempty"`      // "embedded" (default) | "remote"
-	URL       string `json:"url,omitempty"`       // https://cloudbox/h/<host>/app/ollama/
-	TokenFile string `json:"tokenFile,omitempty"` // path to file containing the cloudbox Bearer token
-}
-
-// IsEnabled — nil receiver and nil Enabled both return true (default on).
-func (c *InferenceConfig) IsEnabled() bool {
-	if c == nil || c.Enabled == nil {
-		return true
-	}
-	return *c.Enabled
-}
-
-// UseSystemBinary reports whether ycode should defer to a system-installed
-// upstream ollama instead of the embedded runner. nil receiver and nil
-// UseSystem both return false (default off — embedded path is canonical).
-func (c *InferenceConfig) UseSystemBinary() bool {
-	if c == nil || c.UseSystem == nil {
-		return false
-	}
-	return *c.UseSystem
-}
-
-// ApplyCLIOverrides mutates cfg in place to reflect process-wide CLI
-// overrides set on the root cobra command. Called once per config load
-// (newApp + loadFullServeConfig) before the runtime starts. Currently
-// handles --use-system-binaries, which forces both inference.useSystem
-// and container.useSystem to true when set. Passing false is a no-op
-// — config keys remain whatever settings.json says — matching the
-// plan's "CLI flag > config > default" precedence with the CLI flag
-// being one-directional (only forces "true", never "false").
-func ApplyCLIOverrides(cfg *Config, useSystemBinaries bool) {
-	if cfg == nil || !useSystemBinaries {
-		return
-	}
-	t := true
-	if cfg.Inference == nil {
-		cfg.Inference = &InferenceConfig{}
-	}
-	cfg.Inference.UseSystem = &t
-	if cfg.Container == nil {
-		cfg.Container = &ContainerConfig{}
-	}
-	cfg.Container.UseSystem = &t
-}
-
-// ContainerConfig controls the embedded Podman-based container isolation engine.
-//
-// On by default. Sandbox isolation for the agent's bash tool, yc
-// sandbox, browser containers, and the SearXNG side-service all
-// depend on it. Degrades gracefully when podman is missing on the
-// host (warns + continues without sandbox). Opt-out:
-// `container.enabled: false`.
-type ContainerConfig struct {
-	Enabled      *bool  `json:"enabled,omitempty"`
-	SocketPath   string `json:"socketPath,omitempty"`   // explicit podman socket path
-	Image        string `json:"image,omitempty"`        // default sandbox image (default: ycode-sandbox:latest)
-	Network      string `json:"network,omitempty"`      // network mode: "bridge" (default), "host", "none"
-	ReadOnlyRoot bool   `json:"readOnlyRoot,omitempty"` // read-only root filesystem (default true)
-	PoolSize     int    `json:"poolSize,omitempty"`     // warm pool size (0 = no pool)
-	CPUs         string `json:"cpus,omitempty"`         // per-container CPU limit (e.g., "2.0")
-	Memory       string `json:"memory,omitempty"`       // per-container memory limit (e.g., "4g")
-
-	// UseSystem makes ycode defer to a user-installed upstream `podman`
-	// binary on $PATH instead of extracting/spawning the embedded
-	// podman blob. Default false. Also toggled by the global
-	// --use-system-binaries CLI flag. When true and podman isn't on
-	// $PATH, ycode surfaces a clean error instead of falling back to
-	// the embed — the user opted in explicitly.
-	UseSystem *bool `json:"useSystem,omitempty"`
-
-	// Gateway controls the per-process localhost gateway that fronts the
-	// container engine. When Mode is "remote", podman/docker requests are
-	// proxied through cloudbox to a remote engine on another machine;
-	// agents and tools that read DOCKER_HOST/CONTAINER_HOST see the same
-	// local socket either way. Omit / leave Mode empty to default to
-	// "embedded".
-	Gateway ContainerGatewayConfig `json:"gateway,omitempty"`
-}
-
-// ContainerGatewayConfig is the per-process localhost gateway settings
-// for podman. URL + TokenFile are only consulted when Mode == "remote".
-//
-// The remote URL is backend-agnostic — it can point at either a paired
-// host's RAW podman passthrough (…/app/podman/, full daemon, trusted
-// self-use) or its SAFE-BY-DEFAULT sandbox mount (…/app/sandbox/, which
-// strips privileged / host-namespace / host-bind / added-cap / device
-// requests and injects resource caps). Use the sandbox mount when this
-// ycode is a thin client running untrusted-or-just-remote code on
-// someone else's node; the TokenFile then holds a token scoped to
-// sandbox:run rather than host:proxy. A create request the sandbox mount
-// rejects comes back as a 403 with a {"message":"sandbox: …"} body the
-// docker/podman client surfaces verbatim.
-type ContainerGatewayConfig struct {
-	Mode      string `json:"mode,omitempty"`      // "embedded" (default) | "remote"
-	URL       string `json:"url,omitempty"`       // https://cloudbox/matrix/h/<host>/app/{podman,sandbox}/
-	TokenFile string `json:"tokenFile,omitempty"` // path to file containing the cloudbox Bearer token
-}
-
-// IsEnabled — nil receiver and nil Enabled both return true (default on).
-func (c *ContainerConfig) IsEnabled() bool {
-	if c == nil || c.Enabled == nil {
-		return true
-	}
-	return *c.Enabled
-}
-
-// UseSystemBinary reports whether ycode should defer to a system-installed
-// upstream podman instead of the embedded binary. nil receiver and nil
-// UseSystem both return false (default off — embedded path is canonical).
-func (c *ContainerConfig) UseSystemBinary() bool {
-	if c == nil || c.UseSystem == nil {
-		return false
-	}
-	return *c.UseSystem
 }
 
 // GitServerConfig controls the embedded Gitea-based git server for agent swarm coordination.
@@ -469,25 +295,6 @@ type TasksConfig struct {
 	PollSeconds int `json:"pollSeconds,omitempty"`
 }
 
-// RemoteWriteTarget configures a Prometheus remote-write endpoint.
-type RemoteWriteTarget struct {
-	URL       string            `json:"url"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	BasicAuth *BasicAuth        `json:"basicAuth,omitempty"`
-}
-
-// BasicAuth holds username/password for remote-write authentication.
-type BasicAuth struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
-// FederationTarget configures a Prometheus federation upstream.
-type FederationTarget struct {
-	URL   string   `json:"url"`
-	Match []string `json:"match"` // metric selectors
-}
-
 // ProviderCapabilitiesConfig lets users override auto-detected provider capabilities.
 type ProviderCapabilitiesConfig struct {
 	// CachingSupported overrides whether the provider supports prompt caching.
@@ -531,15 +338,8 @@ func DefaultConfig() *Config {
 			// Set `gitserver.enabled: false` in settings.json to opt out.
 			HTTPOnly: true,
 		},
-		// Every default-on sub-config needs a non-nil pointer at this
-		// stage. Without it, IsEnabled() returns true (nil-safe default)
-		// but consumers that read fields off the sub-config (SocketPath,
-		// ModelsDir, etc.) panic on nil deref. Mirrors the Observability
-		// + GitServer treatment above.
-		Inference: &InferenceConfig{},
-		Container: &ContainerConfig{},
-		NATS:      &NATSConfig{},
-		Chat:      &ChatConfig{},
+		NATS: &NATSConfig{},
+		Chat: &ChatConfig{},
 	}
 }
 
@@ -714,24 +514,6 @@ func mergeFromFile(cfg *Config, path string) error {
 		if o.SampleRate != 0 {
 			cfg.Observability.SampleRate = o.SampleRate
 		}
-		if o.ProxyPort != 0 {
-			cfg.Observability.ProxyPort = o.ProxyPort
-		}
-		if o.ProxyBindAddr != "" {
-			cfg.Observability.ProxyBindAddr = o.ProxyBindAddr
-		}
-		if o.OTLPGRPCPort != 0 {
-			cfg.Observability.OTLPGRPCPort = o.OTLPGRPCPort
-		}
-		if o.OTLPHTTPPort != 0 {
-			cfg.Observability.OTLPHTTPPort = o.OTLPHTTPPort
-		}
-		if len(o.RemoteWrite) > 0 {
-			cfg.Observability.RemoteWrite = o.RemoteWrite
-		}
-		if len(o.Federation) > 0 {
-			cfg.Observability.Federation = o.Federation
-		}
 		if o.DataDir != "" {
 			cfg.Observability.DataDir = o.DataDir
 		}
@@ -757,27 +539,6 @@ func mergeFromFile(cfg *Config, path string) error {
 	if overlay.Chat != nil {
 		cfg.Chat = overlay.Chat
 	}
-	if overlay.Inference != nil {
-		if cfg.Inference == nil {
-			cfg.Inference = &InferenceConfig{}
-		}
-		in := overlay.Inference
-		if in.Enabled != nil {
-			cfg.Inference.Enabled = in.Enabled
-		}
-		if in.DefaultModel != "" {
-			cfg.Inference.DefaultModel = in.DefaultModel
-		}
-		if in.ModelsDir != "" {
-			cfg.Inference.ModelsDir = in.ModelsDir
-		}
-		if in.GPULayers != 0 {
-			cfg.Inference.GPULayers = in.GPULayers
-		}
-		if in.MaxVRAMMB != 0 {
-			cfg.Inference.MaxVRAMMB = in.MaxVRAMMB
-		}
-	}
 	if overlay.NATS != nil {
 		if cfg.NATS == nil {
 			cfg.NATS = &NATSConfig{}
@@ -797,36 +558,6 @@ func mergeFromFile(cfg *Config, path string) error {
 		}
 		if n.Credential != "" {
 			cfg.NATS.Credential = n.Credential
-		}
-	}
-	if overlay.Container != nil {
-		if cfg.Container == nil {
-			cfg.Container = &ContainerConfig{}
-		}
-		co := overlay.Container
-		if co.Enabled != nil {
-			cfg.Container.Enabled = co.Enabled
-		}
-		if co.SocketPath != "" {
-			cfg.Container.SocketPath = co.SocketPath
-		}
-		if co.Image != "" {
-			cfg.Container.Image = co.Image
-		}
-		if co.Network != "" {
-			cfg.Container.Network = co.Network
-		}
-		if co.ReadOnlyRoot {
-			cfg.Container.ReadOnlyRoot = true
-		}
-		if co.PoolSize != 0 {
-			cfg.Container.PoolSize = co.PoolSize
-		}
-		if co.CPUs != "" {
-			cfg.Container.CPUs = co.CPUs
-		}
-		if co.Memory != "" {
-			cfg.Container.Memory = co.Memory
 		}
 	}
 	if overlay.GitServer != nil {

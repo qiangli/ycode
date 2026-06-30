@@ -156,9 +156,7 @@ func TestHelpListsAllCommands(t *testing.T) {
 }
 
 // TestModelNoArgsListsAllSources verifies /model surfaces builtin, config,
-// env (*_API_KEY), and Ollama sources — not just hardcoded aliases. This is
-// the regression guard for the bug where env / ollama models were missing
-// from the slash-command listing even though the modelpicker UI showed them.
+// and env (*_API_KEY) sources — not just hardcoded aliases.
 func TestModelNoArgsListsAllSources(t *testing.T) {
 	// Use OPENAI_API_KEY because its envKeyModels entries (gpt-4.1, o3, …)
 	// don't collide with builtins, so the env-source section is non-empty
@@ -178,18 +176,11 @@ func TestModelNoArgsListsAllSources(t *testing.T) {
 	// DiscoverModels' dedup hides the config entry.
 	cfg.Aliases = map[string]string{"my-custom": "some-custom-model-id"}
 
-	ollamaLister := func(ctx context.Context) []api.ModelInfo {
-		return []api.ModelInfo{
-			{ID: "llama3.2:3b", Provider: "ollama", Source: "ollama", Size: "1.9 GB"},
-		}
-	}
-
 	r := NewRegistry()
 	RegisterBuiltins(r, &RuntimeDeps{
 		Model:        func() string { return cfg.Model },
 		ProviderKind: func() string { return "anthropic" },
 		Config:       cfg,
-		OllamaLister: ollamaLister,
 	})
 
 	out, err := r.Execute(context.Background(), "model", "")
@@ -205,9 +196,6 @@ func TestModelNoArgsListsAllSources(t *testing.T) {
 		"my-custom →",
 		"Env (from *_API_KEY):",
 		"gpt-4.1",
-		"Ollama (local):",
-		"llama3.2:3b",
-		"1.9 GB",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(out, want) {

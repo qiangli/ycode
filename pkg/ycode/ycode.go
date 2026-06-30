@@ -12,7 +12,6 @@ import (
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/cli"
-	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/embedding"
 	"github.com/qiangli/ycode/internal/runtime/session"
@@ -88,21 +87,9 @@ func WithAPIKey(key string) Option {
 	}
 }
 
-// WithOllama configures the agent to use a local Ollama server.
-// If baseURL is empty, defaults to http://127.0.0.1:11434 (or OLLAMA_HOST env).
-func WithOllama(baseURL string) Option {
-	return func(a *Agent) error {
-		if baseURL == "" {
-			baseURL = inference.DefaultOllamaURL()
-		}
-		a.provider = api.NewOpenAICompatClient("", baseURL+"/v1")
-		return nil
-	}
-}
-
 // NewAgent creates a new ycode agent with the given options.
 // If no provider is specified, auto-detects from environment:
-// Ollama (local) → ANTHROPIC_API_KEY → OPENAI_API_KEY → error.
+// configured API provider credentials → error.
 func NewAgent(opts ...Option) (*Agent, error) {
 	cfg := config.DefaultConfig()
 
@@ -263,17 +250,10 @@ func (a *Agent) ensureService() (service.Service, bus.Bus) {
 
 // autoDetectProvider finds a provider from available credentials.
 func autoDetectProvider(model string) (api.Provider, error) {
-	// 1. Try Ollama if running locally.
-	ollamaURL := inference.DefaultOllamaURL()
-	if inference.DetectOllamaServer(context.Background(), ollamaURL) {
-		return api.NewOpenAICompatClient("", ollamaURL+"/v1"), nil
-	}
-
-	// 2. Try standard API keys.
 	providerCfg, err := api.DetectProvider(model)
 	if err == nil {
 		return api.NewProvider(providerCfg), nil
 	}
 
-	return nil, fmt.Errorf("no LLM provider available: install Ollama locally, or set ANTHROPIC_API_KEY / OPENAI_API_KEY")
+	return nil, fmt.Errorf("no LLM provider available: set provider credentials such as ANTHROPIC_API_KEY or OPENAI_API_KEY")
 }

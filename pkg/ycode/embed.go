@@ -10,8 +10,8 @@ import (
 // Embed returns a vector embedding for text using the Agent's configured
 // embedding provider. When WithEmbeddingProvider was not used, the Agent
 // lazily detects one on first call via embedding.DetectProvider() — the same
-// env-precedence ladder (YCODE_EMBEDDING_API → YCODE_OLLAMA_EMBEDDING →
-// TF-IDF fallback) the internal store uses.
+// env-precedence ladder (YCODE_EMBEDDING_API → TF-IDF fallback) the
+// internal store uses.
 func (a *Agent) Embed(ctx context.Context, text string) ([]float32, error) {
 	p, err := a.ensureEmbedder()
 	if err != nil {

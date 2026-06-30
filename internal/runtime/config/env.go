@@ -21,9 +21,9 @@ import (
 //     introduce variants (YCODE_CFG_, YCODE_RUNTIME_, etc.) — operators
 //     should learn one rule, not three.
 //
-//  2. PATH DERIVATION IS A PUBLIC API. Once a deployment sets
-//     YCODE_CONTAINER_SOCKET_PATH=/var/run/podman/podman.sock in their
-//     CI pipeline, renaming the Go field SocketPath silently breaks it.
+//  2. PATH DERIVATION IS A PUBLIC API. Once a deployment sets an env
+//     override such as YCODE_OBSERVABILITY_COLLECTOR_ADDR in their CI
+//     pipeline, renaming the Go field silently breaks it.
 //     If you rename a Config field, add the old env var name to
 //     legacyEnvAliases below for at least one release.
 //
@@ -229,7 +229,6 @@ func assignPtrPrimitive(fv reflect.Value, raw string) bool {
 //	MaxTokens       → MAX_TOKENS
 //	SampleRate      → SAMPLE_RATE
 //	HTTPOnly        → HTTP_ONLY
-//	OTLPGRPCPort    → OTLPGRPC_PORT     (note: see limitation below)
 //	ProjectID       → PROJECT_ID
 //
 // Algorithm: insert an underscore before any uppercase letter that
@@ -237,11 +236,9 @@ func assignPtrPrimitive(fv reflect.Value, raw string) bool {
 // followed by a lowercase letter while preceded by an uppercase letter.
 //
 // LIMITATION: consecutive acronyms cannot be disambiguated without a
-// dictionary. `OTLPGRPCPort` becomes `OTLPGRPC_PORT`, not
-// `OTLP_GRPC_PORT`. Operators overriding such fields must use the
-// derived name. Field names that combine multiple acronyms back-to-back
-// are rare; rename them in Go to introduce a boundary (e.g.
-// OtlpGrpcPort) if the env-var ergonomics become a problem.
+// dictionary. Field names that combine multiple acronyms back-to-back
+// are rare; rename them in Go to introduce a boundary if the env-var
+// ergonomics become a problem.
 func camelToScreamingSnake(name string) string {
 	if name == "" {
 		return ""

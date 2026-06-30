@@ -21,7 +21,7 @@
 # ============================================================================
 #
 #  1. ONE ENTRY PER CAPABILITY FAMILY. A "capability" is a coherent
-#     bundle of verbs/knobs (e.g., "podman sandbox", "memex memory",
+#     bundle of verbs/knobs (e.g., "delegated sandbox", "memex memory",
 #     "browser automation"). Splitting too fine creates noise; lumping
 #     too coarse hides drift. When unsure, prefer matching the package
 #     name in internal/ that hosts the implementation.
@@ -121,28 +121,28 @@ capabilities:
     config: []
 
   - id: container
-    summary: podman sandbox MCP tool (engine now in coreutils; `ycode podman` CLI removed — use `bashy podman`)
+    summary: sandbox compatibility MCP tool; execution is delegated outside ycode, for example to bashy
     audience: [agent]
     cli: []
     mcp: [sandbox_exec]
     http: []
-    config: [Container.SocketPath, Container.Image, Container.Network, Container.ReadOnlyRoot, Container.PoolSize]
+    config: []
 
   - id: inference
-    summary: multi-provider routing (ollama via coreutils; `ycode ollama` CLI removed — use `bashy ollama`)
-    audience: [agent, human]
+    summary: multi-provider routing and model selection
+    audience: [human]
     cli: [model]
-    mcp: [ollama_list_models, ollama_chat, ollama_embed]
+    mcp: []
     http: ["/ycode/api/embed", "/ycode/api/embed/batch", "/ycode/api/embed/dimensions"]
-    config: [Inference.DefaultModel]
+    config: []
 
   - id: pulse
-    summary: observability stack (traces, logs, metrics, dashboards)
+    summary: OTEL client telemetry export and local JSONL persistence
     audience: [agent, human]
     cli: [pulse]
-    mcp: [query_traces, query_logs, query_metrics, diagnose_errors, diagnose_api_errors, diagnose_pause_resume]
-    http: ["/traces/", "/logs/", "/prometheus/", "/alerts/", "/dashboard/", "/collector/"]
-    config: [Observability.CollectorAddr, Observability.SampleRate, Observability.ProxyPort, Observability.DataDir]
+    mcp: []
+    http: []
+    config: [Observability.CollectorAddr, Observability.SampleRate, Observability.DataDir]
     gaps:
       - "stdio MCP intentionally lacks this family — requires ycode serve"
 
@@ -198,14 +198,6 @@ capabilities:
     gaps:
       - "in-process orchestration primitives (Agent, Worker, Team, Handoff) intentionally not exposed via MCP — would let foreign agents fork ycode's runtime"
 
-  - id: observability_collector
-    summary: OTLP ingest endpoints (foreign agents can ship spans/metrics/logs)
-    audience: [agent, runtime]
-    cli: []
-    mcp: []
-    http: []                                           # :4317 gRPC, :4318 HTTP — not under /
-    config: [Observability.OTLPGRPCPort, Observability.OTLPHTTPPort]
-
   - id: bootstrap
     summary: repo + foreign-tool initialization
     audience: [human]
@@ -227,7 +219,7 @@ capabilities:
   - id: dev_lifecycle
     summary: operator commands (health, login, training, eval, healing)
     audience: [human]
-    cli: [doctor, login, logout, heal, train, eval, features, version, batch, netscan, runner, config, tools]
+    cli: [doctor, login, logout, heal, train, eval, features, version, batch, netscan, config, tools]
     mcp: []
     http: ["/ycode/api/health", "/ycode/api/status", "/debug/pprof/"]
     config: [SelfHeal.SinkPath]

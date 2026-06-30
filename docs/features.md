@@ -50,8 +50,7 @@ Cobra-based CLI with subcommands for different operational modes.
 | `ycode ralph` | Autonomous learning loop |
 | `ycode mesh` | Autonomous agent mesh control |
 | `ycode heal` | Self-healing diagnostics (+ `status`, `test` subcommands) |
-| `ycode model` | Manage local LLM models (Ollama/HuggingFace) |
-| `ycode podman` | Container management (alias: `docker`) |
+| `ycode model` | Manage models through external Ollama-compatible/HuggingFace endpoints |
 | `ycode train` | Training and evaluation (RL, data collection) |
 | `ycode skill` | Skill engine (list, show, inspect) |
 | `ycode eval` | Evaluation framework (aperio benchmarks) |
@@ -324,20 +323,10 @@ Five-layer memory system with multi-backend retrieval.
 
 ---
 
-## 10. Internal OCI Container Support & Sandboxing
+## 10. External Sandboxing
 
-### Embedded Podman Engine
-- Pure Go REST API bindings — no external `docker` or `podman` binary required
-- Three-tier bootstrap: existing socket → in-process API server (Linux) → auto-provisioned VM (macOS/Windows)
-- Container, Pod, Network, Image, Machine management
-- OTEL instrumentation for container lifecycle events
-- **Package**: `internal/container/` (2,500 LOC, 8 test files including integration)
-
-### Container Tool Pattern
-- Standardized abstraction for running tools inside containers
-- Inline Dockerfile, source file embedding, bind mounts, build/run timeouts
-- Mutex-protected image builds for concurrent safety
-- Used by: browser-use, SearXNG, tree-sitter (ast-grep), custom tools
+ycode runs host-local tools by default. Container isolation and heavy host
+services are delegated to bashy or another external wrapper.
 - **Package**: `internal/runtime/containertool/` (150 LOC)
 
 ### File Operations Security
@@ -488,14 +477,12 @@ Five-layer memory system with multi-backend retrieval.
 | E2E tests (Go) | 7 | 90 | CLI, TUI, git, tree-sitter, repomap |
 | Playwright browser tests | 5 | — | `e2e/tests/` |
 | TUI fuzz tests | — | — | `make test-tui-fuzz` |
-| Container integration | 2 | 6 | `internal/container/` |
 | **Total** | **404** | **2,899+** | **29 files** |
 
 ### Test Targets
 
 ```
 make test              # unit tests (-short -race)
-make test-container    # container integration (requires podman)
 make test-gitserver    # git server workspace tests
 make test-tui          # TUI integration (direct Update + teatest)
 make test-tui-e2e      # TUI E2E in PTY (requires compiled binary)

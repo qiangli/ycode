@@ -48,13 +48,13 @@ Implement against the root causes. Tests at three levels:
 - **Unit** — `go test -short -race ./pkg/...`. Add a test that pins each
   bug fixed; if a future refactor reintroduces the bug, this test fails.
 - **Integration** — `go test -tags integration ./internal/integration/...`.
-  Real services (ycode server, OTel collector, Prometheus, gitea, podman).
+  Real services (ycode server, Gitea, and configured external endpoints).
 - **End-to-end** — TUI via `teatest` and PTY (`make test-tui`,
   `make test-tui-e2e`); web via Playwright (`make test-ui`).
 
-Internal services first: prefer the embedded `gitea`, `podman`, `ollama`,
-`searxng`, OTel stack (`prometheus`, `jaeger`, `victoria-logs`) over
-external tooling. Track follow-ups in gitea, sandbox in podman.
+Internal services first only where ycode still owns them, such as Gitea.
+Model serving, Podman, SearXNG, and OTEL collection are external host-layer
+concerns; use bashy or configured endpoints for those workflows.
 
 Telemetry at the same level as the test pyramid:
 
@@ -63,11 +63,8 @@ Telemetry at the same level as the test pyramid:
   (canonical place; consumers obtain handles via the `Instruments` struct
   whose pointer must be mutated in place on collector connect — see
   `internal/telemetry/otel/provider.go` and the provider-swap test).
-- Add a Perses dashboard panel for the new series in
-  `internal/observability/dashboards/default_project.json`.
-- Counter names follow the OTel→Prometheus rule: a counter declared as
-  `ycode.foo.bar` is queried in Prometheus as `ycode_foo_bar_total`
-  (`_total` is appended by the collector's Prometheus exporter).
+- When adding metrics, verify local JSONL persistence and optional OTLP
+  export through `observability.collectorAddr`.
 
 ### 4. Evaluate
 
@@ -78,21 +75,18 @@ not just unit tests:
 - `make test-tui-e2e` — TUI scaffold streams in a PTY.
 - `make test-ui` — Playwright spec against a real running server.
 
-Telemetry sanity (with `ycode serve` running, after exercising the
-changed path):
+Telemetry sanity after exercising the changed path:
 
 | Pillar  | Where                                | What to verify                                       |
 | ------- | ------------------------------------ | ---------------------------------------------------- |
-| Metrics | `/prometheus/api/v1/label/__name__/values` | The new `ycode_*` counters appear with non-zero values |
-| Traces  | `/traces/api/services`               | `ycode` service registered, spans exist for the run   |
-| Logs    | `/logs/select/logsql/query?query=service.name:ycode` | structured log records for the change land           |
-| UI      | `/dashboard/`                        | the new Perses panel populates                       |
+| Metrics | local OTEL JSONL or external collector | The new counters appear with non-zero values |
+| Traces  | local OTEL JSONL or external collector | `ycode` service registered, spans exist for the run |
+| Logs    | local OTEL JSONL or external collector | structured log records for the change land |
 
-If a panel says "No data": diagnose by querying Prometheus directly for
-the metric name. If absent, the bug is upstream of the dashboard — check
-provider rebind on collector connect, instrument creation paths, and the
-chat-runtime entry points (`InstrumentedTurnWithRecovery` is the live
-chat path; it must record the same counters as `InstrumentedTurn`).
+If telemetry is absent, check provider setup, instrument creation paths,
+collector connectivity, and the chat-runtime entry points
+(`InstrumentedTurnWithRecovery` is the live chat path; it must record the
+same counters as `InstrumentedTurn`).
 
 ### 5. Commit
 
@@ -163,7 +157,6 @@ history.
 | Auto-memory (per-user)         | per-user memory directory                  |
 | Eval cassettes                 | `internal/eval/<name>/testdata/`           |
 | OTel instruments registry      | `internal/telemetry/otel/instruments.go`   |
-| Perses dashboard JSON          | `internal/observability/dashboards/default_project.json` |
 | TUI integration tests          | `internal/cli/*_test.go` (build tag `integration`) |
 | TUI e2e (PTY)                  | `internal/cli/e2e_test.go` (build tag `e2e`) |
 | Web e2e (Playwright)           | `e2e/tests/*.spec.ts`                      |

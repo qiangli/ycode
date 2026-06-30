@@ -12,12 +12,12 @@ Core loop: `internal/runtime/conversation/runtime.go` — assemble request → p
 ## First-Time Setup
 
 ```bash
-make init                              # REQUIRED: submodules, Perses plugins, gzip assets, Gitea bindata
+ make init                              # REQUIRED: submodules and Gitea bindata/assets
 export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY
 make install-hooks                     # pre-push hook runs `make ci`
 ```
 
-Skipping `make init` leaves Gitea bindata + Perses plugins missing; tests and `ycode serve` fail in subtle ways.
+Skipping `make init` leaves Gitea bindata/assets missing; tests and `ycode serve` fail in subtle ways.
 
 ## Build & Test
 
@@ -30,7 +30,7 @@ make ci              # full GitHub Actions matrix in Docker (slow, definitive)
 
 **Build tags** (see `Makefile`):
 - Default: `sqlite,sqlite_unlock_notify,bindata`
-- Auto-added when `.gz` exists: `embed_runner`, `embed_vfkit` (Darwin), `embed_podman`, `embed_gvproxy`
+- Auto-added when `.gz` exists: `embed_spawn`
 - Manual: `go build -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/`
 
 **Test patterns**:
@@ -43,7 +43,6 @@ PACKAGES=$(go list ./... | grep -v '/priorart/')
 ```
 
 **Specialized test targets** (read Makefile comments for prerequisites):
-- `make test-container` — requires podman
 - `make test-gitserver` — embedded Gitea, ~4 min
 - `make test-tui` / `make test-tui-e2e` — TUI lifecycle; e2e needs compiled binary + PTY
 - `make test-ui` — Playwright (`cd e2e && npx playwright test`) against running server
@@ -86,7 +85,7 @@ Reach for these before `grep`/`find`/`git`. When you don't, the agent-mode hint 
 | `yc tab <status\|extract\|screenshot\|navigate\|click\|type\|scroll\|back\|tabs>` | Driving Chrome tab in live mode | headless wrappers — targets user's actual browser session |
 | `yc remember "<text>"` | Saving facts for future sessions | ad-hoc notes — RRF-fused memex; auto-writes to `~/.claude/projects/<id>/memory/` when `$CLAUDE_PROJECT_DIR` set |
 | `yc recall <query>` | Retrieving prior facts | grepping notes — searches both ycode and Claude corpora |
-| `yc sandbox -- <cmd>` | Untrusted/destructive commands | running on host — podman-isolated, alpine, network=none |
+| `yc sandbox -- <cmd>` | Delegated sandbox command | running an external wrapper directly |
 | `yc help` / `yc manifest` | Discovery | `yc manifest` emits JSON capability catalog |
 
 **Discovery:** `ycode shell --suggest "<cmd>"` previews hints without executing. `ycode shell --manifest` is the full JSON catalog.
@@ -128,5 +127,5 @@ Boss control: `ycode foreman pause/resume/stop/skip/prio/tell/status`
 ## Sub-directory Instructions
 
 - `external/gitea/AGENTS.md` — embedded git server guidance
-- `external/podman/AGENTS.md` — container engine integration
+- `external/podman/AGENTS.md` — read-only historical container reference
 - `peers/` modules have their own `CLAUDE.md` files

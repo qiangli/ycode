@@ -77,7 +77,7 @@ func (m *mockService) ListModels(ctx context.Context) ([]api.ModelInfo, error) {
 	return []api.ModelInfo{
 		{ID: "claude-sonnet-4-6-20250514", Alias: "sonnet", Provider: "anthropic", Source: "builtin"},
 		{ID: "gpt-4.1", Provider: "openai", Source: "env"},
-		{ID: "llama3.2:3b", Provider: "ollama", Source: "ollama", Size: "2.0 GB"},
+		{ID: "qwen2.5-coder:32b", Provider: "openai-compatible", Source: "cloudbox"},
 	}, nil
 }
 func (m *mockService) ExecuteCommand(ctx context.Context, name string, args string) (string, error) {
@@ -445,26 +445,9 @@ func TestListModels(t *testing.T) {
 		for _, m := range models {
 			sources[m.Source] = true
 		}
-		for _, want := range []string{"builtin", "env", "ollama"} {
+		for _, want := range []string{"builtin", "env", "cloudbox"} {
 			if !sources[want] {
 				t.Errorf("expected source %q in response, got sources: %v", want, sources)
-			}
-		}
-	})
-
-	t.Run("OllamaModelHasSize", func(t *testing.T) {
-		resp, err := http.Get(ts.URL + "/api/models")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-
-		var models []api.ModelInfo
-		json.NewDecoder(resp.Body).Decode(&models)
-
-		for _, m := range models {
-			if m.Source == "ollama" && m.Size == "" {
-				t.Errorf("ollama model %q should have a size", m.ID)
 			}
 		}
 	})

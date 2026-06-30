@@ -695,7 +695,6 @@ ycode model delete model_name      # Remove model
 ycode exports OTEL data to:
 - **OTEL Collector** (if configured)
 - **Local files** (JSONL format for offline analysis)
-- **VictoriaLogs/Jaeger** (when `ycode serve` is running)
 
 ### Key Metrics
 
@@ -779,10 +778,9 @@ Heavy dependencies isolated in containers:
 
 ### 7. Local-First LLM Support
 
-Embedded Ollama runner:
-- No external dependencies for local inference
-- Automatic fallback from cloud to local
-- Privacy-sensitive operations stay local
+Local model serving:
+- Configure an external OpenAI-compatible or Ollama-compatible endpoint
+- ycode does not link or start local inference server implementations
 
 ---
 

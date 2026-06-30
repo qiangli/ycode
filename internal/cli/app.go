@@ -110,9 +110,6 @@ type App struct {
 	usageTracker *usage.Tracker
 	sessionStart time.Time
 
-	// Ollama model lister for model discovery (optional).
-	ollamaLister api.OllamaLister
-
 	// Cloudbox model lister for the cloudbox-pooled gateway (optional).
 	cloudboxLister api.CloudboxLister
 
@@ -153,7 +150,6 @@ type AppOptions struct {
 	Storage         *store.Manager
 	MemexGraph      *memexgraph.Graph
 	ConvOTEL        *conversation.OTELConfig
-	OllamaLister    api.OllamaLister
 	CloudboxLister  api.CloudboxLister
 	AgentDefsDir    string // directory containing custom agent YAML definitions
 	InferenceRouter *routing.Router
@@ -229,7 +225,6 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		usageTracker:    usage.NewTracker(),
 		sessionStart:    time.Now(),
 		convOTEL:        o.ConvOTEL,
-		ollamaLister:    o.OllamaLister,
 		cloudboxLister:  o.CloudboxLister,
 		inferenceRouter: o.InferenceRouter,
 		memoryManager:   o.MemoryManager,
@@ -272,7 +267,6 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		Session:        sess,
 		Provider:       app.provider,
 		ModelSwitcher:  app.SwitchModel,
-		OllamaLister:   app.ollamaLister,
 		CloudboxLister: app.cloudboxLister,
 		RetryTurn:      app.RetryTurn,
 		RevertFiles:    app.RevertFiles,

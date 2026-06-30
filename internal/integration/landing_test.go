@@ -19,35 +19,22 @@ func TestLandingPage(t *testing.T) {
 		if !strings.Contains(body, "<!DOCTYPE html>") {
 			t.Error("response is not HTML")
 		}
-		if !strings.Contains(body, "ycode Pulse") {
-			t.Error("page title should contain 'ycode Pulse'")
+		if !strings.Contains(body, "ycode") {
+			t.Error("page title should contain 'ycode'")
 		}
 	})
 
 	t.Run("ContainsTiles", func(t *testing.T) {
 		_, body := httpGet(t, baseURL(t)+"/")
 		requiredTiles := []string{
-			"/prometheus/",
-			"/traces/",
-			"/logs/",
-			"/dashboard/",
-			"/memos/",
-			"/ollama/",
+			"/chat/",
+			"/mcp/",
+			"/healthz",
 		}
 		for _, tile := range requiredTiles {
 			if !strings.Contains(body, tile) {
 				t.Errorf("landing page missing tile for %s", tile)
 			}
-		}
-	})
-
-	t.Run("OllamaTilePresent", func(t *testing.T) {
-		_, body := httpGet(t, baseURL(t)+"/")
-		if !strings.Contains(body, `"/ollama/"`) {
-			t.Error("landing page should have an Ollama tile linking to /ollama/")
-		}
-		if !strings.Contains(body, "Ollama") {
-			t.Error("landing page should show 'Ollama' label")
 		}
 	})
 

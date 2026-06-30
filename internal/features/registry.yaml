@@ -45,8 +45,8 @@ features:
 
   - name: web-tools
     tier: stable
-    description: "WebFetch, WebSearch — auto-routes between Brave / Tavily / SearXNG / DuckDuckGo"
-    files: [internal/tools, internal/runtime/searxng]
+    description: "WebFetch, WebSearch — auto-routes between configured web providers and DuckDuckGo"
+    files: [internal/tools]
     graduation:
       integration_test: true
       dogfood_weeks: 4
@@ -118,23 +118,9 @@ features:
       failure_mode_doc: false
 
   # ─── execution & runtime ──────────────────────────────────────────────────
-  # podman sandbox engine moved to coreutils (AgentOS Phase 4); ycode consumes
-  # coreutils/external/podman/engine and no longer ships a podman runtime. Use
-  # `bashy podman`. The sandbox_exec MCP tool stays (see the `container`
-  # capability in internal/capabilities/registry.yaml).
-
-  - name: ollama-runtime
-    tier: stable
-    description: "local model inference via the coreutils ollama hub (HuggingFace GGUF supported)"
-    files: [internal/inference]
-    graduation:
-      integration_test: true
-      dogfood_weeks: 4
-      failure_mode_doc: false
-
   - name: multi-provider
     tier: stable
-    description: "Anthropic native + OpenAI-compatible covers OpenAI, xAI/Grok, DashScope/Qwen, Ollama, OpenRouter"
+    description: "Anthropic native + OpenAI-compatible covers OpenAI, xAI/Grok, DashScope/Qwen, OpenRouter, and custom HTTP providers"
     files: [internal/api]
     graduation:
       integration_test: true
@@ -143,7 +129,7 @@ features:
 
   - name: serve-mode
     tier: stable
-    description: "`ycode serve` exposes HTTP/WebSocket + NATS endpoints with embedded observability (Prometheus, Jaeger, VictoriaLogs, Perses)"
+    description: "`ycode serve` exposes lightweight HTTP/WebSocket, MCP, and optional NATS endpoints"
     files: [cmd/ycode/serve.go, internal/server]
     graduation:
       integration_test: true
@@ -152,8 +138,8 @@ features:
 
   - name: observability
     tier: stable
-    description: "OTEL traces + metrics + logs out of the box; agent-facing query tools (query_metrics, query_traces, query_logs)"
-    files: [internal/telemetry, internal/observability]
+    description: "OTEL client traces, metrics, and logs with local JSONL persistence and optional OTLP export"
+    files: [internal/telemetry]
     graduation:
       integration_test: true
       dogfood_weeks: 4

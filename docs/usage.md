@@ -348,8 +348,8 @@ Remote deploy auto-detects architecture and cross-compiles if the remote platfor
 
 Runs four test suites against a running ycode instance:
 
-1. **Smoke tests** — healthz, dashboard, version, server status
-2. **Integration tests** — OTEL collector, Prometheus metrics, trace/metric/log ingestion, proxy routing
+1. **Smoke tests** — healthz, version, server status
+2. **Integration tests** — OTEL client export/file persistence, trace/metric/log ingestion, API routing
 3. **Acceptance tests** — one-shot prompt, serve subcommands, doctor
 4. **Performance tests** — healthz latency (p50/p95/p99), trace ingestion throughput, binary startup time
 

@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-# Drop-in shim: routes `docker …` to `ycode podman …` (ycode podman
-# accepts the docker verb set unchanged).
-#
-# Install one of:
-#   ln -s "$(pwd)/scripts/shims/docker" /usr/local/bin/docker
-#   PATH="/path/to/ycode/scripts/shims:$PATH"
-exec ycode podman "$@"

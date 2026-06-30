@@ -88,10 +88,10 @@ func TestModelsEndpoint(t *testing.T) {
 		json.Unmarshal([]byte(body), &models)
 
 		validSources := map[string]bool{
-			"builtin": true,
-			"config":  true,
-			"env":     true,
-			"ollama":  true,
+			"builtin":  true,
+			"config":   true,
+			"env":      true,
+			"cloudbox": true,
 		}
 		for _, m := range models {
 			source, _ := m["source"].(string)

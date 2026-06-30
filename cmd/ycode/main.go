@@ -18,12 +18,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
-	container "github.com/qiangli/coreutils/external/podman/engine"
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/buildinfo"
 	"github.com/qiangli/ycode/internal/cli"
 	"github.com/qiangli/ycode/internal/commands"
-	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/runtime/bash"
 	"github.com/qiangli/ycode/internal/runtime/browser"
 	"github.com/qiangli/ycode/internal/runtime/computer"
@@ -40,7 +38,6 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/prompt"
 	"github.com/qiangli/ycode/internal/runtime/repomap"
 	"github.com/qiangli/ycode/internal/runtime/routing"
-	"github.com/qiangli/ycode/internal/runtime/searxng"
 	"github.com/qiangli/ycode/internal/runtime/session"
 	"github.com/qiangli/ycode/internal/runtime/vfs"
 	"github.com/qiangli/ycode/internal/runtime/wrap"
@@ -180,8 +177,6 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
-	config.ApplyCLIOverrides(cfg, useSystemBinaries)
-
 	// `ycode serve --no-persona` is the operator switch that disables the
 	// per-user persona system process-wide. Useful when one ycode serve is
 	// shared by many end-users (e.g. a third-party host like classgo) and
@@ -319,89 +314,6 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	qm := tools.NewQualityMonitor(0.7)
 	toolReg.SetQualityMonitor(qm)
 
-	// Container sandbox: when enabled, bash commands run inside an isolated container
-	// instead of directly on the host. The workspace is bind-mounted read-write.
-	var bashExecutor bash.Executor
-	var containerEngine *container.Engine
-	if cfg.Container.IsEnabled() {
-		engine, err := container.NewEngine(rootCtx, &container.EngineConfig{
-			SocketPath: cfg.Container.SocketPath,
-			UseSystem:  cfg.Container.UseSystemBinary(),
-		})
-		if err != nil {
-			slog.Warn("container sandbox unavailable, falling back to host execution", "error", err)
-		} else {
-			image := cfg.Container.Image
-			if image == "" {
-				image = "ycode-sandbox:latest"
-			}
-			sandboxCfg := &container.ContainerConfig{
-				Name:     fmt.Sprintf("ycode-sandbox-%s", instanceID[:8]),
-				Image:    image,
-				WorkDir:  "/workspace",
-				ReadOnly: cfg.Container.ReadOnlyRoot,
-				Init:     true,
-				Mounts: []container.Mount{
-					{Source: cwd, Target: "/workspace", ReadOnly: false},
-				},
-				Tmpfs:  []string{"/tmp", "/var/tmp"},
-				Labels: map[string]string{"managed-by": "ycode", "instance": instanceID},
-				Resources: container.Resources{
-					CPUs:   cfg.Container.CPUs,
-					Memory: cfg.Container.Memory,
-				},
-			}
-			if cfg.Container.Network != "" {
-				sandboxCfg.Network = cfg.Container.Network
-			}
-			sandbox, err := engine.CreateContainer(rootCtx, sandboxCfg)
-			if err != nil {
-				slog.Warn("failed to create sandbox container, falling back to host execution", "error", err)
-			} else if err := sandbox.Start(rootCtx); err != nil {
-				slog.Warn("failed to start sandbox container, falling back to host execution", "error", err)
-				sandbox.Remove(rootCtx, true)
-			} else {
-				bashExecutor = &bash.ContainerExecutor{Container: sandbox}
-				containerEngine = engine
-
-				// Start containerized SearXNG for web search (if enabled).
-				// Async — the searxng/searxng:latest image pull is slow on
-				// first run (and can hang outright when podman storage or
-				// the registry is unreachable). Blocking newApp on it
-				// stalls the entire serve startup, holding back the API
-				// stack + canvas/MCP/manifest registration that everything
-				// else waits on. Run start in a goroutine with a wall-clock
-				// timeout; the web-search tool falls back to other
-				// providers (Brave, Tavily, DuckDuckGo) until SearXNG is
-				// ready, then flips automatically via SetSearXNGProvider.
-				if os.Getenv("YCODE_SEARXNG") == "true" || cfg.Container.IsEnabled() {
-					searxngSvc := searxng.NewService(engine, instanceID, cfg.Container.Network)
-					go func() {
-						startCtx, cancel := context.WithTimeout(rootCtx, 5*time.Minute)
-						defer cancel()
-						if err := searxngSvc.Start(startCtx); err != nil {
-							slog.Warn("searxng: failed to start, web search will use other providers", "error", err)
-							return
-						}
-						tools.SetSearXNGProvider(tools.NewSearXNGContainerProvider(searxngSvc))
-						slog.Info("searxng: ready", "instance", instanceID)
-					}()
-					defer searxngSvc.Stop(context.Background())
-				}
-
-				slog.Info("container sandbox active", "container", sandbox.Name, "image", image)
-				// Clean up sandbox on shutdown.
-				defer func() {
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					defer cancel()
-					sandbox.Stop(ctx, 5*time.Second)
-					sandbox.Remove(ctx, true)
-					engine.Close(ctx)
-				}()
-			}
-		}
-	}
-
 	// Experimental ycode-native browser modes (live / probe / solo).
 	// Returns a browser.Client wrapping the configured Manager when
 	// cfg.Browser.Mode is set; nil otherwise. Installing the client on
@@ -416,26 +328,17 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 
 	jobRegistry := bash.NewJobRegistry()
 	// Construct the unified Computer gateway. All agent-driven shell,
-	// fs, and web operations route through its surfaces; host vs.
-	// container exec is selected by the bash.Executor option.
+	// fs, and web operations route through its surfaces. Execution is
+	// host-local; container isolation is delegated to an external host layer.
 	var localOpts []computer.LocalOption
-	if bashExecutor != nil {
-		localOpts = append(localOpts, computer.WithExecutor(bashExecutor))
-	}
 	gateway := computer.NewLocal(v, localOpts...)
 	bashWorkDir := cwd
-	if bashExecutor != nil {
-		bashWorkDir = "/workspace"
-	}
 	tools.RegisterBashHandler(toolReg, bashWorkDir, jobRegistry, gateway.Shell())
 	tools.RegisterFileHandlers(toolReg, gateway.Files())
 	tools.RegisterSearchHandlers(toolReg, v)
 	tools.RegisterSymbolSearchHandler(toolReg)
 	tools.RegisterReferenceHandlers(toolReg)
-	tools.RegisterASTSearchHandler(toolReg, &tools.ASTSearchDeps{
-		WorkDir:         cwd,
-		ContainerEngine: containerEngine,
-	})
+	tools.RegisterASTSearchHandler(toolReg, &tools.ASTSearchDeps{WorkDir: cwd})
 	tools.RegisterVFSHandlers(toolReg, v)
 	tools.RegisterSleepHandler(toolReg)
 	tools.RegisterWebHandlers(toolReg, gateway.Web())
@@ -691,7 +594,6 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 		UserConfigPath: filepath.Join(userDir, "settings.json"),
 		Storage:        storageMgr,
 		ConvOTEL:       convOTEL,
-		OllamaLister:   inference.NewOllamaLister(),
 		CloudboxLister: api.NewCloudboxLister(
 			os.Getenv("DHNT_BASE_URL"),
 			os.Getenv("DHNT_API_KEY"),
@@ -861,7 +763,6 @@ var (
 	modelFlag             string
 	dangerSkipPermissions bool
 	connectURL            string
-	useSystemBinaries     bool
 )
 
 var rootCmd = &cobra.Command{
@@ -1361,7 +1262,6 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "Model to use (overrides config and env vars)")
 	rootCmd.PersistentFlags().BoolVar(&dangerSkipPermissions, "danger-skip-permissions", false, "Skip all permission checks (grants full access to all tools)")
 	rootCmd.PersistentFlags().StringVar(&connectURL, "connect", "", "Connect to a remote ycode server (ws:// or nats://)")
-	rootCmd.PersistentFlags().BoolVar(&useSystemBinaries, "use-system-binaries", false, "Defer to user-installed upstream ollama + podman on $PATH instead of using the embedded binaries (also: inference.useSystem / container.useSystem in settings.json)")
 	rootCmd.Flags().Bool("dry-run", false, "Preview session setup without calling the model")
 
 	// no-otel: accepted for backward compatibility with integration tests (no-op).
@@ -1382,13 +1282,6 @@ func init() {
 	// Model management commands
 	rootCmd.AddCommand(newModelCmd())
 	rootCmd.AddCommand(newConfigCmd())
-
-	// podman + ollama subcommands moved entirely to bashy (the AgentOS host):
-	// `bashy podman …` / `bashy ollama …`. ycode no longer ships them.
-
-	// Embedded inference runner — internal protocol with ollama's scheduler.
-	// Hidden from help; exec-replaces into the extracted ycode-runner.
-	rootCmd.AddCommand(newRunnerCmd())
 
 	// Batch processing
 	rootCmd.AddCommand(newBatchCmd())

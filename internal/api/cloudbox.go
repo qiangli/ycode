@@ -17,9 +17,9 @@ import (
 const DefaultCloudboxURL = "https://ai.dhnt.io/v1"
 
 // CloudboxLister returns the cloudbox-pooled models advertised by the
-// cloudbox /models endpoint. It mirrors the OllamaLister shape: short
-// timeout, nil on failure (logged), so it is safe to invoke from the TUI
-// Update goroutine via the /model picker path.
+// cloudbox /models endpoint. It uses a short timeout and returns nil on
+// failure (logged), so it is safe to invoke from the TUI Update goroutine
+// via the /model picker path.
 type CloudboxLister func(ctx context.Context) []ModelInfo
 
 // cloudboxModelsResponse mirrors the cloudbox-extended OpenAI shape served

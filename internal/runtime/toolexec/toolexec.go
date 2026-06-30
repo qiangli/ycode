@@ -1,11 +1,9 @@
-// Package toolexec provides a three-tier execution framework for external tools.
+// Package toolexec provides a two-tier execution framework for external tools.
 // When a tool is invoked, the executor tries in order:
 //
 //  1. Native — in-process Go implementation (e.g., go-git for git operations)
 //  2. Host exec — system binary via os/exec (if found on PATH)
-//  3. Container — auto-build a container image via built-in podman and exec inside it
 //
-// This allows ycode to run on a barebone host with no external tools installed.
 // Every non-native execution is recorded as a capability gap for the autonomous
 // improvement loop to eventually replace with a native implementation.
 package toolexec
@@ -16,11 +14,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
-	"strings"
 	"sync"
-	"time"
 
-	container "github.com/qiangli/coreutils/external/podman/engine"
 	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
@@ -36,7 +31,8 @@ const (
 	TierNative Tier = iota
 	// TierHostExec means the command was handled by a host binary via exec.
 	TierHostExec
-	// TierContainer means the command was handled inside a container.
+	// TierContainer is kept for old telemetry values; container fallback
+	// is no longer linked into ycode.
 	TierContainer
 )
 
@@ -76,7 +72,8 @@ type ToolDef struct {
 	// Image is the container image tag (e.g., "ycode-git:latest").
 	Image string
 
-	// Dockerfile is the Dockerfile content for auto-building the container image.
+	// Dockerfile is retained for compatibility with older tool definitions.
+	// The lean runtime no longer builds or runs container fallback images.
 	Dockerfile string
 
 	// NativeFuncs maps subcommand names to in-process implementations.
@@ -97,22 +94,16 @@ type GapRecorder interface {
 // Executor runs commands through the three-tier fallback chain.
 type Executor struct {
 	tools    map[string]*ToolDef
-	engine   *container.Engine // nil = container tier disabled
-	recorder GapRecorder       // nil = gap tracking disabled
+	recorder GapRecorder // nil = gap tracking disabled
 	mu       sync.RWMutex
-
-	// containerTools caches containertool-like state per tool (image built once).
-	imageBuilt   map[string]bool
-	imageBuildMu sync.Mutex
 }
 
-// New creates an Executor. Both engine and recorder may be nil.
-func New(engine *container.Engine, recorder GapRecorder) *Executor {
+// New creates an Executor. The first argument is ignored and retained only
+// for source compatibility with older callers that passed a container engine.
+func New(_ any, recorder GapRecorder) *Executor {
 	return &Executor{
-		tools:      make(map[string]*ToolDef),
-		engine:     engine,
-		recorder:   recorder,
-		imageBuilt: make(map[string]bool),
+		tools:    make(map[string]*ToolDef),
+		recorder: recorder,
 	}
 }
 
@@ -164,20 +155,8 @@ func (e *Executor) Run(ctx context.Context, toolName, dir string, args ...string
 		return result, nil
 	}
 
-	// Tier 3: Container.
-	if e.engine != nil && e.engine.Healthy() {
-		slog.Info("tool not found on host, using container fallback",
-			"tool", def.Name, "subcommand", subcommand)
-		result, err := e.containerExec(ctx, def, dir, args)
-		if err != nil {
-			return nil, fmt.Errorf("toolexec: container %s: %w", toolName, err)
-		}
-		result.Tier = TierContainer
-		e.recordGap(ctx, def.Name, subcommand, TierContainer)
-		return result, nil
-	}
-
-	return nil, fmt.Errorf("toolexec: %s not available (no host binary, no container engine)", def.Binary)
+	slog.Info("tool not found on host", "tool", def.Name, "subcommand", subcommand)
+	return nil, fmt.Errorf("toolexec: %s not available on host PATH", def.Binary)
 }
 
 // hostExec runs the command via os/exec on the host.
@@ -204,84 +183,6 @@ func (e *Executor) hostExec(ctx context.Context, binaryPath, dir string, args []
 		Stdout:   string(out),
 		ExitCode: exitCode,
 	}, nil
-}
-
-// containerExec runs the command inside a container, building the image if needed.
-func (e *Executor) containerExec(ctx context.Context, def *ToolDef, dir string, args []string) (*Result, error) {
-	if err := e.ensureImage(ctx, def); err != nil {
-		return nil, fmt.Errorf("ensure image %s: %w", def.Image, err)
-	}
-
-	// Build the command string for sh -c inside the container.
-	cmdParts := append([]string{def.Binary}, args...)
-	cmdStr := strings.Join(cmdParts, " ")
-
-	// Create container with workspace mounted.
-	var mounts []container.Mount
-	if def.MountWorkDir && dir != "" {
-		mounts = append(mounts, container.Mount{
-			Source:   dir,
-			Target:   "/workspace",
-			ReadOnly: false,
-		})
-	}
-
-	cfg := &container.ContainerConfig{
-		Image:   def.Image,
-		Command: []string{"cat"}, // keep alive for exec
-		Mounts:  mounts,
-		WorkDir: "/workspace",
-	}
-
-	ctr, err := e.engine.CreateContainer(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("create container: %w", err)
-	}
-	defer ctr.Remove(ctx, true)
-
-	if err := ctr.Start(ctx); err != nil {
-		return nil, fmt.Errorf("start container: %w", err)
-	}
-
-	execResult, err := ctr.Exec(ctx, cmdStr, "/workspace")
-	if err != nil {
-		return nil, fmt.Errorf("exec in container: %w", err)
-	}
-
-	return &Result{
-		Stdout:   execResult.Stdout,
-		Stderr:   execResult.Stderr,
-		ExitCode: execResult.ExitCode,
-	}, nil
-}
-
-// ensureImage builds the container image if it hasn't been built yet.
-func (e *Executor) ensureImage(ctx context.Context, def *ToolDef) error {
-	e.imageBuildMu.Lock()
-	defer e.imageBuildMu.Unlock()
-
-	if e.imageBuilt[def.Image] {
-		return nil
-	}
-
-	if e.engine.ImageExists(ctx, def.Image) {
-		e.imageBuilt[def.Image] = true
-		return nil
-	}
-
-	slog.Info("building container tool image (one-time)",
-		"tool", def.Name, "image", def.Image)
-
-	buildCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-
-	if err := e.engine.BuildImage(buildCtx, def.Image, []byte(def.Dockerfile)); err != nil {
-		return err
-	}
-
-	e.imageBuilt[def.Image] = true
-	slog.Info("container tool image built", "tool", def.Name, "image", def.Image)
-	return nil
 }
 
 // recordGap notifies the gap recorder if one is configured.

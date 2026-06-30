@@ -13,7 +13,6 @@ import (
 
 	"github.com/qiangli/ycode/internal/docs"
 	"github.com/qiangli/ycode/internal/extractmcp"
-	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/memwatch"
 	"github.com/qiangli/ycode/internal/runtime/codegraph"
 	gh "github.com/qiangli/ycode/internal/runtime/github"
@@ -42,8 +41,8 @@ func newMcpCmd() *cobra.Command {
 		Use:   "mcp",
 		Short: "Model Context Protocol server commands",
 		Long: "Run a ycode MCP server so external coding agents can use ycode's " +
-			"capabilities (AST search, repo-map, memex, Ollama, Gitea workspaces, " +
-			"podman sandbox, observability, ...) without plugins or shell exec.",
+			"capabilities (AST search, repo-map, memex, Gitea workspaces, " +
+			"browser automation, and command helpers) without plugins or shell exec.",
 	}
 	cmd.AddCommand(newMcpServeCmd())
 	return cmd
@@ -61,12 +60,11 @@ func newMcpServeCmd() *cobra.Command {
 			"(agent_shell), skills, docs (list_docs / get_doc / list_catalog), " +
 			"cobra runner (list_ycode_commands / run_ycode_command{,_workspace}), " +
 			"document extractor (extract_document), repomap (build_repomap, " +
-			"repomap_for_files), codegraph (graph_*), podman sandbox " +
-			"(sandbox_exec), GitHub (github_*), browser (browser_*), Ollama " +
-			"(ollama_*), and — when the memex store is reachable — memex " +
+			"repomap_for_files), codegraph (graph_*), delegated sandbox " +
+			"(sandbox_exec), GitHub (github_*), browser (browser_*), and " +
+			"when the memex store is reachable — memex " +
 			"(memex_*, search_memex, list_memory_types).\n\n" +
-			"Loom workspaces and observability tools (promql_*, query_logs, " +
-			"query_traces, etc.) are HTTP-only; reach them via the composite " +
+			"Loom workspaces and provider-backed tools are HTTP-only; reach them via the composite " +
 			"endpoint that `ycode serve` mounts at /mcp/.\n\n" +
 			"Default permission ceiling: danger-full-access — agents that " +
 			"intentionally configure ycode mcp serve in their settings.json have " +
@@ -94,9 +92,7 @@ func newMcpServeCmd() *cobra.Command {
 			}()
 
 			// Capability families register here. Each is one mcp.ServerHandler
-			// implementing the family's tools — see docs/lighthouse.md for the
-			// recipe and internal/observability/mcpserver.go for the canonical
-			// template.
+			// implementing the family's tools.
 			//
 			// agent_shell exposes ycode shell's --agent --json semantics as a
 			// single MCP tool: foreign agents send a `command` and get the
@@ -177,13 +173,6 @@ func newMcpServeCmd() *cobra.Command {
 			} else {
 				slog.Warn("memexmcp disabled (memory manager unavailable)", "error", err)
 			}
-
-			// Family D: Ollama proxy. Same-machine HTTP. The handler
-			// resolves its base URL via env / default — no precheck
-			// here, since Ollama may come up after the MCP serve
-			// process starts and tools must list even when Ollama is
-			// down.
-			handlers = append(handlers, inference.NewMCPHandler(""))
 
 			composite := mcp.NewCompositeHandler(handlers...)
 			composite.SetTransport("stdio")

@@ -634,10 +634,8 @@ var soloMethods = []string{
 	mcpservers.ActionCapabilities,
 }
 
-// PodmanChromiumImage returns the OCI tag of the Chromium image used
-// when no host Chrome is found. The actual pull/build is deferred to
-// a follow-up commit; this constant + the helper below are the seam
-// where it lands. See internal/runtime/containertool for the pattern.
+// PodmanChromiumImage is retained for configuration compatibility. ycode
+// no longer starts containerized Chromium itself.
 const PodmanChromiumImage = "docker.io/chromedp/headless-shell:latest"
 
 // PodmanChromiumFallbackDir is the persistent volume mount inside the

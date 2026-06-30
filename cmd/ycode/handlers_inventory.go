@@ -3,7 +3,6 @@ package main
 import (
 	"github.com/qiangli/ycode/internal/docs"
 	"github.com/qiangli/ycode/internal/extractmcp"
-	"github.com/qiangli/ycode/internal/inference"
 	"github.com/qiangli/ycode/internal/runtime/codegraph"
 	gh "github.com/qiangli/ycode/internal/runtime/github"
 	"github.com/qiangli/ycode/internal/runtime/mcp"
@@ -33,8 +32,8 @@ import (
 // loud failures, by design.
 //
 // Handlers NOT included here (and the reason): memexmcp (needs
-// memory.Manager), gitea/loom (need Gitea), pulse (needs observability
-// stack), widget (needs bus), extractmcp.JSONHandler (needs provider).
+// memory.Manager), gitea/loom (need Gitea), widget (needs bus),
+// extractmcp.JSONHandler (needs provider).
 // Their capabilities are declared in registry.yaml with a `gaps:` entry
 // so the lint suppresses MCP validation for them.
 func alwaysOnMCPHandlers() []mcp.ServerHandler {
@@ -52,7 +51,6 @@ func alwaysOnMCPHandlers() []mcp.ServerHandler {
 		codegraph.NewMCPHandler(),
 		NewMCPHandler(),
 		gh.NewMCPHandler(),
-		inference.NewMCPHandler(""),
 		browsermcp.NewMCPHandler(nil),
 		shell.NewMCPHandler(shellRT),
 	}

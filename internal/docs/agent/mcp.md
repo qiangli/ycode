@@ -42,9 +42,9 @@ composite endpoint.
 (`agent_shell`), skills, docs (`list_docs` / `get_doc` / `list_catalog`),
 cobra runner (`list_ycode_commands` / `run_ycode_command{,_workspace}`),
 document extractor (`extract_document`), repomap (`build_repomap`,
-`repomap_for_files`), code graph (`graph_*`), podman sandbox
-(`sandbox_exec`), GitHub (`github_*`), browser (`browser_*`), Ollama
-(`ollama_*`), and — when the memex store is reachable — memex
+`repomap_for_files`), code graph (`graph_*`), delegated sandbox
+(`sandbox_exec`), GitHub (`github_*`), browser (`browser_*`), and
+when the memex store is reachable — memex
 (`memex_save`, `memex_recall`, `memex_list`, `memex_forget`,
 `memex_index`, `search_memex`, `list_memory_types`). Use from any
 MCP-aware agent (Claude Code, Codex, Cursor) by configuring its
@@ -52,11 +52,9 @@ mcpServers block to spawn the command.
 
 **HTTP** (`http://127.0.0.1:<port>/mcp/`): superset of stdio.
 HTTP-only adds **loom** (`loom_lease`, `loom_push`, `loom_merge`,
-`loom_status`, `loom_release`) and **observability** (`promql_query`,
-`promql_query_range`, `query_logs`, `query_traces`,
-`list_prometheus_metrics`, `search_victorialogs`, `query_metrics`),
-plus a provider-backed `extract_json`. Everything else (sandbox,
-browser, treesitter, etc.) is on both transports. Requires `ycode
+`loom_status`, `loom_release`) and provider-backed tools.
+Everything else (sandbox, browser, treesitter, etc.) is on both transports.
+Requires `ycode
 serve` running. Auth is a single bearer token; pair a new client with
 `ycode pair --tool <name>`.
 

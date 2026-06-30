@@ -71,7 +71,6 @@ Integration tests: `go test -tags integration -v -count=1 ./internal/integration
 
 Additional test targets:
 ```bash
-make test-container   # container integration tests (requires podman)
 make test-gitserver   # git server workspace tests
 make test-tui         # TUI integration tests (direct Update + teatest)
 make test-tui-e2e     # TUI E2E tests in a PTY (requires compiled binary)
@@ -82,26 +81,14 @@ make validate-ui      # Playwright browser tests against running server
 make validate-all     # both validate + validate-ui
 ```
 
-Inference runner (local Ollama):
-```bash
-make runner-build-thin   # build thin embedded runner (auto-invoked by `make build`)
-make runner-build        # full Ollama build from source (requires C++ toolchain)
-make runner-check        # verify a system ollama binary is reachable (for --use-system-binaries)
-```
-
-`make build` auto-produces `../coreutils/external/ollama/runner_embed/ycode-runner.gz`
-on first run via `runner-build-if-missing`. On darwin/arm64 no extra
-toolchain is needed (Metal in-tree); other platforms need CMake. Without
-the toolchain the script warns and skip-cleans — ycode still builds but
-ollama features are disabled at runtime. Run ycode with
-`--use-system-binaries` (or set `inference.useSystem: true` in
-`settings.json`) to defer to a user-installed upstream `ollama` daemon
-instead.
+Local inference, Podman, and hosted OTEL services are no longer embedded
+in ycode. Use external provider URLs for models and delegate host service
+management to bashy or another wrapper.
 
 ### Testing
 
 - **Unit tests**: Written in Go. Run with `go test -short -race`. Use `testing.Short()` to skip slow paths. Located alongside source in `*_test.go` files.
-- **Integration tests**: Written in Go in `internal/integration/`. Use `//go:build integration` build tag. Test against real running services (ycode server, OTEL collector, Prometheus). Use `t.Skip()` for graceful degradation when services are unavailable.
+- **Integration tests**: Written in Go in `internal/integration/`. Use `//go:build integration` build tag. Test against real running services such as ycode server, Gitea, or an external OTLP endpoint. Use `t.Skip()` for graceful degradation when services are unavailable.
 - **No test logic in bash**. Bash scripts may invoke `go test` but must not contain assertions, HTTP calls for validation, or result parsing.
 
 ### Adding New Tests
