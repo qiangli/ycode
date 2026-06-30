@@ -17,7 +17,7 @@
 # wrapper classifies as FailureTypeNotInstalled (no infinite restart).
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(dirname "$0")/.."
 OLLAMA_SRC="${REPO_ROOT}/../coreutils/external/ollama/src"
 OUT_DIR="${REPO_ROOT}/../coreutils/external/ollama/runner_embed"
 BIN_DIR="${REPO_ROOT}/bin"

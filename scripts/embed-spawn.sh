@@ -13,7 +13,7 @@
 # rebuilds) when nothing changed.
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(dirname "$0")/.."
 OUT_DIR="${REPO_ROOT}/internal/runtime/wrap/spawn_embed"
 OUT_GZ="${OUT_DIR}/ycode-spawn.gz"
 
