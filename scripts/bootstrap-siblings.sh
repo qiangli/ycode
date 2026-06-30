@@ -2,7 +2,9 @@
 # Ensure the sibling-path replace targets in go.mod (../sh, ../nadir,
 # ../coreutils)
 # exist on disk, by cloning the pinned commit from each upstream repo
-# if the sibling is missing.
+# if the sibling is missing. Cloned siblings also have their own submodules
+# initialized because ycode's replace directives point into coreutils'
+# nested external/ tree.
 #
 # Why: ycode lives in two contexts.
 #   1. Inside the dhnt umbrella, ../sh and ../nadir are already
@@ -56,4 +58,5 @@ while IFS= read -r line; do
     echo "bootstrap-siblings: cloning $url -> $target @ ${sha:0:12}"
     git clone --quiet "$url" "$target"
     git -C "$target" checkout --quiet "$sha"
+    git -C "$target" submodule update --init --recursive
 done < "$pins"
