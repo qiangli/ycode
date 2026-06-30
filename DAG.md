@@ -34,9 +34,9 @@ export GOROOT="$(bashy go env GOROOT)"
 export PATH="$GOROOT/bin:$PATH"
 git submodule init 2>&1 | grep -v 'already registered' || true
 git submodule update --recursive 2>&1 | grep -v '^From \|^Submodule path\| \* branch' || true
-./scripts/fetch-perses-plugins.sh
-./scripts/gzip-embeds.sh
-./scripts/build-gitea-frontend.sh
+bashy ./scripts/fetch-perses-plugins.sh
+bashy ./scripts/gzip-embeds.sh
+bashy ./scripts/build-gitea-frontend.sh
 echo "Generating Gitea bindata..."
 cd external/gitea && go run build/generate-bindata.go options modules/options/bindata.dat 2>&1
 cd external/gitea && go run build/generate-bindata.go templates modules/templates/bindata.dat 2>&1
@@ -48,21 +48,21 @@ cd external/gitea && go run build/generate-bindata.go modules/migration/schemas 
 Pull latest changes for all submodules (skips on conflict).
 Effects: write
 ```bash
-./scripts/sync-submodules.sh
+bashy ./scripts/sync-submodules.sh
 ```
 
 ### priorart-list
 List all priorart repos with branch and latest commit.
 Effects: read
 ```bash
-./scripts/sync-priorart.sh list
+bashy ./scripts/sync-priorart.sh list
 ```
 
 ### priorart-sync
 Pull latest changes for all priorart repos.
 Effects: write
 ```bash
-./scripts/sync-priorart.sh sync
+bashy ./scripts/sync-priorart.sh sync
 ```
 
 ### spawn-embed
@@ -71,7 +71,7 @@ Sources: cmd/ycode-spawn/
 Generates: internal/runtime/wrap/spawn_embed/ycode-spawn.gz
 Effects: write
 ```bash
-./scripts/embed-spawn.sh
+bashy ./scripts/embed-spawn.sh
 ```
 
 ### runner-build-if-missing
@@ -84,11 +84,11 @@ export GOROOT="$(bashy go env GOROOT)"
 export PATH="$GOROOT/bin:$PATH"
 if [ ! -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
   if [ -z "${BUILD_EMBEDS_FROM_SOURCE:-}" ]; then
-    ./scripts/embed-fetch.sh runner
+    bashy ./scripts/embed-fetch.sh runner
   fi
 fi
 if [ ! -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
-  ./scripts/build-runner-thin.sh
+    bashy ./scripts/build-runner-thin.sh
 fi
 ```
 
@@ -192,7 +192,7 @@ if [ -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
 fi
 
 export VERSION COMMIT PACKAGES TAG_LIST
-./scripts/build.sh
+bashy ./scripts/build.sh
 ```
 
 ### test
@@ -455,7 +455,7 @@ set -e
 export GOROOT="$(bashy go env GOROOT)"
 export PATH="$GOROOT/bin:$PATH"
 export PACKAGES="${PACKAGES:-$(go list ./... | grep -v '/priorart/')}"
-./scripts/tidy.sh
+bashy ./scripts/tidy.sh
 ```
 
 ### clean
@@ -553,7 +553,7 @@ echo "=== ci-fast PASSED ==="
 Symlink scripts/git-hooks/* into .git/hooks/.
 Effects: write
 ```bash
-./scripts/install-hooks.sh
+bashy ./scripts/install-hooks.sh
 ```
 
 ### dist/ycode-linux-amd64
@@ -686,14 +686,14 @@ Effects: write
 ```bash
 export GOROOT="$(bashy go env GOROOT)"
 export PATH="$GOROOT/bin:$PATH"
-./scripts/build-runner.sh
+bashy ./scripts/build-runner.sh
 ```
 
 ### embed-fetch
 Download prebuilt embed blobs (runner+podman+vfkit+gvproxy) from the latest GitHub release.
 Effects: write
 ```bash
-./scripts/embed-fetch.sh
+bashy ./scripts/embed-fetch.sh
 ```
 
 ### runner-build-thin
@@ -702,14 +702,14 @@ Effects: write
 ```bash
 export GOROOT="$(bashy go env GOROOT)"
 export PATH="$GOROOT/bin:$PATH"
-./scripts/build-runner-thin.sh
+bashy ./scripts/build-runner-thin.sh
 ```
 
 ### runner-check
 Verify runner binary exists and responds to health check.
 Effects: read
 ```bash
-./scripts/check-runner.sh
+bashy ./scripts/check-runner.sh
 ```
 
 ### build-single
@@ -729,9 +729,9 @@ Effects: write
 set -e
 HOST="${HOST:-localhost}"
 if [ "${HOST}" = "localhost" ] || [ "${HOST}" = "127.0.0.1" ]; then
-  ./scripts/deploy-local.sh
+  bashy ./scripts/deploy-local.sh
 else
-  ./scripts/deploy-remote.sh
+  bashy ./scripts/deploy-remote.sh
 fi
 ```
 
@@ -739,21 +739,21 @@ fi
 Deploy to localhost.
 Effects: write
 ```bash
-./scripts/deploy-local.sh
+bashy ./scripts/deploy-local.sh
 ```
 
 ### deploy-remote
 Deploy to remote host.
 Effects: write
 ```bash
-./scripts/deploy-remote.sh
+bashy ./scripts/deploy-remote.sh
 ```
 
 ### validate
 Run Go integration tests against running instance.
 Effects: read
 ```bash
-./scripts/validate.sh
+bashy ./scripts/validate.sh
 ```
 
 ### validate-ui
