@@ -189,6 +189,18 @@ var Catalog = []Hint{
 		SkipOnSuccess: true,
 	},
 	{
+		// yc memory is per-agent/per-project; ~/.bashy/kb is the HOST ring —
+		// the collective memory of every agent tool across every repo on
+		// this machine. An agent already reaching for memory is the right
+		// moment to teach it the wider ring (and the retro write-back).
+		ID:            "recall-suggests-host-kb",
+		Pattern:       regexp.MustCompile(`\byc\s+(recall|remember)\b`),
+		Category:      "memory",
+		Suggest:       "also check the host-wide kb shared by ALL agents and repos on this machine: `bashy kb search '<terms>'` (contribute via `bashy kb add`; after a task, `bashy kb retro`)",
+		Why:           "yc memory is scoped to this agent/project; ~/.bashy/kb carries lessons from every other tool and repo on the host.",
+		SkipOnSuccess: true,
+	},
+	{
 		ID:            "echo-content-pipe-grep",
 		Pattern:       regexp.MustCompile(`\becho\b[^|]*\|\s*grep\b`),
 		Category:      "code-search",
