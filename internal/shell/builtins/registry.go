@@ -1,7 +1,7 @@
 // Package builtins provides the `yc <verb>` family of in-process commands
 // that ycode shell injects into the bash exec path. Foreign agents that
 // shell out to ycode get these capabilities (treesitter AST search, repo
-// map, code graph, sandbox, browser-use, semantic memory, native git)
+// map, code graph, sandbox, semantic memory, native git)
 // as plain shell commands with no MCP setup required.
 //
 // Built-ins live under `yc <verb>` to namespace cleanly and stay

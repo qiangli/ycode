@@ -71,8 +71,8 @@ func LoadCatalog() (Catalog, error) {
 
 // FilterByTask returns rows whose task or read_more field substring-
 // matches the query (case-insensitive). Matching read_more is what
-// lets `--task browser` find the "drive a web page" row whose
-// read_more is `browser`. Empty query returns all rows.
+// lets `--task sandbox` find the "isolated command execution" row whose
+// read_more is `sandbox`. Empty query returns all rows.
 func (c Catalog) FilterByTask(query string) Catalog {
 	if query == "" {
 		return c

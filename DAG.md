@@ -541,22 +541,6 @@ Requires: build
 echo "all complete"
 ```
 
-### chrome-extension
-Build ycode and print ycode-live Chrome extension setup.
-Requires: compile
-```bash
-set -e
-echo "ycode binary built. The ycode-live Chrome extension is embedded inside it."
-echo ""
-echo "Extract the extension:"
-echo "  bin/ycode browser setup live"
-echo ""
-echo "Load it into Chrome:"
-echo "  1. Open chrome://extensions"
-echo "  2. Toggle Developer mode"
-echo "  3. Click 'Load unpacked' -> point at bin/ycode's output"
-```
-
 ### ci-image
 Build the ycode-builder Docker image used by GitHub Actions.
 Effects: write

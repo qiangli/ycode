@@ -284,7 +284,7 @@ Extend `pkg/memex/memory/fusion.go` to accept graph-traversal results as a fourt
 - **SCIP import**: one-shot importer for repos with existing SCIP indexes.
 - **Embeddings on demand**: lazy-compute `region.embedding` only for regions ≥ N tokens or returned more than K times.
 - **Time-travel queries**: link a `Commit` node + `fs.content_hash` → "what did this symbol look like at commit X" as a graph query.
-- **External knowledge surfaces**: `browser_extract` results, dependency READMEs, licenses — all become File+Region nodes; memories edge to them like local files.
+- **External knowledge surfaces**: fetched web content, dependency READMEs, licenses — all become File+Region nodes; memories edge to them like local files.
 
 ## Validation
 

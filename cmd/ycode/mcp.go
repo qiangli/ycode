@@ -17,7 +17,6 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/codegraph"
 	gh "github.com/qiangli/ycode/internal/runtime/github"
 	"github.com/qiangli/ycode/internal/runtime/mcp"
-	"github.com/qiangli/ycode/internal/runtime/mcpservers/browsermcp"
 	"github.com/qiangli/ycode/internal/runtime/memexmcp"
 	"github.com/qiangli/ycode/internal/runtime/origin"
 	"github.com/qiangli/ycode/internal/runtime/repomap"
@@ -42,7 +41,7 @@ func newMcpCmd() *cobra.Command {
 		Short: "Model Context Protocol server commands",
 		Long: "Run a ycode MCP server so external coding agents can use ycode's " +
 			"capabilities (AST search, repo-map, memex, Gitea workspaces, " +
-			"browser automation, and command helpers) without plugins or shell exec.",
+			"and command helpers) without plugins or shell exec.",
 	}
 	cmd.AddCommand(newMcpServeCmd())
 	return cmd
@@ -61,7 +60,7 @@ func newMcpServeCmd() *cobra.Command {
 			"cobra runner (list_ycode_commands / run_ycode_command{,_workspace}), " +
 			"document extractor (extract_document), repomap (build_repomap, " +
 			"repomap_for_files), codegraph (graph_*), delegated sandbox " +
-			"(sandbox_exec), GitHub (github_*), browser (browser_*), and " +
+			"(sandbox_exec), GitHub (github_*), and " +
 			"when the memex store is reachable — memex " +
 			"(memex_*, search_memex, list_memory_types).\n\n" +
 			"Loom workspaces and provider-backed tools are HTTP-only; reach them via the composite " +
@@ -152,16 +151,6 @@ func newMcpServeCmd() *cobra.Command {
 				// ~/.config/gh/hosts.yml. Reads ReadOnly; create_*
 				// tools WorkspaceWrite.
 				gh.NewMCPHandler(),
-
-				// Family F: browser automation. Exposed without a
-				// client so foreign agents discover the 14 browser_*
-				// tools — each call returns the friendly "configure
-				// browser.mode" message until the operator wires a
-				// backend. The HTTP /mcp/ variant in serve.go shares
-				// the same client ycode's runtime uses so attach state
-				// is unified; the stdio variant here is short-lived,
-				// so we don't try to share with a serve process.
-				browsermcp.NewMCPHandler(nil),
 			}
 
 			// Family A.3: memex memory. Best-effort — if the manager

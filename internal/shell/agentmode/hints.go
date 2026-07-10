@@ -114,14 +114,6 @@ var Catalog = []Hint{
 		SkipOnSuccess: true,
 	},
 	{
-		ID:            "curl-http-suggests-browser",
-		Pattern:       regexp.MustCompile(`\bcurl\b[^|]*?(https?://\S+)`),
-		Category:      "net",
-		Suggest:       "for JS-rendered pages: `yc browser fetch $1`; for an interactive session: `yc browser open $1`",
-		Why:           "`yc browser fetch` handles redirects, content-type sniffing, and JS execution; curl returns the unrendered source.",
-		SkipOnSuccess: true,
-	},
-	{
 		ID:            "git-log-status-diff-suggests-yc-git",
 		Pattern:       regexp.MustCompile(`\bgit\s+(log|status|diff|branch|show|blame)\b`),
 		Category:      "git",
@@ -170,14 +162,6 @@ var Catalog = []Hint{
 		Category:      "code-search",
 		Suggest:       "`yc symbols <path>` extracts symbols natively (treesitter, no index file)",
 		Why:           "No index file to maintain or stale; treesitter parses on demand.",
-		SkipOnSuccess: true,
-	},
-	{
-		ID:            "wget-suggests-browser",
-		Pattern:       regexp.MustCompile(`\bwget\b[^|]*?(https?://\S+)`),
-		Category:      "net",
-		Suggest:       "for JS-rendered pages: `yc browser fetch $1` (also handles redirects + Content-Type)",
-		Why:           "wget returns the raw response; `yc browser fetch` resolves redirects and reports the final URL.",
 		SkipOnSuccess: true,
 	},
 	{

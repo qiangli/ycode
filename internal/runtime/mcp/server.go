@@ -19,7 +19,7 @@ type ServerHandler interface {
 // Content is one MCP tool-result content block (text, image, or
 // resource). The MCP spec lets a single tools/call response carry an
 // ordered array of these so a handler can mix narration with binary
-// payloads — e.g. screenshot → [image block + text metadata].
+// payloads — e.g. an image block + text metadata.
 //
 // Field set is the union of the spec's TextContent and ImageContent
 // shapes; unused fields drop out via omitempty. Use ContentText /
@@ -48,9 +48,9 @@ func ContentImage(data, mimeType string) Content {
 // text-only path — the server auto-wraps their string in one text
 // block — so every existing handler keeps working unchanged.
 //
-// The motivating case is browser_screenshot: returning the PNG via an
-// image content block lets foreign agents (Claude Code, Cursor, …)
-// render it inline without the consumer side base64-decoding a JSON
+// The motivating case is a tool that returns an image: emitting the PNG
+// via an image content block lets foreign agents (Claude Code, Cursor,
+// …) render it inline without the consumer side base64-decoding a JSON
 // envelope by hand.
 type RichHandler interface {
 	HandleToolCallRich(ctx context.Context, name string, input json.RawMessage) ([]Content, error)
@@ -225,9 +225,9 @@ func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) (*JSONR
 // dispatchToolCall routes a tools/call through the rich content path
 // when the handler supports it, falling back to the legacy
 // HandleToolCall (string) path otherwise. Both CompositeHandler and
-// GatedHandler implement RichHandler conditionally, so a screenshot
-// going through composite → gated → browsermcp still surfaces an
-// image content block on the wire.
+// GatedHandler implement RichHandler conditionally, so an image result
+// going through composite → gated → handler still surfaces an image
+// content block on the wire.
 func dispatchToolCall(ctx context.Context, h ServerHandler, name string, args json.RawMessage) ([]Content, error) {
 	if rich, ok := h.(RichHandler); ok {
 		return rich.HandleToolCallRich(ctx, name, args)

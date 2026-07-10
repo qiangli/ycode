@@ -162,12 +162,6 @@ func TestComputer_E2E_FullSequence(t *testing.T) {
 		t.Error("expected SSRF rejection")
 	}
 
-	// 8. Browser surface — must report ErrNotSupported on default
-	// LocalComputer (no CDP plugged in).
-	if err := c.Browser().Goto(ctx, "https://example.com"); err == nil {
-		t.Error("expected Browser.Goto to return ErrNotSupported")
-	}
-
 	// ----- Span assertions -----
 
 	// Required spans (in any order; ordering depends on test

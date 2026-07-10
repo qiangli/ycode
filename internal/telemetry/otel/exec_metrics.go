@@ -50,16 +50,15 @@ const (
 	ExecScopeBashTTY      = "bash-tty"      // ycode shell's TTY exec (ssh, vi, sudo)
 	ExecScopeToolexec     = "toolexec"      // 3-tier toolexec host-exec tier
 	ExecScopeSandbox      = "sandbox"       // yc sandbox builtin (podman run …)
-	ExecScopeProbeLaunch  = "probe-launch"  // ycode browser launch (experimental)
 	ExecScopeContainer    = "container"     // Container.Exec REST API
 	ExecScopeWrappedAgent = "wrapped-agent" // `ycode wrap` PATH-shim dispatcher
 	ExecScopeWASM         = "wasm"          // wazero+WASI sandboxed tool (rg/jq/sed/awk/…)
 	ExecScopeMCPGateway   = "mcp-gateway"   // proxy_tool_call federation forward
 )
 
-// execMeter looks up the global meter fresh each call. Same pattern
-// as browser_metrics.go: some sites (e.g. bash exec inside a shell
-// session) fire before setupOTEL runs, so memoizing instruments via
+// execMeter looks up the global meter fresh each call. Some sites
+// (e.g. bash exec inside a shell session) fire before setupOTEL runs,
+// so memoizing instruments via
 // sync.Once would freeze us on the no-op meter forever. The OTEL SDK
 // caches counter creation internally — per-call lookup is cheap.
 func execMeter() metric.Meter { return otel.Meter("ycode.exec") }

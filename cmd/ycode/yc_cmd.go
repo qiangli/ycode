@@ -28,7 +28,7 @@ func newYcCmd() *cobra.Command {
 		Long: `Run a yc <verb> built-in from any shell, without going through ycode shell.
 
 The yc verb family (symbols, refs, search-symbols, repomap, graph, git,
-remember, recall, browser, sandbox, manifest, help) is normally reachable
+remember, recall, sandbox, manifest, help) is normally reachable
 inside ycode shell as plain shell commands. This subcommand exposes the
 same dispatcher to any caller — useful when an agent's bash tool spawns
 /bin/zsh or /bin/bash by absolute path and never sees the

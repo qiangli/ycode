@@ -138,20 +138,6 @@ make eval-e2e        # full coding tasks
 make eval-all-evals  # all of the above
 ```
 
-## Browser automation preflight
-
-When using any `browser_*` tool against an unfamiliar backend (especially
-the live mode's Chrome extension which can drift behind a `ycode`
-upgrade), call `browser_capabilities` once per session before relying
-on actions that may be missing — `wait_for_selector`,
-`keyboard_press`, `clipboard_*`, `cookies_get`, `storage_get`. The
-response carries `{mode, version, methods, permissions}`; if your
-desired action isn't in `methods` the extension needs a reload at
-`chrome://extensions`. Stale-extension drift is also flagged on the
-first result hint (`"live: extension stale ..."`). See
-[browser.md](./browser.md) for recipes (`max_bytes` screenshot cap,
-scope-aware extract, `match_text` click without selector).
-
 ## Documentation security
 
 Hard rule for any artifact that leaves the local machine — files under

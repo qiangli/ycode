@@ -81,8 +81,6 @@ Reach for these before `grep`/`find`/`git`. When you don't, the agent-mode hint 
 | `yc lsp <hover\|definition\|references\|symbols\|diagnostics> <file>[:line[:col]]` | Querying LSP | reading source manually — structured `Response` |
 | `yc run [--json] -- <cmd>` | Commands where exit-code + duration matter | shell text parsing — typed envelope |
 | `yc graph "<DQL>"` | Code knowledge graph queries | nothing else gives DQL — falls back to ephemeral mirror of `.agents/ycode/graph.json` |
-| `yc browser <open\|fetch\|find>` | Web page operations | `curl` — resolves redirects, handles JS-rendered pages |
-| `yc tab <status\|extract\|screenshot\|navigate\|click\|type\|scroll\|back\|tabs>` | Driving Chrome tab in live mode | headless wrappers — targets user's actual browser session |
 | `yc remember "<text>"` | Saving facts for future sessions | ad-hoc notes — RRF-fused memex; auto-writes to `~/.claude/projects/<id>/memory/` when `$CLAUDE_PROJECT_DIR` set |
 | `yc recall <query>` | Retrieving prior facts | grepping notes — searches both ycode and Claude corpora |
 | `yc sandbox -- <cmd>` | Delegated sandbox command | running an external wrapper directly |

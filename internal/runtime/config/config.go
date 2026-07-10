@@ -76,9 +76,6 @@ type Config struct {
 	// Multi-agent collaboration task queue settings (see docs/agent-collab.md).
 	Tasks *TasksConfig `json:"tasks,omitempty"`
 
-	// Browser automation backend selection (see internal/runtime/mcpservers).
-	Browser *BrowserConfig `json:"browser,omitempty"`
-
 	// Self-heal observer (see internal/runtime/selfheal). Phase 1
 	// of the autonomous fix loop: watch tool-call spans for
 	// ycode-bug-shaped failures and write them to a JSONL log. On
@@ -249,34 +246,6 @@ func (c *GitServerConfig) IsEnabled() bool {
 type ProjectConfig struct {
 	ID   string `json:"id,omitempty"`   // stable identifier, e.g. github.com/foo/bar
 	Name string `json:"name,omitempty"` // human-readable name shown in dashboards
-}
-
-// BrowserConfig selects which ycode-native browser mode handles the
-// browser_* tools and tunes per-mode behavior. See
-// internal/runtime/mcpservers for the live / probe / solo
-// implementations.
-type BrowserConfig struct {
-	Mode string `json:"mode,omitempty"` // "live" | "probe" | "solo"
-
-	// live (Chrome extension over WebSocket)
-	LivePort int `json:"livePort,omitempty"` // default 58082
-
-	// probe (CDP attach)
-	ProbeURL string `json:"probeURL,omitempty"` // default http://localhost:9222
-
-	// solo (chromedp launches fresh Chrome)
-	SoloChromePath  string `json:"soloChromePath,omitempty"`  // empty → auto-detect / podman fallback
-	SoloHeaded      bool   `json:"soloHeaded,omitempty"`      // default headless
-	SoloUserDataDir string `json:"soloUserDataDir,omitempty"` // empty → ephemeral
-
-	// Reliability layer toggles (openchrome-inspired). nil = default
-	// on; explicit false disables. See
-	// internal/runtime/mcpservers/reliability.
-	HintEngine     *bool `json:"hintEngine,omitempty"`
-	RalphFallback  *bool `json:"ralphFallback,omitempty"`
-	CircuitBreaker *bool `json:"circuitBreaker,omitempty"`
-	CompactDOM     *bool `json:"compactDOM,omitempty"`
-	PatternLearner *bool `json:"patternLearner,omitempty"`
 }
 
 // TasksConfig controls the multi-agent collaboration task queue.
@@ -608,45 +577,6 @@ func mergeFromFile(cfg *Config, path string) error {
 		}
 		if overlay.Project.Name != "" {
 			cfg.Project.Name = overlay.Project.Name
-		}
-	}
-	if overlay.Browser != nil {
-		if cfg.Browser == nil {
-			cfg.Browser = &BrowserConfig{}
-		}
-		b := overlay.Browser
-		if b.Mode != "" {
-			cfg.Browser.Mode = b.Mode
-		}
-		if b.LivePort != 0 {
-			cfg.Browser.LivePort = b.LivePort
-		}
-		if b.ProbeURL != "" {
-			cfg.Browser.ProbeURL = b.ProbeURL
-		}
-		if b.SoloChromePath != "" {
-			cfg.Browser.SoloChromePath = b.SoloChromePath
-		}
-		if b.SoloHeaded {
-			cfg.Browser.SoloHeaded = true
-		}
-		if b.SoloUserDataDir != "" {
-			cfg.Browser.SoloUserDataDir = b.SoloUserDataDir
-		}
-		if b.HintEngine != nil {
-			cfg.Browser.HintEngine = b.HintEngine
-		}
-		if b.RalphFallback != nil {
-			cfg.Browser.RalphFallback = b.RalphFallback
-		}
-		if b.CircuitBreaker != nil {
-			cfg.Browser.CircuitBreaker = b.CircuitBreaker
-		}
-		if b.CompactDOM != nil {
-			cfg.Browser.CompactDOM = b.CompactDOM
-		}
-		if b.PatternLearner != nil {
-			cfg.Browser.PatternLearner = b.PatternLearner
 		}
 	}
 	if overlay.Toolsets != nil {

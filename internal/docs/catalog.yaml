@@ -18,32 +18,6 @@
 # valid (sandbox today).
 
 rows:
-  - task: drive a web page
-    surfaces:
-      cli: [ycode browser]
-      yc:  [yc browser, yc tab]
-      mcp:
-        - browser_navigate
-        - browser_click
-        - browser_type
-        - browser_eval
-        - browser_screenshot
-        - browser_extract
-        - browser_console_get
-        - browser_network_list
-        - browser_lighthouse
-        - browser_wait_for_selector
-        - browser_keyboard_press
-        - browser_cookies_get
-        - browser_storage_get
-        - browser_clipboard_read
-        - browser_clipboard_write
-        - browser_perf_start
-        - browser_perf_stop
-        - browser_capabilities
-    prereq: browser.mode set in settings.json; for live mode, run `ycode browser setup live` once and verify with `ycode browser doctor`.
-    read_more: browser
-
   - task: search code symbols
     surfaces:
       yc:  [yc symbols, yc search-symbols, yc refs]
@@ -82,7 +56,3 @@ rows:
       mcp: [list_docs, get_doc, list_catalog]
     read_more: mcp
 
-  - task: outcome_class taxonomy
-    surfaces:
-      mcp: [list_docs, get_doc]
-    read_more: outcomes

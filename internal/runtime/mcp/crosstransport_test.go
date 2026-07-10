@@ -19,23 +19,23 @@ func (s fixedToolsHandler) HandleToolCall(context.Context, string, json.RawMessa
 func (s fixedToolsHandler) ReadResource(context.Context, string) (string, error) { return "", nil }
 
 func TestUnknownToolErr_CrossTransportHint(t *testing.T) {
-	// Compose with only the docs tools registered. Asking for browser_eval
+	// Compose with only the docs tools registered. Asking for loom_lease
 	// — which crossTransportTools says lives on "http" — should produce
 	// the cross-transport hint.
 	c := NewCompositeHandler(fixedToolsHandler{tools: []Tool{{Name: "list_docs"}}})
 	c.SetTransport("stdio")
 
-	_, err := c.HandleToolCall(context.Background(), "browser_eval", nil)
+	_, err := c.HandleToolCall(context.Background(), "loom_lease", nil)
 	if err == nil {
 		t.Fatal("expected error for unknown tool")
 	}
 	msg := err.Error()
 	for _, want := range []string{
-		`browser_eval`,
+		`loom_lease`,
 		`transport "stdio"`,
 		`available on "http"`,
 		`ycode serve`,
-		`ycode pair --tool browser_eval`,
+		`ycode pair --tool loom_lease`,
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("expected %q in error, got: %s", want, msg)
@@ -47,7 +47,7 @@ func TestUnknownToolErr_NoHintWhenTransportUnset(t *testing.T) {
 	c := NewCompositeHandler(fixedToolsHandler{tools: []Tool{{Name: "list_docs"}}})
 	// no SetTransport call
 
-	_, err := c.HandleToolCall(context.Background(), "browser_eval", nil)
+	_, err := c.HandleToolCall(context.Background(), "loom_lease", nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -75,13 +75,13 @@ func TestUnknownToolErr_NoHintForUnknownToolName(t *testing.T) {
 }
 
 func TestUnknownToolErr_NoHintWhenSameTransport(t *testing.T) {
-	// browser_eval is owned by "http" — if the composite's transport
+	// loom_lease is owned by "http" — if the composite's transport
 	// already matches, no cross-transport hint should fire (the tool
 	// is missing for some other reason — e.g. handler not registered).
 	c := NewCompositeHandler(fixedToolsHandler{tools: []Tool{{Name: "list_docs"}}})
 	c.SetTransport("http")
 
-	_, err := c.HandleToolCall(context.Background(), "browser_eval", nil)
+	_, err := c.HandleToolCall(context.Background(), "loom_lease", nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}

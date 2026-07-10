@@ -43,7 +43,7 @@ composite endpoint.
 cobra runner (`list_ycode_commands` / `run_ycode_command{,_workspace}`),
 document extractor (`extract_document`), repomap (`build_repomap`,
 `repomap_for_files`), code graph (`graph_*`), delegated sandbox
-(`sandbox_exec`), GitHub (`github_*`), browser (`browser_*`), and
+(`sandbox_exec`), GitHub (`github_*`), and
 when the memex store is reachable — memex
 (`memex_save`, `memex_recall`, `memex_list`, `memex_forget`,
 `memex_index`, `search_memex`, `list_memory_types`). Use from any

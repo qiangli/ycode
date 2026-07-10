@@ -209,7 +209,7 @@ func EnvironmentSection(ctx *ProjectContext) string {
 
 		// Container engine.
 		if !sys.CanRunContainers {
-			items = append(items, "Container engine: unavailable (browser automation disabled)")
+			items = append(items, "Container engine: unavailable (sandbox execution disabled)")
 		}
 
 		// Resources.

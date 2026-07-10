@@ -1,14 +1,10 @@
 // Package computer is the unified mediation seam for agent-driven
-// shell, filesystem, web, and browser access.
+// shell, filesystem, and web access.
 //
 // The Computer interface composes existing pieces (bash.Executor,
 // fileops.*, *http.Client, vfs.VFS, permission.Enforcer) into one
 // auditable surface so every side-effectful operation can be
 // observed, gated, and swapped (Local now; Container/Remote later).
-//
-// See docs/strategy.md (Phase 3 trust UX) and the plan in
-// .claude/plans/built-in-feature-simialr-refactored-aho.md for the
-// origin story and design rationale.
 package computer
 
 import (
@@ -24,18 +20,16 @@ import (
 )
 
 // ErrNotSupported is returned when a surface is unavailable in the
-// current Computer implementation (e.g. Browser when no Chrome is
-// installed, or Session before the pty implementation lands).
+// current Computer implementation (e.g. Session before the pty
+// implementation lands).
 var ErrNotSupported = errors.New("computer: surface not supported by this implementation")
 
 // Computer is the agent's mediated view of the host. Every
-// shell / fs / web / browser operation flows through one of its
-// surfaces.
+// shell / fs / web operation flows through one of its surfaces.
 type Computer interface {
 	Shell() Shell
 	Files() Files
 	Web() Web
-	Browser() Browser
 
 	// Name identifies the implementation for span attributes
 	// (e.g. "local"). Container/remote impls return their own name.
@@ -120,69 +114,3 @@ type FetchResult struct {
 	Body   []byte
 	URL    string // final URL after redirects
 }
-
-// Browser mediates a CDP-driven browser session. May return
-// ErrNotSupported if no system Chrome is found at construction
-// time.
-type Browser interface {
-	Goto(ctx context.Context, url string) error
-	Click(ctx context.Context, sel Selector) error
-	Type(ctx context.Context, sel Selector, text string) error
-	Press(ctx context.Context, key string) error
-	Scroll(ctx context.Context, dx, dy int) error
-	Screenshot(ctx context.Context, opts ShotOpts) ([]byte, error)
-	Snapshot(ctx context.Context) (PageSnapshot, error)
-	Eval(ctx context.Context, js string) ([]byte, error)
-	WaitFor(ctx context.Context, cond WaitCond) error
-	Close(ctx context.Context) error
-}
-
-// Selector targets an element either by CSS selector or by (x,y) point.
-type Selector struct {
-	CSS  string
-	X, Y int
-}
-
-// ShotOpts configures Browser.Screenshot.
-type ShotOpts struct {
-	FullPage bool
-	MaxDim   int // longest side; 0 = no clamp
-}
-
-// PageSnapshot is a thin DOM + accessibility tree extract for
-// agent reasoning without sending raw HTML.
-type PageSnapshot struct {
-	URL        string
-	Title      string
-	HTML       string // sanitized / truncated
-	Text       string // visible text
-	Links      []Link
-	AccessTree []byte // serialized accessibility tree
-}
-
-// Link is one entry from PageSnapshot.Links.
-type Link struct {
-	Text string
-	Href string
-}
-
-// WaitCond expresses a condition for Browser.WaitFor.
-type WaitCond struct {
-	Kind     WaitKind
-	Selector string
-	Timeout  time.Duration
-}
-
-// WaitKind enumerates the conditions Browser.WaitFor recognizes.
-type WaitKind int
-
-const (
-	// WaitLoad — DOMContentLoaded.
-	WaitLoad WaitKind = iota + 1
-	// WaitNetworkIdle — no network activity for a quiet window.
-	WaitNetworkIdle
-	// WaitSelector — element matching Selector exists / is visible.
-	WaitSelector
-	// WaitTimeout — sleep for Timeout (rare; explicit).
-	WaitTimeout
-)

@@ -36,42 +36,6 @@ func TestFilterBySystemContext_NoInternet(t *testing.T) {
 	}
 }
 
-func TestFilterBySystemContext_NoContainers(t *testing.T) {
-	r := NewRegistry()
-	RegisterBuiltins(r)
-
-	sys := &sysinfo.SystemContext{
-		HasInternet:      true,
-		CanRunContainers: false,
-		HasGit:           true,
-		IsContainer:      true,
-	}
-	FilterBySystemContext(r, sys)
-
-	// Browser tools should be disabled.
-	browserTools := []string{
-		"browser_navigate", "browser_click", "browser_type",
-		"browser_scroll", "browser_screenshot", "browser_extract",
-		"browser_back", "browser_tabs",
-	}
-	for _, name := range browserTools {
-		spec, ok := r.Get(name)
-		if !ok {
-			// Browser tools may be registered inline, not in builtinSpecs.
-			continue
-		}
-		if !spec.Disabled {
-			t.Errorf("%s should be disabled when CanRunContainers=false", name)
-		}
-	}
-
-	// WebFetch should still be enabled.
-	spec, _ := r.Get("WebFetch")
-	if spec.Disabled {
-		t.Error("WebFetch should not be disabled when only containers are unavailable")
-	}
-}
-
 func TestFilterBySystemContext_NoGit(t *testing.T) {
 	r := NewRegistry()
 	RegisterBuiltins(r)

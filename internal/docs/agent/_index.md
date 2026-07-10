@@ -13,18 +13,10 @@ entry point to every ycode capability that exposes a verb you can call.
 - **mcp** — connect to ycode's MCP composite endpoint (HTTP) or stdio
   server. Start here if you've never used ycode before; most other
   capabilities are reachable as MCP tools.
-- **browser** — drive a real or headless browser (live / probe / solo)
-  via the `browser_*` MCP tools; recovery patterns for AUTH_REDIRECT
-  and BLOCKED.
-- **tab** — drive the user's currently-open Chrome tab in live mode
-  (extract / screenshot / navigate / click / type / scroll). The
-  bridge to surfaces a headless browser can't reach.
 - **loom** — v1 substrate underneath weave: per-call MCP verbs
   for lease / push / merge / release. The local parallel subagent
   surface is now the sibling `bashy weave` command, not a ycode
   subcommand.
-- **outcomes** — taxonomy reference for the `outcome_class` field on
-  every browser_* result.
 - **sandbox** — `yc sandbox` podman-isolated command execution.
 - **memex** — semantic memory: save / recall / list / forget.
 - **repomap** — token-budgeted repo orientation (`yc repomap`).

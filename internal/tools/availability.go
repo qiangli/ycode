@@ -25,16 +25,6 @@ func FilterBySystemContext(r *Registry, sys *sysinfo.SystemContext) {
 			"WebFetch", "WebSearch")
 	}
 
-	// Cannot run containers → disable browser automation.
-	// Note: ast_search has an in-process tree-sitter fallback, so it stays enabled.
-	// Only browser_* tools require a podman container unconditionally.
-	if !sys.CanRunContainers {
-		disabled += disableTools(r, "no container engine",
-			"browser_navigate", "browser_click", "browser_type",
-			"browser_scroll", "browser_screenshot", "browser_extract",
-			"browser_back", "browser_tabs")
-	}
-
 	// No git → disable git tools.
 	if !sys.HasGit {
 		disabled += disableTools(r, "git not in PATH",

@@ -98,7 +98,7 @@ based on tool descriptions. Use `mcp__ycode__agent_shell` when:
 
 - The LLM wants in-process `yc <verb>` builtins (`yc symbols`,
   `yc search-symbols`, `yc refs`, `yc repomap`, `yc graph`, `yc git`,
-  `yc remember`, `yc recall`, `yc browser`, `yc sandbox`).
+  `yc remember`, `yc recall`, `yc sandbox`).
 - Pre/post-exec hints from ycode's agent-mode catalog are useful
   (e.g. suggesting `yc search-symbols` when the agent ran `grep -r`).
 - Telemetry should flow through ycode's pulse stack.

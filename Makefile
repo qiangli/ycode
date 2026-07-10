@@ -195,24 +195,6 @@ install: build ## Install the ycode binary to ~/bin/ (no shims — opt in via sc
 
 all: build ## Full quality gate (alias for build)
 
-chrome-extension: compile ## Build ycode and print ycode-live Chrome extension setup
-	@echo ""
-	@echo "ycode binary built. The ycode-live Chrome extension is embedded inside it."
-	@echo ""
-	@echo "Extract the extension:"
-	@echo "  bin/ycode browser setup live"
-	@echo "      (or pass --dest <dir> to override the default ~/Downloads/ycode-chrome-ext)"
-	@echo ""
-	@echo "Load it into Chrome:"
-	@echo "  1. Open chrome://extensions"
-	@echo "  2. Toggle Developer mode (top-right)"
-	@echo "  3. Click 'Load unpacked' → point at the extracted folder"
-	@echo "  4. Pin the extension to the toolbar"
-	@echo "  5. On the tab you want ycode to drive, click the extension icon → Connect"
-	@echo ""
-	@echo "Then point ycode at it:"
-	@echo "  ycode config set browser.mode live"
-
 # ─── CI Parity ──────────────────────────────────────────────────────────────
 #
 # `make ci` runs everything GitHub Actions does, in the same container,

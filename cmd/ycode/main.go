@@ -23,7 +23,6 @@ import (
 	"github.com/qiangli/ycode/internal/cli"
 	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/runtime/bash"
-	"github.com/qiangli/ycode/internal/runtime/browser"
 	"github.com/qiangli/ycode/internal/runtime/computer"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
@@ -314,18 +313,6 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	qm := tools.NewQualityMonitor(0.7)
 	toolReg.SetQualityMonitor(qm)
 
-	// Experimental ycode-native browser modes (live / probe / solo).
-	// Returns a browser.Client wrapping the configured Manager when
-	// cfg.Browser.Mode is set; nil otherwise. Installing the client on
-	// rootCtx makes it available to every browser_* tool dispatched in
-	// this App's goroutines (tool handlers retrieve it via
-	// browser.ClientFromContext). live mode eagerly binds its WS port
-	// here so the Chrome extension can connect immediately. probe /
-	// solo are lazily initialized on first browser tool call.
-	if browserClient := setupBrowserBackend(rootCtx, cfg); browserClient != nil {
-		rootCtx = browser.WithClient(rootCtx, browserClient)
-	}
-
 	jobRegistry := bash.NewJobRegistry()
 	// Construct the unified Computer gateway. All agent-driven shell,
 	// fs, and web operations route through its surfaces. Execution is
@@ -343,7 +330,6 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	tools.RegisterSleepHandler(toolReg)
 	tools.RegisterWebHandlers(toolReg, gateway.Web())
 	tools.RegisterNetscanHandler(toolReg)
-	tools.RegisterBrowserHandlers(toolReg)
 	tools.RegisterToolSearchHandler(toolReg)
 	tools.RegisterSkillHandler(toolReg)
 	tools.RegisterMemosHandlers(toolReg)
@@ -1327,10 +1313,9 @@ func init() {
 	// to `ycode docs` (which is curated for agents).
 	rootCmd.AddCommand(newToolsCmd())
 
-	// MCP browser backends (playwright / devtools / browsermcp).
-	// Stable build adds a stub explaining how to enable; experimental
-	// build registers the real subcommands. See internal/runtime/mcpservers.
-	rootCmd.AddCommand(newBrowserCmd())
+	// The browser feature has been fully removed from ycode — it now
+	// lives in bashy (`bashy browser`, coreutils/pkg/browser). ycode no
+	// longer registers browser_* tools or hosts a browser hub.
 
 	// Interactive agentic shell (ycode shell)
 	rootCmd.AddCommand(newShellCmd())

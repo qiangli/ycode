@@ -170,7 +170,7 @@ longer bundled here.
 
 ## Skills
 
-Bundled skills live at top-level `skills/` (`ycode-foreman`, `ycode-autopilot`, `ycode-tab`, …), are embedded in the binary via `skills/embed.go`, and install user-globally. Edit them there — not in `.agents/ycode/skills/`, which is the installed copy. (The general conductor playbook moved to `bashy/skills/conductor`; ycode can still drive the runnable dhnt `ConductorSkill` via `dhnt conductor`.)
+Bundled skills live at top-level `skills/` (`ycode-foreman`, `ycode-autopilot`, `ycode-learn`, …), are embedded in the binary via `skills/embed.go`, and install user-globally. Edit them there — not in `.agents/ycode/skills/`, which is the installed copy. (The general conductor playbook moved to `bashy/skills/conductor`; ycode can still drive the runnable dhnt `ConductorSkill` via `dhnt conductor`.)
 
 ## Umbrella interaction
 

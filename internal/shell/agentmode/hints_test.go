@@ -92,18 +92,6 @@ func TestSuggestSubstitutes(t *testing.T) {
 			wantSub: "yc symbols foo.go",
 		},
 		{
-			name:    "curl URL captured",
-			command: "curl -sL https://example.com/path",
-			wantID:  "curl-http-suggests-browser",
-			wantSub: "yc browser fetch https://example.com/path",
-		},
-		{
-			name:    "wget URL captured",
-			command: "wget https://example.com/x.tar.gz",
-			wantID:  "wget-suggests-browser",
-			wantSub: "yc browser fetch https://example.com/x.tar.gz",
-		},
-		{
 			name:    "wc -l on source file",
 			command: "wc -l internal/shell/sentinel.go",
 			wantID:  "wc-source-suggests-symbols",

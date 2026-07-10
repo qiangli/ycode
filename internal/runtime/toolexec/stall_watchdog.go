@@ -7,7 +7,7 @@ import (
 
 // StallWatchdog detects when a tool execution stalls (no activity for a
 // configurable duration). It provides an arm/touch/disarm API that can be
-// used across bash, container, and browser tool executions.
+// used across bash and container tool executions.
 //
 // Inspired by openclaw's armable stall watchdog with configurable timeout
 // and check interval.

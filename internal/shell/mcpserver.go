@@ -38,7 +38,7 @@ func (h *MCPHandler) ListTools() []mcp.Tool {
 			"suggesting `yc search-symbols` when the agent ran `grep -r`). " +
 			"Sentinels (/, @, !, ?) work in `command` exactly like the interactive shell. " +
 			"yc <verb> built-ins (symbols, search-symbols, refs, repomap, graph, git, " +
-			"remember, recall, browser, sandbox) run in-process — no PATH lookup needed.",
+			"remember, recall, sandbox) run in-process — no PATH lookup needed.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {

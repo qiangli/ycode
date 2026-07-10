@@ -40,10 +40,6 @@ var (
 	AttrURL        = attribute.Key("http.url")
 	AttrHTTPStatus = attribute.Key("http.status")
 	AttrHTTPBytes  = attribute.Key("http.bytes")
-
-	AttrBrowserURL  = attribute.Key("browser.url")
-	AttrBrowserSel  = attribute.Key("browser.selector")
-	AttrBrowserCond = attribute.Key("browser.wait.cond")
 )
 
 // startSpan begins a span named "ycode.computer.<surface>.<op>" with

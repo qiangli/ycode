@@ -198,8 +198,6 @@ func buildInstructionsBlock(caps []CapabilitySpec) string {
 	b.WriteString("- `yc test [--json] -- <args>` — language-aware test runner with structured output (auto-detects go/pytest/jest/cargo/mvn).\n")
 	b.WriteString("- `yc lsp <action> <file>:<line>:<col>` — LSP hover/diagnostics/rename/definition/refs.\n")
 	b.WriteString("- `yc run --json -- <cmd>` — structured-envelope wrapper around exec (stdout/stderr/exit/duration as JSON).\n")
-	b.WriteString("- `yc browser fetch <url>` — HTTP fetch with timeout/redirect handling. `yc browser open` requires `ycode serve`.\n")
-	b.WriteString("- `yc tab <action>` — control a live Chrome tab when `ycode serve` is running (extract, screenshot, click).\n")
 	b.WriteString("- `yc qacache <action>` — inspect/manage the project-local Q→A cache.\n")
 	b.WriteString("- `yc graph \"<DQL>\"` — read-only DQL query against ycode's code knowledge graph (uses persistent DB from `ycode serve`, falls back to ephemeral treesitter pass for small workspaces).\n")
 	b.WriteString("- `yc remember \"<text>\"` / `yc recall <query>` — semantic memory (RRF fusion across memex backends). When `CLAUDE_PROJECT_DIR` is set, writes through to Claude Code's `~/.claude/projects/<id>/memory/`.\n")

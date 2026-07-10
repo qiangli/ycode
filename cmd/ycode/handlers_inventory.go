@@ -6,7 +6,6 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/codegraph"
 	gh "github.com/qiangli/ycode/internal/runtime/github"
 	"github.com/qiangli/ycode/internal/runtime/mcp"
-	"github.com/qiangli/ycode/internal/runtime/mcpservers/browsermcp"
 	"github.com/qiangli/ycode/internal/runtime/repomap"
 	"github.com/qiangli/ycode/internal/runtime/skills"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
@@ -51,7 +50,6 @@ func alwaysOnMCPHandlers() []mcp.ServerHandler {
 		codegraph.NewMCPHandler(),
 		NewMCPHandler(),
 		gh.NewMCPHandler(),
-		browsermcp.NewMCPHandler(nil),
 		shell.NewMCPHandler(shellRT),
 	}
 }

@@ -364,7 +364,6 @@ type Registry struct {
 | `list_directory/tree` | File Ops | Directory exploration |
 | `apply_patch` | File Ops | Diff/patch keywords |
 | `web_search` | Web | "search", "find online" |
-| `browser_use` | Browser | "browse", "check page" |
 | `semantic_search` | Code Intel | "find similar", "semantic" |
 | `ast_search` | Code Intel | "structural", "pattern" |
 | `goto_definition` | LSP | "definition", "where is" |
@@ -505,7 +504,7 @@ Configs are merged in order (later overrides earlier):
   "allowed_directories": ["/home/user/projects"],
   "tools": {
     "disabled": ["bash"],
-    "deferred_defaults": ["web_search", "browser_use"]
+    "deferred_defaults": ["web_search"]
   },
   "agents": {
     "researcher": {

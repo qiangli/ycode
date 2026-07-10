@@ -49,7 +49,7 @@ These intercept *before* `$PATH` lookup so they're always available, never shado
 | `yc help` | List all built-ins | — |
 | `yc manifest` | JSON capability dump | — |
 
-Phase B will add: `yc graph "<DQL>"`, `yc git <subcmd>`, `yc browser open|fetch|find`, `yc sandbox -- <cmd>`, `yc remember`/`yc recall`.
+Phase B will add: `yc graph "<DQL>"`, `yc git <subcmd>`, `yc sandbox -- <cmd>`, `yc remember`/`yc recall`.
 
 ## Agent-mode hints (the teaching layer)
 
@@ -63,7 +63,6 @@ Initial pattern catalog (regex-driven, expand via `internal/shell/agentmode/hint
 | `find ... -name *.go` | `yc symbols` / `yc repomap` |
 | `tree` / `ls -R` | `yc repomap` *or* `yc graph "<DQL>"` |
 | `wc -l *.go` | `yc symbols` |
-| `curl https?://` | `yc browser fetch\|open` |
 | `git log\|status\|diff\|...` | `yc git $1` (native go-git) |
 | `cat ... \| head` | `yc repomap --budget=N` |
 | `rm -rf` | (advisory) `--sandbox` for copy-on-write |

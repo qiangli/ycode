@@ -25,7 +25,6 @@ import (
 	"github.com/qiangli/ycode/internal/extractmcp"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	mcppkg "github.com/qiangli/ycode/internal/runtime/mcp"
-	"github.com/qiangli/ycode/internal/runtime/mcpservers/browsermcp"
 	"github.com/qiangli/ycode/internal/runtime/memexmcp"
 	"github.com/qiangli/ycode/internal/runtime/origin"
 	"github.com/qiangli/ycode/internal/runtime/repomap"
@@ -49,7 +48,7 @@ var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Run the ycode API, WebSocket, NATS, MCP, manifest, and debug server",
 	Long: `Start the lean ycode server: HTTP/WebSocket API, optional embedded NATS,
-composite MCP endpoint, browser hub, lighthouse manifest, and pprof debug
+composite MCP endpoint, manifest, and pprof debug
 surface. Observability is client-side OTEL export only; run an external
 collector such as bashy otel when you want dashboards or local storage.`,
 	RunE: runServe,
@@ -383,8 +382,6 @@ func buildServeMCPHandlers(ctx context.Context, fullCfg *config.Config, api *api
 	} else {
 		slog.Warn("memexmcp disabled (memory manager unavailable)", "error", err)
 	}
-	browserClient := setupBrowserBackend(ctx, fullCfg)
-	handlers = append(handlers, browsermcp.NewMCPHandler(browserClient))
 	if api != nil && api.memBus != nil {
 		handlers = append(handlers, widget.NewMCPHandler(api.memBus))
 		widget.NewAlertHook(api.memBus, widget.DefaultSession).Start(ctx)

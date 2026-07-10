@@ -17,29 +17,6 @@ import "fmt"
 // that really does advertise the tool, so the table can't drift
 // without the test catching it.
 var crossTransportTools = map[string]string{
-	// Browser family — registered only by `ycode serve` (HTTP).
-	"browser_navigate":          "http",
-	"browser_click":             "http",
-	"browser_type":              "http",
-	"browser_scroll":            "http",
-	"browser_screenshot":        "http",
-	"browser_extract":           "http",
-	"browser_back":              "http",
-	"browser_tabs":              "http",
-	"browser_eval":              "http",
-	"browser_perf_start":        "http",
-	"browser_perf_stop":         "http",
-	"browser_network_list":      "http",
-	"browser_console_get":       "http",
-	"browser_lighthouse":        "http",
-	"browser_wait_for_selector": "http",
-	"browser_keyboard_press":    "http",
-	"browser_clipboard_read":    "http",
-	"browser_clipboard_write":   "http",
-	"browser_cookies_get":       "http",
-	"browser_storage_get":       "http",
-	"browser_capabilities":      "http",
-
 	// Loom (worktree coordination) — HTTP only.
 	"loom_lease":   "http",
 	"loom_push":    "http",

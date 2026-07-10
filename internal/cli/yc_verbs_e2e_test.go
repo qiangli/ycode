@@ -16,7 +16,7 @@ import (
 // E2E tests for `ycode shell` and `yc <verb>` built-ins. Drives the
 // real binary; covers the surfaces verified manually:
 //   - yc symbols / search-symbols / repomap / git / manifest /
-//     browser fetch / remember+recall
+//     remember+recall
 //   - ycode shell --manifest, --suggest, -c "/help"
 //
 // Skipped here:
@@ -153,27 +153,6 @@ func TestE2E_YC_Manifest_ValidJSON(t *testing.T) {
 	bs, ok := m["builtins"].([]any)
 	if !ok || len(bs) < 10 {
 		t.Errorf("expected >=10 builtins in manifest; got: %v", m["builtins"])
-	}
-}
-
-func TestE2E_YC_BrowserFetch_HTTPGet(t *testing.T) {
-	if testing.Short() {
-		t.Skip("e2e test skipped in -short")
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"ok":"yes"}`))
-	}))
-	defer srv.Close()
-
-	out, err := runYC(t, t.TempDir(), t.TempDir(), "browser", "fetch", srv.URL)
-	if err != nil {
-		t.Fatalf("yc browser fetch: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, `"ok":"yes"`) {
-		t.Errorf("expected JSON body in output; got:\n%s", out)
-	}
-	if !strings.Contains(out, "200") {
-		t.Errorf("expected 200 status in headers; got:\n%s", out)
 	}
 }
 

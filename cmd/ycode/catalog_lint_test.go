@@ -86,7 +86,7 @@ func TestCatalogLint(t *testing.T) {
 //   - the docs handler itself (list_docs, get_doc, list_catalog), via
 //     its in-process ListTools().
 //   - the http-only set declared by internal/runtime/mcp/
-//     crossTransportTools (browser_*, loom_*, memex_*, repomap_*,
+//     crossTransportTools (loom_*, memex_*, repomap_*,
 //     observability).
 //   - a small explicit stdio-only set for treesitter and skills tools
 //     that aren't crossTransportTools members (they exist on stdio

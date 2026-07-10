@@ -173,18 +173,9 @@ Prior-art column lists which projects have the tool (abbreviated): **ai**=aider,
 
 ### Browser Automation
 
-| Tool | ycode | Prior Art | Description |
-|------|:-----:|-----------|-------------|
-| Navigate to URL | ✓ `browser_navigate` | cl, oh, ow | Open URL in browser |
-| Click element | ✓ `browser_click` | cl, oh, ow | Click a page element |
-| Type text | ✓ `browser_type` | cl, oh, ow | Type text into input field |
-| Scroll page | ✓ `browser_scroll` | cl, oh, ow | Scroll up or down |
-| Take screenshot | ✓ `browser_screenshot` | cl, oh, ow | Capture page screenshot |
-| Extract page content | ✓ `browser_extract` | oh, ow | Get page text content |
-| Go back | ✓ `browser_back` | oh, ow | Navigate browser back |
-| List/switch tabs | ✓ `browser_tabs` | oh, ow | List and switch browser tabs |
-| Evaluate JavaScript | ✗ | ow | Run JS in browser context |
-| Launch/close browser | ✗ | cl | Explicit browser lifecycle |
+Browser automation has moved out of ycode into **bashy** (`bashy browser`,
+backed by `coreutils/pkg/browser`). ycode no longer exposes `browser_*`
+tools.
 
 ### Agent & Orchestration
 

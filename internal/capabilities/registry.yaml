@@ -180,14 +180,6 @@ capabilities:
     http: []
     config: []
 
-  - id: browser
-    summary: browser automation (live / probe / solo backends)
-    audience: [agent]
-    cli: [browser]
-    mcp: [browser_navigate, browser_click, browser_type, browser_scroll, browser_screenshot, browser_extract, browser_eval, browser_back, browser_tabs, browser_wait_for_selector, browser_keyboard_press, browser_console_get, browser_cookies_get, browser_storage_get, browser_clipboard_read, browser_clipboard_write, browser_network_list, browser_capabilities, browser_perf_start, browser_perf_stop, browser_lighthouse]
-    http: []
-    config: [Browser.Mode]
-
   - id: orchestration
     summary: multi-agent task queue + autopilot loops
     audience: [human, agent]

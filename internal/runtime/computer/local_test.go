@@ -93,13 +93,6 @@ func TestLocalWeb_Fetch(t *testing.T) {
 	}
 }
 
-func TestLocalBrowser_DefaultUnsupported(t *testing.T) {
-	c, _ := newTestComputer(t)
-	if err := c.Browser().Goto(context.Background(), "https://example.com"); !errors.Is(err, ErrNotSupported) {
-		t.Errorf("Goto err = %v, want ErrNotSupported", err)
-	}
-}
-
 func TestNewLocal_AppliesOptions(t *testing.T) {
 	v, _ := vfs.New([]string{t.TempDir()}, nil)
 	custom := &http.Client{}

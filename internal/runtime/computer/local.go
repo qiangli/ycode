@@ -17,13 +17,11 @@ import (
 // LocalComputer is the in-process Computer. It composes the
 // existing bash.Executor, vfs.VFS, fileops.*, and a single shared
 // *http.Client; every agent-driven shell / fs / web call is funneled
-// through it. Browser is left as a runtime-degrade stub here; the
-// real CDP impl plugs in via WithBrowser.
+// through it.
 type LocalComputer struct {
-	exec    bash.Executor // optional; nil → direct host execution
-	vfs     *vfs.VFS
-	httpc   *http.Client
-	browser Browser // optional; nil → ErrNotSupported
+	exec  bash.Executor // optional; nil → direct host execution
+	vfs   *vfs.VFS
+	httpc *http.Client
 }
 
 // LocalOption configures a LocalComputer.
@@ -38,12 +36,6 @@ func WithExecutor(e bash.Executor) LocalOption {
 // WithHTTPClient overrides the default web HTTP client.
 func WithHTTPClient(h *http.Client) LocalOption {
 	return func(c *LocalComputer) { c.httpc = h }
-}
-
-// WithBrowser plugs in a Browser implementation (typically a CDP
-// session). When omitted, Browser surface returns ErrNotSupported.
-func WithBrowser(b Browser) LocalOption {
-	return func(c *LocalComputer) { c.browser = b }
 }
 
 // NewLocal constructs a LocalComputer over the given VFS. The VFS
@@ -83,21 +75,8 @@ func (c *LocalComputer) Files() Files { return &localFiles{c: c} }
 // Web returns the web surface.
 func (c *LocalComputer) Web() Web { return &localWeb{c: c} }
 
-// Browser returns the browser surface; when no Browser was
-// configured, returns one whose methods all yield ErrNotSupported.
-func (c *LocalComputer) Browser() Browser {
-	if c.browser != nil {
-		return c.browser
-	}
-	return unsupportedBrowser{}
-}
-
-// Close releases any resources held by surfaces (notably the
-// Browser if one is attached).
+// Close releases any resources held by surfaces.
 func (c *LocalComputer) Close() error {
-	if c.browser != nil {
-		return c.browser.Close(context.Background())
-	}
 	return nil
 }
 
@@ -346,32 +325,10 @@ func (w *localWeb) Do(ctx context.Context, req *http.Request) (resp *http.Respon
 	return resp, err
 }
 
-// ----- Browser (unsupported stub) -----------------------------------------
-
-type unsupportedBrowser struct{}
-
-func (unsupportedBrowser) Goto(context.Context, string) error           { return ErrNotSupported }
-func (unsupportedBrowser) Click(context.Context, Selector) error        { return ErrNotSupported }
-func (unsupportedBrowser) Type(context.Context, Selector, string) error { return ErrNotSupported }
-func (unsupportedBrowser) Press(context.Context, string) error          { return ErrNotSupported }
-func (unsupportedBrowser) Scroll(context.Context, int, int) error       { return ErrNotSupported }
-func (unsupportedBrowser) Screenshot(context.Context, ShotOpts) ([]byte, error) {
-	return nil, ErrNotSupported
-}
-func (unsupportedBrowser) Snapshot(context.Context) (PageSnapshot, error) {
-	return PageSnapshot{}, ErrNotSupported
-}
-func (unsupportedBrowser) Eval(context.Context, string) ([]byte, error) {
-	return nil, ErrNotSupported
-}
-func (unsupportedBrowser) WaitFor(context.Context, WaitCond) error { return ErrNotSupported }
-func (unsupportedBrowser) Close(context.Context) error             { return nil }
-
 // Compile-time assertions.
 var (
 	_ Computer = (*LocalComputer)(nil)
 	_ Shell    = (*localShell)(nil)
 	_ Files    = (*localFiles)(nil)
 	_ Web      = (*localWeb)(nil)
-	_ Browser  = unsupportedBrowser{}
 )
