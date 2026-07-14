@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/qiangli/coreutils/pkg/telemetry"
+
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
@@ -174,6 +176,14 @@ func doWithRetry(ctx context.Context, client *http.Client, makeReq func() (*http
 			// of them.
 			if resp.StatusCode == http.StatusTooManyRequests {
 				providerPacer.penalize(host, serverWait)
+
+				// RECORD IT EVEN THOUGH WE RECOVER. Three 429s in a run all recovered on
+				// retry, cost minutes, and left no signal at all — so "rate limits killed
+				// it" stayed a plausible theory for hours with nothing to check it
+				// against. A bound that binds and recovers is the one nobody investigates
+				// until it stops recovering.
+				telemetry.BoundHit(ctx, "rate_limit", int64(serverWait/time.Millisecond),
+					int64(attempt), "provider 429 from "+host)
 			}
 
 			lastErr = &ClassifiedError{

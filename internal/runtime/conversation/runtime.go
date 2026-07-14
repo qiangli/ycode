@@ -15,6 +15,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/qiangli/coreutils/pkg/telemetry"
+
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/permission"
@@ -873,7 +875,7 @@ func (r *Runtime) ExecuteTools(ctx context.Context, calls []ToolCall, progress c
 		}
 	}
 
-	return r.distillResults(calls, results)
+	return r.distillResults(ctx, calls, results)
 }
 
 // activateToolsFromResult parses a ToolSearch result and activates the
@@ -981,7 +983,7 @@ func (r *Runtime) executeToolsParallel(ctx context.Context, calls []ToolCall, pr
 }
 
 // distillResults keeps its name and no longer distills anything. See below.
-func (r *Runtime) distillResults(calls []ToolCall, results []api.ContentBlock) []api.ContentBlock {
+func (r *Runtime) distillResults(ctx context.Context, calls []ToolCall, results []api.ContentBlock) []api.ContentBlock {
 	// VERBATIM. The model sees exactly what the tool returned.
 	//
 	// This function used to run a two-stage cascade over every tool result:
@@ -1015,12 +1017,19 @@ func (r *Runtime) distillResults(calls []ToolCall, results []api.ContentBlock) [
 			continue
 		}
 		if before := len(results[i].Content); before > session.AbsoluteToolOutputCap {
+			tool := toolNameFor(calls, results[i].ToolUseID)
 			results[i].Content = session.CapToolOutput(results[i].Content)
 			r.logger.Warn("tool result exceeded the absolute safety cap",
-				"tool", toolNameFor(calls, results[i].ToolUseID),
+				"tool", tool,
 				"bytes", before,
 				"cap", session.AbsoluteToolOutputCap,
 			)
+
+			// The only unconditional cut left in the system. It fires on output no human
+			// would paste either — but every OTHER cut we made here was invisible, and
+			// each one cost hours. This one says so.
+			telemetry.BoundHit(ctx, "bytes", int64(session.AbsoluteToolOutputCap), int64(before),
+				"tool result truncated: "+tool)
 		}
 	}
 	return results
@@ -1139,6 +1148,28 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 		"compact_at", r.contextBudget.CompactionThreshold,
 		"from_provider", used.HasReport,
 	)
+
+	// THE PROVENANCE OF THE NUMBER, RECORDED NEXT TO THE NUMBER.
+	//
+	// A token count of 6482 tells you nothing. 6482 that the PROVIDER REPORTED tells you
+	// the context gate is running on fact; 6482 that we ESTIMATED tells you it is running
+	// on a guess — and every context bug in this codebase was a decision made on a guess
+	// that nobody could see was a guess.
+	//
+	// `from_provider=false` on the log line above is the ONLY reason the dead
+	// usage-plumbing bug was ever caught: MeasureTokens was reading ConversationMessage
+	// .Usage out of []api.Message, a type with no Usage field, so it returned nil on every
+	// single turn and the whole "ask the provider, do not guess" mechanism fell back to
+	// the estimator it exists to replace. Silently. For every model.
+	//
+	// As a log line that took a human staring at stderr. As a span attribute it is a
+	// QUERY: "show me every turn where the context gate ran on an estimate."
+	source := "estimate"
+	if used.HasReport {
+		source = "provider"
+	}
+	telemetry.Provenance(ctx, "context.tokens", int64(used.Total()), source)
+	telemetry.Provenance(ctx, "context.window", int64(r.contextBudget.ContextWindow), "capabilities-table")
 	r.lastContextHealth = &session.ContextHealth{
 		EstimatedTokens: used.Total(),
 		Threshold:       r.contextBudget.CompactionThreshold,

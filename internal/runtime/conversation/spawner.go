@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/qiangli/coreutils/pkg/telemetry"
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/agentpool"
@@ -435,6 +438,12 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 		})
 		logger.Warn("subagent hit its iteration cap; returning partial findings",
 			"agent_id", agentID, "max_iter", maxIter, "turns_of_findings", len(progress))
+
+		// The delegate was INTERRUPTED, not finished. Record it as a bound, so a parent
+		// that reasoned from a truncated report can be found later — the absence of a
+		// finding here is not evidence there was nothing to find.
+		telemetry.BoundHit(ctx, "iterations", int64(maxIter), int64(maxIter),
+			"subagent cut off with "+strconv.Itoa(len(progress))+" turns of findings")
 		span.SetAttributes(attribute.Bool("agent.truncated", true), attribute.Int("agent.turns", maxIter))
 		return partialSubagentReport(progress, toolsUsed, maxIter), nil
 	}

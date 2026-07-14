@@ -16,6 +16,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"google.golang.org/grpc/grpclog"
 
+	"github.com/qiangli/coreutils/pkg/telemetry"
+
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/runtime/agentdef"
@@ -840,6 +842,14 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 	// So: say it, in the model's channel AND the operator's, and exit NON-ZERO. A run
 	// that was stopped before it finished did not succeed.
 	msg := fmt.Sprintf("stopped after %d tool iterations (the limit) — the agent had not finished", maxIter)
+
+	// A BOUND YOU CANNOT SEE IS NOT A BOUND, IT IS A TRAP.
+	//
+	// This cap cut an agent off mid-investigation TWICE, exited 0 both times, and very
+	// nearly had "cannot conduct" written against a model that was doing nothing wrong.
+	// It is now a first-class event: queryable, attributable, and impossible to mistake
+	// for a completed run.
+	telemetry.BoundHit(ctx, "iterations", int64(maxIter), int64(maxIter), msg)
 
 	if a.printMode {
 		// The caller is a machine reading stdout. Put the truth where it will be read.
