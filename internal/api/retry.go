@@ -61,9 +61,22 @@ func isRetryableNetError(err error) bool {
 func doWithRetry(ctx context.Context, client *http.Client, makeReq func() (*http.Request, error)) (*http.Response, error) {
 	var lastErr error
 
+	// serverWait is what the SERVER told us to wait, via Retry-After. It beats any
+	// backoff we could compute, because it is not a guess — it is the only party that
+	// knows when the window actually reopens.
+	//
+	// We ignored it. On a 429 we rolled our own exponential backoff and hoped, which
+	// means we retried too early (wasting an attempt and another 429) or too late
+	// (wasting wall-clock). Meanwhile the answer was sitting in a response header.
+	var serverWait time.Duration
+
 	for attempt := 0; attempt <= defaultMaxRetries; attempt++ {
 		if attempt > 0 {
 			delay := backoffWithJitter(attempt)
+			if serverWait > 0 {
+				delay = serverWait
+				serverWait = 0
+			}
 			yotel.RecordRetry(ctx, attempt, delay, classifyRetryReason(lastErr))
 			slog.Warn("retrying API request",
 				"attempt", attempt+1,
@@ -80,6 +93,12 @@ func doWithRetry(ctx context.Context, client *http.Client, makeReq func() (*http
 		req, err := makeReq()
 		if err != nil {
 			// Request creation errors are not retryable.
+			return nil, err
+		}
+
+		// Wait out any pacing this host has earned. See providerPacer: after a 429 we
+		// SLOW DOWN rather than merely retrying the one request that failed.
+		if err := providerPacer.wait(ctx, req.URL.Host); err != nil {
 			return nil, err
 		}
 
@@ -146,6 +165,17 @@ func doWithRetry(ctx context.Context, client *http.Client, makeReq func() (*http
 
 		// For retry actions, continue the retry loop.
 		if action == ActionRetry {
+			// The server may have told us exactly how long to wait. Believe it.
+			serverWait = parseRetryAfter(resp.Header.Get("Retry-After"))
+
+			// A rate limit is a fact about the PROVIDER, not about the work. Tell the
+			// pacer so the NEXT request is spaced out instead of firing straight into
+			// the same wall — reacting to 429s one at a time just means a steady stream
+			// of them.
+			if resp.StatusCode == http.StatusTooManyRequests {
+				providerPacer.penalize(host, serverWait)
+			}
+
 			lastErr = &ClassifiedError{
 				Reason:     reason,
 				Action:     action,

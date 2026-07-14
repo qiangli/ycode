@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -310,8 +309,24 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 				if len(progress) > 0 {
 					logger.Warn("subagent hit an API error; returning the findings it already had",
 						"agent_id", agentID, "turn", i+1, "error", err)
+
+					// DO NOT PUT THE TRANSPORT ERROR IN THE MODEL'S CONTEXT.
+					//
+					// The first version of this appended err.Error() to the report, so a
+					// rate limit landed in the parent's context as text. The parent —
+					// reasonably, and this is measured, not hypothetical — tried to SOLVE
+					// it: glm-5.2 read "rate limit" and issued `sleep 120`. Three of its
+					// turns went to napping. It was doing the harness's job, badly, with
+					// the operator's iteration budget.
+					//
+					// A rate limit is a fact about the PROVIDER, not about the work. It is
+					// handled in the transport (see api.providerPacer) where the agent
+					// cannot see it and cannot try to help. What the parent needs to know
+					// is only that the delegate stopped early — which the partial report
+					// already says.
 					return partialSubagentReport(progress, toolsUsed, i+1) +
-						"\nIt was stopped by an API error on turn " + strconv.Itoa(i+1) + ": " + err.Error() + "\n", nil
+						"\nIt was stopped early by an infrastructure condition (already handled " +
+						"by the harness — this is NOT something for you to work around).\n", nil
 				}
 				return "", fmt.Errorf("subagent turn %d: %w", i+1, err)
 			}
