@@ -9,6 +9,9 @@ import (
 	"strings"
 	"time"
 
+	coreutilsshell "github.com/qiangli/coreutils/shell"
+	"github.com/qiangli/coreutils/pkg/telemetry"
+
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
@@ -71,11 +74,31 @@ func (e *InterpreterExecutor) Execute(ctx context.Context, params ExecParams) (*
 		defer stdin.Close()
 	}
 
-	// Build runner options.
+	// THE EXEC CHAIN IS BASHY'S. This is what "embedded bashy" means.
+	//
+	// ycode used to install a security handler and NOTHING ELSE — so every command it
+	// ran forked out to PATH, and it got none of the substrate bashy exists to provide:
+	//
+	//	no pure-Go userland   — bashy's whole Tier-1 thesis is IN-PROCESS, zero forks
+	//	no telemetry          — ycode's commands were invisible on the OTel plane
+	//	no advisor, no audit  — the middleware that steers agents off doomed retries
+	//
+	// The irony was total: bashy ships a `force-agent-shell` skill that ATTESTS that
+	// Claude Code, OpenCode and Aider route their shell through bashy — and ycode, the
+	// FIRST-PARTY harness, quietly ran its own. It is not even in the adoption matrix
+	// it exists to justify.
+	//
+	// Order is outermost-first: telemetry sees the true wall-clock and final exit of
+	// everything below it; security gates before anything executes; the coreutils
+	// userland resolves in-process and is innermost, so a pure-Go tool never forks.
 	opts := []interp.RunnerOption{
 		interp.StdIO(stdin, &stdout, &stderr),
 		interp.Env(expand.ListEnviron(os.Environ()...)),
-		interp.ExecHandlers(NewSecurityExecHandler(e.permMode, e.killTimeout)),
+		interp.ExecHandlers(
+			telemetry.ExecMiddleware,
+			NewSecurityExecHandler(e.permMode, e.killTimeout),
+			coreutilsshell.Handler(),
+		),
 	}
 
 	if workDir != "" {

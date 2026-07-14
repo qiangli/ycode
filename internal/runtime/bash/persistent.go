@@ -9,6 +9,9 @@ import (
 	"strings"
 	"time"
 
+	coreutilsshell "github.com/qiangli/coreutils/shell"
+	"github.com/qiangli/coreutils/pkg/telemetry"
+
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
@@ -49,8 +52,19 @@ func (s *ShellSession) EnsureRunner(_ context.Context) (*interp.Runner, error) {
 		return s.runner, nil
 	}
 
-	mws := append([]func(interp.ExecHandlerFunc) interp.ExecHandlerFunc{}, s.extraExecMWs...)
-	mws = append(mws, NewShellExecHandler(2*time.Second, s.tty))
+	// THE PERSISTENT SESSION IS THE ONE THE SHELL TOOL ACTUALLY USES.
+	//
+	// ycode has TWO interpreters — this one and InterpreterExecutor — and wiring only the
+	// other one produced exactly the symptom you would expect if the middleware were
+	// broken: it was linked, it was correct, and it never fired. Two constructors of the
+	// same thing is one more than can be kept in step.
+	//
+	// Outermost-first: telemetry (true wall-clock, final exit) → the shell/security gate
+	// → the coreutils userland innermost, so a pure-Go tool resolves in-process and never
+	// forks. This is bashy's chain; ycode now runs it too.
+	mws := append([]func(interp.ExecHandlerFunc) interp.ExecHandlerFunc{}, telemetry.ExecMiddleware)
+	mws = append(mws, s.extraExecMWs...)
+	mws = append(mws, NewShellExecHandler(2*time.Second, s.tty), coreutilsshell.Handler())
 
 	opts := []interp.RunnerOption{
 		interp.Env(expand.ListEnviron(os.Environ()...)),

@@ -220,9 +220,21 @@ func (c *SelfHealConfig) IsEnabled() bool {
 type ObservabilityConfig struct {
 	// OTEL SDK — on by default. Set `observability.enabled: false`
 	// in settings.json to disable.
-	Enabled       *bool   `json:"enabled,omitempty"`
-	CollectorAddr string  `json:"collectorAddr"` // optional external OTLP gRPC endpoint
-	SampleRate    float64 `json:"sampleRate"`    // default 1.0
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// CollectorAddr is the OTLP gRPC endpoint.
+	//
+	// It is ALSO settable — and overridden — by the standard OTEL_EXPORTER_OTLP_ENDPOINT
+	// env var, which is what every other service in the fleet already reads and what the
+	// umbrella's trace-propagation contract mandates ("configuration is pure standard
+	// OTEL env vars").
+	//
+	// ycode honoured only this bespoke settings.json field, so exporting anything meant
+	// editing a config file — and setting the standard env var, as anyone would, did
+	// exactly nothing. Silently. Which is why ycode's traces have been unreachable in
+	// practice while its telemetry package sat there fully implemented.
+	CollectorAddr string  `json:"collectorAddr"`
+	SampleRate    float64 `json:"sampleRate"` // default 1.0
 
 	// Local persistence under DataDir
 	DataDir          string `json:"dataDir"`          // default "~/.agents/ycode/otel"
@@ -238,6 +250,26 @@ type ObservabilityConfig struct {
 // (the absent / never-set case) as enabled — that's the ycode default.
 // Returns false only when the user explicitly set
 // `observability.enabled: false` in settings.json.
+// Endpoint resolves the OTLP endpoint, with the STANDARD env var winning.
+//
+// The umbrella's trace-propagation contract says configuration is "pure standard OTEL
+// env vars" — and every other service in the fleet reads them. ycode read only its own
+// settings.json field, so setting OTEL_EXPORTER_OTLP_ENDPOINT, as anyone would, did
+// nothing at all. Silently. Its telemetry package is fully implemented and has been
+// effectively unreachable.
+func (c *ObservabilityConfig) Endpoint() string {
+	if v := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")); v != "" {
+		// Strip the scheme: the OTLP gRPC exporter takes host:port.
+		v = strings.TrimPrefix(v, "http://")
+		v = strings.TrimPrefix(v, "https://")
+		return strings.TrimSuffix(v, "/")
+	}
+	if c == nil {
+		return ""
+	}
+	return c.CollectorAddr
+}
+
 func (c *ObservabilityConfig) IsEnabled() bool {
 	if c == nil {
 		return true

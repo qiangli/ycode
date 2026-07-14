@@ -33,6 +33,21 @@ type otelResult struct {
 // resolveCollectorAddr returns the OTEL collector gRPC address using the priority:
 // overrideCollectorAddr (set by serve) > config CollectorAddr > discovery file > default.
 func resolveCollectorAddr(cfg *config.Config) string {
+	// THE STANDARD ENV VAR WINS. It was not consulted at all.
+	//
+	// The umbrella's trace-propagation contract mandates "pure standard OTEL env vars",
+	// and every other service in the fleet (cloudbox-hub, outpost, loom, act_runner, and
+	// now bashy) reads them. ycode read only its own settings.json field and a discovery
+	// file — so setting OTEL_EXPORTER_OTLP_ENDPOINT, which is what anyone would do and
+	// what every doc says to do, exported NOTHING. Silently.
+	//
+	// ycode's telemetry package is large, complete, and has been effectively unreachable.
+	if v := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")); v != "" {
+		// The OTLP gRPC exporter takes host:port, not a URL.
+		v = strings.TrimPrefix(v, "http://")
+		v = strings.TrimPrefix(v, "https://")
+		return strings.TrimSuffix(v, "/")
+	}
 	// 1. Package-level override set by runAllServices (in-process serve mode).
 	if overrideCollectorAddr != "" {
 		return overrideCollectorAddr
