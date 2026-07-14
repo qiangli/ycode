@@ -58,6 +58,7 @@ type App struct {
 	promptCtx      *prompt.ProjectContext
 	planMode       tools.PlanModeController
 	stdout         io.Writer
+	stderr         io.Writer
 	printMode      bool // plain text output, no markdown rendering
 	version        string
 	workDir        string
@@ -184,6 +185,7 @@ func NewThinApp(version, workDir string) (*App, error) {
 		version:      version,
 		workDir:      workDir,
 		stdout:       os.Stdout,
+		stderr:       os.Stderr,
 		config:       &config.Config{},
 		commands:     cmdRegistry,
 		taskRegistry: task.NewRegistry(),
@@ -221,6 +223,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		promptCtx:       o.PromptCtx,
 		planMode:        o.PlanMode,
 		stdout:          os.Stdout,
+		stderr:          os.Stderr,
 		version:         o.Version,
 		workDir:         o.WorkDir,
 		userConfigPath:  o.UserConfigPath,
@@ -397,6 +400,25 @@ func (a *App) emitEvent(typ string, data any) {
 	})
 }
 
+// chromeWriter returns the destination for non-answer diagnostics.
+// In print mode, chrome (progress, metrics, session summary) is routed to
+// stderr so that stdout contains only the answer text.
+//
+// This is what makes the event channel honest. turn.end.text is captured off
+// a.stdout, so it carries EXACTLY what stdout carried -- which meant that while
+// stdout was full of chrome, `turn.end.text == stdout` was true and both were
+// wrong. Two wrongs agreeing is not a passing gate. Route the chrome away and
+// the same assertion starts comparing the ANSWER to the answer.
+func (a *App) chromeWriter() io.Writer {
+	if a.printMode {
+		if a.stderr != nil {
+			return a.stderr
+		}
+		return os.Stderr
+	}
+	return a.stdout
+}
+
 // conversationRuntime creates a conversation.Runtime from the current app state.
 func (a *App) conversationRuntime() *conversation.Runtime {
 	rt := conversation.NewRuntime(a.config, a.provider, a.session, a.toolRegistry, a.promptCtx)
@@ -527,14 +549,16 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 		if _, ok := a.commands.Get(name); ok {
 			// Enable progressive output in one-shot mode so long-running
 			// commands (e.g. /init with LLM call) stream lines immediately.
+			// In print mode, progress/delta chrome goes to stderr so stdout
+			// stays clean for the final answer.
 			if a.progressFunc == nil {
 				a.progressFunc = func(message string) {
-					fmt.Fprintln(a.stdout, message)
+					fmt.Fprintln(a.chromeWriter(), message)
 				}
 			}
 			if a.deltaFunc == nil {
 				a.deltaFunc = func(text string) {
-					fmt.Fprint(a.stdout, text)
+					fmt.Fprint(a.chromeWriter(), text)
 				}
 			}
 			output, err := a.commands.Execute(ctx, name, args)
@@ -646,22 +670,22 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 		// Show recovery info if context management occurred.
 		if recovery != nil {
 			if recovery.Pruned {
-				fmt.Fprintf(a.stdout, "\n⟳ Context pruned: %d tool results trimmed to save context.\n", recovery.PrunedCount)
+				fmt.Fprintf(a.chromeWriter(), "\n⟳ Context pruned: %d tool results trimmed to save context.\n", recovery.PrunedCount)
 			}
 			if recovery.CompactedCount > 0 {
-				fmt.Fprintf(a.stdout, "\n⚠ Context compacted: %d messages summarized, %d recent messages preserved.\n",
+				fmt.Fprintf(a.chromeWriter(), "\n⚠ Context compacted: %d messages summarized, %d recent messages preserved.\n",
 					recovery.CompactedCount, recovery.PreservedCount)
 			}
 			if recovery.Flushed {
-				fmt.Fprintf(a.stdout, "\n⚠ Emergency context flush: conversation restarted with summary + last request.\n")
+				fmt.Fprintf(a.chromeWriter(), "\n⚠ Emergency context flush: conversation restarted with summary + last request.\n")
 			}
-			fmt.Fprintln(a.stdout)
+			fmt.Fprintln(a.chromeWriter())
 		}
 
 		// Show LLM call metrics.
 		metrics := formatLLMMetrics(result)
 		if metrics != "" {
-			fmt.Fprint(a.stdout, metrics)
+			fmt.Fprint(a.chromeWriter(), metrics)
 		}
 
 		// Check for stuck loops.
@@ -669,9 +693,9 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 			loopStatus := loopDetector.Record(result.TextContent)
 			switch loopStatus {
 			case conversation.LoopWarning:
-				fmt.Fprintf(a.stdout, "\n⚠ Loop detected: agent may be stuck. Injecting intervention.\n\n")
+				fmt.Fprintf(a.chromeWriter(), "\n⚠ Loop detected: agent may be stuck. Injecting intervention.\n\n")
 			case conversation.LoopBreak:
-				fmt.Fprintf(a.stdout, "\n✘ Loop detected: agent is stuck after %d similar responses. Breaking loop.\n\n",
+				fmt.Fprintf(a.chromeWriter(), "\n✘ Loop detected: agent is stuck after %d similar responses. Breaking loop.\n\n",
 					conversation.LoopHardThreshold)
 				a.printSessionSummary()
 				return nil
@@ -695,7 +719,9 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 
 		// If no tool calls, we're done.
 		if len(result.ToolCalls) == 0 {
-			fmt.Fprintln(a.stdout)
+			if !a.printMode {
+				fmt.Fprintln(a.stdout)
+			}
 			a.printSessionSummary()
 			return nil
 		}
@@ -722,7 +748,11 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 				Input: tc.Input,
 			})
 			// Show tool detail in one-shot mode.
-			fmt.Fprintf(a.stdout, "⚙ %s\n", toolDetail(tc.Name, tc.Input))
+			// The human-readable line is CHROME (stderr in print mode); the event
+			// is the RECORD. Keeping both is the whole point of the channel: a
+			// consumer gets the tool call as data instead of scraping it back out
+			// of a terminal.
+			fmt.Fprintf(a.chromeWriter(), "⚙ %s\n", toolDetail(tc.Name, tc.Input))
 			a.emitEvent("tool.call", map[string]any{
 				"name":  tc.Name,
 				"input": tc.Input,
@@ -743,7 +773,9 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 		})
 	}
 
-	fmt.Fprintln(a.stdout)
+	if !a.printMode {
+		fmt.Fprintln(a.stdout)
+	}
 	a.printSessionSummary()
 	return nil
 }
@@ -752,7 +784,7 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 func (a *App) printSessionSummary() {
 	duration := time.Since(a.sessionStart)
 	summary := a.usageTracker.Summary()
-	fmt.Fprintf(a.stdout, "\nSession Summary: %s | Duration: %s\n", summary, formatDuration(duration))
+	fmt.Fprintf(a.chromeWriter(), "\nSession Summary: %s | Duration: %s\n", summary, formatDuration(duration))
 }
 
 // formatDuration formats a duration in a human-readable way.
@@ -869,7 +901,7 @@ func (a *App) SwitchModel(name string) (string, error) {
 	// Persist to user config so the choice survives restarts.
 	if a.userConfigPath != "" {
 		if err := config.SetLocalConfigField(a.userConfigPath, "model", resolved); err != nil {
-			fmt.Fprintf(a.stdout, "warning: could not save model preference: %v\n", err)
+			fmt.Fprintf(a.chromeWriter(), "warning: could not save model preference: %v\n", err)
 		}
 	}
 
