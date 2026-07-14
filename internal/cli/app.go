@@ -35,6 +35,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 	"github.com/qiangli/ycode/internal/runtime/team"
 	"github.com/qiangli/ycode/internal/runtime/todo"
+	"github.com/qiangli/ycode/internal/runtime/unattended"
 	"github.com/qiangli/ycode/internal/runtime/usage"
 	"github.com/qiangli/ycode/internal/runtime/worker"
 	"github.com/qiangli/ycode/internal/service"
@@ -554,15 +555,22 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 	}
 
 	// Wire a non-interactive permission prompter for one-shot mode.
-	// Without this, tools requiring elevated permissions are silently denied
-	// with a confusing error. The non-interactive prompter denies with a clear
-	// message directing the user to use --dangerously-skip-permissions or
-	// interactive mode.
+	// In unattended contexts (weave workspaces, CI, --no-interactive) we
+	// auto-approve so the agent can complete tasks without a human at the
+	// keyboard. Otherwise we deny with a clear message directing the user
+	// to --dangerously-skip-permissions or interactive mode.
 	if a.toolRegistry != nil {
-		a.toolRegistry.SetPermissionPrompter(func(_ context.Context, toolName string, requiredMode permission.Mode, _ json.RawMessage) (bool, error) {
-			return false, fmt.Errorf("tool %q requires %s permission; use --dangerously-skip-permissions or run in interactive mode to approve",
-				toolName, requiredMode)
-		})
+		if unattended.IsUnattended(ctx) {
+			a.toolRegistry.SetPermissionPrompter(func(_ context.Context, toolName string, requiredMode permission.Mode, _ json.RawMessage) (bool, error) {
+				slog.Info("auto-approving tool in unattended mode", "tool", toolName, "mode", requiredMode)
+				return true, nil
+			})
+		} else {
+			a.toolRegistry.SetPermissionPrompter(func(_ context.Context, toolName string, requiredMode permission.Mode, _ json.RawMessage) (bool, error) {
+				return false, fmt.Errorf("tool %q requires %s permission; use --dangerously-skip-permissions or run in interactive mode to approve",
+					toolName, requiredMode)
+			})
+		}
 	}
 
 	rt := a.conversationRuntime()
