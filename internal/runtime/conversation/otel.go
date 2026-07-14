@@ -14,6 +14,8 @@ import (
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/usage"
+	"github.com/qiangli/coreutils/pkg/telemetry"
+
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
@@ -390,11 +392,39 @@ func (r *Runtime) recordTurnMetrics(ctx context.Context, result *TurnResult) {
 	if result.Usage.CacheCreationInput > 0 {
 		inst.LLMTokensCacheWrite.Add(ctx, int64(result.Usage.CacheCreationInput), attrs)
 	}
+	// COST CARRIES ITS PROVENANCE, or it is a lie with a dollar sign on it.
+	//
+	// The pricing fallback is $3/$15 per million — Claude Sonnet's rate. So a model the
+	// table has never heard of is not reported as "cost unknown"; it is reported as a
+	// confident, specific, WRONG number. GLM-5.2's real API price is ~$0.60/M, and on a
+	// flat-rate coding plan its marginal cost is ZERO — yet the fallback billed it like a
+	// frontier Anthropic model, 5x its API price. A cost dashboard would have shown the
+	// cheapest model in the fleet as the most expensive one.
+	//
+	// pricing.known=false is the signal that a dollar figure is a GUESS. Without it,
+	// nobody can tell the difference — and a number that looks like a fact and is not one
+	// is worse than a missing number.
+	pricing := usage.LookupPricing(r.config.Model)
 	cost := usage.EstimateCost(r.config.Model, int(inputTokens), int(outputTokens),
 		result.Usage.CacheCreationInput, result.Usage.CacheReadInput)
+
+	costOpt := metric.WithAttributes(
+		append(append([]attribute.KeyValue{}, llmAttrs...),
+			attribute.Bool("pricing.known", pricing.Known))...)
+
 	if cost > 0 {
-		inst.LLMCostDollars.Add(ctx, cost, attrs)
+		inst.LLMCostDollars.Add(ctx, cost, costOpt)
+
+		// SessionTotalCost was DECLARED, CREATED, and never recorded — dead since the day
+		// it was written, like ConversationMessage.Usage, ExemptFromMasking, StreamOptions
+		// and three config fields before it.
+		if inst.SessionTotalCost != nil {
+			inst.SessionTotalCost.Add(ctx, cost, costOpt)
+		}
 	}
+
+	telemetry.Provenance(ctx, "llm.cost.micros", int64(cost*1_000_000),
+		map[bool]string{true: "pricing-table", false: "GUESS-default-rate"}[pricing.Known])
 }
 
 // recordError records a general error via metric, structured log, and slog.
