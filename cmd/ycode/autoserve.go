@@ -222,7 +222,9 @@ func runServerPrompt(baseURL, prompt string) error {
 				fmt.Print(data.Text)
 			}
 		case bus.EventTurnComplete:
-			fmt.Println()
+			if !printFlag {
+				fmt.Println()
+			}
 			return nil
 		case bus.EventTurnError:
 			var data struct {

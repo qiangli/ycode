@@ -48,6 +48,7 @@ func newTestApp(t *testing.T) *App {
 		usageTracker: usage.NewTracker(),
 		sessionStart: time.Now(),
 		stdout:       os.Stdout,
+		stderr:       os.Stderr,
 	}
 }
 
