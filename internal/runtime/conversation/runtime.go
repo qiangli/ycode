@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -32,6 +33,13 @@ const MaxOutputTokenCap = 32_000
 
 // Runtime manages the conversation turn loop.
 type Runtime struct {
+	// preActivatedFor is the user message we last ran tool preactivation for.
+	// The agentic loop re-enters Turn() once per LLM round-trip with the SAME user
+	// message (only tool results are appended), and preactivation was re-deriving
+	// the identical answer every time: measured at 41.4s of a 111.7s run — 37% of
+	// wall — across 25 turns, all with msg_len=461.
+	preActivatedFor string
+
 	config    *config.Config
 	provider  api.Provider
 	session   *session.Session
@@ -443,8 +451,20 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 	// Pre-activate deferred tools based on intent signals in the user message.
 	// Tier 1a: high-precision keywords. Tier 1b: SearchTools() scoring.
 	// This eliminates the 2-turn ToolSearch overhead for common operations.
+	//
+	// INSTRUMENTED (temporary): an L4 review named this as the suspected per-turn
+	// cost — on a continuation turn the user text is UNCHANGED (only tool results
+	// were appended), the cheap tiers find everything already active, total==0, and
+	// that fires the Tier-2 LLM classifier (preactivate.go:137) plus a semantic
+	// vector query. Both have timeouts (3s and 2s) but NOBODY HAS MEASURED THE
+	// ACTUAL DURATION. A timeout is a ceiling, not a number. Measure it.
 	if userMsg := lastUserText(messages); userMsg != "" {
+		preStart := time.Now()
 		r.preActivateTools(userMsg)
+		if os.Getenv("YCODE_PERF") != "" {
+			fmt.Fprintf(os.Stderr, "YCODE_PERF preactivate=%.2fs msg_len=%d\n",
+				time.Since(preStart).Seconds(), len(userMsg))
+		}
 	}
 
 	// Build tool definitions — in plan/explore mode, exclude tools requiring write access.

@@ -125,6 +125,43 @@ func (r *Runtime) preActivateTools(userMessage string) int {
 		return 0
 	}
 
+	// SAME MESSAGE, SAME ANSWER. Do not pay for it twice.
+	//
+	// The agentic loop calls Turn() once per LLM round-trip: ask, run tools, append
+	// the RESULTS, ask again. The user's message does not change across those
+	// rounds — lastUserText() walks back past the tool results to the same original
+	// string every time. So preactivation was being handed identical input on every
+	// turn and dutifully re-deriving the identical answer.
+	//
+	// MEASURED, on a 25-turn run (YCODE_PERF=1):
+	//
+	//     preactivation: 41.4s of 111.7s wall — 37% of the entire run
+	//     ~1.9s per turn, 24 turns out of 25, msg_len=461 EVERY TIME
+	//
+	// The cost is real and it is structural: the cheap keyword/scoring tiers skip
+	// tools that are ALREADY ACTIVE, so on a continuation turn they find nothing new,
+	// total lands on 0, and that fires the expensive tiers — a semantic vector query
+	// (2s timeout) and, when that also finds nothing, an LLM classification call (3s
+	// timeout). Every turn. For an answer we already had.
+	//
+	// This is a memo on the INPUT, not a behaviour change: the same string against
+	// the same tool registry cannot produce a different activation set. If either
+	// changes, the memo misses and the full cascade runs.
+	// ONE HONEST CAVEAT, and the review caught it before I did. On turn 1 the
+	// keyword tier hits, so total > 0 and the classifier is SKIPPED. On turn 2+
+	// everything it matched is already active, the cheap tiers return nothing,
+	// total lands on 0, and the classifier fires — so today it can activate tools
+	// on a later turn that it never would have on the first.
+	//
+	// This memo removes those late activations. That is a real behaviour change and
+	// it is stated rather than hidden: the classifier is second-guessing a message
+	// whose keywords already answered it, 24 turns in a row, at ~2s a turn. The GATE
+	// decides whether it was buying anything — and it is the only thing that can.
+	if r.preActivatedFor == userMessage {
+		return 0
+	}
+	r.preActivatedFor = userMessage
+
 	// Tier 1a: keyword matching.
 	total := r.preActivateByKeyword(userMessage)
 
