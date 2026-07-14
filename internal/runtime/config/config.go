@@ -15,6 +15,17 @@ type Config struct {
 	MaxTokens   int      `json:"maxTokens,omitempty"`
 	Temperature *float64 `json:"temperature,omitempty"`
 
+	// MaxToolIterations caps the agentic loop: how many tool-use round-trips a single
+	// turn may take before ycode stops the agent.
+	//
+	// Zero means the default (25). It is a REAL limit with a REAL cost — a deep code
+	// review legitimately needs more, and 25 was enough to cut one off mid-investigation
+	// twice. Raise it for investigation work; lower it to bound an untrusted run.
+	//
+	// Whatever it is, hitting it is now reported as a truncation and exits non-zero.
+	// A bound you cannot see is not a bound, it is a trap.
+	MaxToolIterations int `json:"maxToolIterations,omitempty"`
+
 	// ContextWindow overrides the model's advertised context window, in tokens.
 	//
 	// The window is a property of the MODEL, and ycode looks it up in a hardcoded
@@ -421,11 +432,29 @@ func mergeFromFile(cfg *Config, path string) error {
 	}
 
 	// Merge non-zero fields.
+	//
+	// NOTE: this merge is FIELD-BY-FIELD AND HAND-WRITTEN. A field added to Config but
+	// not added here is DEAD: it parses, it validates, it appears in settings.json, and
+	// it is silently discarded. There is no error and no warning.
+	//
+	// All three fields below were shipped exactly that way — declared, documented, and
+	// never merged. maxToolIterations was set to 80 in settings.json and the agent was
+	// still cut off at 25, twice, because the number never reached the code that reads
+	// it. TestEveryConfigFieldIsMerged now fails the build on the next one.
 	if overlay.Model != "" {
 		cfg.Model = overlay.Model
 	}
 	if overlay.MaxTokens != 0 {
 		cfg.MaxTokens = overlay.MaxTokens
+	}
+	if overlay.MaxToolIterations != 0 {
+		cfg.MaxToolIterations = overlay.MaxToolIterations
+	}
+	if overlay.ContextWindow != 0 {
+		cfg.ContextWindow = overlay.ContextWindow
+	}
+	if overlay.ContextReserved != 0 {
+		cfg.ContextReserved = overlay.ContextReserved
 	}
 	if overlay.Temperature != nil {
 		cfg.Temperature = overlay.Temperature

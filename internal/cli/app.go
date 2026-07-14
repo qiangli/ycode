@@ -536,8 +536,17 @@ func gitConfigEmail(dir string) string {
 	return out
 }
 
-// maxToolIterations is the maximum number of tool-use round-trips per turn.
-const maxToolIterations = 25
+// defaultMaxToolIterations is the maximum number of tool-use round-trips per turn when
+// the operator has not set one.
+const defaultMaxToolIterations = 25
+
+// maxToolIterations resolves the loop bound for this run.
+func (a *App) maxToolIterations() int {
+	if a.config != nil && a.config.MaxToolIterations > 0 {
+		return a.config.MaxToolIterations
+	}
+	return defaultMaxToolIterations
+}
 
 // RunPrompt executes a one-shot prompt with the full agentic loop
 // (system prompt, tools, multi-turn tool execution).
@@ -674,8 +683,9 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 		}
 	}()
 
+	maxIter := a.maxToolIterations()
 	loopDetector := conversation.NewLoopDetector()
-	for i := 0; i < maxToolIterations; i++ {
+	for i := 0; i < maxIter; i++ {
 		a.turnIndex++
 		result, recovery, err := rt.InstrumentedTurnWithRecovery(ctx, messages, a.turnIndex)
 		if err != nil {
@@ -829,7 +839,7 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 	//
 	// So: say it, in the model's channel AND the operator's, and exit NON-ZERO. A run
 	// that was stopped before it finished did not succeed.
-	msg := fmt.Sprintf("stopped after %d tool iterations (the limit) — the agent had not finished", maxToolIterations)
+	msg := fmt.Sprintf("stopped after %d tool iterations (the limit) — the agent had not finished", maxIter)
 
 	if a.printMode {
 		// The caller is a machine reading stdout. Put the truth where it will be read.
