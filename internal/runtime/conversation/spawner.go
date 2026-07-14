@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -219,6 +222,14 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 		startTime := time.Now()
 		toolsUsed := make(map[string]bool)
 
+		// What the subagent has ESTABLISHED so far, turn by turn.
+		//
+		// It used to be kept nowhere. When the iteration cap was hit, the loop returned
+		// ("", error) — every finding from fifteen turns of real investigation thrown on
+		// the floor, and the parent handed an error it could not distinguish from "my
+		// delegate found nothing". See the cap handler below.
+		var progress []string
+
 		// Agentic loop: send → receive → execute tools → repeat.
 		for i := 0; i < maxIter; i++ {
 			req := &api.Request{
@@ -286,10 +297,29 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 				})
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
+
+				// An API error mid-flight — a rate limit that outlasted its retries, a
+				// dropped connection — should not incinerate the work already done. It
+				// used to: `return "", err`, and everything the subagent had established
+				// went with it.
+				//
+				// But if it established NOTHING, the parent must hear a hard error and
+				// not a soft "partial result with no findings" — otherwise a dead binding
+				// or a bad key reads as "the delegate looked and found nothing", which is
+				// a lie about the code rather than about the run.
+				if len(progress) > 0 {
+					logger.Warn("subagent hit an API error; returning the findings it already had",
+						"agent_id", agentID, "turn", i+1, "error", err)
+					return partialSubagentReport(progress, toolsUsed, i+1) +
+						"\nIt was stopped by an API error on turn " + strconv.Itoa(i+1) + ": " + err.Error() + "\n", nil
+				}
 				return "", fmt.Errorf("subagent turn %d: %w", i+1, err)
 			}
 
 			textContent := joinParts(textParts)
+			if strings.TrimSpace(textContent) != "" {
+				progress = append(progress, textContent)
+			}
 
 			// No tool calls — subagent is done.
 			if len(toolCalls) == 0 {
@@ -361,18 +391,37 @@ func NewAgentSpawner(sc *SpawnerConfig) func(ctx context.Context, manifest *tool
 			})
 		}
 
+		// THE CAP IS NOT A FAILURE. It is an INTERRUPTION, and the difference is the
+		// whole point.
+		//
+		// This used to `return "", err` — discarding everything the subagent had
+		// established across every one of its turns, and handing the parent an error
+		// indistinguishable from "my delegate found nothing".
+		//
+		// That is the absence-of-evidence bug living inside the delegation path, and it
+		// is not theoretical: a live conductor run delegated correctly, had its
+		// subagents killed at the cap, got back errors carrying ZERO information, had
+		// nothing to reason from, announced a fallback strategy, and stopped. It burned
+		// 25 turns and 169 tool calls and produced not one finding. The model was blamed.
+		// It was our cap.
+		//
+		// So: return the WORK, say plainly that it is partial, and say what it means.
+		// A parent that knows its delegate was cut off can re-delegate the remainder,
+		// narrow the scope, or finish the job itself. A parent handed an opaque error
+		// can only guess — and the guess it makes is "there was nothing there".
 		completeAgent(true)
 		recordEpisodicMemory(sc, manifest, agentID, startTime, toolsUsed, false)
 		emitAgentEvent(sc, "agent.complete", map[string]any{
 			"agent_id":    agentID,
 			"description": manifest.Description,
-			"status":      "failed",
+			"status":      "truncated",
+			"turns":       maxIter,
 			"duration_ms": time.Since(startTime).Milliseconds(),
 		})
-		err := fmt.Errorf("subagent exceeded maximum iterations (%d)", maxSubagentIterations)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return "", err
+		logger.Warn("subagent hit its iteration cap; returning partial findings",
+			"agent_id", agentID, "max_iter", maxIter, "turns_of_findings", len(progress))
+		span.SetAttributes(attribute.Bool("agent.truncated", true), attribute.Int("agent.turns", maxIter))
+		return partialSubagentReport(progress, toolsUsed, maxIter), nil
 	}
 
 	return func(ctx context.Context, manifest *tools.AgentManifest) (out string, err error) {
@@ -500,4 +549,50 @@ func recordEpisodicMemory(sc *SpawnerConfig, manifest *tools.AgentManifest, agen
 	if err := sc.MemoryManager.Save(mem); err != nil {
 		slog.Debug("episodic memory save failed", "agent", agentID, "error", err)
 	}
+}
+
+// partialSubagentReport renders what a subagent established before its iteration cap
+// stopped it — and, more importantly, tells the parent WHAT THE RESULT MEANS.
+//
+// The cap is an interruption, not a verdict. A parent that is told "your delegate ran
+// out of budget, here is what it had, here is what it never reached" can re-delegate,
+// narrow the scope, or finish the job. A parent handed an error concludes "nothing was
+// found" — and that conclusion is drawn from an ABSENCE, which is the failure this whole
+// codebase has spent a day stamping out.
+//
+// The warning is stated in the model's own channel — the text — because the model is the
+// consumer. An error code it never sees cannot inform it.
+func partialSubagentReport(progress []string, toolsUsed map[string]bool, maxIter int) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "[PARTIAL RESULT — this subagent was STOPPED at its %d-iteration budget. "+
+		"It did NOT finish.]\n\n", maxIter)
+
+	if len(progress) == 0 {
+		b.WriteString("It produced no findings before it was stopped — it was still gathering context.\n\n")
+	} else {
+		b.WriteString("What it established before it was stopped:\n\n")
+		for _, p := range progress {
+			b.WriteString(strings.TrimSpace(p))
+			b.WriteString("\n\n")
+		}
+	}
+
+	if len(toolsUsed) > 0 {
+		names := make([]string, 0, len(toolsUsed))
+		for n := range toolsUsed {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		fmt.Fprintf(&b, "Tools it used: %s\n\n", strings.Join(names, ", "))
+	}
+
+	b.WriteString("IMPORTANT — how to read this:\n")
+	b.WriteString("This is an INTERRUPTED investigation, not a completed one. The absence of a " +
+		"finding here is NOT evidence that there is nothing to find; it is evidence that the " +
+		"subagent ran out of budget.\n")
+	b.WriteString("Do not conclude anything from what is missing. Either re-delegate the " +
+		"remaining work with a NARROWER scope (so it fits the budget), or finish it yourself.\n")
+
+	return b.String()
 }
