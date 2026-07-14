@@ -38,6 +38,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/usage"
 	"github.com/qiangli/ycode/internal/runtime/worker"
 	"github.com/qiangli/ycode/internal/service"
+	"github.com/qiangli/ycode/internal/telemetry"
 	"github.com/qiangli/ycode/internal/tools"
 	memexgraph "github.com/qiangli/ycode/pkg/memex/graph"
 	"github.com/qiangli/ycode/pkg/memex/memory"
@@ -119,6 +120,9 @@ type App struct {
 	// OTEL conversation instrumentation (optional).
 	convOTEL  *conversation.OTELConfig
 	turnIndex int // monotonically increasing turn counter for OTEL
+
+	// NDJSON event log sink (optional).
+	eventsSink telemetry.Sink
 
 	// Cleanup functions called on Close (OTEL shutdown, context cancel, etc.).
 	cleanupFuncs []func()
@@ -372,6 +376,27 @@ func (a *App) SetPrintMode(enabled bool) {
 	a.printMode = enabled
 }
 
+// SetEventsFile opens an NDJSON event log sink at the given path.
+func (a *App) SetEventsFile(path string) error {
+	sink, err := telemetry.NewJSONLSink(path)
+	if err != nil {
+		return err
+	}
+	a.eventsSink = sink
+	return nil
+}
+
+func (a *App) emitEvent(typ string, data any) {
+	if a.eventsSink == nil {
+		return
+	}
+	_ = a.eventsSink.Emit(&telemetry.Event{
+		Type:      typ,
+		Timestamp: time.Now(),
+		Data:      data,
+	})
+}
+
 // conversationRuntime creates a conversation.Runtime from the current app state.
 func (a *App) conversationRuntime() *conversation.Runtime {
 	rt := conversation.NewRuntime(a.config, a.provider, a.session, a.toolRegistry, a.promptCtx)
@@ -585,6 +610,23 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 	})
 
 	// Agentic loop: send → receive → execute tools → repeat until end_turn.
+	a.emitEvent("turn.start", map[string]string{"prompt": userPrompt})
+
+	origStdout := a.stdout
+	var captured strings.Builder
+	if a.eventsSink != nil {
+		a.stdout = io.MultiWriter(origStdout, &captured)
+	}
+	defer func() {
+		if a.eventsSink != nil {
+			a.stdout = origStdout
+			a.emitEvent("turn.end", map[string]string{
+				"status": "ok",
+				"text":   captured.String(),
+			})
+		}
+	}()
+
 	loopDetector := conversation.NewLoopDetector()
 	for i := 0; i < maxToolIterations; i++ {
 		a.turnIndex++
@@ -681,6 +723,10 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 			})
 			// Show tool detail in one-shot mode.
 			fmt.Fprintf(a.stdout, "⚙ %s\n", toolDetail(tc.Name, tc.Input))
+			a.emitEvent("tool.call", map[string]any{
+				"name":  tc.Name,
+				"input": tc.Input,
+			})
 		}
 		messages = append(messages, api.Message{
 			Role:    api.RoleAssistant,
@@ -1245,6 +1291,13 @@ func (a *App) Close() error {
 			if err := memory.SavePersona(store, a.currentPersona); err != nil {
 				slog.Debug("persona save on close", "error", err)
 			}
+		}
+	}
+
+	// Close the events sink if set.
+	if a.eventsSink != nil {
+		if err := a.eventsSink.Close(); err != nil {
+			slog.Debug("events sink close", "error", err)
 		}
 	}
 
