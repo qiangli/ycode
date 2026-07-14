@@ -749,6 +749,7 @@ var (
 	modelFlag             string
 	dangerSkipPermissions bool
 	connectURL            string
+	eventsFile            string
 )
 
 var rootCmd = &cobra.Command{
@@ -822,6 +823,11 @@ var rootCmd = &cobra.Command{
 			if printFlag {
 				app.SetPrintMode(true)
 			}
+			if eventsFile != "" {
+				if err := app.SetEventsFile(eventsFile); err != nil {
+					return fmt.Errorf("events file: %w", err)
+				}
+			}
 			return app.RunPrompt(context.Background(), prompt)
 		}
 
@@ -859,6 +865,11 @@ var promptCmd = &cobra.Command{
 		defer app.Close()
 		if printFlag {
 			app.SetPrintMode(true)
+		}
+		if eventsFile != "" {
+			if err := app.SetEventsFile(eventsFile); err != nil {
+				return fmt.Errorf("events file: %w", err)
+			}
 		}
 		prompt := strings.Join(args, " ")
 		return app.RunPrompt(context.Background(), prompt)
@@ -1248,6 +1259,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "Model to use (overrides config and env vars)")
 	rootCmd.PersistentFlags().BoolVar(&dangerSkipPermissions, "danger-skip-permissions", false, "Skip all permission checks (grants full access to all tools)")
 	rootCmd.PersistentFlags().StringVar(&connectURL, "connect", "", "Connect to a remote ycode server (ws:// or nats://)")
+	rootCmd.PersistentFlags().StringVar(&eventsFile, "events", "", "Write NDJSON event log to file")
 	rootCmd.Flags().Bool("dry-run", false, "Preview session setup without calling the model")
 
 	// no-otel: accepted for backward compatibility with integration tests (no-op).
