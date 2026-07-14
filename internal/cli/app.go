@@ -541,7 +541,7 @@ const maxToolIterations = 25
 
 // RunPrompt executes a one-shot prompt with the full agentic loop
 // (system prompt, tools, multi-turn tool execution).
-func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
+func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 	// Dispatch slash commands (e.g. /init, /config) before the provider check
 	// — some commands like /init have a deterministic phase that works without an LLM.
 	if strings.HasPrefix(userPrompt, "/") {
@@ -649,11 +649,26 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 	if a.eventsSink != nil {
 		a.stdout = io.MultiWriter(origStdout, &captured)
 	}
+
+	// turn.end must report WHAT HAPPENED, and this defer used to hard-code Status: "ok"
+	// on EVERY return — including the error returns above it.
+	//
+	// That is not a cosmetic bug. The event channel is the whole reason a first-party
+	// harness is worth having: bashy believes `turn.end` because it is a fact the agent
+	// REPORTS, rather than a silence bashy interprets (see docs/first-party-harness.md).
+	// A channel that says "ok" when the run failed is worse than no channel — it launders
+	// a failure into a fact, and every consumer downstream inherits the lie.
+	//
+	// Name the error return so the defer can tell the truth about it.
 	defer func() {
 		if a.eventsSink != nil {
 			a.stdout = origStdout
+			status := "ok"
+			if rerr != nil {
+				status = "error"
+			}
 			a.emitEvent(wireevents.TurnEnd, wireevents.TurnEndData{
-				Status: "ok",
+				Status: status,
 				Text:   captured.String(),
 			})
 		}
@@ -793,11 +808,41 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 		})
 	}
 
-	if !a.printMode {
+	// FALLING OUT OF THE LOOP MEANS WE CUT THE AGENT OFF. It is not a completion.
+	//
+	// Every path where the agent actually FINISHES returns from inside the loop (a turn
+	// with no tool calls). Reaching here means it still had work in flight and we stopped
+	// it at maxToolIterations.
+	//
+	// This used to `return nil` — exit 0, print a session summary, and say nothing. So a
+	// truncated run was indistinguishable from a successful one, and a caller had to
+	// diff the artifact to find out. It cost a real exam: glm-5.2 was asked to refute a
+	// design plan, ran to exactly 25 turns TWICE, was cut off mid-investigation both
+	// times, exited 0 both times, and produced no findings. I was one step from recording
+	// "cannot conduct" against the model. It was our cap, and our silence about it.
+	//
+	// The bitter part: this repo's own harness A/B concluded "ALL THREE HARNESSES EXIT 0
+	// WHEN THEY FAIL — a harness's exit code is not evidence, run the gate"
+	// (docs/harness-ab-deepseek.md). That was written about opencode and aider. Ours did
+	// it too, in the one harness whose entire justification is that it reports its turns
+	// honestly instead of leaving them to be guessed at.
+	//
+	// So: say it, in the model's channel AND the operator's, and exit NON-ZERO. A run
+	// that was stopped before it finished did not succeed.
+	msg := fmt.Sprintf("stopped after %d tool iterations (the limit) — the agent had not finished", maxToolIterations)
+
+	if a.printMode {
+		// The caller is a machine reading stdout. Put the truth where it will be read.
+		fmt.Fprintf(a.stdout, "\n\n[TRUNCATED: %s. This is NOT a complete answer, and the "+
+			"absence of a conclusion is NOT a conclusion. Re-run with a narrower scope, or "+
+			"raise the iteration limit.]\n", msg)
+	} else {
 		fmt.Fprintln(a.stdout)
 	}
 	a.printSessionSummary()
-	return nil
+
+	// The defer above turns this into turn.end{status:"error"} on the event channel.
+	return fmt.Errorf("%s", msg)
 }
 
 // printSessionSummary outputs a summary of the session (time and tokens).
