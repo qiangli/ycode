@@ -56,10 +56,6 @@ type Runtime struct {
 	cachingSupported bool
 	contextBaseline  *prompt.ContextBaseline
 
-	// Tool output distillation config.
-	distillCfg   session.DistillConfig
-	routingCache *session.RoutingCache
-
 	// Optional LLM-based summarizer for compaction. If nil, heuristic is used.
 	llmSummarizer *session.LLMSummarizer
 
@@ -179,15 +175,6 @@ func NewRuntime(
 		contextBudget = contextBudget.WithReserved(cfg.ContextReserved)
 	}
 
-	var distillCfg session.DistillConfig
-	if cachingSupported {
-		distillCfg = session.DefaultDistillConfig()
-	} else {
-		distillCfg = session.AggressiveDistillConfig()
-	}
-	if sess != nil {
-		distillCfg.FullOutputDir = sess.ToolOutputDir()
-	}
 
 	// Set up completion cache directory under the session.
 	var completionCacheDir string
@@ -221,8 +208,6 @@ func NewRuntime(
 		contextBaseline:  prompt.NewContextBaseline(),
 		contextBudget:    contextBudget,
 		responseTokens:   responseTokens,
-		distillCfg:       distillCfg,
-		routingCache:     session.NewRoutingCache(),
 		activatedTools:   make(map[string]int),
 		completionCache:  api.NewCompletionCache(completionCacheDir, api.CompletionCacheTTL),
 		promptCache:      api.NewPromptCache(),
@@ -960,96 +945,60 @@ func (r *Runtime) executeToolsParallel(ctx context.Context, calls []ToolCall, pr
 	return blocks
 }
 
-// distillResults applies content routing and tool output distillation to reduce
-// token usage. The pipeline per tool result is:
-//
-//  1. Route: classify as Full/Partial/Summary/Excluded based on tool type + size
-//  2. If RouteFull → run through DistillToolOutput (may still truncate large content)
-//     Otherwise → apply the route transformation directly
-//
-// Error results are never distilled — they contain critical diagnostics.
+// distillResults keeps its name and no longer distills anything. See below.
 func (r *Runtime) distillResults(calls []ToolCall, results []api.ContentBlock) []api.ContentBlock {
+	// VERBATIM. The model sees exactly what the tool returned.
+	//
+	// This function used to run a two-stage cascade over every tool result:
+	//
+	//   session.RouteContent  -> classify, and for a read_file over 2000 chars,
+	//                            keep the head, keep the tail, DELETE THE MIDDLE
+	//   session.DistillToolOutput -> head/tail again at 1000 chars for a non-caching
+	//                            provider
+	//
+	// Measured on the wire: the model asked to read the 2.4KB test file it had been
+	// told to implement against, and got it back with the TEST CASES cut out of the
+	// middle. It then spent SEVENTEEN turns on cat, sed ranges, python, awk, base64
+	// and finally xxd, trying to rebuild the specification we had deleted. It was not
+	// confused; it was doing what anyone does when handed a document with the middle
+	// torn out.
+	//
+	// Both stages have been deleted. Not gated -- deleted. A tool result is an
+	// OBSERVATION, and the answer to "how big is this string" is never a reason to
+	// edit what the agent saw.
+	//
+	// The one limit that survives is an absolute safety cap: a core dump or a 200MB
+	// log must not be inlined whatever the pressure. It fires at 256KB, on output no
+	// human would paste either, and it TELLS the model -- naming the size and how to
+	// read the middle. A cut the model knows about costs one follow-up call. A cut it
+	// does not know about cost us seventeen.
+	//
+	// Pressure is now handled where pressure belongs: once, before the request, in
+	// TurnWithRecovery, against the token count the PROVIDER reported.
 	for i := range results {
-		if results[i].IsError || results[i].Type != api.ContentTypeToolResult {
+		if results[i].Type != api.ContentTypeToolResult {
 			continue
 		}
-		// Find the matching tool name for this result.
-		toolName := ""
-		for _, call := range calls {
-			if call.ID == results[i].ToolUseID {
-				toolName = call.Name
-				break
-			}
-		}
-
-		before := len(results[i].Content)
-
-		// DO NOT MANAGE A CONTEXT PROBLEM YOU DO NOT HAVE.
-		//
-		// Content routing exists to survive a full context window. It was running
-		// UNCONDITIONALLY — on turn 1 of an empty conversation, against a 64K-token
-		// window with ~600 tokens used. A read_file result over 2000 characters was
-		// classified RoutePartial, which keeps the head and the tail and DELETES THE
-		// MIDDLE (session/routing.go:84-93, partialContent at :165).
-		//
-		// What that did to a real task, measured on the wire: the model asked to read
-		// a 2.4KB test file — the SPECIFICATION it was asked to implement — and got it
-		// back with the test cases cut out of the middle. It then spent SEVENTEEN
-		// turns trying to recover them: cat, sed ranges, python, awk, `base64`, and
-		// finally `xxd` to hexdump the file. It was not confused. It was doing exactly
-		// what you would do if someone kept handing you a document with the middle
-		// torn out.
-		//
-		//     23 turns, 22 tool calls, 16 of them bash. Wall: ~55s.
-		//
-		// So: route only when the context is actually under pressure. Below the soft
-		// threshold the window is empty and mutilating a 2KB file to save 800
-		// characters buys nothing and costs the agent its ability to read.
-		if !r.contextUnderPressure() {
-			// VERBATIM. Not routed, and NOT DISTILLED EITHER.
-			//
-			// The first version of this gate skipped RouteContent and then still called
-			// DistillToolOutput — which truncates head/tail at MaxInlineChars, and that
-			// is 1000 chars for a non-caching provider (distill.go:25, :93). So a 2.4KB
-			// read_file was STILL being mutilated below pressure, by the second of two
-			// functions that do the same thing. An adversarial review caught it; the
-			// measurement had improved enough to hide it.
-			//
-			// The principle has to apply to both or it is not a principle: below the
-			// soft threshold there is NO CONTEXT PROBLEM, and damaging a tool
-			// observation to solve a problem you do not have costs the agent its
-			// ability to read and buys nothing.
-			//
-			// The one thing still enforced is an absolute sanity cap — a pathological
-			// output (a 50MB core dump) must not be inlined whatever the pressure. That
-			// is a safety limit, not context management.
+		if before := len(results[i].Content); before > session.AbsoluteToolOutputCap {
 			results[i].Content = session.CapToolOutput(results[i].Content)
-			continue
-		}
-
-		// Step 1: Content routing — classify the result.
-		route := session.RouteContent(toolName, results[i].Content, false, r.routingCache, r.distillCfg.AggressiveMode)
-
-		// Step 2: Apply route or distillation.
-		switch route {
-		case session.RouteFull:
-			// Full route still goes through distillation (catches byte/line limits).
-			results[i].Content = session.DistillToolOutput(toolName, results[i].Content, r.distillCfg)
-		default:
-			// Partial/Summary/Excluded — apply the route transformation.
-			results[i].Content = session.ApplyRoute(results[i].Content, route, toolName)
-		}
-
-		if after := len(results[i].Content); after < before {
-			r.logger.Info("distilled tool output",
-				"tool", toolName,
-				"route", string(route),
-				"before", before,
-				"after", after,
+			r.logger.Warn("tool result exceeded the absolute safety cap",
+				"tool", toolNameFor(calls, results[i].ToolUseID),
+				"bytes", before,
+				"cap", session.AbsoluteToolOutputCap,
 			)
 		}
 	}
 	return results
+}
+
+// toolNameFor resolves a tool result back to the call that produced it.
+func toolNameFor(calls []ToolCall, toolUseID string) string {
+	for _, c := range calls {
+		if c.ID == toolUseID {
+			return c.Name
+		}
+	}
+	return ""
 }
 
 // collectDiagnostics gathers runtime diagnostics (degraded tools, context health)
@@ -1127,29 +1076,37 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 	sessionMsgs := r.apiMessagesToSession(messages)
 	recovery := &RecoveryResult{}
 
-	// --- Layer 0: Observation masking (cheapest defense — always runs) ---
-	// Uses token-budget-based masking: protects newest tool outputs up to a budget,
-	// only masks when prunable tokens exceed a batch threshold.
-	// Non-caching providers use tighter budgets.
-	// Derived from THIS model's window, not from an absolute constant. The constants
-	// (50K protect / 30K prunable) exceed the entire usable window of a 32K model, so
-	// nothing could ever be classed prunable and masking silently never ran — the same
-	// dead-mechanism bug as the compaction threshold, in a different file.
-	protectionBudget := r.contextBudget.MaskingProtectionBudget()
-	minPrunable := r.contextBudget.MaskingMinPrunable()
-	if !r.cachingSupported {
-		// Non-caching providers pay full price for every input token every turn, so
-		// mask sooner: protect less, and act on a smaller pile of prunable results.
-		protectionBudget = protectionBudget * 60 / 100
-		minPrunable = minPrunable * 60 / 100
-	}
-	masked, maskedCount := session.MaskOldObservationsBudget(sessionMsgs, protectionBudget, minPrunable)
-	if maskedCount > 0 {
-		r.logger.Info("layer 0: masked old observations", "count", maskedCount)
-		sessionMsgs = masked
-		messages = r.sessionMessagesToAPI(masked)
-		recovery.Masked = true
-		recovery.MaskedCount = maskedCount
+	// ONE measurement, from the PROVIDER, not from a guess.
+	//
+	// Everything below used to be decided by estimateAllTokens() — 4 chars ≈ 1 token —
+	// compared against absolute constants unrelated to the model. That estimate was too
+	// crude to act on once, so the code acted on it FIVE times, gently: mask, soft-trim,
+	// hard-clear, route, distill. Five gentle wrong answers, and on a small model all of
+	// their thresholds sat OUTSIDE the window, so none of them ever fired and the log
+	// said "healthy" right up to the API rejecting the request.
+	//
+	// MeasureTokens asks the provider. Its count covers the whole request — system
+	// prompt, tool schemas, every prior message — and only the tool results appended
+	// since the last response have to be estimated. The estimator survives, confined to
+	// the tail of one turn, sitting on top of a number that is exact.
+	//
+	// It also makes a RESUMED session safe: usage is persisted per message, so a
+	// conversation loaded from disk arrives with its size already known. Without that,
+	// the first request after a resume has no count, "nothing to compact" is the answer,
+	// and the request blows the window — a success state reached by the ABSENCE of a
+	// measurement.
+	used := session.MeasureTokens(sessionMsgs)
+	r.logger.Info("context",
+		"reported_tokens", used.Reported,
+		"unreported_estimate", used.Unreported,
+		"total", used.Total(),
+		"window", r.contextBudget.ContextWindow,
+		"compact_at", r.contextBudget.CompactionThreshold,
+		"from_provider", used.HasReport,
+	)
+	r.lastContextHealth = &session.ContextHealth{
+		EstimatedTokens: used.Total(),
+		Threshold:       r.contextBudget.CompactionThreshold,
 	}
 
 	// Merge adjacent user messages to reduce per-message structural overhead.
@@ -1158,15 +1115,26 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 	sessionMsgs = session.MergeAdjacentUserMessages(sessionMsgs)
 	messages = r.sessionMessagesToAPI(sessionMsgs)
 
-	health := session.CheckContextHealth(sessionMsgs, r.contextBudget)
-	r.lastContextHealth = &health
-	r.logger.Info("context health", "tokens", health.EstimatedTokens, "level", health.Level.String())
-
-	// --- Layer 1: Pruning (in-memory tool result trimming) ---
-	if health.NeedsPruning() && !health.NeedsCompactionNow() {
+	// --- The cheap answer to real pressure: drop STALE tool observations ---
+	//
+	// This is the one trimming layer that survives, and it survives because compaction
+	// is an LLM CALL. If the only response to pressure is to summarize, then every
+	// pressure event on a long non-caching session — deepseek, kimi, the whole API-key
+	// lane — costs a full summarization round-trip. Dropping an old, superseded tool
+	// result costs nothing. (This is codex's objection to deleting it, and it is right.)
+	//
+	// What makes it safe is that it only ever touches OLD observations, it only runs
+	// when the window is ACTUALLY filling up (against the provider's count, not a
+	// guess), and it names the tool and says the result can be re-run.
+	//
+	// Observation masking used to run here too, unconditionally, doing the same job with
+	// a different placeholder — and its exemption list keyed on a field production never
+	// populated, so it protected nothing. Two mechanisms, one job, one of them blind.
+	// Deleted.
+	if r.contextBudget.NeedsTrim(used) && !r.contextBudget.NeedsCompaction(used) {
 		pruned, pruneResult := session.PruneMessages(sessionMsgs, r.contextBudget)
 		if pruneResult != nil {
-			r.logger.Info("layer 1: pruned tool results",
+			r.logger.Info("trimmed stale tool observations",
 				"soft_trimmed", pruneResult.SoftTrimmed,
 				"hard_cleared", pruneResult.HardCleared,
 				"tokens_before", pruneResult.TokensBefore,
@@ -1181,8 +1149,8 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 		}
 	}
 
-	// --- Layer 2: Proactive compaction (before hitting API limit) ---
-	if health.NeedsCompactionNow() {
+	// --- Compaction: the honest, expensive answer when trimming is not enough ---
+	if r.contextBudget.NeedsCompaction(used) {
 		compactResult := r.proactiveCompactCtx(ctx, sessionMsgs)
 		if compactResult != nil {
 			messages = r.buildCompactedMessages(messages, compactResult)

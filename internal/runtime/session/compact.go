@@ -36,14 +36,6 @@ type CompactionResult struct {
 	HeadPreservedCount int
 }
 
-// NeedsCompaction reports whether the session exceeds the budget of the model it
-// is going to. It delegates to ContextBudget.ShouldCompact, which also catches the
-// case the ratio alone misses: a conversation that is still under the compaction
-// threshold but is about to run out of window anyway.
-func NeedsCompaction(estimatedTokens int, budget ContextBudget) bool {
-	return budget.ShouldCompact(estimatedTokens)
-}
-
 // EstimateMessageTokens roughly estimates the token footprint of a message.
 // Uses CJK-aware estimation: ASCII chars ≈ 0.25 tokens, non-ASCII ≈ 1.3 tokens.
 func EstimateMessageTokens(msg ConversationMessage) int {

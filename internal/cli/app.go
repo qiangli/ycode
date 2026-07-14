@@ -715,12 +715,27 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 			fmt.Fprint(a.stdout, result.TextContent)
 		}
 
-		// Save assistant message to session.
+		// Save assistant message to session, WITH the provider's token count.
+		//
+		// ConversationMessage.Usage has always existed and serialized to JSON. Nothing
+		// ever wrote it. Every reference in the tree was a read or a struct copy, so
+		// msg.Usage was permanently nil — which is why the session indexer and the SQL
+		// writer have been reporting zero tokens for every session ever recorded, and
+		// why context management had nothing but a 4-chars-per-token guess to work from.
+		//
+		// It is the exact number the whole context layer needs, it was in every
+		// response, and we threw it away.
 		if result.TextContent != "" {
 			_ = a.session.AddMessage(session.ConversationMessage{
 				Role: session.RoleAssistant,
 				Content: []session.ContentBlock{
 					{Type: session.ContentTypeText, Text: result.TextContent},
+				},
+				Usage: &session.TokenUsage{
+					InputTokens:        result.Usage.InputTokens,
+					OutputTokens:       result.Usage.OutputTokens,
+					CacheCreationInput: result.Usage.CacheCreationInput,
+					CacheReadInput:     result.Usage.CacheReadInput,
 				},
 			})
 		}
