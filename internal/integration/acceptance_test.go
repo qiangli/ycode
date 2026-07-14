@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -79,12 +80,25 @@ func TestAcceptance(t *testing.T) {
 		cmd.Stdin = strings.NewReader("What is 2+2?")
 		cmd.Dir = dir
 
+		stdoutPipe, err := cmd.StdoutPipe()
+		if err != nil {
+			t.Fatalf("stdout pipe: %v", err)
+		}
+
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start: %v", err)
+		}
+
 		done := make(chan struct{})
-		var out []byte
-		var err error
+		var stdoutBytes []byte
 		go func() {
-			out, err = cmd.CombinedOutput()
+			stdoutBytes, _ = io.ReadAll(stdoutPipe)
 			close(done)
+		}()
+
+		waitDone := make(chan error, 1)
+		go func() {
+			waitDone <- cmd.Wait()
 		}()
 
 		select {
@@ -94,8 +108,14 @@ func TestAcceptance(t *testing.T) {
 			t.Fatal("events file prompt timed out after 60s")
 		}
 
-		if err != nil {
-			t.Fatalf("events file prompt failed: %v\n%s", err, out)
+		select {
+		case cmdErr := <-waitDone:
+			if cmdErr != nil {
+				t.Fatalf("events file prompt failed: %v\nstdout: %s", cmdErr, stdoutBytes)
+			}
+		case <-time.After(5 * time.Second):
+			cmd.Process.Kill()
+			t.Fatal("process wait timed out")
 		}
 
 		eventsData, err := os.ReadFile(eventsPath)
@@ -141,7 +161,7 @@ func TestAcceptance(t *testing.T) {
 			t.Fatal("events file does not contain turn.end event")
 		}
 
-		stdoutStr := string(out)
+		stdoutStr := strings.TrimSpace(string(stdoutBytes))
 		if turnEndText != stdoutStr {
 			t.Errorf("turn.end.data.text does not match stdout\nturn.end.text: %q\nstdout: %q", turnEndText, stdoutStr)
 		}
