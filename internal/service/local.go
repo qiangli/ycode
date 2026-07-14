@@ -3,9 +3,12 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
+
+	"github.com/qiangli/coreutils/pkg/telemetry"
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/bus"
@@ -15,7 +18,16 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/taskqueue"
 )
 
-const maxToolIterations = 25 // kept for reference; IterationBudget is the active mechanism
+// maxToolIterations is the SERVER-mode loop bound.
+//
+// This is a SECOND definition of the same limit — internal/cli/app.go has its own — and
+// that duplication is exactly the "two constructors of one thing" trap: the CLI one was
+// made configurable and taught to report truncation honestly, and this one was NOT,
+// because nobody remembered it existed. Found by an adversarial review (glm-5.2), which
+// was asked "where else is the same thing built twice?" and answered correctly.
+//
+// It now reads the SAME config field, so raising the budget raises it everywhere.
+const defaultMaxToolIterations = 25
 
 // LocalService implements Service by wrapping a cli.App instance.
 // It bridges the existing App methods into the service interface and
@@ -165,7 +177,12 @@ func (s *LocalService) SendMessage(ctx context.Context, sessionID string, input 
 	loopDetector := conversation.NewEnhancedLoopDetector(conversation.EnhancedLoopDetectorConfig{
 		SessionID: sessionID,
 	})
-	budget := conversation.NewIterationBudget(maxToolIterations)
+	// The SAME config field the CLI path reads, so raising the budget raises it in both.
+	maxIter := defaultMaxToolIterations
+	if cfg := s.app.Config(); cfg != nil && cfg.MaxToolIterations > 0 {
+		maxIter = cfg.MaxToolIterations
+	}
+	budget := conversation.NewIterationBudget(maxIter)
 	for i := 0; budget.Consume(); i++ {
 		// Inject grace message on the final turn so the LLM wraps up.
 		if budget.IsGrace() {
@@ -360,12 +377,25 @@ func (s *LocalService) SendMessage(ctx context.Context, sessionID string, input 
 		})
 	}
 
+	// FALLING OUT OF THE LOOP MEANS WE CUT THE AGENT OFF. It is not a completion.
+	//
+	// This published bus.EventTurnComplete — a SUCCESS event — for a run that was
+	// truncated, with the truth hidden in a status string nobody reads, and returned nil.
+	// A client watching the bus saw "the turn completed."
+	//
+	// It is the same bug the CLI path had (return nil after the loop, exit 0), in a
+	// second copy nobody remembered. The status field whispering "max_iterations" while
+	// the event type asserts completion is not honesty; it is a footnote on a lie.
+	msg := fmt.Sprintf("stopped after %d tool iterations (the limit) — the agent had not finished", maxIter)
+
+	telemetry.BoundHit(ctx, "iterations", int64(maxIter), int64(maxIter), msg)
+
 	s.b.Publish(bus.Event{
-		Type:      bus.EventTurnComplete,
+		Type:      bus.EventTurnError,
 		SessionID: sessionID,
-		Data:      mustJSON(map[string]string{"status": "max_iterations"}),
+		Data:      mustJSON(map[string]string{"error": msg, "status": "truncated"}),
 	})
-	return nil
+	return errors.New(msg)
 }
 
 // executeCommandFromMessage runs a slash command with streaming progress via bus events.

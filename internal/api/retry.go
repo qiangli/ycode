@@ -165,6 +165,23 @@ func doWithRetry(ctx context.Context, client *http.Client, makeReq func() (*http
 			}
 		}
 
+		// A QUOTA EXHAUSTION IS NOT A RATE LIMIT, and retrying it is futile.
+		//
+		// Both arrive as 429. We retried nine times against a z.ai quota that would not
+		// reset for fifteen hours — ~30s of backoff spent on a request that could not
+		// possibly succeed. Fail fast and say WHY, so the caller can hand off to another
+		// agent instead of waiting for a window that is not coming.
+		if resp.StatusCode == http.StatusTooManyRequests && IsQuotaExhausted(body) {
+			telemetry.BoundHit(ctx, "quota_exhausted", 0, int64(attempt),
+				"provider quota gone at "+host+" — retrying cannot help; hand off")
+			return nil, &ClassifiedError{
+				Reason:     reason,
+				Action:     ActionAbort,
+				StatusCode: resp.StatusCode,
+				Body:       body,
+			}
+		}
+
 		// For retry actions, continue the retry loop.
 		if action == ActionRetry {
 			// The server may have told us exactly how long to wait. Believe it.

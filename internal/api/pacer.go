@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -168,4 +169,41 @@ func parseRetryAfter(v string) time.Duration {
 		}
 	}
 	return 0
+}
+
+// IsQuotaExhausted distinguishes a QUOTA that has run out from a RATE that is too high.
+//
+// Both arrive as HTTP 429, and treating them the same is how nine retries got burned
+// against a limit that would not reset for FIFTEEN HOURS. Measured, on a real run:
+//
+//	1302  "Rate limit reached for requests"     -> too fast. Back off; it clears in seconds.
+//	1308  "Usage limit reached for 5 hour.      -> OUT OF QUOTA. Retrying is futile until
+//	       Your limit will reset at <time>"        the window resets. Nine attempts, ~30s of
+//	                                               backoff, and it could never have worked.
+//
+// The distinction is not cosmetic — the two failures want OPPOSITE responses:
+//
+//	rate limited  -> WAIT. The same agent will succeed shortly.
+//	quota gone    -> HAND OFF. This agent cannot succeed at all, for hours. Retrying it
+//	                 wastes wall-clock; routing to another agent is the only move that can
+//	                 produce an answer.
+//
+// This is the failure classification that makes a backup chain sane: a backup only helps
+// when the failure is AGENT-SPECIFIC. A quota exhaustion is exactly that. A failing gate
+// is not — hand THAT down a chain of five agents and you get five identical failures.
+func IsQuotaExhausted(body string) bool {
+	lower := strings.ToLower(body)
+	for _, marker := range []string{
+		`"code":"1308"`,   // z.ai: usage limit reached for the N-hour window
+		"usage limit reached",
+		"quota exceeded",
+		"insufficient_quota",
+		"billing_hard_limit_reached",
+		"credit balance is too low",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
