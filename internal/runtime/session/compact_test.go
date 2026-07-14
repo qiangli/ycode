@@ -5,10 +5,10 @@ import (
 )
 
 func TestNeedsCompaction(t *testing.T) {
-	if NeedsCompaction(50_000) {
+	if NeedsCompaction(50_000, ContextBudget{ContextWindow: 200_000, ReservedTokens: 40_000, CompactionThreshold: 100_000, ReservedBuffer: 20_000}) {
 		t.Error("50K tokens should not need compaction")
 	}
-	if !NeedsCompaction(150_000) {
+	if !NeedsCompaction(150_000, ContextBudget{ContextWindow: 200_000, ReservedTokens: 40_000, CompactionThreshold: 100_000, ReservedBuffer: 20_000}) {
 		t.Error("150K tokens should need compaction")
 	}
 }

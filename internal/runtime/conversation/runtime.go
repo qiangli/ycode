@@ -66,6 +66,10 @@ type Runtime struct {
 	// Context budget for history caps and compaction thresholds.
 	contextBudget session.ContextBudget
 
+	// responseTokens is the max_tokens we actually SEND, and the exact amount
+	// contextBudget reserves room for. One number, so the two cannot disagree.
+	responseTokens int
+
 	// Activated deferred tools — tools discovered via ToolSearch that must
 	// be included in subsequent API requests so the provider accepts tool_use calls.
 	// Value is the turn number when the tool was last used/activated.
@@ -152,7 +156,28 @@ func NewRuntime(
 	if cfg.ProviderCapabilities != nil && cfg.ProviderCapabilities.CachingSupported != nil {
 		cachingSupported = *cfg.ProviderCapabilities.CachingSupported
 	}
-	contextBudget := session.ContextBudgetForProvider(caps.MaxContextTokens, cachingSupported)
+	// Two halves of one rule, and they have to agree: ask for a reply that FITS in
+	// this model's window (MaxResponseTokens), and then RESERVE room for exactly that
+	// reply (WithResponseReserve). Reserving for a reply too big to fit is impossible;
+	// asking for one and not reserving for it overflows the window.
+	ceiling := cfg.MaxTokens
+	if ceiling <= 0 || ceiling > MaxOutputTokenCap {
+		ceiling = MaxOutputTokenCap
+	}
+
+	// The window comes from a hardcoded table, which goes stale every time a provider
+	// ships a model. cfg.ContextWindow is the escape hatch — one number, no rebuild.
+	window := caps.MaxContextTokens
+	if cfg.ContextWindow > 0 {
+		window = cfg.ContextWindow
+	}
+
+	baseBudget := session.ContextBudgetForProvider(window, cachingSupported)
+	responseTokens := baseBudget.MaxResponseTokens(ceiling)
+	contextBudget := baseBudget.WithResponseReserve(responseTokens)
+	if cfg.ContextReserved > 0 {
+		contextBudget = contextBudget.WithReserved(cfg.ContextReserved)
+	}
 
 	var distillCfg session.DistillConfig
 	if cachingSupported {
@@ -195,6 +220,7 @@ func NewRuntime(
 		cachingSupported: cachingSupported,
 		contextBaseline:  prompt.NewContextBaseline(),
 		contextBudget:    contextBudget,
+		responseTokens:   responseTokens,
 		distillCfg:       distillCfg,
 		routingCache:     session.NewRoutingCache(),
 		activatedTools:   make(map[string]int),
@@ -453,15 +479,9 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 	promptSpan.End()
 	_ = promptCtx
 
-	// The size of the conversation we are about to send. Content routing reads this
-	// to decide whether there is a context problem worth solving — see
-	// contextUnderPressure and distillResults.
-	r.lastContextChars = 0
-	for _, m := range messages {
-		for _, b := range m.Content {
-			r.lastContextChars += len(b.Text) + len(b.Content)
-		}
-	}
+	// (r.lastContextChars is measured below, once the FULL request exists — it has to
+	// count the system prompt and the tool schemas too, and those are built further
+	// down. See the comment at the assignment.)
 
 	// Pre-activate deferred tools based on intent signals in the user message.
 	// Tier 1a: high-precision keywords. Tier 1b: SearchTools() scoring.
@@ -523,8 +543,12 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 	}
 
 	// Cap output tokens to prevent runaway responses.
-	maxTokens := r.config.MaxTokens
-	if maxTokens <= 0 || maxTokens > MaxOutputTokenCap {
+	// Ask for a reply that FITS. r.responseTokens is the model-aware cap the budget
+	// was built around — using MaxOutputTokenCap here instead would ask for a reply
+	// bigger than the room we reserved for it, which is how a "reserve" becomes a
+	// decoration.
+	maxTokens := r.responseTokens
+	if maxTokens <= 0 {
 		maxTokens = MaxOutputTokenCap
 	}
 
@@ -541,6 +565,16 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		Tools:     toolDefs,
 		Stream:    true,
 	}
+
+	// How full is the window, really? contextUnderPressure and distillResults read
+	// this to decide whether damaging a tool result buys anything.
+	//
+	// Measure the REQUEST, not the message list. The system prompt and the tool
+	// schemas are not free — they ride in every single request and they occupy the
+	// same window the messages do. The old version counted only messages, which
+	// understates pressure by a near-constant amount: largest, proportionally,
+	// exactly when the conversation is smallest.
+	r.lastContextChars = requestChars(req)
 
 	// Track prompt cache fingerprint for hit/miss/break detection.
 	fp := api.Fingerprint(req)
@@ -850,6 +884,11 @@ func (r *Runtime) executeToolsSequential(ctx context.Context, calls []ToolCall, 
 		block := api.ContentBlock{
 			Type:      api.ContentTypeToolResult,
 			ToolUseID: call.ID,
+			// Name is what every downstream policy keys on — ExemptFromMasking, the
+			// routing exemptions, the pressure logic. It was never set here, so
+			// ExemptFromMasking[block.Name] was ALWAYS false and the exemption list
+			// protected nothing. A safety list nobody can match is not a safety list.
+			Name: call.Name,
 		}
 		if err != nil {
 			block.Content = fmt.Sprintf("Error: %v", err)
@@ -906,6 +945,7 @@ func (r *Runtime) executeToolsParallel(ctx context.Context, calls []ToolCall, pr
 		block := api.ContentBlock{
 			Type:      api.ContentTypeToolResult,
 			ToolUseID: calls[i].ID,
+			Name:      calls[i].Name, // see the note at the serial path
 		}
 		if res.Err != nil {
 			block.Content = fmt.Sprintf("Error: %v", res.Err)
@@ -1091,11 +1131,17 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 	// Uses token-budget-based masking: protects newest tool outputs up to a budget,
 	// only masks when prunable tokens exceed a batch threshold.
 	// Non-caching providers use tighter budgets.
-	protectionBudget := session.ToolMaskingProtectionBudget
-	minPrunable := session.ToolMaskingMinPrunable
+	// Derived from THIS model's window, not from an absolute constant. The constants
+	// (50K protect / 30K prunable) exceed the entire usable window of a 32K model, so
+	// nothing could ever be classed prunable and masking silently never ran — the same
+	// dead-mechanism bug as the compaction threshold, in a different file.
+	protectionBudget := r.contextBudget.MaskingProtectionBudget()
+	minPrunable := r.contextBudget.MaskingMinPrunable()
 	if !r.cachingSupported {
-		protectionBudget = protectionBudget * 60 / 100 // 30K for non-caching
-		minPrunable = minPrunable * 60 / 100           // 18K for non-caching
+		// Non-caching providers pay full price for every input token every turn, so
+		// mask sooner: protect less, and act on a smaller pile of prunable results.
+		protectionBudget = protectionBudget * 60 / 100
+		minPrunable = minPrunable * 60 / 100
 	}
 	masked, maskedCount := session.MaskOldObservationsBudget(sessionMsgs, protectionBudget, minPrunable)
 	if maskedCount > 0 {
@@ -1112,13 +1158,13 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 	sessionMsgs = session.MergeAdjacentUserMessages(sessionMsgs)
 	messages = r.sessionMessagesToAPI(sessionMsgs)
 
-	health := session.CheckContextHealth(sessionMsgs)
+	health := session.CheckContextHealth(sessionMsgs, r.contextBudget)
 	r.lastContextHealth = &health
 	r.logger.Info("context health", "tokens", health.EstimatedTokens, "level", health.Level.String())
 
 	// --- Layer 1: Pruning (in-memory tool result trimming) ---
 	if health.NeedsPruning() && !health.NeedsCompactionNow() {
-		pruned, pruneResult := session.PruneMessages(sessionMsgs)
+		pruned, pruneResult := session.PruneMessages(sessionMsgs, r.contextBudget)
 		if pruneResult != nil {
 			r.logger.Info("layer 1: pruned tool results",
 				"soft_trimmed", pruneResult.SoftTrimmed,
@@ -1581,11 +1627,48 @@ func lastUserText(messages []api.Message) string {
 // Context management is a response to a context PROBLEM. Below the soft threshold
 // there is no problem, and saving 800 characters costs the agent its ability to
 // read.
+// requestChars measures everything in the request that occupies the model's context
+// window: the system prompt, the tool schemas, and the messages.
+//
+// The tool schemas matter more than they look. A counting proxy on the wire measured
+// ycode sending ~6.2KB of them on EVERY request — small next to a full conversation,
+// large next to an empty one, and present in both.
+func requestChars(req *api.Request) int {
+	n := len(req.System)
+	for _, t := range req.Tools {
+		n += len(t.Name) + len(t.Description) + len(t.InputSchema)
+	}
+	for _, m := range req.Messages {
+		for _, b := range m.Content {
+			n += len(b.Text) + len(b.Content)
+		}
+	}
+	return n
+}
+
+// The budget is the MODEL'S. The first version of this function was gated on the
+// package-level session.CompactionThreshold — a flat 100_000 — which on a 64K model
+// puts the soft-trim line at 60K tokens against a usable window of 48K. It could
+// never fire. The gate would have said "no pressure" right up to the API error.
+//
+// It gave the right answer on the benchmark for the wrong reason: those runs were
+// short, so "never under pressure" and "not yet under pressure" look identical. A
+// long conversation would have sailed past the window instead of compacting.
 func (r *Runtime) contextUnderPressure() bool {
 	// ~4 chars per token is the usual rule of thumb; the exactness does not matter,
 	// only the order of magnitude — we are distinguishing "the window is basically
 	// empty" from "the window is filling up".
 	const charsPerToken = 4
-	softThresholdTokens := int(float64(session.CompactionThreshold) * session.SoftTrimRatio)
-	return r.lastContextChars/charsPerToken >= softThresholdTokens
+
+	budget := r.contextBudget
+	if budget.CompactionThreshold <= 0 {
+		// An UNSET budget is not a full window. Without this, SoftTrimAt() is 0, the
+		// comparison is `0 >= 0`, and an EMPTY conversation reports pressure — so a
+		// missing budget would silently turn content damage back on for everything.
+		//
+		// Damaging the model's observations is the aggressive act. Do not reach it by
+		// the ABSENCE of a number.
+		budget = session.DefaultContextBudget()
+	}
+	return r.lastContextChars/charsPerToken >= budget.SoftTrimAt()
 }

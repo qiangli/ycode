@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"strings"
 )
 
 const (
@@ -24,6 +25,11 @@ const (
 	ToolMaskingMinPrunable = 30_000
 
 	// maskedPlaceholder replaces old tool results in observation masking (Layer 0).
+	//
+	// It is a PREFIX, not the whole string: maskedFor appends the tool's name and a
+	// recovery instruction. A bare "<MASKED>" tells the model that something it once
+	// saw is gone, but not what it was or how to get it back — which leaves it to
+	// guess, and guessing is what costs turns.
 	maskedPlaceholder = "<MASKED>"
 
 	// SoftTrimRatio is the fraction of CompactionThreshold at which soft trim activates.
@@ -72,11 +78,14 @@ type PruneResult struct {
 //   - Hard clear: replace old tool results with placeholder
 //
 // Recent messages (last RecentMessagesProtected) are never pruned.
-func PruneMessages(messages []ConversationMessage) ([]ConversationMessage, *PruneResult) {
+//
+// The budget is the MODEL'S, not a global constant. That distinction is the whole
+// point of the parameter: see the comment on ContextHealth.Threshold.
+func PruneMessages(messages []ConversationMessage, budget ContextBudget) ([]ConversationMessage, *PruneResult) {
 	totalTokens := estimateAllTokens(messages)
 
-	softThreshold := int(float64(CompactionThreshold) * SoftTrimRatio)
-	hardThreshold := int(float64(CompactionThreshold) * HardClearRatio)
+	softThreshold := budget.SoftTrimAt()
+	hardThreshold := budget.HardClearAt()
 
 	if totalTokens < softThreshold {
 		return messages, nil // No pruning needed.
@@ -192,10 +201,22 @@ func (l ContextLevel) String() string {
 	}
 }
 
-// CheckContextHealth evaluates the context health of a message set.
-func CheckContextHealth(messages []ConversationMessage) ContextHealth {
+// CheckContextHealth evaluates the context health of a message set against the
+// budget of the model the messages are actually going to.
+//
+// It used to divide by the package-level CompactionThreshold — a flat 100_000 —
+// no matter what model was on the other end. ContextBudgetForProvider had already
+// computed the right number and stored it on the Runtime; every consumer reached
+// past it for the constant.
+//
+// On a 64K model that arithmetic is not merely imprecise, it is inert. The usable
+// budget is 48K tokens, and the constant puts soft trim at 60K, hard clear at 80K
+// and compaction at 100K — all three ABOVE the window. Nothing could ever fire.
+// The conversation ran until the API rejected it. Every safety layer in this file
+// was dead code on any model smaller than ~128K.
+func CheckContextHealth(messages []ConversationMessage, budget ContextBudget) ContextHealth {
 	tokens := estimateAllTokens(messages)
-	ratio := float64(tokens) / float64(CompactionThreshold)
+	ratio := float64(tokens) / float64(budget.CompactionThreshold)
 
 	var level ContextLevel
 	switch {
@@ -211,7 +232,7 @@ func CheckContextHealth(messages []ConversationMessage) ContextHealth {
 
 	return ContextHealth{
 		EstimatedTokens: tokens,
-		Threshold:       CompactionThreshold,
+		Threshold:       budget.CompactionThreshold,
 		Ratio:           ratio,
 		Level:           level,
 	}
@@ -232,6 +253,24 @@ func (h ContextHealth) NeedsPruning() bool {
 // NeedsCompactionNow returns true if the context is at or above the compaction threshold.
 func (h ContextHealth) NeedsCompactionNow() bool {
 	return h.Level >= ContextOverflow
+}
+
+// maskedFor renders the placeholder that replaces an old tool observation, naming
+// the tool and saying plainly that the result can be obtained again.
+//
+// The model is not being lied to here: the observation IS gone, and it needs to know
+// both that fact and what to do about it. Dropping content silently is what turns one
+// masked read into six speculative ones.
+func maskedFor(toolName string) string {
+	if toolName == "" {
+		return maskedPlaceholder + " (an older tool result was dropped to free context; re-run the tool if you still need it)"
+	}
+	return maskedPlaceholder + " (the older `" + toolName + "` result was dropped to free context; re-run `" + toolName + "` if you still need it)"
+}
+
+// isMasked reports whether a tool result has already been masked.
+func isMasked(content string) bool {
+	return strings.HasPrefix(content, maskedPlaceholder)
 }
 
 // ExemptFromMasking is the set of tool names whose outputs are always high-signal
@@ -315,8 +354,8 @@ func MaskOldObservationsBudget(messages []ConversationMessage, protectionBudget,
 	for msgIdx, blocks := range isPrunable {
 		for blockIdx := range blocks {
 			block := &masked[msgIdx].Content[blockIdx]
-			if block.Content != maskedPlaceholder && len(block.Content) > len(maskedPlaceholder) {
-				block.Content = maskedPlaceholder
+			if !isMasked(block.Content) {
+				block.Content = maskedFor(block.Name)
 				maskedCount++
 			}
 		}
@@ -364,8 +403,8 @@ func MaskOldObservations(messages []ConversationMessage, window int) ([]Conversa
 			seenFromEnd++
 			if seenFromEnd > window {
 				// This tool result is outside the window — mask it.
-				if masked[i].Content[j].Content != maskedPlaceholder && len(masked[i].Content[j].Content) > len(maskedPlaceholder) {
-					masked[i].Content[j].Content = maskedPlaceholder
+				if !isMasked(masked[i].Content[j].Content) {
+					masked[i].Content[j].Content = maskedFor(masked[i].Content[j].Name)
 					maskedCount++
 				}
 			}

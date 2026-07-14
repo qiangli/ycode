@@ -15,6 +15,26 @@ type Config struct {
 	MaxTokens   int      `json:"maxTokens,omitempty"`
 	Temperature *float64 `json:"temperature,omitempty"`
 
+	// ContextWindow overrides the model's advertised context window, in tokens.
+	//
+	// The window is a property of the MODEL, and ycode looks it up in a hardcoded
+	// table (internal/api/capabilities.go). A table goes stale every time a provider
+	// ships a model — and when it is wrong, every threshold derived from it is wrong,
+	// silently. This is the escape hatch: one number, no rebuild.
+	//
+	// Zero means "use the table".
+	ContextWindow int `json:"contextWindow,omitempty"`
+
+	// ContextReserved overrides how many tokens are held back from the window for the
+	// model's reply plus overhead.
+	//
+	// This is the ONE knob worth exposing, and it is the one opencode exposes
+	// (`compaction.reserved`). The reserve is not a fact about the model — it is a
+	// consequence of the request WE choose to make, so it is ours to set.
+	//
+	// Zero means "derive it from max_tokens", which is the right default.
+	ContextReserved int `json:"contextReserved,omitempty"`
+
 	// Permission mode
 	PermissionMode string `json:"permissionMode,omitempty"`
 

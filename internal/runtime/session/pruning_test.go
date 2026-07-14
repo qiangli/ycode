@@ -11,7 +11,7 @@ func TestPruneMessages_NoOpBelowThreshold(t *testing.T) {
 		{Role: RoleAssistant, Content: []ContentBlock{{Type: ContentTypeText, Text: "hi"}}},
 	}
 
-	pruned, result := PruneMessages(messages)
+	pruned, result := PruneMessages(messages, big200K())
 	if result != nil {
 		t.Error("should return nil result when below threshold")
 	}
@@ -41,7 +41,7 @@ func TestPruneMessages_SoftTrimsLargeToolResults(t *testing.T) {
 		{Role: RoleAssistant, Content: []ContentBlock{{Type: ContentTypeText, Text: "bye"}}},
 	}
 
-	pruned, result := PruneMessages(messages)
+	pruned, result := PruneMessages(messages, big200K())
 	if result == nil {
 		t.Fatal("should have pruned")
 	}
@@ -77,7 +77,7 @@ func TestPruneMessages_ProtectsRecentMessages(t *testing.T) {
 		}
 	}
 
-	pruned, result := PruneMessages(messages)
+	pruned, result := PruneMessages(messages, big200K())
 	if result != nil && (result.SoftTrimmed > 0 || result.HardCleared > 0) {
 		t.Error("should not prune protected recent messages")
 	}
@@ -103,7 +103,7 @@ func TestPruneMessages_DoesNotModifyOriginal(t *testing.T) {
 		{Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeText, Text: "g"}}},
 	}
 
-	PruneMessages(messages)
+	PruneMessages(messages, big200K())
 
 	// Original should be untouched.
 	if messages[0].Content[0].Content != largeContent {
@@ -131,6 +131,18 @@ func TestSoftTrim(t *testing.T) {
 	}
 }
 
+// big200K pins a compaction threshold of exactly 100K — the number the ratio
+// fixtures in this file were written against (60% warn / 80% critical / 100%
+// overflow). These tests are about the RATIO logic, so the threshold is stated
+// outright rather than derived, and stays stable if the derivation changes.
+func big200K() ContextBudget {
+	return ContextBudget{
+		ContextWindow:       200_000,
+		ReservedTokens:      40_000,
+		CompactionThreshold: 100_000,
+	}
+}
+
 func TestCheckContextHealth(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -151,7 +163,11 @@ func TestCheckContextHealth(t *testing.T) {
 				{Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeText, Text: text}}},
 			}
 
-			health := CheckContextHealth(messages)
+			// An explicit 200K-window budget: these cases exercise the RATIO logic
+			// (60% warn / 80% critical / 100% overflow), and the magnitudes were
+			// written against a 100K threshold. The default budget is now the
+			// unknown-model one (32K), which is deliberately much smaller.
+			health := CheckContextHealth(messages, big200K())
 			if health.Level != tt.expected {
 				t.Errorf("expected %s, got %s (tokens=%d, ratio=%.2f)",
 					tt.expected, health.Level, health.EstimatedTokens, health.Ratio)

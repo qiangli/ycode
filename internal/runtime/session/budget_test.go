@@ -16,8 +16,10 @@ func TestContextBudgetForModel(t *testing.T) {
 		{"large 128K", 128_000, 30_000, 49_000},
 		{"claude 200K", 200_000, 40_000, 80_000},
 		{"huge 1M", 1_000_000, 200_000, 400_000},
-		{"zero", 0, 40_000, 100_000}, // defaults
-		{"negative", -1, 40_000, 100_000},
+		// An unknown window is assumed SMALL (UnknownModelContextWindow=32K).
+		// Guessing big is the one that breaks: it packs 100K tokens into an 8K model.
+		{"zero", 0, 8_000, 12_000},
+		{"negative", -1, 8_000, 12_000},
 	}
 
 	for _, tt := range tests {
@@ -56,8 +58,15 @@ func TestContextBudget_Thresholds(t *testing.T) {
 
 func TestDefaultContextBudget(t *testing.T) {
 	b := DefaultContextBudget()
-	if b.CompactionThreshold != CompactionThreshold {
-		t.Errorf("default should match CompactionThreshold constant")
+	// It used to assert the default equals the 100K global constant. That constant is
+	// not a budget — see TestTheGlobalConstantIsNotABudget. What matters about the
+	// default is that it is SMALL (an unknown model is the one you must not guess big
+	// on) and internally consistent.
+	if b.ContextWindow != UnknownModelContextWindow {
+		t.Errorf("default window: got %d, want %d", b.ContextWindow, UnknownModelContextWindow)
+	}
+	if b.CompactionThreshold >= b.EffectiveMax() {
+		t.Errorf("default compaction (%d) is outside its own usable window (%d)", b.CompactionThreshold, b.EffectiveMax())
 	}
 	if b.MaxChatHistoryTokens <= 0 {
 		t.Errorf("MaxChatHistoryTokens should be > 0, got %d", b.MaxChatHistoryTokens)
