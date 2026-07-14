@@ -35,6 +35,8 @@ func DetectProviderFromModel(model string) string {
 		return "moonshot"
 	case strings.HasPrefix(lower, "deepseek"):
 		return "deepseek"
+	case strings.HasPrefix(lower, "glm"):
+		return "zai"
 	default:
 		return "unknown"
 	}
@@ -58,6 +60,8 @@ func providerEnvKey(provider string) string {
 		return "MOONSHOT_API_KEY (or KIMI_API_KEY)"
 	case "deepseek":
 		return "DEEPSEEK_API_KEY"
+	case "zai":
+		return "ZAI_API_KEY (or GLM_API_KEY)"
 	default:
 		return ""
 	}
@@ -110,6 +114,14 @@ var envKeyModels = []struct {
 		"deepseek-reasoner",
 		"deepseek-v4-flash",
 		"deepseek-v4-pro",
+	}},
+	// z.ai (Zhipu) GLM. The CODING PLAN endpoint is /api/coding/paas/v4 — a different
+	// path from the general /api/paas/v4, and a coding key is rejected by the latter.
+	{"ZAI_API_KEY", "zai", []string{
+		"glm-4.6",
+	}},
+	{"GLM_API_KEY", "zai", []string{
+		"glm-4.6",
 	}},
 }
 

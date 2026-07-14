@@ -21,6 +21,7 @@ var ModelAliases = map[string]string{
 	"deepseek-r1":    "deepseek-reasoner",
 	"deepseek-flash": "deepseek-v4-flash",
 	"deepseek-pro":   "deepseek-v4-pro",
+	"glm":            "glm-4.6",
 }
 
 // ProviderConfig holds provider-specific settings for client creation.
@@ -203,6 +204,14 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 			BaseURL:     envNonEmpty("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
 		}, nil
 	}
+	if key := zaiKey(); key != "" {
+		return &ProviderConfig{
+			Kind:        ProviderOpenAI,
+			DisplayName: "zai",
+			APIKey:      key,
+			BaseURL:     envNonEmpty("ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4"),
+		}, nil
+	}
 	if key := envNonEmpty("GOOGLE_API_KEY"); key != "" {
 		return &ProviderConfig{
 			Kind:        ProviderGemini,
@@ -229,7 +238,7 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 		}, nil
 	}
 
-	return nil, fmt.Errorf("no API key found; set one of: DHNT_BASE_URL (+ DHNT_API_KEY), ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, DEEPSEEK_API_KEY\nor run: ycode login")
+	return nil, fmt.Errorf("no API key found; set one of: DHNT_BASE_URL (+ DHNT_API_KEY), ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, DEEPSEEK_API_KEY, ZAI_API_KEY\nor run: ycode login")
 }
 
 // NewProvider creates a Provider from a ProviderConfig.
@@ -295,6 +304,25 @@ func detectFromModel(model string) (*ProviderConfig, bool) {
 				DisplayName: "xai",
 				APIKey:      key,
 				BaseURL:     envNonEmpty("XAI_BASE_URL", "https://api.x.ai/v1"),
+			}, true
+		}
+		return nil, true
+	case strings.HasPrefix(lower, "glm") || strings.HasPrefix(lower, "zai/"):
+		// NOTE: envNonEmpty(a, b) does NOT mean "try a then b" — the second argument is
+		// a literal DEFAULT VALUE. Calling envNonEmpty("ZAI_API_KEY", "GLM_API_KEY")
+		// would send the literal string "GLM_API_KEY" as the bearer token whenever
+		// ZAI_API_KEY was unset: a silent auth failure that reads as a broken model.
+		// Look each one up properly, as moonshot/kimi do.
+		if key := zaiKey(); key != "" {
+			return &ProviderConfig{
+				Kind:        ProviderOpenAI,
+				DisplayName: "zai",
+				APIKey:      key,
+				// The CODING PLAN endpoint. Note the path: /api/coding/paas/v4, NOT the
+				// general /api/paas/v4. A coding-plan key against the general endpoint
+				// is rejected, and the two differ only by a path segment — exactly the
+				// kind of near-miss that reads as "the model is broken".
+				BaseURL: envNonEmpty("ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4"),
 			}, true
 		}
 		return nil, true
@@ -392,6 +420,18 @@ func resolveOAuthToken() (string, error) {
 
 // envNonEmpty returns the value of the first env var that is set and non-empty.
 // If defaults are provided, the first one is returned when no env var matches.
+// zaiKey resolves the z.ai (GLM) key from either accepted env var.
+//
+// Deliberately not envNonEmpty("ZAI_API_KEY", "GLM_API_KEY") — see the note in
+// detectFromModel: that helper treats its second argument as a literal DEFAULT, so it
+// would happily hand the string "GLM_API_KEY" to the API as a bearer token.
+func zaiKey() string {
+	if v := os.Getenv("ZAI_API_KEY"); v != "" {
+		return v
+	}
+	return os.Getenv("GLM_API_KEY")
+}
+
 func envNonEmpty(keys ...string) string {
 	if len(keys) == 0 {
 		return ""

@@ -86,6 +86,11 @@ func openaiCapabilities(model string) ProviderCapabilities {
 		caps.MaxContextTokens = 128_000
 	case strings.Contains(lower, "o3"), strings.Contains(lower, "o4"):
 		caps.MaxContextTokens = 200_000
+	case strings.Contains(lower, "glm"):
+		// GLM-4.6: 200K context, 128K max output (docs.z.ai/guides/llm/glm-4.6).
+		// Verified against the vendor docs, not recalled — the window drives every
+		// context threshold now, so a wrong number here is a wrong number everywhere.
+		caps.MaxContextTokens = 200_000
 	case strings.Contains(lower, "deepseek"):
 		caps.MaxContextTokens = 128_000
 	default:
