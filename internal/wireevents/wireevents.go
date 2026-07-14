@@ -30,6 +30,20 @@
 // cannot drift apart again — which is exactly what happened when each path was
 // allowed to name things for itself.
 //
+// # Where this does NOT reach, stated plainly
+//
+// SERVER MODE. When `ycode serve` is running, the TUI becomes a thin client and
+// the agent loop runs in the SERVER process — which never sees the client's
+// --events flag. So an orchestrator that starts a server first gets no wire.
+//
+// This is a real gap and it is left open rather than papered over. I wrote a bus
+// bridge for it (subscribe to the internal bus, translate, write the wire), got it
+// building, and then deleted it: it hung off the CLIENT's App, so it would have
+// subscribed to the client's bus, which carries nothing. It compiled, it read like
+// a feature, and it did nothing — which is the exact failure this file exists to
+// stop. Closing this properly means a sink on the SERVER side, and that is a
+// different design, not a missing call.
+//
 // # What turn.end is for
 //
 // It is the thing an orchestrator cannot get from any third-party CLI: a turn's

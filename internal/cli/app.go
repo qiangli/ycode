@@ -17,7 +17,6 @@ import (
 	"google.golang.org/grpc/grpclog"
 
 	"github.com/qiangli/ycode/internal/api"
-	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/runtime/agentdef"
 	"github.com/qiangli/ycode/internal/runtime/agentpool"
@@ -125,9 +124,8 @@ type App struct {
 	turnIndex int // monotonically increasing turn counter for OTEL
 
 	// NDJSON event log sink (optional).
-	eventsSink   *wireevents.Writer
-	eventsBridge *wireevents.Bridge
-	inTurn       bool // a user turn is in flight; an LLM round-trip is NOT a turn
+	eventsSink *wireevents.Writer
+	inTurn     bool // a user turn is in flight; an LLM round-trip is NOT a turn
 
 	// Cleanup functions called on Close (OTEL shutdown, context cancel, etc.).
 	cleanupFuncs []func()
@@ -397,20 +395,6 @@ func (a *App) SetEventsFile(path string) error {
 	}
 	a.eventsSink = w
 	return nil
-}
-
-// StartEventBridge pipes the internal bus onto the external wire, so the TUI
-// emits the same three events the one-shot path does.
-//
-// The TUI runs its agent loop through the service layer, which publishes to the
-// bus — and nothing was listening. This is what an orchestrator launches when it
-// wants a session it can steer, so it is precisely the path that most needed to
-// report its turn boundaries, and precisely the one that did not.
-func (a *App) StartEventBridge(b bus.Bus) {
-	if a.eventsSink == nil || b == nil {
-		return
-	}
-	a.eventsBridge = wireevents.StartBridge(b, a.eventsSink)
 }
 
 func (a *App) emitEvent(typ string, data any) {
