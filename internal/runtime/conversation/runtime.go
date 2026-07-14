@@ -66,6 +66,23 @@ type Runtime struct {
 	// contextBudget reserves room for. One number, so the two cannot disagree.
 	responseTokens int
 
+	// What the PROVIDER said the last request cost, and how many messages were in
+	// flight when it said it.
+	//
+	// This is held here, in memory, rather than recovered from the message list —
+	// because it CANNOT be recovered from the message list. TurnWithRecovery is handed
+	// []api.Message, and api.Message is {Role, Content}: it has no Usage field and never
+	// did. So apiMessagesToSession could not populate ConversationMessage.Usage no
+	// matter what was persisted, MeasureTokens read nil on every single turn, and the
+	// context gate fell back to the 4-chars-per-token estimator — silently, forever.
+	//
+	// I built a mechanism to stop guessing and then fed it a type that cannot carry the
+	// answer. The log said `from_provider=false` on every turn and I had to be looking
+	// at it to notice. Which is the whole argument for printing the provenance of a
+	// number next to the number.
+	lastReportedTokens int
+	lastReportedAtMsgs int
+
 	// Activated deferred tools — tools discovered via ToolSearch that must
 	// be included in subsequent API requests so the provider accepts tool_use calls.
 	// Value is the turn number when the tool was last used/activated.
@@ -219,6 +236,12 @@ func NewRuntime(
 	registry.SetFileAccessHook(func(path string) {
 		jit.OnToolAccess(path)
 	})
+
+	// A RESUMED session already knows what it cost — recover it, or the first request
+	// after a resume is unmeasured and a large history sails into the window.
+	if sess != nil {
+		r.seedReportedTokens(sess.Messages)
+	}
 
 	return r
 }
@@ -732,6 +755,18 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		r.promptCtx.Diagnostics.RecentAnswer = ""
 	}
 
+	// Remember what the provider said this request cost. This is the number the whole
+	// context layer runs on — see MeasureTokens.
+	//
+	// Anthropic reports input_tokens and cache_read_input_tokens separately, so summing
+	// is correct; the OpenAI-compatible path leaves the cache fields at zero, so it
+	// cannot double-count either.
+	if total := result.Usage.InputTokens + result.Usage.OutputTokens +
+		result.Usage.CacheReadInput + result.Usage.CacheCreationInput; total > 0 {
+		r.lastReportedTokens = total
+		r.lastReportedAtMsgs = len(messages)
+	}
+
 	return result, nil
 }
 
@@ -1095,7 +1130,7 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 	// the first request after a resume has no count, "nothing to compact" is the answer,
 	// and the request blows the window — a success state reached by the ABSENCE of a
 	// measurement.
-	used := session.MeasureTokens(sessionMsgs)
+	used := r.measureTokens(sessionMsgs)
 	r.logger.Info("context",
 		"reported_tokens", used.Reported,
 		"unreported_estimate", used.Unreported,
@@ -1639,4 +1674,55 @@ func (r *Runtime) contextUnderPressure() bool {
 		budget = session.DefaultContextBudget()
 	}
 	return r.lastContextChars/charsPerToken >= budget.SoftTrimAt()
+}
+
+// measureTokens reports how full the window is, using what the PROVIDER said the last
+// request cost plus an estimate of only what has been appended since.
+//
+// The count is held on the Runtime, not read back out of the message list, because it
+// CANNOT be read out of the message list: TurnWithRecovery is handed []api.Message, and
+// api.Message is {Role, Content}. It has no Usage field and never had one. So
+// session.MeasureTokens read nil on every turn, `from_provider=false` on every line of
+// the log, and the gate quietly fell back to the 4-chars-per-token estimator it was
+// built to replace.
+//
+// I built the mechanism to stop guessing and then fed it a type that cannot carry the
+// answer. It took a log line that PRINTS THE PROVENANCE of the number — from_provider —
+// to see it. A number without its provenance would have looked perfectly healthy.
+func (r *Runtime) measureTokens(msgs []session.ConversationMessage) session.TokensUsed {
+	if r.lastReportedTokens <= 0 {
+		// No response has come back yet. Estimate the lot — it is all we have, and a
+		// conversation with no assistant turn in it is small. (A RESUMED session is
+		// seeded from its persisted usage at construction; see seedReportedTokens.)
+		return session.MeasureTokens(msgs)
+	}
+
+	// Everything up to the message count that produced the last report is exactly
+	// accounted for by that report. Estimate only the tail appended since.
+	unreported := 0
+	if r.lastReportedAtMsgs < len(msgs) {
+		for _, m := range msgs[r.lastReportedAtMsgs:] {
+			unreported += session.EstimateMessageTokens(m)
+		}
+	}
+	return session.TokensUsed{
+		Reported:   r.lastReportedTokens,
+		Unreported: unreported,
+		HasReport:  true,
+	}
+}
+
+// seedReportedTokens recovers the provider's count for a RESUMED conversation.
+//
+// Usage IS persisted per message (ConversationMessage.Usage), so a session loaded from
+// disk still knows what it cost. Without this, the first request after a resume would
+// have no count, "nothing to compact" would be the answer, and a 95k-token history
+// would sail straight into the window — a success state reached by the ABSENCE of a
+// measurement.
+func (r *Runtime) seedReportedTokens(msgs []session.ConversationMessage) {
+	used := session.MeasureTokens(msgs)
+	if used.HasReport {
+		r.lastReportedTokens = used.Reported
+		r.lastReportedAtMsgs = len(msgs)
+	}
 }

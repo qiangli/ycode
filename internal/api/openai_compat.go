@@ -394,23 +394,37 @@ func (c *OpenAICompatClient) readStream(body io.Reader, events chan<- *StreamEve
 			continue
 		}
 
-		// Handle usage data from final chunk (when choices is empty but usage is present).
-		if chunk.Usage != nil && len(chunk.Choices) == 0 {
-			// Emit message_start with usage for input tokens.
-			inputTokens := chunk.Usage.InputTokens + chunk.Usage.PromptTokens
-			if inputTokens > 0 {
+		// Take usage from ANY chunk that carries it — not only from a choices-empty one.
+		//
+		// There are two shapes in the wild, and both are legal:
+		//
+		//   OpenAI/deepseek: a trailing chunk with "choices":[] and the usage block
+		//   z.ai (GLM):      usage bundled INTO the last content chunk, which still
+		//                    carries a choice (finish_reason:"length"/"stop")
+		//
+		// This branch used to require len(chunk.Choices) == 0, so it silently dropped
+		// z.ai's usage on the floor and every GLM request reported ZERO tokens in and
+		// ZERO tokens out. Cost tracking said $0.0000, the session index said nothing
+		// was spent, and — since the context layer now gates compaction on the token
+		// count the PROVIDER reports — the whole "ask the artifact, do not guess"
+		// mechanism fell back to the 4-chars-per-token estimator without a word.
+		//
+		// A parser that accepts one vendor's framing and silently discards another's is
+		// not strict; it is wrong for everyone it does not recognise. Read the usage
+		// wherever it appears, and let the choices loop below run as normal.
+		if chunk.Usage != nil {
+			if inputTokens := chunk.Usage.InputTokens + chunk.Usage.PromptTokens; inputTokens > 0 {
 				events <- &StreamEvent{
 					Type: "message_start",
 					Message: &Response{
 						Usage: Usage{
-							InputTokens: inputTokens,
+							InputTokens:    inputTokens,
+							CacheReadInput: chunk.Usage.CacheReadInput,
 						},
 					},
 				}
 			}
-			// Emit message_delta with usage for output tokens.
-			outputTokens := chunk.Usage.OutputTokens + chunk.Usage.CompletionTokens
-			if outputTokens > 0 {
+			if outputTokens := chunk.Usage.OutputTokens + chunk.Usage.CompletionTokens; outputTokens > 0 {
 				events <- &StreamEvent{
 					Type: "message_delta",
 					Usage: &Usage{
@@ -418,7 +432,8 @@ func (c *OpenAICompatClient) readStream(body io.Reader, events chan<- *StreamEve
 					},
 				}
 			}
-			continue
+			// NOTE: no `continue` here. z.ai's usage chunk ALSO carries the final choice
+			// (finish_reason), and skipping it would drop the stop reason on the floor.
 		}
 
 		for _, choice := range chunk.Choices {
