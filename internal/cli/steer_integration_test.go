@@ -16,15 +16,15 @@ import (
 // the mock LLM's scripted response.
 const steerMarker = "ycode-steer-integration-please"
 
-// TestPTY_MidTurnSteer is a regression test for Gate 5: ycode running under a
-// PTY must accept supplementary input ("steer" text) while a turn is actively
+// TestTUIModel_MidTurnSteer is a regression test for Gate 5: the ycode TUI
+// model must accept supplementary input ("steer" text) while a turn is actively
 // streaming, and must process it rather than dropping it on the floor.
 //
-// The test drives the ycode TUI inside a real pseudo-terminal via teatest,
+// The test drives the ycode TUI model via teatest (Bubble Tea test harness),
 // simulates an in-flight streaming LLM response, injects steer text while the
-// TUI is in the WORKING state, and verifies that the TUI acknowledges the
+// TUI model is in the WORKING state, and verifies that the TUI acknowledges the
 // steer and forwards it to the mid-turn channel.
-func TestPTY_MidTurnSteer(t *testing.T) {
+func TestTUIModel_MidTurnSteer(t *testing.T) {
 	app := newTestApp(t)
 	m := NewTUIModel(app)
 
