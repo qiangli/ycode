@@ -61,112 +61,6 @@ func TestAcceptance(t *testing.T) {
 		}
 	})
 
-	t.Run("EventsFile", func(t *testing.T) {
-		bin := binaryPath()
-		if bin == "" {
-			t.Skip("ycode binary not found")
-		}
-		if !isLocal(t) {
-			t.Skip("CLI tests only run locally")
-		}
-		if os.Getenv("ANTHROPIC_API_KEY") == "" && os.Getenv("OPENAI_API_KEY") == "" {
-			t.Skip("no API key available (set ANTHROPIC_API_KEY or OPENAI_API_KEY)")
-		}
-
-		dir := t.TempDir()
-		eventsPath := filepath.Join(dir, "events.jsonl")
-
-		cmd := exec.Command(bin, "--no-otel", "--print", "--events", eventsPath)
-		cmd.Stdin = strings.NewReader("What is 2+2?")
-		cmd.Dir = dir
-
-		stdoutPipe, err := cmd.StdoutPipe()
-		if err != nil {
-			t.Fatalf("stdout pipe: %v", err)
-		}
-
-		if err := cmd.Start(); err != nil {
-			t.Fatalf("start: %v", err)
-		}
-
-		done := make(chan struct{})
-		var stdoutBytes []byte
-		go func() {
-			stdoutBytes, _ = io.ReadAll(stdoutPipe)
-			close(done)
-		}()
-
-		waitDone := make(chan error, 1)
-		go func() {
-			waitDone <- cmd.Wait()
-		}()
-
-		select {
-		case <-done:
-		case <-time.After(60 * time.Second):
-			cmd.Process.Kill()
-			t.Fatal("events file prompt timed out after 60s")
-		}
-
-		select {
-		case cmdErr := <-waitDone:
-			if cmdErr != nil {
-				t.Fatalf("events file prompt failed: %v\nstdout: %s", cmdErr, stdoutBytes)
-			}
-		case <-time.After(5 * time.Second):
-			cmd.Process.Kill()
-			t.Fatal("process wait timed out")
-		}
-
-		eventsData, err := os.ReadFile(eventsPath)
-		if err != nil {
-			t.Fatalf("read events file: %v", err)
-		}
-
-		eventsContent := strings.TrimSpace(string(eventsData))
-		if eventsContent == "" {
-			t.Fatal("events file is empty")
-		}
-
-		lines := strings.Split(eventsContent, "\n")
-		hasTurnStart := false
-		var turnEndText string
-		for _, line := range lines {
-			var event struct {
-				Type string          `json:"type"`
-				Data json.RawMessage `json:"data"`
-			}
-			if err := json.Unmarshal([]byte(line), &event); err != nil {
-				t.Fatalf("invalid JSON in events file: %v\nline: %s", err, line)
-			}
-			if event.Type == "turn.start" {
-				hasTurnStart = true
-			}
-			if event.Type == "turn.end" {
-				var data struct {
-					Text string `json:"text"`
-				}
-				if err := json.Unmarshal(event.Data, &data); err != nil {
-					t.Fatalf("invalid turn.end data: %v", err)
-				}
-				turnEndText = data.Text
-			}
-		}
-
-		if !hasTurnStart {
-			t.Error("events file does not contain turn.start event")
-		}
-
-		if turnEndText == "" {
-			t.Fatal("events file does not contain turn.end event")
-		}
-
-		stdoutStr := strings.TrimSpace(string(stdoutBytes))
-		if turnEndText != stdoutStr {
-			t.Errorf("turn.end.data.text does not match stdout\nturn.end.text: %q\nstdout: %q", turnEndText, stdoutStr)
-		}
-	})
-
 	t.Run("ServeStatusSubcommand", func(t *testing.T) {
 		bin := binaryPath()
 		if bin == "" {
@@ -327,4 +221,149 @@ func TestGate2FailureIsLoud(t *testing.T) {
 			t.Errorf("expected diagnostic stderr for bad API key, got: %s", out)
 		}
 	})
+}
+
+// TestEventsFile is the Gate 3 acceptance test: --events must emit the turn
+// lifecycle, and turn.end.text must equal what --print wrote to stdout.
+//
+// IT LIVES OUTSIDE TestAcceptance ON PURPOSE. It used to be a subtest of it, and
+// TestAcceptance opens with requireConnectivity() — which skips unless a WEB
+// SERVER is deployed and answering /healthz. This is a CLI test. It spawns a
+// binary and reads a file; it has no more use for a web server than it has for a
+// printer.
+//
+// So the gate that proves the event channel works was silently skipping on every
+// machine that had not run `make deploy`. It reported `ok`. A SKIP IS NOT A PASS:
+// a test that can quietly not run cannot gate anything, and one that reports `ok`
+// while not running is worse than no test, because it occupies the space where a
+// real one would go.
+func TestEventsFile(t *testing.T) {
+	// The ONE precondition this test may skip on: it calls a real model, so it
+	// needs a real key. Nothing else.
+	//
+	// It is a narrow, named, honest skip — not the one it used to inherit, which
+	// was `requireConnectivity`: a check that a WEB SERVER was deployed and
+	// answering /healthz. This test spawns a binary and reads a file. It has no
+	// more use for a web server than it has for a printer, and it was silently
+	// skipping on every machine that had not run `make deploy` — while reporting
+	// `ok`.
+	if os.Getenv("DEEPSEEK_API_KEY") == "" && os.Getenv("MOONSHOT_API_KEY") == "" &&
+		os.Getenv("ANTHROPIC_API_KEY") == "" && os.Getenv("OPENAI_API_KEY") == "" {
+		t.Skip("no API key (set DEEPSEEK_API_KEY / MOONSHOT_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY)")
+	}
+
+	bin := binaryPath()
+	if bin == "" {
+		t.Skip("ycode binary not found")
+	}
+	if !isLocal(t) {
+		t.Skip("CLI tests only run locally")
+	}
+	if os.Getenv("ANTHROPIC_API_KEY") == "" && os.Getenv("OPENAI_API_KEY") == "" {
+		t.Skip("no API key available (set ANTHROPIC_API_KEY or OPENAI_API_KEY)")
+	}
+
+	dir := t.TempDir()
+	eventsPath := filepath.Join(dir, "events.jsonl")
+
+	// Name the model. Without it the root command falls back to a default that the
+	// configured provider may not serve at all — which is how this test failed the
+	// moment it was allowed to actually run: exit 1, "invalid_request_error:
+	// model_not_found". The HARNESS was behaving correctly (a loud, non-zero
+	// failure with a diagnostic is Gate 2 working); the test was asking for a model
+	// nobody had.
+	model := os.Getenv("YCODE_TEST_MODEL")
+	if model == "" {
+		model = "deepseek-v4-pro"
+	}
+
+	cmd := exec.Command(bin, "--no-otel", "--print", "--model", model, "--events", eventsPath)
+	cmd.Stdin = strings.NewReader("What is 2+2?")
+	cmd.Dir = dir
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	done := make(chan struct{})
+	var stdoutBytes []byte
+	go func() {
+		stdoutBytes, _ = io.ReadAll(stdoutPipe)
+		close(done)
+	}()
+
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- cmd.Wait()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(60 * time.Second):
+		cmd.Process.Kill()
+		t.Fatal("events file prompt timed out after 60s")
+	}
+
+	select {
+	case cmdErr := <-waitDone:
+		if cmdErr != nil {
+			t.Fatalf("events file prompt failed: %v\nstdout: %s", cmdErr, stdoutBytes)
+		}
+	case <-time.After(5 * time.Second):
+		cmd.Process.Kill()
+		t.Fatal("process wait timed out")
+	}
+
+	eventsData, err := os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatalf("read events file: %v", err)
+	}
+
+	eventsContent := strings.TrimSpace(string(eventsData))
+	if eventsContent == "" {
+		t.Fatal("events file is empty")
+	}
+
+	lines := strings.Split(eventsContent, "\n")
+	hasTurnStart := false
+	var turnEndText string
+	for _, line := range lines {
+		var event struct {
+			Type string          `json:"type"`
+			Data json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("invalid JSON in events file: %v\nline: %s", err, line)
+		}
+		if event.Type == "turn.start" {
+			hasTurnStart = true
+		}
+		if event.Type == "turn.end" {
+			var data struct {
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal(event.Data, &data); err != nil {
+				t.Fatalf("invalid turn.end data: %v", err)
+			}
+			turnEndText = data.Text
+		}
+	}
+
+	if !hasTurnStart {
+		t.Error("events file does not contain turn.start event")
+	}
+
+	if turnEndText == "" {
+		t.Fatal("events file does not contain turn.end event")
+	}
+
+	stdoutStr := strings.TrimSpace(string(stdoutBytes))
+	if turnEndText != stdoutStr {
+		t.Errorf("turn.end.data.text does not match stdout\nturn.end.text: %q\nstdout: %q", turnEndText, stdoutStr)
+	}
 }
