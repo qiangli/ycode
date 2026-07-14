@@ -55,7 +55,7 @@ type toolCallEntry struct {
 	DurationMs int64  `json:"duration_ms"`
 }
 
-func handleQueryLogs(_ context.Context, input json.RawMessage) (string, error) {
+func handleQueryLogs(ctx context.Context, input json.RawMessage) (string, error) {
 	if otelDataDir == "" {
 		return "", fmt.Errorf("OTEL data directory not configured")
 	}
@@ -71,15 +71,29 @@ func handleQueryLogs(_ context.Context, input json.RawMessage) (string, error) {
 		params.Limit = 100
 	}
 
+	// Conversation logs are ycode-only: no other service writes them, so unlike traces the
+	// local files are COMPLETE, not a fragment. The banner says so rather than warning about
+	// missing cross-service data that, here, does not exist.
+	banner := "source: ycode conversation logs (complete — only ycode writes these)"
+	if _, up, _ := telemetryStore(ctx); up {
+		banner = "source: ycode conversation logs (complete — only ycode writes these; also mirrored to the telemetry store)"
+	}
+	withSource := func(out string, err error) (string, error) {
+		if err != nil {
+			return "", err
+		}
+		return banner + "\n\n" + out, nil
+	}
+
 	switch params.QueryType {
 	case "recent_turns":
-		return queryRecentTurns(params)
+		return withSource(queryRecentTurns(params))
 	case "turn_errors":
-		return queryTurnErrors(params)
+		return withSource(queryTurnErrors(params))
 	case "search":
-		return querySearchLogs(params)
+		return withSource(querySearchLogs(params))
 	case "cost_summary":
-		return queryCostSummary(params)
+		return withSource(queryCostSummary(params))
 	default:
 		return "", fmt.Errorf("unknown query_type: %q (valid: recent_turns, turn_errors, search, cost_summary)", params.QueryType)
 	}

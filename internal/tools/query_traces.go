@@ -90,9 +90,11 @@ func (s *traceSpan) isError() bool {
 	return s.Status.Code == "Error" || s.Status.Code == "STATUS_CODE_ERROR"
 }
 
-func handleQueryTraces(_ context.Context, input json.RawMessage) (string, error) {
-	if otelDataDir == "" {
-		return "", fmt.Errorf("OTEL data directory not configured")
+func handleQueryTraces(ctx context.Context, input json.RawMessage) (string, error) {
+	// The store is enough on its own. Requiring a local data dir would refuse to answer from
+	// the RICHER source because the poorer one was missing.
+	if _, up, why := telemetryStore(ctx); !up && otelDataDir == "" {
+		return "", fmt.Errorf("no telemetry available: %s, and no local OTEL data directory is configured", why)
 	}
 
 	var params queryTracesInput
@@ -106,23 +108,50 @@ func handleQueryTraces(_ context.Context, input json.RawMessage) (string, error)
 		params.Limit = 100
 	}
 
+	// Every answer carries WHERE IT CAME FROM. A result that does not say whether it read the
+	// store or only ycode's own files lets an empty answer read as "nothing happened" when it
+	// means "nobody looked at the place the answer was."
+	banner := sourceOf(ctx).Banner()
+	withSource := func(out string, err error) (string, error) {
+		if err != nil {
+			return "", err
+		}
+		return banner + "\n\n" + out, nil
+	}
+
 	switch params.QueryType {
 	case "recent_spans":
-		return queryRecentSpans(params)
+		return withSource(queryRecentSpans(ctx, params))
 	case "slow_spans":
-		return querySlowSpans(params)
+		return withSource(querySlowSpans(ctx, params))
 	case "error_spans":
-		return queryErrorSpans(params)
+		return withSource(queryErrorSpans(ctx, params))
 	case "summary":
-		return queryTraceSummary(params)
+		return withSource(queryTraceSummary(ctx, params))
 	default:
 		return "", fmt.Errorf("unknown query_type: %q (valid: recent_spans, slow_spans, error_spans, summary)", params.QueryType)
 	}
 }
 
-// loadSpans reads JSONL trace files from the data directory.
+// loadSpans returns spans, preferring the TELEMETRY STORE over ycode's local JSONL.
+//
+// The store holds every service's spans and can assemble a trace that crosses processes. The
+// JSONL files hold ycode's own spans and structurally cannot -- a file is written by one
+// process. When both exist, reading the files instead would answer a cross-service question
+// with a single-process fragment, and say nothing about the difference.
+//
+// The local files remain the fallback, so an agent with no stack running still gets its own
+// spans (local-first). The caller announces WHICH was used; see sourceOf/Banner.
+func loadSpans(ctx context.Context, sessionFilter string, maxFiles int) ([]traceSpan, error) {
+	if _, up, _ := telemetryStore(ctx); up {
+		return storeSpans(ctx, sessionFilter, 1000)
+	}
+	return loadSpansFromFiles(sessionFilter, maxFiles)
+}
+
+// loadSpansFromFiles reads JSONL trace files from the data directory.
 // It searches both the shared traces dir and per-instance dirs.
-func loadSpans(sessionFilter string, maxFiles int) ([]traceSpan, error) {
+func loadSpansFromFiles(sessionFilter string, maxFiles int) ([]traceSpan, error) {
 	var paths []string
 
 	// Shared traces dir.
@@ -191,8 +220,8 @@ func parseTraceFile(path string) ([]traceSpan, error) {
 	return spans, scanner.Err()
 }
 
-func queryRecentSpans(p queryTracesInput) (string, error) {
-	spans, err := loadSpans(p.SessionID, 3)
+func queryRecentSpans(ctx context.Context, p queryTracesInput) (string, error) {
+	spans, err := loadSpans(ctx, p.SessionID, 3)
 	if err != nil {
 		return "", err
 	}
@@ -221,13 +250,13 @@ func queryRecentSpans(p queryTracesInput) (string, error) {
 	return b.String(), nil
 }
 
-func querySlowSpans(p queryTracesInput) (string, error) {
+func querySlowSpans(ctx context.Context, p queryTracesInput) (string, error) {
 	threshold := int64(p.ThresholdMs)
 	if threshold <= 0 {
 		threshold = 5000
 	}
 
-	spans, err := loadSpans(p.SessionID, 3)
+	spans, err := loadSpans(ctx, p.SessionID, 3)
 	if err != nil {
 		return "", err
 	}
@@ -261,8 +290,8 @@ func querySlowSpans(p queryTracesInput) (string, error) {
 	return b.String(), nil
 }
 
-func queryErrorSpans(p queryTracesInput) (string, error) {
-	spans, err := loadSpans(p.SessionID, 3)
+func queryErrorSpans(ctx context.Context, p queryTracesInput) (string, error) {
+	spans, err := loadSpans(ctx, p.SessionID, 3)
 	if err != nil {
 		return "", err
 	}
@@ -296,8 +325,8 @@ func queryErrorSpans(p queryTracesInput) (string, error) {
 	return b.String(), nil
 }
 
-func queryTraceSummary(p queryTracesInput) (string, error) {
-	spans, err := loadSpans(p.SessionID, 5)
+func queryTraceSummary(ctx context.Context, p queryTracesInput) (string, error) {
+	spans, err := loadSpans(ctx, p.SessionID, 5)
 	if err != nil {
 		return "", err
 	}
