@@ -1,6 +1,6 @@
 module github.com/qiangli/ycode
 
-go 1.26.4
+go 1.26.5
 
 replace mvdan.cc/sh/v3 => ../sh
 
