@@ -33,6 +33,11 @@ const MaxOutputTokenCap = 32_000
 
 // Runtime manages the conversation turn loop.
 type Runtime struct {
+	// lastContextChars is the size of the conversation as of the current turn.
+	// Content routing consults it so that it only mutilates a tool result when the
+	// window is ACTUALLY under pressure — see contextUnderPressure.
+	lastContextChars int
+
 	// preActivatedFor is the user message we last ran tool preactivation for.
 	// The agentic loop re-enters Turn() once per LLM round-trip with the SAME user
 	// message (only tool results are appended), and preactivation was re-deriving
@@ -447,6 +452,16 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 	promptSpan.SetAttributes(attribute.Int("system_prompt.size", len(systemPrompt)))
 	promptSpan.End()
 	_ = promptCtx
+
+	// The size of the conversation we are about to send. Content routing reads this
+	// to decide whether there is a context problem worth solving — see
+	// contextUnderPressure and distillResults.
+	r.lastContextChars = 0
+	for _, m := range messages {
+		for _, b := range m.Content {
+			r.lastContextChars += len(b.Text) + len(b.Content)
+		}
+	}
 
 	// Pre-activate deferred tools based on intent signals in the user message.
 	// Tier 1a: high-precision keywords. Tier 1b: SearchTools() scoring.
@@ -928,6 +943,32 @@ func (r *Runtime) distillResults(calls []ToolCall, results []api.ContentBlock) [
 		}
 
 		before := len(results[i].Content)
+
+		// DO NOT MANAGE A CONTEXT PROBLEM YOU DO NOT HAVE.
+		//
+		// Content routing exists to survive a full context window. It was running
+		// UNCONDITIONALLY — on turn 1 of an empty conversation, against a 64K-token
+		// window with ~600 tokens used. A read_file result over 2000 characters was
+		// classified RoutePartial, which keeps the head and the tail and DELETES THE
+		// MIDDLE (session/routing.go:84-93, partialContent at :165).
+		//
+		// What that did to a real task, measured on the wire: the model asked to read
+		// a 2.4KB test file — the SPECIFICATION it was asked to implement — and got it
+		// back with the test cases cut out of the middle. It then spent SEVENTEEN
+		// turns trying to recover them: cat, sed ranges, python, awk, `base64`, and
+		// finally `xxd` to hexdump the file. It was not confused. It was doing exactly
+		// what you would do if someone kept handing you a document with the middle
+		// torn out.
+		//
+		//     23 turns, 22 tool calls, 16 of them bash. Wall: ~55s.
+		//
+		// So: route only when the context is actually under pressure. Below the soft
+		// threshold the window is empty and mutilating a 2KB file to save 800
+		// characters buys nothing and costs the agent its ability to read.
+		if !r.contextUnderPressure() {
+			results[i].Content = session.DistillToolOutput(toolName, results[i].Content, r.distillCfg)
+			continue
+		}
 
 		// Step 1: Content routing — classify the result.
 		route := session.RouteContent(toolName, results[i].Content, false, r.routingCache, r.distillCfg.AggressiveMode)
@@ -1506,4 +1547,28 @@ func lastUserText(messages []api.Message) string {
 		}
 	}
 	return ""
+}
+
+// contextUnderPressure reports whether the conversation is large enough that
+// throwing away part of a tool result is a trade worth making.
+//
+// It exists because content routing was making that trade UNCONDITIONALLY. On turn
+// 1 of an empty conversation — 64K-token window, ~600 tokens used — a read_file
+// result over 2000 characters had its MIDDLE DELETED (session/routing.go:84-93).
+//
+// The model asked for the test file it had been told to implement against, and got
+// it back with the test cases cut out. It then spent seventeen turns trying to
+// recover them with sed, base64 and xxd. It was not confused; it was doing what
+// anyone would do when handed a document with the middle torn out.
+//
+// Context management is a response to a context PROBLEM. Below the soft threshold
+// there is no problem, and saving 800 characters costs the agent its ability to
+// read.
+func (r *Runtime) contextUnderPressure() bool {
+	// ~4 chars per token is the usual rule of thumb; the exactness does not matter,
+	// only the order of magnitude — we are distinguishing "the window is basically
+	// empty" from "the window is filling up".
+	const charsPerToken = 4
+	softThresholdTokens := int(float64(session.CompactionThreshold) * session.SoftTrimRatio)
+	return r.lastContextChars/charsPerToken >= softThresholdTokens
 }
