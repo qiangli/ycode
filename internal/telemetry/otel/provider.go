@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"path/filepath"
 	"time"
 
@@ -12,8 +13,11 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
@@ -149,21 +153,42 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 	// PeriodicReader can drain into the still-open file). We collect
 	// those here and append them per-signal below.
 
+	// WHICH OTLP PROTOCOL. Standard env var, both supported.
+	//
+	// All three exporters were hard-coded to gRPC, pointed at a collector. The embedded
+	// stack no longer HAS a collector — every Victoria component ingests OTLP/HTTP
+	// natively and the proxy fans /v1/{traces,logs,metrics} out to them — so gRPC-only
+	// exporters had nowhere left to send. ycode's conversation logs, its LLM token and
+	// cost metrics, and its request spans would all have gone quietly nowhere.
+	//
+	// OTEL_EXPORTER_OTLP_PROTOCOL selects grpc or http/protobuf. The spec's default is
+	// http/protobuf, and so is ours — which is what the stack now serves.
+	useHTTP := !strings.EqualFold(strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_PROTOCOL")), "grpc")
+
 	// --- Trace provider ---
 	var spanExporters []sdktrace.SpanExporter
 	var traceFileCloses []func(context.Context) error
 
 	if cfg.CollectorAddr != "" {
-		grpcCtx, grpcCancel := context.WithTimeout(ctx, grpcConnectTimeout)
-		grpcExp, err := otlptracegrpc.New(grpcCtx,
-			otlptracegrpc.WithEndpoint(cfg.CollectorAddr),
-			otlptracegrpc.WithInsecure(),
-		)
-		grpcCancel()
-		if err != nil {
-			slog.Warn("OTEL trace gRPC exporter unavailable, skipping", "addr", cfg.CollectorAddr, "error", err)
+		expCtx, expCancel := context.WithTimeout(ctx, grpcConnectTimeout)
+		var exp sdktrace.SpanExporter
+		var err error
+		if useHTTP {
+			exp, err = otlptracehttp.New(expCtx,
+				otlptracehttp.WithEndpoint(cfg.CollectorAddr),
+				otlptracehttp.WithInsecure(),
+			)
 		} else {
-			spanExporters = append(spanExporters, grpcExp)
+			exp, err = otlptracegrpc.New(expCtx,
+				otlptracegrpc.WithEndpoint(cfg.CollectorAddr),
+				otlptracegrpc.WithInsecure(),
+			)
+		}
+		expCancel()
+		if err != nil {
+			slog.Warn("OTEL trace exporter unavailable, skipping", "addr", cfg.CollectorAddr, "error", err)
+		} else {
+			spanExporters = append(spanExporters, exp)
 		}
 	}
 
@@ -210,17 +235,26 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 	var metricFileCloses []func(context.Context) error
 
 	if cfg.CollectorAddr != "" {
-		grpcCtx, grpcCancel := context.WithTimeout(ctx, grpcConnectTimeout)
-		grpcExp, err := otlpmetricgrpc.New(grpcCtx,
-			otlpmetricgrpc.WithEndpoint(cfg.CollectorAddr),
-			otlpmetricgrpc.WithInsecure(),
-		)
-		grpcCancel()
+		expCtx, expCancel := context.WithTimeout(ctx, grpcConnectTimeout)
+		var mexp sdkmetric.Exporter
+		var err error
+		if useHTTP {
+			mexp, err = otlpmetrichttp.New(expCtx,
+				otlpmetrichttp.WithEndpoint(cfg.CollectorAddr),
+				otlpmetrichttp.WithInsecure(),
+			)
+		} else {
+			mexp, err = otlpmetricgrpc.New(expCtx,
+				otlpmetricgrpc.WithEndpoint(cfg.CollectorAddr),
+				otlpmetricgrpc.WithInsecure(),
+			)
+		}
+		expCancel()
 		if err != nil {
-			slog.Warn("OTEL metric gRPC exporter unavailable, skipping", "addr", cfg.CollectorAddr, "error", err)
+			slog.Warn("OTEL metric exporter unavailable, skipping", "addr", cfg.CollectorAddr, "error", err)
 		} else {
 			metricReaders = append(metricReaders,
-				sdkmetric.NewPeriodicReader(grpcExp, sdkmetric.WithInterval(15*time.Second)))
+				sdkmetric.NewPeriodicReader(mexp, sdkmetric.WithInterval(15*time.Second)))
 		}
 	}
 
@@ -270,16 +304,25 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 	var logFileCloses []func(context.Context) error
 
 	if cfg.CollectorAddr != "" {
-		grpcCtx, grpcCancel := context.WithTimeout(ctx, grpcConnectTimeout)
-		grpcLogExp, err := otlploggrpc.New(grpcCtx,
-			otlploggrpc.WithEndpoint(cfg.CollectorAddr),
-			otlploggrpc.WithInsecure(),
-		)
-		grpcCancel()
-		if err != nil {
-			slog.Warn("OTEL log gRPC exporter unavailable, skipping", "addr", cfg.CollectorAddr, "error", err)
+		expCtx, expCancel := context.WithTimeout(ctx, grpcConnectTimeout)
+		var lexp sdklog.Exporter
+		var err error
+		if useHTTP {
+			lexp, err = otlploghttp.New(expCtx,
+				otlploghttp.WithEndpoint(cfg.CollectorAddr),
+				otlploghttp.WithInsecure(),
+			)
 		} else {
-			logProcessors = append(logProcessors, sdklog.NewBatchProcessor(grpcLogExp))
+			lexp, err = otlploggrpc.New(expCtx,
+				otlploggrpc.WithEndpoint(cfg.CollectorAddr),
+				otlploggrpc.WithInsecure(),
+			)
+		}
+		expCancel()
+		if err != nil {
+			slog.Warn("OTEL log exporter unavailable, skipping", "addr", cfg.CollectorAddr, "error", err)
+		} else {
+			logProcessors = append(logProcessors, sdklog.NewBatchProcessor(lexp))
 		}
 	}
 
