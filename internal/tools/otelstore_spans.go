@@ -36,43 +36,57 @@ func storeSpans(ctx context.Context, sessionFilter string, limit int) ([]traceSp
 
 	spans := make([]traceSpan, 0, len(rows))
 	for _, r := range rows {
+		// Top-level span identity fields are stored under their bare names.
 		s := traceSpan{
-			Name:    rowStr(r, "span.name", "name", "operationName"),
+			Name:    rowStr(r, "name", "span.name", "operationName"),
 			TraceID: rowStr(r, "trace_id", "traceId", "traceID"),
 			SpanID:  rowStr(r, "span_id", "spanId", "spanID"),
 		}
 
 		start := rowTime(r, "_time", "start_time", "startTime")
 		s.StartTime = start
-		if d := rowNum(r, "duration_ms", "duration"); d > 0 {
-			s.EndTime = start.Add(time.Duration(d) * time.Millisecond)
+		// The store records `duration` in MICROSECONDS. Getting the unit wrong here is not a
+		// cosmetic slip: a slow-span query thresholds on it, so a 1000x error hides every slow
+		// span or flags every fast one.
+		if micros := rowNum(r, "duration"); micros > 0 {
+			s.EndTime = start.Add(time.Duration(micros) * time.Microsecond)
 		} else {
 			s.EndTime = rowTime(r, "end_time", "endTime")
 		}
 
-		if code := rowStr(r, "status.code", "status_code", "statusCode"); code != "" {
-			s.Status = spanStatus{
-				Code:        code,
-				Description: rowStr(r, "status.message", "status_description"),
-			}
+		// status_code is numeric in the store (2 = error); ycode's isError() expects the OTel
+		// string form. Translate, or a failed span reads as OK.
+		switch rowStr(r, "status_code", "status.code") {
+		case "2", "STATUS_CODE_ERROR", "Error":
+			s.Status = spanStatus{Code: "Error", Description: rowStr(r, "status_message", "status.message")}
+		default:
+			s.Status = spanStatus{Code: "Ok", Description: rowStr(r, "status_message")}
 		}
 
-		// Everything else becomes an attribute, so attrString() keeps working — including
-		// the attributes that only exist in the store, like bashy's cmd.exit_code.
+		// Every attribute becomes a flat attr so attrString("cmd.exit_code") keeps working.
 		//
-		// The SERVICE is carried as an attribute too. Without it an agent reading a merged
-		// trace cannot tell WHICH PROCESS a span came from, and a cross-service trace whose
-		// spans are unattributed is harder to reason about than no trace at all.
+		// The store prefixes attributes by origin (span_attr:, resource_attr:,
+		// event:event_attr:NAME:INDEX). Carry them through with the PREFIX STRIPPED — an agent
+		// asking for "cmd.exit_code" must not have to know it is really "span_attr:cmd.exit_code".
+		// That leakage of the storage schema into the query is exactly the bug that made every
+		// otel verb return 0.
 		for k, v := range r {
 			if v == nil || strings.HasPrefix(k, "_") {
 				continue
 			}
+			key := stripAttrPrefix(k)
+			if key == "" {
+				continue // structural field (name/trace_id/duration/...) already mapped above
+			}
 			s.Attributes = append(s.Attributes, spanAttr{
-				Key:   k,
+				Key:   key,
 				Value: spanValue{Type: "STRING", Value: v},
 			})
 		}
-		if svc := rowStr(r, "service.name", "service"); svc != "" {
+
+		// SERVICE is carried explicitly. Without it an agent reading a merged cross-service
+		// trace cannot tell WHICH PROCESS a span came from.
+		if svc := rowStr(r, "resource_attr:service.name", "service.name", "service"); svc != "" {
 			s.Resource = spanResource{Attributes: []spanAttr{{
 				Key:   "service.name",
 				Value: spanValue{Type: "STRING", Value: svc},
@@ -81,6 +95,37 @@ func storeSpans(ctx context.Context, sessionFilter string, limit int) ([]traceSp
 		spans = append(spans, s)
 	}
 	return spans, nil
+}
+
+// stripAttrPrefix converts a VictoriaTraces column name to the bare OTel attribute name, or
+// returns "" for a structural field that is not an attribute.
+//
+//	span_attr:cmd.exit_code        -> cmd.exit_code
+//	resource_attr:service.name     -> service.name
+//	event:event_attr:value.name:0  -> value.name
+//	name / trace_id / duration     -> "" (mapped as span identity, not an attribute)
+func stripAttrPrefix(k string) string {
+	switch {
+	case strings.HasPrefix(k, "span_attr:"):
+		return strings.TrimPrefix(k, "span_attr:")
+	case strings.HasPrefix(k, "resource_attr:"):
+		return strings.TrimPrefix(k, "resource_attr:")
+	case strings.HasPrefix(k, "event:event_attr:"):
+		rest := strings.TrimPrefix(k, "event:event_attr:")
+		if i := strings.LastIndex(rest, ":"); i >= 0 {
+			return rest[:i] // drop the trailing :INDEX
+		}
+		return rest
+	case strings.HasPrefix(k, "event:"):
+		return "" // event_name / event_time — not a queryable attribute
+	}
+	// Bare structural fields we already mapped as identity.
+	switch k {
+	case "name", "trace_id", "span_id", "duration", "start_time_unix_nano",
+		"end_time_unix_nano", "status_code", "status_message", "scope_name", "flags", "kind":
+		return ""
+	}
+	return k
 }
 
 func rowStr(row map[string]any, names ...string) string {
