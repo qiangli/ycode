@@ -242,3 +242,24 @@ func truncateChars(s string, maxChars int) string {
 	}
 	return s[:maxChars] + "\n[... truncated ...]"
 }
+
+// AbsoluteToolOutputCap is the only limit that applies with NO regard to context
+// pressure. It is a safety valve, not context management: a pathological tool
+// output (a core dump, a runaway log) must not be inlined into a conversation
+// whatever the window looks like.
+//
+// It is deliberately enormous. Everything below it is the agent's business — a
+// 2.4KB file the model asked to read is not a problem to be managed, and treating
+// it as one cost seventeen turns of base64 and xxd.
+const AbsoluteToolOutputCap = 256 * 1024
+
+// CapToolOutput enforces the absolute safety cap and NOTHING else. Below context
+// pressure this is the only thing a tool result should pass through.
+func CapToolOutput(output string) string {
+	if len(output) <= AbsoluteToolOutputCap {
+		return output
+	}
+	return output[:AbsoluteToolOutputCap] + fmt.Sprintf(
+		"\n\n[... output exceeded the %d-byte safety cap and was cut here. "+
+			"Re-run the tool against a narrower range.]", AbsoluteToolOutputCap)
+}

@@ -966,7 +966,24 @@ func (r *Runtime) distillResults(calls []ToolCall, results []api.ContentBlock) [
 		// threshold the window is empty and mutilating a 2KB file to save 800
 		// characters buys nothing and costs the agent its ability to read.
 		if !r.contextUnderPressure() {
-			results[i].Content = session.DistillToolOutput(toolName, results[i].Content, r.distillCfg)
+			// VERBATIM. Not routed, and NOT DISTILLED EITHER.
+			//
+			// The first version of this gate skipped RouteContent and then still called
+			// DistillToolOutput — which truncates head/tail at MaxInlineChars, and that
+			// is 1000 chars for a non-caching provider (distill.go:25, :93). So a 2.4KB
+			// read_file was STILL being mutilated below pressure, by the second of two
+			// functions that do the same thing. An adversarial review caught it; the
+			// measurement had improved enough to hide it.
+			//
+			// The principle has to apply to both or it is not a principle: below the
+			// soft threshold there is NO CONTEXT PROBLEM, and damaging a tool
+			// observation to solve a problem you do not have costs the agent its
+			// ability to read and buys nothing.
+			//
+			// The one thing still enforced is an absolute sanity cap — a pathological
+			// output (a 50MB core dump) must not be inlined whatever the pressure. That
+			// is a safety limit, not context management.
+			results[i].Content = session.CapToolOutput(results[i].Content)
 			continue
 		}
 
