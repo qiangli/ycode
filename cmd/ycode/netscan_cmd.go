@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/runtime/netscan"
+	"github.com/qiangli/ycode/internal/runtime/unattended"
 )
 
 // newNetscanCmd builds the `ycode netscan` cobra command. The command
@@ -36,14 +37,18 @@ this is strictly a superset of what running any one bash command would produce.
 Use --list to list only without opening an SSH session, or --json for
 machine-readable output.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := ctxWithUnattendedFlag(cmd.Context(), cmd)
 			scan, _ := cmd.Flags().GetBool("scan")
 			timeout, _ := cmd.Flags().GetDuration("timeout")
 			port, _ := cmd.Flags().GetInt("port")
 			userFlag, _ := cmd.Flags().GetString("user")
 			listOnly, _ := cmd.Flags().GetBool("list")
 			jsonOut, _ := cmd.Flags().GetBool("json")
+			if unattended.IsUnattended(ctx) && !listOnly {
+				listOnly = true
+			}
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), timeout+5*time.Second)
+			ctx, cancel := context.WithTimeout(ctx, timeout+5*time.Second)
 			defer cancel()
 
 			hosts, err := netscan.Discover(ctx, netscan.Options{

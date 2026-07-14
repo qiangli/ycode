@@ -38,6 +38,9 @@ func startPTY(t *testing.T, args ...string) (*os.File, *exec.Cmd) {
 		"OPENAI_API_KEY=",
 		"KIMI_API_KEY=",
 		"MOONSHOT_API_KEY=",
+		"WEAVE_ID=",
+		"WEAVE_WORKSPACE=",
+		"YCODE_UNATTENDED=",
 	)
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
@@ -192,6 +195,9 @@ func TestE2E_PTY_InitStreamsScaffoldOutput(t *testing.T) {
 		"OPENAI_API_KEY=",
 		"KIMI_API_KEY=",
 		"MOONSHOT_API_KEY=",
+		"WEAVE_ID=",
+		"WEAVE_WORKSPACE=",
+		"YCODE_UNATTENDED=",
 	)
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
@@ -360,4 +366,52 @@ func TestE2E_DoctorCommand(t *testing.T) {
 		t.Error("expected non-empty output from doctor command")
 	}
 	t.Logf("doctor output: %s", out)
+}
+
+// TestE2E_UnattendedNoTTY verifies that ycode runs without any stdin
+// interaction in a fresh weave workspace with no prior session. This is
+// Gate 4: the binary must skip trust prompts, first-run wizards, surveys,
+// and any interactive gate, exiting 0 with a readiness answer on stdout.
+func TestE2E_UnattendedNoTTY(t *testing.T) {
+	if _, err := os.Stat(e2eBinaryPath); os.IsNotExist(err) {
+		t.Skipf("binary not found at %s; run 'make compile' first", e2eBinaryPath)
+	}
+	if testing.Short() {
+		t.Skip("e2e test skipped in -short")
+	}
+
+	tmp := t.TempDir()
+	binAbs, err := filepath.Abs(e2eBinaryPath)
+	if err != nil {
+		t.Fatalf("filepath.Abs: %v", err)
+	}
+
+	cmd := exec.Command(binAbs)
+	cmd.Dir = tmp
+	stdin, err := os.Open("/dev/null")
+	if err != nil {
+		t.Fatalf("open /dev/null: %v", err)
+	}
+	defer stdin.Close()
+	cmd.Stdin = stdin
+
+	cmd.Env = append(os.Environ(),
+		"WEAVE_ID=weave-test",
+		"YCODE_NO_SERVER=1",
+		"ANTHROPIC_API_KEY=",
+		"OPENAI_API_KEY=",
+		"KIMI_API_KEY=",
+		"MOONSHOT_API_KEY=",
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("unattended run failed: %v\noutput:\n%s", err, out)
+	}
+	if len(out) == 0 {
+		t.Fatal("expected output on stdout, got none")
+	}
+	if !strings.Contains(string(out), "Readiness:") {
+		t.Errorf("expected readiness report on stdout, got:\n%s", out)
+	}
 }

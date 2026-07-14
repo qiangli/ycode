@@ -38,6 +38,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/repomap"
 	"github.com/qiangli/ycode/internal/runtime/routing"
 	"github.com/qiangli/ycode/internal/runtime/session"
+	"github.com/qiangli/ycode/internal/runtime/unattended"
 	"github.com/qiangli/ycode/internal/runtime/vfs"
 	"github.com/qiangli/ycode/internal/runtime/wrap"
 	"github.com/qiangli/ycode/internal/selfheal"
@@ -750,6 +751,8 @@ var (
 	dangerSkipPermissions bool
 	connectURL            string
 	eventsFile            string
+	noInteractiveFlag     bool
+	yesFlag               bool
 )
 
 var rootCmd = &cobra.Command{
@@ -765,26 +768,58 @@ var rootCmd = &cobra.Command{
 	// invocation. To establish ycode in a repo (write
 	// <repo>/.agents/ycode/AGENTS.md), run `ycode init` explicitly.
 	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := ctxWithUnattendedFlag(cmd.Context(), cmd)
+
 		// Dry-run mode: preview session setup without calling the model.
 		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
-			report := health.NewReadinessReport()
-			// Check provider.
-			if os.Getenv("ANTHROPIC_API_KEY") != "" || os.Getenv("OPENAI_API_KEY") != "" {
-				report.Add("provider", health.StatusReady, "API key found")
-			} else {
-				report.Add("provider", health.StatusBlocked, "No API key (set ANTHROPIC_API_KEY or OPENAI_API_KEY)")
-			}
-			// Check working directory.
-			if _, err := os.Getwd(); err == nil {
-				report.Add("workspace", health.StatusReady, "Working directory accessible")
-			}
-			fmt.Print(report.Format())
+			printReadinessReport()
 			return nil
 		}
 
 		// Remote mode: connect to a running ycode server.
 		if connectURL != "" {
 			return runRemoteTUI(connectURL)
+		}
+
+		// Unattended contexts (weave workspace, CI, --no-interactive,
+		// --yes) must never open an interactive TUI or prompt on stdin.
+		// Piped input and positional args are treated as the prompt; with
+		// no prompt we emit a readiness report and exit cleanly.
+		if unattended.IsUnattended(ctx) {
+			origin.SetAgentTool(origin.ToolPrompt)
+			stat, _ := os.Stdin.Stat()
+			isPiped := (stat.Mode() & os.ModeCharDevice) == 0
+
+			if isPiped {
+				input, err := io.ReadAll(os.Stdin)
+				if err != nil {
+					return fmt.Errorf("read stdin: %w", err)
+				}
+				prompt := strings.TrimSpace(string(input))
+				if prompt == "" {
+					return fmt.Errorf("empty input from stdin")
+				}
+				app, err := newApp()
+				if err != nil {
+					return err
+				}
+				defer app.Close()
+				app.SetPrintMode(true)
+				return app.RunPrompt(ctx, prompt)
+			}
+
+			if len(args) > 0 {
+				app, err := newApp()
+				if err != nil {
+					return err
+				}
+				defer app.Close()
+				app.SetPrintMode(true)
+				return app.RunPrompt(ctx, strings.Join(args, " "))
+			}
+
+			printReadinessReport()
+			return nil
 		}
 
 		// Default to TUI for the root invocation. Per-command RunE
@@ -828,7 +863,7 @@ var rootCmd = &cobra.Command{
 					return fmt.Errorf("events file: %w", err)
 				}
 			}
-			return app.RunPrompt(context.Background(), prompt)
+			return app.RunPrompt(ctx, prompt)
 		}
 
 		// Client-server mode if a server is already running; otherwise
@@ -852,11 +887,35 @@ var rootCmd = &cobra.Command{
 	},
 }
 
+// ctxWithUnattendedFlag applies the global --no-interactive / --yes flags to
+// the context so the rest of the binary can query unattended.IsUnattended(ctx).
+func ctxWithUnattendedFlag(ctx context.Context, cmd *cobra.Command) context.Context {
+	noInteractive, _ := cmd.Flags().GetBool("no-interactive")
+	yes, _ := cmd.Flags().GetBool("yes")
+	return unattended.WithValue(ctx, noInteractive || yes)
+}
+
+// printReadinessReport prints a quick provider/workspace readiness report to
+// stdout. It does not construct a full App and is safe to call without a TTY.
+func printReadinessReport() {
+	report := health.NewReadinessReport()
+	if os.Getenv("ANTHROPIC_API_KEY") != "" || os.Getenv("OPENAI_API_KEY") != "" {
+		report.Add("provider", health.StatusReady, "API key found")
+	} else {
+		report.Add("provider", health.StatusBlocked, "No API key (set ANTHROPIC_API_KEY or OPENAI_API_KEY)")
+	}
+	if _, err := os.Getwd(); err == nil {
+		report.Add("workspace", health.StatusReady, "Working directory accessible")
+	}
+	fmt.Print(report.Format())
+}
+
 var promptCmd = &cobra.Command{
 	Use:   "prompt [message]",
 	Short: "Send a one-shot prompt to the agent",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := ctxWithUnattendedFlag(cmd.Context(), cmd)
 		origin.SetAgentTool(origin.ToolPrompt)
 		app, err := newApp()
 		if err != nil {
@@ -872,7 +931,7 @@ var promptCmd = &cobra.Command{
 			}
 		}
 		prompt := strings.Join(args, " ")
-		return app.RunPrompt(context.Background(), prompt)
+		return app.RunPrompt(ctx, prompt)
 	},
 }
 
@@ -893,6 +952,7 @@ the next iteration — and Ctrl+C cancels after the current iteration completes.
 
 --prompt is required (no default); --interval defaults to 10m.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := ctxWithUnattendedFlag(cmd.Context(), cmd)
 		intervalStr, _ := cmd.Flags().GetString("interval")
 		promptFile, _ := cmd.Flags().GetString("prompt")
 
@@ -923,7 +983,7 @@ the next iteration — and Ctrl+C cancels after the current iteration completes.
 		fmt.Printf("Starting loop: every %s with prompt from %s\n", interval, promptFile)
 		fmt.Println("Press Ctrl+C to stop.")
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
 		// Handle signals for graceful shutdown.
@@ -1260,6 +1320,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&dangerSkipPermissions, "danger-skip-permissions", false, "Skip all permission checks (grants full access to all tools)")
 	rootCmd.PersistentFlags().StringVar(&connectURL, "connect", "", "Connect to a remote ycode server (ws:// or nats://)")
 	rootCmd.PersistentFlags().StringVar(&eventsFile, "events", "", "Write NDJSON event log to file")
+	rootCmd.PersistentFlags().BoolVar(&noInteractiveFlag, "no-interactive", false, "Run non-interactively: skip TUI, trust prompts, and confirmations")
+	rootCmd.PersistentFlags().BoolVar(&yesFlag, "yes", false, "Auto-confirm interactive prompts (alias for --no-interactive)")
 	rootCmd.Flags().Bool("dry-run", false, "Preview session setup without calling the model")
 
 	// no-otel: accepted for backward compatibility with integration tests (no-op).

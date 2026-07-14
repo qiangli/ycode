@@ -4,8 +4,6 @@ package cli
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"

@@ -30,6 +30,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/repomap"
 	"github.com/qiangli/ycode/internal/runtime/skills"
 	"github.com/qiangli/ycode/internal/runtime/treesitter"
+	"github.com/qiangli/ycode/internal/runtime/unattended"
 	"github.com/qiangli/ycode/internal/runtime/widget"
 	"github.com/qiangli/ycode/internal/selfinit"
 	"github.com/qiangli/ycode/internal/shell"
@@ -164,15 +165,18 @@ var serveResetCmd = &cobra.Command{
 	Use:   "reset",
 	Short: "Remove file-backed OTEL data",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := ctxWithUnattendedFlag(cmd.Context(), cmd)
 		home, _ := os.UserHomeDir()
 		otelDir := filepath.Join(home, ".agents", "ycode", "otel")
 		fmt.Printf("This will remove all data in:\n  %s\n", otelDir)
-		fmt.Print("Continue? [y/N] ")
-		var answer string
-		fmt.Scanln(&answer)
-		if answer != "y" && answer != "Y" {
-			fmt.Println("Aborted.")
-			return nil
+		if !unattended.IsUnattended(ctx) {
+			fmt.Print("Continue? [y/N] ")
+			var answer string
+			fmt.Scanln(&answer)
+			if answer != "y" && answer != "Y" {
+				fmt.Println("Aborted.")
+				return nil
+			}
 		}
 		_ = os.RemoveAll(otelDir)
 		fmt.Println("OTEL data removed.")
