@@ -883,6 +883,21 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 		defer app.Close()
+
+		// --events on the INTERACTIVE path. This is the one that mattered and the
+		// one that was missing: the flag is persistent, so it parsed fine here, and
+		// then nothing wired it up. `ycode --events x` was accepted, ignored, and
+		// wrote an empty file — a flag that looks supported and does nothing.
+		//
+		// It matters because the TUI is what an orchestrator launches when it wants
+		// a session it can STEER, so it is exactly the path that most needs to
+		// report its turn boundaries. Without this, bashy asked ycode when its turn
+		// ended, heard nothing, and fell back to guessing from 25 seconds of silence.
+		if eventsFile != "" {
+			if err := app.SetEventsFile(eventsFile); err != nil {
+				return fmt.Errorf("events file: %w", err)
+			}
+		}
 		return app.RunInteractive(context.Background())
 	},
 }

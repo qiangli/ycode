@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/grpclog"
 
 	"github.com/qiangli/ycode/internal/api"
+	"github.com/qiangli/ycode/internal/bus"
 	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/runtime/agentdef"
 	"github.com/qiangli/ycode/internal/runtime/agentpool"
@@ -39,8 +40,8 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/usage"
 	"github.com/qiangli/ycode/internal/runtime/worker"
 	"github.com/qiangli/ycode/internal/service"
-	"github.com/qiangli/ycode/internal/telemetry"
 	"github.com/qiangli/ycode/internal/tools"
+	"github.com/qiangli/ycode/internal/wireevents"
 	memexgraph "github.com/qiangli/ycode/pkg/memex/graph"
 	"github.com/qiangli/ycode/pkg/memex/memory"
 	"github.com/qiangli/ycode/pkg/memex/qacache"
@@ -124,7 +125,9 @@ type App struct {
 	turnIndex int // monotonically increasing turn counter for OTEL
 
 	// NDJSON event log sink (optional).
-	eventsSink telemetry.Sink
+	eventsSink   *wireevents.Writer
+	eventsBridge *wireevents.Bridge
+	inTurn       bool // a user turn is in flight; an LLM round-trip is NOT a turn
 
 	// Cleanup functions called on Close (OTEL shutdown, context cancel, etc.).
 	cleanupFuncs []func()
@@ -380,25 +383,38 @@ func (a *App) SetPrintMode(enabled bool) {
 	a.printMode = enabled
 }
 
-// SetEventsFile opens an NDJSON event log sink at the given path.
+// SetEventsFile opens the EXTERNAL event stream (--events).
+//
+// One writer, one vocabulary, both paths. See internal/wireevents: ycode used to
+// have two names for the same three facts — the one-shot path said `turn.end`
+// while the internal bus said `turn.complete` — so --events worked from
+// `ycode prompt` and did nothing at all from the TUI. A flag that is accepted,
+// ignored, and produces an empty file is the worst kind of flag.
 func (a *App) SetEventsFile(path string) error {
-	sink, err := telemetry.NewJSONLSink(path)
+	w, err := wireevents.NewFileWriter(path)
 	if err != nil {
 		return err
 	}
-	a.eventsSink = sink
+	a.eventsSink = w
 	return nil
 }
 
-func (a *App) emitEvent(typ string, data any) {
-	if a.eventsSink == nil {
+// StartEventBridge pipes the internal bus onto the external wire, so the TUI
+// emits the same three events the one-shot path does.
+//
+// The TUI runs its agent loop through the service layer, which publishes to the
+// bus — and nothing was listening. This is what an orchestrator launches when it
+// wants a session it can steer, so it is precisely the path that most needed to
+// report its turn boundaries, and precisely the one that did not.
+func (a *App) StartEventBridge(b bus.Bus) {
+	if a.eventsSink == nil || b == nil {
 		return
 	}
-	_ = a.eventsSink.Emit(&telemetry.Event{
-		Type:      typ,
-		Timestamp: time.Now(),
-		Data:      data,
-	})
+	a.eventsBridge = wireevents.StartBridge(b, a.eventsSink)
+}
+
+func (a *App) emitEvent(typ string, data any) {
+	_ = a.eventsSink.Emit(typ, data)
 }
 
 // chromeWriter returns the destination for non-answer diagnostics.
@@ -642,7 +658,7 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 	})
 
 	// Agentic loop: send → receive → execute tools → repeat until end_turn.
-	a.emitEvent("turn.start", map[string]string{"prompt": userPrompt})
+	a.emitEvent(wireevents.TurnStart, wireevents.TurnStartData{Prompt: userPrompt})
 
 	origStdout := a.stdout
 	var captured strings.Builder
@@ -652,9 +668,9 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 	defer func() {
 		if a.eventsSink != nil {
 			a.stdout = origStdout
-			a.emitEvent("turn.end", map[string]string{
-				"status": "ok",
-				"text":   captured.String(),
+			a.emitEvent(wireevents.TurnEnd, wireevents.TurnEndData{
+				Status: "ok",
+				Text:   captured.String(),
 			})
 		}
 	}()
@@ -761,10 +777,7 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) error {
 			// consumer gets the tool call as data instead of scraping it back out
 			// of a terminal.
 			fmt.Fprintf(a.chromeWriter(), "⚙ %s\n", toolDetail(tc.Name, tc.Input))
-			a.emitEvent("tool.call", map[string]any{
-				"name":  tc.Name,
-				"input": tc.Input,
-			})
+			a.emitEvent(wireevents.ToolCall, wireevents.ToolCallData{Name: tc.Name, Input: tc.Input})
 		}
 		messages = append(messages, api.Message{
 			Role:    api.RoleAssistant,
@@ -840,11 +853,99 @@ func (a *App) RunTurnWithRecoveryStreaming(
 		return nil, nil, fmt.Errorf("no LLM provider configured; set ANTHROPIC_API_KEY, OPENAI_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, or DEEPSEEK_API_KEY")
 	}
 	rt := a.conversationRuntime()
-	if onEvent != nil {
-		rt.SetEventCallback(onEvent)
+
+	// THE EXTERNAL WIRE, EMITTED FROM THE ONE PLACE BOTH PATHS PASS THROUGH.
+	//
+	// This function is the chokepoint: the TUI calls it (tui.go), and so does the
+	// one-shot path. Hooking the wire here is what finally made --events work from
+	// an interactive session — which is the session an orchestrator actually
+	// launches when it wants something it can steer, and which used to emit
+	// nothing at all.
+	//
+	// The turn boundary is emitted HERE and not in the runtime because the runtime
+	// does not know where a turn begins and ends: it emits deltas, tool calls and
+	// llm request/response. A turn is this function's notion, so this function is
+	// the only honest place to announce one.
+	rt.SetEventCallback(func(eventType string, data map[string]any) {
+		a.emitWireToolCall(eventType, data)
+		if onEvent != nil {
+			onEvent(eventType, data)
+		}
+	})
+
+	// A TURN IS NOT AN LLM CALL.
+	//
+	// This function is ONE round-trip with the model. The agentic loop calls it
+	// repeatedly — ask, run tools, ask again, until the model answers with no tool
+	// calls. Announcing turn.end on every round-trip is what the first version did,
+	// and it produced exactly the nonsense you would expect: a turn.end with an
+	// empty `text` right after the tool-call round, followed by another turn.start.
+	// A consumer waiting for the turn to finish woke up in the middle of it and
+	// took an empty string for the answer.
+	//
+	// The rule is ycode's own, from the service layer: the turn is over when the
+	// model returns text and asks for NO MORE TOOLS. Until then it is still
+	// thinking, and there is nothing to report.
+	if !a.inTurn {
+		a.inTurn = true
+		a.emitEvent(wireevents.TurnStart, wireevents.TurnStartData{Prompt: lastUserText(messages)})
 	}
+
 	a.turnIndex++
-	return rt.InstrumentedTurnWithRecovery(ctx, messages, a.turnIndex)
+	result, recovery, err := rt.InstrumentedTurnWithRecovery(ctx, messages, a.turnIndex)
+
+	// An error ends the turn too — and it ends it loudly. A consumer blocked on a
+	// boundary must not be left waiting forever because the agent fell over.
+	if err != nil {
+		a.inTurn = false
+		a.emitEvent(wireevents.TurnEnd, wireevents.TurnEndData{Status: "error", Text: ""})
+		return result, recovery, err
+	}
+
+	// Still tool-calling: the model is mid-thought. Say nothing.
+	if result != nil && len(result.ToolCalls) > 0 {
+		return result, recovery, err
+	}
+
+	// The model answered without asking for more tools. THAT is the end of the
+	// turn, and `text` is the answer — the same string --print writes to stdout. A
+	// consumer compares the two; if they disagree, one of us is lying.
+	a.inTurn = false
+	text := ""
+	if result != nil {
+		text = result.TextContent
+	}
+	a.emitEvent(wireevents.TurnEnd, wireevents.TurnEndData{Status: "ok", Text: text})
+
+	return result, recovery, err
+}
+
+// emitWireToolCall translates the runtime's tool event onto the external wire.
+//
+// The runtime says `tool_use.start` with {"tool": name}; the wire says `tool.call`
+// with {"name": ...}. One vocabulary at the boundary — a consumer should not have
+// to know which of ycode's subsystems produced a line.
+func (a *App) emitWireToolCall(eventType string, data map[string]any) {
+	if a.eventsSink == nil || eventType != "tool_use.start" {
+		return
+	}
+	name, _ := data["tool"].(string)
+	a.emitEvent(wireevents.ToolCall, wireevents.ToolCallData{Name: name, Input: data["input"]})
+}
+
+// lastUserText is the prompt this turn is answering.
+func lastUserText(messages []api.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "user" {
+			continue
+		}
+		for _, b := range messages[i].Content {
+			if b.Text != "" {
+				return b.Text
+			}
+		}
+	}
+	return ""
 }
 
 // ExecuteTools runs tool calls and returns tool result content blocks.
