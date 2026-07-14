@@ -24,6 +24,12 @@ func NewTracker() *Tracker {
 }
 
 // Add records token usage from a single request.
+// Add records token usage WITHOUT a model, and therefore prices it against the fallback.
+//
+// Deprecated: use AddWithModel. Every production call site used this one, so t.Model was
+// never set and every session was priced as Claude Sonnet. Kept only so an out-of-tree
+// caller does not break; it now records the model as "" and LookupPricing reports
+// Known=false, so at least the guess ADMITS it is a guess.
 func (t *Tracker) Add(input, output, cacheCreate, cacheRead int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -55,16 +61,32 @@ func (t *Tracker) Cost() float64 {
 	return t.costLocked()
 }
 
+// costLocked prices the session against the model that actually ran it.
+//
+// It used to carry a THIRD hardcoded copy of Claude Sonnet's price ($3/$15 per million),
+// reached whenever t.Model was empty — and t.Model was ALWAYS empty, because every
+// production call site used Add() rather than AddWithModel() and Add() never set it.
+//
+// So the "Est. cost: $X" line at the end of every run was computed as if every model on
+// earth were Claude Sonnet. GLM-5.2 reported at 5.5x its real price. It did not even read
+// the PricingTable — it inlined the numbers.
+//
+// Found by an adversarial review (glm-5.2). It is the same bug as the metric path, in a
+// second cost implementation nobody remembered — which is the "two constructors of one
+// thing" trap, for the third time this week.
+//
+// There is now ONE pricing source: PricingTable, via LookupPricing.
 func (t *Tracker) costLocked() float64 {
-	if t.Model != "" {
-		return EstimateCost(t.Model, t.InputTokens, t.OutputTokens, t.CacheCreationInput, t.CacheReadInput)
-	}
-	// Fallback: hardcoded Claude Sonnet pricing for backward compatibility.
-	inputCost := float64(t.InputTokens) * 3.0 / 1_000_000
-	outputCost := float64(t.OutputTokens) * 15.0 / 1_000_000
-	cacheWriteCost := float64(t.CacheCreationInput) * 3.75 / 1_000_000
-	cacheReadCost := float64(t.CacheReadInput) * 0.30 / 1_000_000
-	return inputCost + outputCost + cacheWriteCost + cacheReadCost
+	return EstimateCost(t.Model, t.InputTokens, t.OutputTokens, t.CacheCreationInput, t.CacheReadInput)
+}
+
+// CostIsGuess reports whether the session cost was priced from a DECLARED rate or from the
+// fallback guess (which is Claude's rate — so an unknown model reads as expensive, not as
+// unknown). A dollar figure nobody can tell apart from a measurement is worse than none.
+func (t *Tracker) CostIsGuess() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return !LookupPricing(t.Model).Known
 }
 
 // Summary returns a formatted usage summary.

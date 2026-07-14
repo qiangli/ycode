@@ -793,8 +793,9 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		result := msg.Result
 
-		// Track usage from this turn.
-		m.app.usageTracker.Add(
+		// Track usage from this turn — WITH the model, or it is priced as Claude Sonnet.
+		m.app.usageTracker.AddWithModel(
+			m.app.resolvedModel(),
 			result.Usage.InputTokens,
 			result.Usage.OutputTokens,
 			result.Usage.CacheCreationInput,

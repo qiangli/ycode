@@ -282,7 +282,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		RetryTurn:      app.RetryTurn,
 		RevertFiles:    app.RevertFiles,
 		TrackUsage: func(inputTokens, outputTokens, cacheCreate, cacheRead int) {
-			app.usageTracker.Add(inputTokens, outputTokens, cacheCreate, cacheRead)
+			app.usageTracker.AddWithModel(app.resolvedModel(), inputTokens, outputTokens, cacheCreate, cacheRead)
 			if app.usageFunc != nil {
 				app.usageFunc(inputTokens, outputTokens, cacheCreate, cacheRead)
 			}
@@ -694,8 +694,9 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 			return fmt.Errorf("turn %d: %w", i+1, err)
 		}
 
-		// Track usage from this turn.
-		a.usageTracker.Add(
+		// Track usage from this turn — WITH the model, or it is priced as Claude Sonnet.
+		a.usageTracker.AddWithModel(
+			a.resolvedModel(),
 			result.Usage.InputTokens,
 			result.Usage.OutputTokens,
 			result.Usage.CacheCreationInput,
@@ -863,6 +864,16 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 
 	// The defer above turns this into turn.end{status:"error"} on the event channel.
 	return fmt.Errorf("%s", msg)
+}
+
+// resolvedModel is the model that ACTUALLY ran — the per-session override if there is one,
+// else the configured default. Both cost paths must price against this and not against
+// nothing, which is what they did.
+func (a *App) resolvedModel() string {
+	if a == nil || a.config == nil {
+		return ""
+	}
+	return a.config.Model
 }
 
 // printSessionSummary outputs a summary of the session (time and tokens).
