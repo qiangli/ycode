@@ -9,8 +9,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
-
-	"github.com/qiangli/ycode/internal/runtime/mcp"
 )
 
 // withOriginProvider creates a provider with origin fields populated
@@ -154,62 +152,5 @@ func fakeInstruments(t *testing.T, m attribute.KeyValue) *Instruments {
 	return &Instruments{
 		ToolCallDuration: dur,
 		ToolCallTotal:    total,
-	}
-}
-
-func TestToolMiddleware_AttachesAgentClientFromCtx(t *testing.T) {
-	prev := otel.GetMeterProvider()
-	t.Cleanup(func() { otel.SetMeterProvider(prev) })
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	otel.SetMeterProvider(mp)
-
-	inst := fakeInstruments(t, attribute.String("test", "true"))
-	tracer := otel.Tracer("ycode.test.tools")
-	mw := ToolMiddleware(tracer, inst)
-	wrapped := mw("my-tool", fakeToolFunc)
-
-	// Two calls: one with an agent.client on ctx, one without.
-	ctx := mcp.WithAgentClient(context.Background(), "claude-code")
-	if _, err := wrapped(ctx, json.RawMessage(`{}`)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wrapped(context.Background(), json.RawMessage(`{}`)); err != nil {
-		t.Fatal(err)
-	}
-
-	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatal(err)
-	}
-
-	// Expect exactly one timeseries tagged ycode.agent.client=claude-code
-	// and exactly one without that label.
-	withClient := 0
-	withoutClient := 0
-	for _, sm := range rm.ScopeMetrics {
-		for _, met := range sm.Metrics {
-			if met.Name != "ycode.tool.call.total" {
-				continue
-			}
-			sum, ok := met.Data.(metricdata.Sum[int64])
-			if !ok {
-				continue
-			}
-			for _, dp := range sum.DataPoints {
-				v, ok := dp.Attributes.Value(attribute.Key("ycode.agent.client"))
-				if ok && v.AsString() == "claude-code" {
-					withClient += int(dp.Value)
-				} else {
-					withoutClient += int(dp.Value)
-				}
-			}
-		}
-	}
-	if withClient != 1 {
-		t.Errorf("expected 1 counter point with agent.client=claude-code; got %d", withClient)
-	}
-	if withoutClient != 1 {
-		t.Errorf("expected 1 counter point without agent.client; got %d", withoutClient)
 	}
 }

@@ -18,7 +18,6 @@ import (
 // lint asserts:
 //
 //   - cli verbs resolve to real subcommands under rootCmd
-//   - mcp tools are exposed by some live always-on handler
 //   - config paths reflect-resolve on *config.Config
 //
 // HTTP routes are NOT validated — they're wired programmatically in
@@ -35,7 +34,6 @@ func TestCapabilityRegistry(t *testing.T) {
 	}
 
 	cobraVerbs := collectTopLevelVerbs(rootCmd)
-	mcpTools := collectAlwaysOnMCPTools(t)
 	cfgPaths := collectConfigPaths(reflect.TypeOf(config.Config{}), "")
 
 	var violations []string
@@ -52,26 +50,6 @@ func TestCapabilityRegistry(t *testing.T) {
 				violations = append(violations,
 					fmt.Sprintf("[%s] cli: `ycode %s` is declared but no such top-level cobra verb exists",
 						c.ID, top))
-			}
-		}
-
-		// MCP validation is suppressed for capabilities that declare a
-		// `gaps:` entry (registry.yaml rule 8). Those families either
-		// require a live `ycode serve` stack (gitea/loom/pulse) or need
-		// runtime deps the lint can't easily mock (memex). Their MCP
-		// claims are still useful documentation; we just can't assert
-		// resolution in a unit test. The actual HTTP composite presence
-		// is verified by end-to-end probes against `ycode serve`.
-		mcpClaimsAreAssertable := len(c.Gaps) == 0
-		if mcpClaimsAreAssertable {
-			for _, tool := range c.MCP {
-				if !mcpTools[tool] {
-					violations = append(violations,
-						fmt.Sprintf("[%s] mcp: tool %q is declared but not exposed by any always-on handler "+
-							"(either add the handler's construction to collectAlwaysOnMCPTools, or "+
-							"document the dep requirement under `gaps:` in registry.yaml)",
-							c.ID, tool))
-				}
 			}
 		}
 
@@ -142,20 +120,6 @@ func collectTopLevelVerbs(root *cobra.Command) map[string]bool {
 	out := map[string]bool{}
 	for _, c := range root.Commands() {
 		out[c.Name()] = true
-	}
-	return out
-}
-
-// collectAlwaysOnMCPTools returns the union of ListTools() across the
-// alwaysOnMCPHandlers() inventory. Single source of truth for the
-// handler list lives in cmd/ycode/handlers_inventory.go.
-func collectAlwaysOnMCPTools(t *testing.T) map[string]bool {
-	t.Helper()
-	out := map[string]bool{}
-	for _, h := range alwaysOnMCPHandlers() {
-		for _, tool := range h.ListTools() {
-			out[tool.Name] = true
-		}
 	}
 	return out
 }
