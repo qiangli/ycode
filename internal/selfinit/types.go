@@ -37,11 +37,6 @@ type Tool interface {
 	// Cheap; intended to gate optional writers.
 	Detect() bool
 
-	// WriteMCP writes the L1 MCP server config for this tool (user
-	// scope) given the capability list. Returns whether the file
-	// changed (false when content was already up to date).
-	WriteMCP(ctx context.Context, caps []CapabilitySpec) (changed bool, err error)
-
 	// WriteInstructions writes the L2 memory-file delimited block
 	// for this tool (user scope). Returns whether the file changed.
 	WriteInstructions(ctx context.Context, caps []CapabilitySpec) (changed bool, err error)

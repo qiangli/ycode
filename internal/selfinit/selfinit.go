@@ -34,7 +34,7 @@ type Options struct {
 	// writers (Claude Code, OpenCode, …) from the package-level
 	// registry. Off by default — touching another tool's user-scope
 	// config is opt-in. When true, registered Tools whose Detect()
-	// returns true get their WriteMCP / WriteInstructions called.
+	// returns true get their WriteInstructions called.
 	//
 	// Has no effect when Tools is non-nil; callers passing an
 	// explicit list have already opted in by enumerating writers.
@@ -156,12 +156,6 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	// User-scope writes (per detected foreign tool).
 	for _, t := range detected {
 		var files []string
-		if changed, err := t.WriteMCP(ctx, caps); err != nil {
-			logger.Warn("selfinit: write MCP config",
-				"tool", t.Name(), "err", err)
-		} else if changed {
-			files = append(files, "mcp")
-		}
 		if changed, err := t.WriteInstructions(ctx, caps); err != nil {
 			logger.Warn("selfinit: write instructions",
 				"tool", t.Name(), "err", err)
