@@ -147,13 +147,6 @@ func builtinSpecs() []*ToolSpec {
 			Source:       SourceBuiltin,
 		},
 		{
-			Name:         "netscan",
-			Description:  "Discover hosts on the local network via mDNS, optional TCP CONNECT scan, and opportunistic system probes (arp/ip neigh/dns-sd/avahi-browse). Returns a JSON list of hosts with name, IP, port, service, and observation source. Read-only — does not establish SSH connections from the agentic flow; use the bash tool with `ssh user@host -- '<cmd>'` for non-interactive remote command execution.",
-			InputSchema:  mustJSON(netscanSchema),
-			RequiredMode: permission.ReadOnly,
-			Source:       SourceBuiltin,
-		},
-		{
 			Name:         "AskUserQuestion",
 			Description:  "Ask the user a question and wait for their response.",
 			InputSchema:  mustJSON(askUserSchema),
@@ -1021,16 +1014,6 @@ var (
 			"max_results": {"type": "integer", "description": "Maximum results to return"}
 		},
 		"required": ["query"]
-	}`
-
-	netscanSchema = `{
-		"type": "object",
-		"properties": {
-			"subnets": {"type": "array", "items": {"type": "string"}, "description": "Optional CIDR(s) to scan; auto-detected if omitted"},
-			"services": {"type": "array", "items": {"type": "string"}, "description": "mDNS service types to query (e.g. _ssh._tcp); defaults to a common set"},
-			"scan_ports": {"type": "boolean", "description": "Also do a TCP CONNECT scan over the local /24 (slow). Default false"},
-			"timeout_ms": {"type": "integer", "description": "Total discovery timeout in milliseconds (default 3000)"}
-		}
 	}`
 
 	askUserSchema = `{

@@ -329,7 +329,6 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	tools.RegisterVFSHandlers(toolReg, v)
 	tools.RegisterSleepHandler(toolReg)
 	tools.RegisterWebHandlers(toolReg, gateway.Web())
-	tools.RegisterNetscanHandler(toolReg)
 	tools.RegisterToolSearchHandler(toolReg)
 	tools.RegisterSkillHandler(toolReg)
 	tools.RegisterMemosHandlers(toolReg)

@@ -89,7 +89,6 @@ var cobraAllowlist = []cmdAllowEntry{
 	{"foreman", mcp.ModeReadOnly, "Inspect Foreman state. Use args=[\"status\"] only — start/pause require WorkspaceWrite."},
 	{"skill", mcp.ModeReadOnly, "Inspect installed skills. Use args=[\"list\"]."},
 	{"pair", mcp.ModeReadOnly, "Print the bearer-token + config snippet for a foreign tool. Use args=[\"--tool\", \"<name>\"]."},
-	{"netscan", mcp.ModeReadOnly, "Discover ycode servers on the local network."},
 
 	// --- WorkspaceWrite: mutates project / on-disk state ---
 	{"init", mcp.ModeWorkspaceWrite, "Establish ycode in the current git repo (writes .agents/ycode/AGENTS.md)."},
