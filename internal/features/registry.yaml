@@ -108,15 +108,6 @@ features:
       dogfood_weeks: 4
       failure_mode_doc: false
 
-  - name: mcp-client
-    tier: stable
-    description: "full MCP client (stdio + SSE) for external tool servers; also exposes ycode tools via `ycode mcp serve`"
-    files: [internal/runtime/mcp]
-    graduation:
-      integration_test: true
-      dogfood_weeks: 4
-      failure_mode_doc: false
-
   # ─── execution & runtime ──────────────────────────────────────────────────
   - name: multi-provider
     tier: stable
@@ -259,19 +250,3 @@ features:
     files: [internal/chat]
     notes: "adapter scaffold present; not wired end-to-end"
 
-  - name: mesh-auto-start
-    tier: experimental
-    description: "auto-engage background mesh agents (fixer, researcher, learner) from the main runtime"
-    files: [internal/mesh]
-    notes: "background agents wired in wire.go but do not auto-engage in main loop"
-
-  # ─── wip (placeholder or active dev; not user-facing) ─────────────────────
-  - name: trainer-agent
-    tier: wip
-    files: [internal/training]
-    notes: "no-op placeholder; do not surface in tools or README"
-
-  - name: sprint-two-stage-review
-    tier: wip
-    files: [cmd/ycode/sprint_cmd.go]
-    notes: "scaffolded callbacks; phase transition not gate-driven"
