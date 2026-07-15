@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,22 +20,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/qiangli/ycode/internal/docs"
-	"github.com/qiangli/ycode/internal/extractmcp"
 	"github.com/qiangli/ycode/internal/runtime/config"
-	mcppkg "github.com/qiangli/ycode/internal/runtime/mcp"
-	"github.com/qiangli/ycode/internal/runtime/memexmcp"
 	"github.com/qiangli/ycode/internal/runtime/origin"
-	"github.com/qiangli/ycode/internal/runtime/repomap"
-	"github.com/qiangli/ycode/internal/runtime/skills"
-	"github.com/qiangli/ycode/internal/runtime/treesitter"
 	"github.com/qiangli/ycode/internal/runtime/unattended"
-	"github.com/qiangli/ycode/internal/runtime/widget"
 	"github.com/qiangli/ycode/internal/selfinit"
-	"github.com/qiangli/ycode/internal/shell"
 	_ "github.com/qiangli/ycode/internal/shell/agentmode"
 	_ "github.com/qiangli/ycode/internal/shell/builtins"
-	memorypkg "github.com/qiangli/ycode/pkg/memex/memory"
 )
 
 var (
@@ -47,10 +36,9 @@ var (
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
-	Short: "Run the ycode API, WebSocket, NATS, MCP, manifest, and debug server",
+	Short: "Run the ycode API, WebSocket, NATS, manifest, and debug server",
 	Long: `Start the lean ycode server: HTTP/WebSocket API, optional embedded NATS,
-composite MCP endpoint, manifest, and pprof debug
-surface. Observability is client-side OTEL export only; run an external
+manifest, and pprof debug surface. Observability is client-side OTEL export only; run an external
 collector such as bashy otel when you want dashboards or local storage.`,
 	RunE: runServe,
 }
@@ -265,16 +253,6 @@ func runAllServices(ctx context.Context, fullCfg *config.Config) error {
 		}
 	}
 
-	compositeMCP := buildServeMCPHandlers(ctx, fullCfg, api)
-	if len(compositeMCP) > 0 {
-		composite := mcppkg.NewCompositeHandler(compositeMCP...)
-		composite.SetTransport("http")
-		gateMode := parseMCPPermission(serveMCPPermission)
-		gated := mcppkg.NewGatedHandler(composite, mcppkg.StaticGate{Ceiling: gateMode})
-		mux.Handle("/mcp/", newMCPHTTPHandler(gated))
-		fmt.Printf("ycode MCP at       http://127.0.0.1:%d/mcp/  (ceiling: %s)\n", port, gateMode)
-	}
-
 	pidPath := filepath.Join(home, ".agents", "ycode", "serve.pid")
 	portPath := filepath.Join(home, ".agents", "ycode", "serve.port")
 	_ = os.MkdirAll(filepath.Dir(pidPath), 0o755)
@@ -363,81 +341,6 @@ func runAllServices(ctx context.Context, fullCfg *config.Config) error {
 		api.stop()
 	}
 	return nil
-}
-
-func buildServeMCPHandlers(ctx context.Context, fullCfg *config.Config, api *apiStack) []mcppkg.ServerHandler {
-	shellRT, _ := shell.New(shell.Options{Permission: "danger-full-access"})
-	handlers := []mcppkg.ServerHandler{
-		treesitter.NewMCPHandler(),
-		skills.NewMCPHandler(),
-		shell.NewMCPHandler(shellRT),
-		repomap.NewMCPHandler(),
-		docs.NewMCPHandler(),
-		newCobraMCPHandler(),
-		extractmcp.NewDocumentHandler(),
-	}
-	if p := detectExtractProvider(fullCfg.Model); p != nil {
-		if extractJSON := extractmcp.NewJSONHandler(p, fullCfg.Model, fullCfg.MaxTokens); extractJSON != nil {
-			handlers = append(handlers, extractJSON)
-		}
-	}
-	if mgr, err := openMemexForServe(); err == nil {
-		handlers = append(handlers, memexmcp.NewMCPHandler(mgr))
-	} else {
-		slog.Warn("memexmcp disabled (memory manager unavailable)", "error", err)
-	}
-	if api != nil && api.memBus != nil {
-		handlers = append(handlers, widget.NewMCPHandler(api.memBus))
-		widget.NewAlertHook(api.memBus, widget.DefaultSession).Start(ctx)
-		widget.NewHealthHook(api.memBus, widget.DefaultSession, func(_ context.Context) widget.HealthData {
-			return widget.HealthData{YcodeVersion: version, Incidents: []widget.HealthRow{}, Deploys: []widget.HealthRow{}}
-		}).Start(ctx)
-	}
-	return handlers
-}
-
-type mcpHTTPHandler struct {
-	server *mcppkg.Server
-}
-
-func newMCPHTTPHandler(handler mcppkg.ServerHandler) *mcpHTTPHandler {
-	return &mcpHTTPHandler{server: mcppkg.NewServer(handler)}
-}
-
-func (h *mcpHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "MCP server accepts POST requests with JSON-RPC body", http.StatusMethodNotAllowed)
-		return
-	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 10*1024*1024))
-	if err != nil {
-		http.Error(w, "failed to read request body", http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-	var req mcppkg.JSONRPCRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(mcppkg.JSONRPCResponse{
-			JSONRPC: "2.0",
-			Error:   &mcppkg.JSONRPCError{Code: -32700, Message: "parse error: " + err.Error()},
-		})
-		return
-	}
-	resp, err := h.server.HandleRequest(r.Context(), &req)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(mcppkg.JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error:   &mcppkg.JSONRPCError{Code: -32603, Message: err.Error()},
-		})
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func alreadyRunning(port int) bool {
@@ -573,34 +476,6 @@ func loadFullServeConfig() (*config.Config, *config.ObservabilityConfig, string,
 	return cfg, obsCfg, dataDir, nil
 }
 
-func parseMCPPermission(s string) mcppkg.PermissionMode {
-	switch s {
-	case "read-only", "readonly":
-		return mcppkg.ModeReadOnly
-	case "workspace-write", "write":
-		return mcppkg.ModeWorkspaceWrite
-	case "", "danger-full-access", "full", "danger":
-		return mcppkg.ModeDangerFullAccess
-	default:
-		slog.Warn("unknown --mcp-permission, defaulting to danger-full-access", "value", s)
-		return mcppkg.ModeDangerFullAccess
-	}
-}
-
-func openMemexForServe() (*memorypkg.Manager, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("locate home dir: %w", err)
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("getwd: %w", err)
-	}
-	globalDir := filepath.Join(home, ".agents", "ycode", "memory")
-	projectDir := filepath.Join(cwd, ".agents", "ycode", "memory")
-	return memorypkg.NewManagerWithGlobal(globalDir, projectDir)
-}
-
 var pulseCmd = &cobra.Command{
 	Use:   "pulse",
 	Short: "Manage ycode's lightweight background server",
@@ -617,7 +492,6 @@ func init() {
 	serveCmd.Flags().BoolVar(&serveNoPersona, "no-persona", false, "Disable persona inference for shared/multi-tenant deployments")
 	serveCmd.Flags().StringSliceVar(&serveToolsAllowlist, "tools-allowlist", nil, "Register only these built-in tool names (process-wide; mutually exclusive with --tools-blocklist)")
 	serveCmd.Flags().StringSliceVar(&serveToolsBlocklist, "tools-blocklist", nil, "Register every built-in tool except these (process-wide; ignored when --tools-allowlist is set)")
-	serveCmd.Flags().StringVar(&serveMCPPermission, "mcp-permission", "danger-full-access", "Server-side MCP permission ceiling: read-only | workspace-write | danger-full-access")
 	serveCmd.Flags().StringVar(&serveWorkspacePolicy, "workspace-policy", "per-session", "Web-session workspace policy: per-session (default), cwd (server startup dir).")
 	_ = serveCmd.Flags().MarkHidden("auto")
 	serveCmd.Flags().IntVar(&apiNATSPort, "nats-port", 4222, "Port for the embedded NATS server")
