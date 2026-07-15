@@ -9,8 +9,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/qiangli/ycode/internal/runtime/mcp"
 )
 
 // ToolFunc matches the tools.ToolFunc signature.
@@ -24,9 +22,6 @@ func ToolMiddleware(tracer trace.Tracer, inst *Instruments) func(toolName string
 			spanAttrs := []attribute.KeyValue{
 				AttrToolName.String(toolName),
 				AttrToolInputSummary.String(truncate(string(input), 512)),
-			}
-			if client := mcp.AgentClient(ctx); client != "" {
-				spanAttrs = append(spanAttrs, AttrAgentClient.String(client))
 			}
 			ctx, span := tracer.Start(ctx, "ycode.tool.call",
 				trace.WithAttributes(spanAttrs...))
@@ -61,16 +56,8 @@ func ToolMiddleware(tracer trace.Tracer, inst *Instruments) func(toolName string
 				))
 			}
 
-			// Record metrics. Include agent.client label so the
-			// per-foreign-client breakdown lights up in the Per-Tool
-			// / Per-Project Rollup dashboard. Empty when the call
-			// originated locally (TUI/prompt), bounded otherwise to
-			// a small set of real MCP clients.
-			client := mcp.AgentClient(ctx)
+			// Record metrics.
 			metricAttrs := []attribute.KeyValue{AttrToolName.String(toolName)}
-			if client != "" {
-				metricAttrs = append(metricAttrs, AttrAgentClient.String(client))
-			}
 			inst.ToolCallDuration.Record(ctx, float64(dur.Milliseconds()),
 				metric.WithAttributes(metricAttrs...))
 			inst.ToolCallTotal.Add(ctx, 1,
