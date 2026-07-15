@@ -766,7 +766,11 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 	if total := result.Usage.InputTokens + result.Usage.OutputTokens +
 		result.Usage.CacheReadInput + result.Usage.CacheCreationInput; total > 0 {
 		r.lastReportedTokens = total
-		r.lastReportedAtMsgs = len(messages)
+		// NOTE: the tail-estimate baseline (lastReportedAtMsgs) is anchored in
+		// TurnWithRecovery against the DURABLE message list, NOT here against `messages`.
+		// `messages` is the list we SENT, which compaction may have shrunk; measureTokens
+		// reads the durable history, so an index taken from the compacted send-list drifts
+		// and estimates a phantom tail. See TurnWithRecovery + measureTokens.
 	}
 
 	return result, nil
@@ -1235,6 +1239,25 @@ func (r *Runtime) TurnWithRecovery(ctx context.Context, messages []api.Message) 
 	// First attempt (with pruned/compacted messages).
 	result, err := r.Turn(ctx, messages)
 	if err == nil {
+		// Anchor the tail-estimate baseline to the DURABLE list.
+		//
+		// Turn just recorded the provider's token count (r.lastReportedTokens), but the
+		// baseline INDEX must live here, because only here do we hold the durable history
+		// (sessionMsgs). Turn holds `messages` — the list it SENT, which compaction may
+		// have shrunk to a fraction of the durable size. Recording the index from that
+		// short list and then reading it against the long durable list in measureTokens
+		// makes the two diverge: msgs[shortIndex:longLen] is a phantom tail.
+		//
+		// Observed, live: GLM Reported=16k, tail ESTIMATED at 230k, total 246k tripping a
+		// 56k threshold EVERY turn — so compaction fired 119 times, discarding the files
+		// the agent had just read, and the agent re-read them and never converged (40 min,
+		// 0 files written).
+		//
+		// The report accounts for the whole request through this response; the only
+		// genuinely-unaccounted tokens are what gets appended AFTER it (next turn's tool
+		// results). +1 skips the assistant message, whose output tokens are already in
+		// the report.
+		r.lastReportedAtMsgs = len(sessionMsgs) + 1
 		if recovery.Pruned || recovery.CompactedCount > 0 {
 			return result, recovery, nil
 		}
