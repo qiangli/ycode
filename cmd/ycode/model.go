@@ -9,12 +9,9 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
-
-	"github.com/qiangli/ycode/internal/inference"
 )
 
 func newModelCmd() *cobra.Command {
@@ -26,7 +23,6 @@ func newModelCmd() *cobra.Command {
 		newModelCurrentCmd(),
 		newModelUseCmd(),
 		newModelP2PCmd(),
-		newModelSearchCmd(),
 	)
 	return cmd
 }
@@ -179,34 +175,4 @@ Examples:
 			return nil
 		},
 	}
-}
-
-func newModelSearchCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "search <query>",
-		Short: "Search Hugging Face for GGUF models",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return searchHuggingFace(context.Background(), args[0])
-		},
-	}
-}
-
-func searchHuggingFace(ctx context.Context, query string) error {
-	hf := inference.NewHFClient(inference.HFConfig{})
-	models, err := hf.Search(ctx, query, 20)
-	if err != nil {
-		return err
-	}
-	if len(models) == 0 {
-		fmt.Println("No GGUF models found.")
-		return nil
-	}
-
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "REPO\tDOWNLOADS\tLIKES")
-	for _, m := range models {
-		fmt.Fprintf(w, "%s\t%d\t%d\n", m.ID, m.Downloads, m.Likes)
-	}
-	return w.Flush()
 }

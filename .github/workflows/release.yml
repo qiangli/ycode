@@ -129,7 +129,6 @@ jobs:
           set -euo pipefail
           make ensure-embeds
           echo "--- embed blobs produced ---"
-          ls -lh internal/inference/runner_embed/ycode-runner.gz 2>/dev/null || echo "(no runner gz)"
           ls -lh internal/container/podman_embed/podman.gz       2>/dev/null || echo "(no podman gz)"
           ls -lh internal/container/vfkit_embed/vfkit.gz         2>/dev/null || echo "(no vfkit gz)"
           ls -lh internal/container/gvproxy_embed/gvproxy.gz     2>/dev/null || echo "(no gvproxy gz)"
@@ -197,8 +196,6 @@ jobs:
             cp "$src" "embed-dist/$dest"
             ls -lh "embed-dist/$dest"
           }
-          stage_if_present internal/inference/runner_embed/ycode-runner.gz \
-                           ycode-runner-${{ matrix.target }}.gz
           stage_if_present internal/container/podman_embed/podman.gz \
                            podman-${{ matrix.target }}.gz
           stage_if_present internal/container/vfkit_embed/vfkit.gz \
