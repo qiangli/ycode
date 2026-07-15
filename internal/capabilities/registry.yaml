@@ -83,7 +83,7 @@ capabilities:
   - id: mcp_server
     summary: Model Context Protocol server commands
     audience: [agent, human]
-    cli: [mcp, pair]
+    cli: [pair]
     mcp: []
     http: ["/mcp/", "/manifest", "/.well-known/ycode-manifest.json"]
     config: []

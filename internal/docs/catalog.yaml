@@ -52,7 +52,7 @@ rows:
 
   - task: MCP transport orientation
     surfaces:
-      cli: [ycode mcp, ycode pair, ycode serve]
+      cli: [ycode pair, ycode serve]
       mcp: [list_docs, get_doc, list_catalog]
     read_more: mcp
 

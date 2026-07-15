@@ -15,9 +15,13 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/mcp"
 )
 
-// cmdmcp.go — the cobra→MCP runner. Exposes every safe `ycode <verb>`
+// cobrarunner.go — the cobra→MCP runner. Exposes every safe `ycode <verb>`
 // as MCP-callable so foreign agents can invoke ycode CLI capabilities
 // without shelling out manually.
+//
+// This handler is consumed by the `ycode serve` /mcp/ endpoint (and the
+// always-on handler inventory). It is NOT tied to the standalone
+// `ycode mcp` command, which has been removed.
 //
 // ============================================================================
 // SAFEGUARDS — read before changing the allowlist

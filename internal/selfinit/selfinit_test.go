@@ -13,24 +13,12 @@ type stubTool struct {
 	mu               sync.Mutex
 	name             string
 	detected         bool
-	mcpCalls         int
 	instructionCalls int
-	mcpErr           error
 	instructionErr   error
 }
 
 func (s *stubTool) Name() string { return s.name }
 func (s *stubTool) Detect() bool { return s.detected }
-
-func (s *stubTool) WriteMCP(_ context.Context, _ []CapabilitySpec) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.mcpCalls++
-	if s.mcpErr != nil {
-		return false, s.mcpErr
-	}
-	return true, nil
-}
 
 func (s *stubTool) WriteInstructions(_ context.Context, _ []CapabilitySpec) (bool, error) {
 	s.mu.Lock()
@@ -65,8 +53,8 @@ func TestRun_FullFlow(t *testing.T) {
 	if len(res.Capabilities) == 0 {
 		t.Errorf("expected baseline caps registered")
 	}
-	if stub.mcpCalls != 1 || stub.instructionCalls != 1 {
-		t.Errorf("stub not invoked: mcp=%d instr=%d", stub.mcpCalls, stub.instructionCalls)
+	if stub.instructionCalls != 1 {
+		t.Errorf("stub not invoked: instr=%d", stub.instructionCalls)
 	}
 	if _, ok := res.UserFilesByTool["stub"]; !ok {
 		t.Errorf("stub not in UserFilesByTool: %+v", res.UserFilesByTool)
@@ -85,8 +73,8 @@ func TestRun_FullFlow(t *testing.T) {
 	if !res2.Skipped {
 		t.Errorf("second run should skip via marker")
 	}
-	if stub.mcpCalls != 1 {
-		t.Errorf("stub re-invoked despite skip: mcpCalls=%d", stub.mcpCalls)
+	if stub.instructionCalls != 1 {
+		t.Errorf("stub re-invoked despite skip: instructionCalls=%d", stub.instructionCalls)
 	}
 
 	// Force=true bypasses the marker.
@@ -96,8 +84,8 @@ func TestRun_FullFlow(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Run --force: %v", err)
 	}
-	if stub.mcpCalls != 2 {
-		t.Errorf("force did not re-invoke: mcpCalls=%d", stub.mcpCalls)
+	if stub.instructionCalls != 2 {
+		t.Errorf("force did not re-invoke: instructionCalls=%d", stub.instructionCalls)
 	}
 }
 
@@ -116,7 +104,7 @@ func TestRun_OptedOut(t *testing.T) {
 	if !res.OptedOut {
 		t.Errorf("expected OptedOut=true")
 	}
-	if stub.mcpCalls != 0 {
+	if stub.instructionCalls != 0 {
 		t.Errorf("stub invoked despite opt-out")
 	}
 }
@@ -133,7 +121,7 @@ func TestRun_NotInGitRepo_StillRunsUserScope(t *testing.T) {
 	if res.RepoRoot != "" {
 		t.Errorf("expected empty RepoRoot, got %q", res.RepoRoot)
 	}
-	if stub.mcpCalls != 1 || stub.instructionCalls != 1 {
+	if stub.instructionCalls != 1 {
 		t.Errorf("user-scope writes should still happen outside git repo")
 	}
 	// No marker file written outside git repo.
@@ -150,7 +138,7 @@ func TestRun_UndetectedToolSkipped(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if notInstalled.mcpCalls != 0 {
+	if notInstalled.instructionCalls != 0 {
 		t.Errorf("undetected tool should not be invoked")
 	}
 }
@@ -174,8 +162,8 @@ func TestRun_ForeignToolsOptIn(t *testing.T) {
 	if _, err := Run(context.Background(), Options{Cwd: repo, Home: home, YcodeVersion: "v1"}); err != nil {
 		t.Fatalf("Run default: %v", err)
 	}
-	if registered.mcpCalls != 0 {
-		t.Errorf("registered tool invoked without opt-in: mcpCalls=%d", registered.mcpCalls)
+	if registered.instructionCalls != 0 {
+		t.Errorf("registered tool invoked without opt-in: instructionCalls=%d", registered.instructionCalls)
 	}
 
 	// Opt-in via Options field.
@@ -185,8 +173,8 @@ func TestRun_ForeignToolsOptIn(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Run opt-in: %v", err)
 	}
-	if registered.mcpCalls != 1 {
-		t.Errorf("opt-in via Options did not invoke registered tool: mcpCalls=%d", registered.mcpCalls)
+	if registered.instructionCalls != 1 {
+		t.Errorf("opt-in via Options did not invoke registered tool: instructionCalls=%d", registered.instructionCalls)
 	}
 
 	// Opt-in via env var.
@@ -196,8 +184,8 @@ func TestRun_ForeignToolsOptIn(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Run env opt-in: %v", err)
 	}
-	if registered.mcpCalls != 2 {
-		t.Errorf("env opt-in did not invoke registered tool: mcpCalls=%d", registered.mcpCalls)
+	if registered.instructionCalls != 2 {
+		t.Errorf("env opt-in did not invoke registered tool: instructionCalls=%d", registered.instructionCalls)
 	}
 }
 
