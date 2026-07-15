@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -958,90 +957,6 @@ var versionCmd = &cobra.Command{
 	},
 }
 
-var loopCmd = &cobra.Command{
-	Use:   "loop",
-	Short: "Run agent in continuous loop mode (requires --prompt <file>)",
-	Long: `Re-runs the agent on a fixed interval, reading a prompt from --prompt
-each iteration. The prompt file is re-read every tick — edits take effect on
-the next iteration — and Ctrl+C cancels after the current iteration completes.
-
---prompt is required (no default); --interval defaults to 10m.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := ctxWithUnattendedFlag(cmd.Context(), cmd)
-		intervalStr, _ := cmd.Flags().GetString("interval")
-		promptFile, _ := cmd.Flags().GetString("prompt")
-
-		if intervalStr == "" {
-			intervalStr = "10m"
-		}
-
-		if promptFile == "" {
-			return fmt.Errorf("--prompt flag is required (path to prompt file)")
-		}
-
-		interval, err := time.ParseDuration(intervalStr)
-		if err != nil {
-			return fmt.Errorf("invalid interval %q: %w", intervalStr, err)
-		}
-
-		content, err := os.ReadFile(promptFile)
-		if err != nil {
-			return fmt.Errorf("read prompt file: %w", err)
-		}
-
-		app, err := newApp()
-		if err != nil {
-			return err
-		}
-		defer app.Close()
-
-		fmt.Printf("Starting loop: every %s with prompt from %s\n", interval, promptFile)
-		fmt.Println("Press Ctrl+C to stop.")
-
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-
-		// Handle signals for graceful shutdown.
-		go func() {
-			sigCh := make(chan os.Signal, 1)
-			signal.Notify(sigCh, os.Interrupt)
-			<-sigCh
-			fmt.Println("\nStopping loop...")
-			cancel()
-		}()
-
-		iteration := 0
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
-			}
-
-			iteration++
-			fmt.Printf("\n--- Iteration %d ---\n", iteration)
-
-			// Re-read prompt file each iteration to pick up changes.
-			if data, err := os.ReadFile(promptFile); err == nil {
-				content = data
-			}
-
-			if err := app.RunPrompt(ctx, string(content)); err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			}
-
-			select {
-			case <-time.After(interval):
-			case <-ctx.Done():
-				return nil
-			}
-		}
-	},
-}
-
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Run health checks",
@@ -1344,11 +1259,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noOtel, "no-otel", false, "Disable OTEL instrumentation (no-op, kept for compatibility)")
 	_ = rootCmd.PersistentFlags().MarkHidden("no-otel")
 
-	loopCmd.Flags().String("interval", "10m", "Loop interval (e.g., 5m, 1h)")
-	loopCmd.Flags().String("prompt", "", "Path to prompt file (required; re-read every iteration)")
-	_ = loopCmd.MarkFlagRequired("prompt")
 	doctorCmd.Flags().Bool("dry-run", false, "Quick readiness check without starting the full system")
-	rootCmd.AddCommand(promptCmd, versionCmd, doctorCmd, loopCmd, loginCmd, logoutCmd)
+	rootCmd.AddCommand(promptCmd, versionCmd, doctorCmd, loginCmd, logoutCmd)
 
 	// Self-heal commands
 	healCmd.AddCommand(healStatusCmd, healTestCmd)
@@ -1356,26 +1268,8 @@ func init() {
 
 	// Model management commands
 	rootCmd.AddCommand(newModelCmd())
-	rootCmd.AddCommand(newConfigCmd())
-
-	// Batch processing
-	rootCmd.AddCommand(newBatchCmd())
-
-	// Ralph autonomous loop
-	rootCmd.AddCommand(newRalphCmd())
-
-	// Training and evaluation
-	rootCmd.AddCommand(newTrainCmd())
-
-	// Autonomous agent mesh
-	rootCmd.AddCommand(newMeshCmd())
-
-	// Autoloop and skill engine
-	rootCmd.AddCommand(newAutoCmd())
 	rootCmd.AddCommand(newSkillCmd())
-
-	// Local network discovery + SSH
-	rootCmd.AddCommand(newNetscanCmd())
+	rootCmd.AddCommand(newConfigCmd())
 
 	// Feature registry (build tiers — see docs/strategy.md#feature-tiers)
 	rootCmd.AddCommand(newFeaturesCmd())
@@ -1407,10 +1301,6 @@ func init() {
 
 	// Interactive agentic shell (ycode shell)
 	rootCmd.AddCommand(newShellCmd())
-
-	// `ycode yc <verb>` — same built-in registry as the bash middleware,
-	// reachable from any shell since the ycode binary is on PATH.
-	rootCmd.AddCommand(newYcCmd())
 
 	// `ycode wrap <agent-cmd>` — PATH-shim involuntary interception for
 	// foreign agentic CLIs (Claude Code, Codex, Aider, Gemini CLI,
