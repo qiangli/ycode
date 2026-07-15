@@ -107,7 +107,7 @@ capabilities:
   - id: shell
     summary: agent-callable bash with parse/validate/sandbox hooks
     audience: [agent]
-    cli: [shell, yc, wrap]
+    cli: [shell, wrap]
     mcp: [agent_shell]
     http: []
     config: []
@@ -183,7 +183,7 @@ capabilities:
   - id: orchestration
     summary: multi-agent task queue + autopilot loops
     audience: [human, agent]
-    cli: [serve, prompt, loop, ralph, auto, mesh, sprint]
+    cli: [serve, prompt]
     mcp: []
     http: ["/ycode/api/sessions", "/ycode/api/groups", "/ycode/api/commands", "/chat/"]
     config: [Tasks.CICommand, Tasks.AutoMerge, Chat.Enabled]
@@ -211,7 +211,7 @@ capabilities:
   - id: dev_lifecycle
     summary: operator commands (health, login, training, eval, healing)
     audience: [human]
-    cli: [doctor, login, logout, heal, train, eval, features, version, batch, netscan, config, tools]
+    cli: [doctor, login, logout, heal, eval, features, version, config, tools]
     mcp: []
     http: ["/ycode/api/health", "/ycode/api/status", "/debug/pprof/"]
     config: [SelfHeal.SinkPath]
