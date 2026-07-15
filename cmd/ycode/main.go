@@ -1370,9 +1370,8 @@ func init() {
 	// Autonomous agent mesh
 	rootCmd.AddCommand(newMeshCmd())
 
-	// Autoloop, sprint, and skill engine
+	// Autoloop and skill engine
 	rootCmd.AddCommand(newAutoCmd())
-	rootCmd.AddCommand(newSprintCmd())
 	rootCmd.AddCommand(newSkillCmd())
 
 	// Local network discovery + SSH

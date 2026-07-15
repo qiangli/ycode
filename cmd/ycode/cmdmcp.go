@@ -48,7 +48,7 @@ import (
 //     though run_ycode_command itself is callable.
 //
 //  5. NEVER ADD interactive verbs (login, prompt), self-recursive verbs
-//     (prompt, ralph, loop, auto, autopilot, sprint, collab, mesh start),
+//     (prompt, ralph, loop, auto, autopilot, collab, mesh start),
 //     internal verbs (runner, shell-trace, internal-*), or PATH-mutating
 //     verbs (wrap install) to the allowlist. These break the runner's
 //     transactional contract or create cycles.
