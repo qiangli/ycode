@@ -30,8 +30,10 @@ type otelResult struct {
 	convOTEL *conversation.OTELConfig
 }
 
-// resolveCollectorAddr returns the OTEL collector gRPC address using the priority:
-// overrideCollectorAddr (set by serve) > config CollectorAddr > discovery file > default.
+// resolveCollectorAddr returns the OTEL collector address using the priority:
+// env > overrideCollectorAddr (set by serve) > config CollectorAddr > discovery file.
+// It intentionally has no loopback default: without an explicitly configured or
+// discovered endpoint, ycode must not keep dialing 127.0.0.1:4317.
 func resolveCollectorAddr(cfg *config.Config) string {
 	// THE STANDARD ENV VAR WINS. It was not consulted at all.
 	//
@@ -63,8 +65,14 @@ func resolveCollectorAddr(cfg *config.Config) string {
 			return addr
 		}
 	}
-	// 4. Default.
-	return "127.0.0.1:4317"
+	return ""
+}
+
+func resolveCollectorAddrForEnabledObservability(cfg *config.Config) string {
+	if cfg == nil || !cfg.Observability.IsEnabled() {
+		return ""
+	}
+	return resolveCollectorAddr(cfg)
 }
 
 // resolveOTELDataDir returns the OTEL storage path using the priority:
@@ -155,11 +163,14 @@ func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Reg
 	// Start retention cleanup.
 	yotel.StartRetentionCleanup(ctx, dataDir, 3*24*time.Hour)
 
-	// Try connecting to a running collector for dual-export.
+	// Try connecting to a running collector for dual-export only when
+	// observability is enabled and an endpoint was explicitly configured
+	// or discovered. An explicit observability opt-out must not dial even
+	// if OTEL_EXPORTER_OTLP_ENDPOINT is present in the environment.
 	// This enables the workflow: start ycode solo, then start ycode serve,
 	// and ycode auto-publishes to the shared collector.
-	collectorAddr := resolveCollectorAddr(cfg)
-	if otelProvider.TryConnectCollector(ctx, collectorAddr) {
+	collectorAddr := resolveCollectorAddrForEnabledObservability(cfg)
+	if collectorAddr != "" && otelProvider.TryConnectCollector(ctx, collectorAddr) {
 		if otelProvider.LoggerProvider != nil {
 			convCfg.ConvLogger = yotel.NewConversationLogger(otelProvider.LoggerProvider, instanceID)
 		}

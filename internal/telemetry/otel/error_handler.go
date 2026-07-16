@@ -10,16 +10,13 @@ import (
 
 // InstallQuietErrorHandler swaps OTel's default error handler (which
 // writes via Go's stdlib `log.Print` and so leaks unstructured noise
-// into stderr) for one that routes through slog. The well-known
-// "collector unreachable" signatures — fired every PeriodicReader tick
-// when ycode wraps a tool but no `ycode serve` is up — are demoted to
-// slog.Debug so they stay invisible at the default INFO level. They
-// remain inspectable via YCODE_LOG_LEVEL=debug, and the file metric
-// exporter still captures the underlying samples regardless of gRPC
-// health, so demoting these doesn't lose data.
+// into stderr) for one that routes through slog. Repeated export errors
+// from an unreachable collector fire every PeriodicReader tick; keep the
+// first warning visible and suppress repeats so telemetry degrades quietly.
 //
-// Other errors (encode failures, programmer error, etc.) route at
-// slog.Warn so genuine bugs aren't silently swallowed.
+// Other errors (encode failures, programmer error, etc.) also route at
+// slog.Warn once per class so genuine bugs remain visible without flooding
+// long-running agent output.
 //
 // Wrapped-process stdout/stderr/exit codes are unaffected — this only
 // changes where ycode's own OTel-SDK error log goes.
@@ -43,10 +40,38 @@ func (quietErrorHandler) Handle(err error) {
 	}
 	msg := err.Error()
 	if isCollectorUnavailable(msg) {
-		slog.Debug("otel: collector unavailable", "error", msg)
+		logOTELSDKErrorOnce("collector_unavailable", "otel: collector unavailable", msg)
 		return
 	}
-	slog.Warn("otel: sdk error", "error", msg)
+	logOTELSDKErrorOnce("sdk_error", "otel: sdk error", msg)
+}
+
+var otelSDKErrorLogSuppressor = newOncePerClassLogSuppressor()
+
+type oncePerClassLogSuppressor struct {
+	mu   sync.Mutex
+	seen map[string]struct{}
+}
+
+func newOncePerClassLogSuppressor() *oncePerClassLogSuppressor {
+	return &oncePerClassLogSuppressor{seen: make(map[string]struct{})}
+}
+
+func logOTELSDKErrorOnce(class, message, err string) {
+	if !otelSDKErrorLogSuppressor.shouldLog(class) {
+		return
+	}
+	slog.Warn(message, "error", err)
+}
+
+func (s *oncePerClassLogSuppressor) shouldLog(class string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.seen[class]; ok {
+		return false
+	}
+	s.seen[class] = struct{}{}
+	return true
 }
 
 // isCollectorUnavailable matches the substrings the OTLP exporters
