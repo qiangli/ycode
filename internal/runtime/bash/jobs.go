@@ -93,7 +93,7 @@ func (j *Job) Signal(sig os.Signal) error {
 
 	// For other signals, try to send to process group if we have a PID.
 	if j.PID > 0 {
-		return syscall.Kill(-j.PID, sysSig)
+		return killProcessGroup(j.PID, sysSig)
 	}
 	return fmt.Errorf("cannot send signal %v: no PID available", sig)
 }
