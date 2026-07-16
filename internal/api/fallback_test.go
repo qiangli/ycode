@@ -128,7 +128,9 @@ func TestFallbackProvider_ModelNotFoundRetriesWithFallbackModel(t *testing.T) {
 			models = append(models, req.Model)
 			events := make(chan *StreamEvent, 1)
 			errs := make(chan error, 1)
-			if req.Model == "missing-model" {
+			// The untagged name and its :latest form both 404, so the chain walks
+			// all the way to the configured known-good default.
+			if req.Model == "missing-model" || req.Model == "missing-model:latest" {
 				close(events)
 				errs <- &ClassifiedError{Reason: ReasonModelNotFound, Action: ActionFallbackModel, StatusCode: 404, Body: "model not found"}
 				close(errs)
@@ -154,7 +156,7 @@ func TestFallbackProvider_ModelNotFoundRetriesWithFallbackModel(t *testing.T) {
 	}
 	for range events {
 	}
-	if got, want := fmt.Sprint(models), "[missing-model gpt-4.1]"; got != want {
+	if got, want := fmt.Sprint(models), "[missing-model missing-model:latest gpt-4.1]"; got != want {
 		t.Errorf("models tried = %s, want %s", got, want)
 	}
 }
@@ -213,5 +215,35 @@ func TestFallbackProvider_Kind(t *testing.T) {
 	}
 	if fp.Kind() != ProviderAnthropic {
 		t.Errorf("expected Anthropic, got %s", fp.Kind())
+	}
+}
+
+// TestFallbackModelUntaggedTriesLatest: a ModelNotFound on an UNTAGGED model
+// retries "<model>:latest" first (Ollama/cloudbox-pool tag convention), then the
+// configured default — and the chain always terminates without mangling the
+// default or looping.
+func TestFallbackModelUntaggedTriesLatest(t *testing.T) {
+	fp := &FallbackProvider{fallbackModelName: "gpt-4.1"}
+	if got := fp.fallbackModel("gpt-oss-20b"); got != "gpt-oss-20b:latest" {
+		t.Errorf("untagged request: got %q, want gpt-oss-20b:latest", got)
+	}
+	if got := fp.fallbackModel("gpt-oss-20b:latest"); got != "gpt-4.1" {
+		t.Errorf("after :latest retry: got %q, want gpt-4.1 (configured default)", got)
+	}
+	// The default itself must return itself (no ":latest" mangling) so the caller's
+	// fallback==requested check errors out instead of trying "gpt-4.1:latest".
+	if got := fp.fallbackModel("gpt-4.1"); got != "gpt-4.1" {
+		t.Errorf("default model: got %q, want gpt-4.1 unchanged", got)
+	}
+	// Empty configured default: untagged still tries :latest, tagged terminates.
+	fp2 := &FallbackProvider{fallbackModelName: ""}
+	if got := fp2.fallbackModel("gpt-oss-20b"); got != "gpt-oss-20b:latest" {
+		t.Errorf("empty default, untagged: got %q, want gpt-oss-20b:latest", got)
+	}
+	if got := fp2.fallbackModel("qwen2.5-coder:32b"); got != "" {
+		t.Errorf("empty default, tagged: got %q, want empty (terminates)", got)
+	}
+	if got := fp2.fallbackModel(""); got != "" {
+		t.Errorf("empty request: got %q, want empty", got)
 	}
 }

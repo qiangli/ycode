@@ -152,9 +152,20 @@ func (fp *FallbackProvider) Send(ctx context.Context, req *Request) (<-chan *Str
 	return emptyCh, resultCh
 }
 
+// fallbackModel yields the next model to try after a ModelNotFound. It walks an
+// ordered chain: for an UNTAGGED request it tries "<model>:latest" first — the
+// Ollama / cloudbox-pool convention tags every model, so an untagged name
+// ("gpt-oss-20b") 404s where "gpt-oss-20b:latest" is served — then falls through
+// to the configured known-good default. The `requested != fallbackModelName`
+// guard keeps it from appending ":latest" to the default itself, so the chain
+// always terminates (…":latest" carries a ":", the default returns itself → the
+// caller sees fallback == requested and errors out).
 func (fp *FallbackProvider) fallbackModel(requested string) string {
 	if requested == "" {
 		return ""
+	}
+	if !strings.Contains(requested, ":") && requested != fp.fallbackModelName {
+		return requested + ":latest"
 	}
 	return fp.fallbackModelName
 }
