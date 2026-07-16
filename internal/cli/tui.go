@@ -1202,7 +1202,7 @@ func (m *TUIModel) statusBar() string {
 	sessionInfo := sessionStyle.Render(sessionText)
 
 	// Hints.
-	hintText := " ctrl+k:commands | shift+tab:mode | /help "
+	hintText := " pgup/pgdn:scroll | ctrl+k:commands | shift+tab:mode | /help "
 	if m.paused {
 		hintText = " /resume to continue | ctrl+c to cancel | type to add context "
 	}
