@@ -11,7 +11,7 @@ import (
 const cloudboxOKResponse = `{
   "object": "list",
   "data": [
-    {"id": "gpt-4.1", "object": "model", "owned_by": "openai", "x_capabilities": ["chat"], "x_context_length": 200000},
+    {"id": "gpt-5.5", "object": "model", "owned_by": "openai", "x_capabilities": ["chat"], "x_context_length": 200000},
     {"id": "llama3.2:3b", "object": "model", "owned_by": "ollama", "x_capabilities": ["chat"], "x_context_length": 131072},
     {"id": "claude-sonnet-4-6-20250514", "object": "model", "owned_by": "anthropic"},
     {"id": "qwen2.5-coder:32b", "object": "model", "owned_by": "ollama"}
@@ -47,8 +47,8 @@ func TestCloudboxLister_HappyPath(t *testing.T) {
 			t.Errorf("model %q source = %q, want cloudbox", m.ID, m.Source)
 		}
 	}
-	if byID["gpt-4.1"].Provider != "openai" {
-		t.Errorf("gpt-4.1 provider = %q, want openai", byID["gpt-4.1"].Provider)
+	if byID["gpt-5.5"].Provider != "openai" {
+		t.Errorf("gpt-5.5 provider = %q, want openai", byID["gpt-5.5"].Provider)
 	}
 	if byID["llama3.2:3b"].Provider != "ollama" {
 		t.Errorf("llama3.2:3b provider = %q, want ollama", byID["llama3.2:3b"].Provider)
@@ -173,9 +173,9 @@ func TestDiscoverEnvAndCloudbox_MergesEnvAndCloudbox(t *testing.T) {
 	lister := CloudboxLister(func(ctx context.Context) []ModelInfo {
 		return []ModelInfo{
 			{ID: "qwen2.5-coder:32b", Provider: "ollama", Source: "cloudbox"},
-			// gpt-4.1 overlaps with the OPENAI_API_KEY env-detected list:
+			// gpt-5.5 overlaps with the OPENAI_API_KEY env-detected list:
 			// env wins (appears first), cloudbox entry is deduped.
-			{ID: "gpt-4.1", Provider: "openai", Source: "cloudbox"},
+			{ID: "gpt-5.5", Provider: "openai", Source: "cloudbox"},
 		}
 	})
 
@@ -193,9 +193,9 @@ func TestDiscoverEnvAndCloudbox_MergesEnvAndCloudbox(t *testing.T) {
 	if bySource["cloudbox"] == 0 {
 		t.Errorf("expected cloudbox models, got sources: %+v", bySource)
 	}
-	// gpt-4.1 came from BOTH env and cloudbox; env wins on dedup.
-	if byID["gpt-4.1"].Source != "env" {
-		t.Errorf("gpt-4.1 source = %q, want env (env appears first and dedupes cloudbox)", byID["gpt-4.1"].Source)
+	// gpt-5.5 came from BOTH env and cloudbox; env wins on dedup.
+	if byID["gpt-5.5"].Source != "env" {
+		t.Errorf("gpt-5.5 source = %q, want env (env appears first and dedupes cloudbox)", byID["gpt-5.5"].Source)
 	}
 	// qwen unique to cloudbox.
 	if byID["qwen2.5-coder:32b"].Source != "cloudbox" {
