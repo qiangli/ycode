@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -340,21 +341,59 @@ func (c *OpenAICompatClient) readStream(body io.Reader, events chan<- *StreamEve
 		args strings.Builder
 	}
 	activeTools := make(map[int]*toolCallState)
+	var thinking strings.Builder
+
+	flushThinking := func() {
+		if thinking.Len() == 0 {
+			return
+		}
+		delta, _ := json.Marshal(map[string]string{
+			"type":     "thinking_delta",
+			"thinking": thinking.String(),
+		})
+		events <- &StreamEvent{
+			Type:  "content_block_delta",
+			Delta: delta,
+		}
+		thinking.Reset()
+	}
+
+	flushTools := func() bool {
+		if len(activeTools) == 0 {
+			return false
+		}
+		indexes := make([]int, 0, len(activeTools))
+		for idx := range activeTools {
+			indexes = append(indexes, idx)
+		}
+		sort.Ints(indexes)
+		for _, idx := range indexes {
+			tc := activeTools[idx]
+			events <- &StreamEvent{
+				Type:  "content_block_start",
+				Index: idx,
+				ContentBlock: &ContentBlock{
+					Type:  ContentTypeToolUse,
+					ID:    tc.id,
+					Name:  tc.name,
+					Input: json.RawMessage(tc.args.String()),
+				},
+			}
+			events <- &StreamEvent{
+				Type:  "content_block_stop",
+				Index: idx,
+			}
+		}
+		activeTools = make(map[int]*toolCallState)
+		return true
+	}
 
 	for {
 		raw, err := parser.Next()
 		if err != nil {
 			if err == io.EOF {
-				// Finalize any active tool calls.
-				for idx, tc := range activeTools {
-					// Emit content_block_stop for each tool.
-					events <- &StreamEvent{
-						Type:  "content_block_stop",
-						Index: idx,
-					}
-					_ = tc // already emitted start
-				}
-				if len(activeTools) > 0 {
+				flushThinking()
+				if flushTools() {
 					// Signal stop_reason = tool_use.
 					delta, _ := json.Marshal(map[string]string{"stop_reason": "tool_use"})
 					events <- &StreamEvent{Type: "message_delta", Delta: delta}
@@ -367,15 +406,8 @@ func (c *OpenAICompatClient) readStream(body io.Reader, events chan<- *StreamEve
 		}
 
 		if raw.Data == "[DONE]" {
-			// Finalize active tool calls.
-			for idx, tc := range activeTools {
-				events <- &StreamEvent{
-					Type:  "content_block_stop",
-					Index: idx,
-				}
-				_ = tc
-			}
-			if len(activeTools) > 0 {
+			flushThinking()
+			if flushTools() {
 				delta, _ := json.Marshal(map[string]string{"stop_reason": "tool_use"})
 				events <- &StreamEvent{Type: "message_delta", Delta: delta}
 			}
@@ -439,18 +471,12 @@ func (c *OpenAICompatClient) readStream(body io.Reader, events chan<- *StreamEve
 		for _, choice := range chunk.Choices {
 			// Handle reasoning/thinking content.
 			if choice.Delta.ReasoningContent != "" {
-				delta, _ := json.Marshal(map[string]string{
-					"type":     "thinking_delta",
-					"thinking": choice.Delta.ReasoningContent,
-				})
-				events <- &StreamEvent{
-					Type:  "content_block_delta",
-					Delta: delta,
-				}
+				thinking.WriteString(choice.Delta.ReasoningContent)
 			}
 
 			// Handle text content.
 			if choice.Delta.Content != "" {
+				flushThinking()
 				delta, _ := json.Marshal(map[string]string{
 					"type": "text_delta",
 					"text": choice.Delta.Content,
@@ -463,53 +489,28 @@ func (c *OpenAICompatClient) readStream(body io.Reader, events chan<- *StreamEve
 
 			// Handle tool calls.
 			for _, tc := range choice.Delta.ToolCalls {
+				flushThinking()
 				state, exists := activeTools[tc.Index]
 				if !exists {
-					// New tool call — emit content_block_start.
-					state = &toolCallState{
-						id:   tc.ID,
-						name: tc.Function.Name,
-					}
+					state = &toolCallState{}
 					activeTools[tc.Index] = state
-
-					block := &ContentBlock{
-						Type: ContentTypeToolUse,
-						ID:   tc.ID,
-						Name: tc.Function.Name,
-					}
-					events <- &StreamEvent{
-						Type:         "content_block_start",
-						Index:        tc.Index,
-						ContentBlock: block,
-					}
 				}
-
-				// Accumulate arguments and emit partial_json delta.
+				if tc.ID != "" {
+					state.id = tc.ID
+				}
+				if tc.Function.Name != "" {
+					state.name = tc.Function.Name
+				}
 				if tc.Function.Arguments != "" {
 					state.args.WriteString(tc.Function.Arguments)
-					delta, _ := json.Marshal(map[string]string{
-						"type":         "input_json_delta",
-						"partial_json": tc.Function.Arguments,
-					})
-					events <- &StreamEvent{
-						Type:  "content_block_delta",
-						Index: tc.Index,
-						Delta: delta,
-					}
 				}
 			}
 
 			// Handle finish_reason.
 			if choice.FinishReason != nil {
+				flushThinking()
 				reason := *choice.FinishReason
-				// Finalize tool calls.
-				for idx, tc := range activeTools {
-					events <- &StreamEvent{
-						Type:  "content_block_stop",
-						Index: idx,
-					}
-					_ = tc
-				}
+				flushTools()
 
 				// Map OpenAI finish reasons to Anthropic stop reasons.
 				stopReason := "end_turn"
