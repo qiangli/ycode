@@ -13,6 +13,7 @@ type ModelInfo struct {
 	Alias    string `json:"alias,omitempty"`   // short alias if any (e.g. "opus")
 	Provider string `json:"provider"`          // provider name (e.g. "anthropic", "openai")
 	Source   string `json:"source"`            // "builtin", "config", "env", "cloudbox"
+	Auth     string `json:"auth,omitempty"`    // how it authenticates: "api-key", "subscription", "pooled"
 	Size     string `json:"size,omitempty"`    // human-readable size when a provider reports it
 	Current  bool   `json:"current,omitempty"` // true if this is the active model
 }
@@ -243,6 +244,7 @@ func appendEnvModels(models []ModelInfo, seen map[string]bool) []ModelInfo {
 				ID:       modelID,
 				Provider: entry.provider,
 				Source:   "env",
+				Auth:     "api-key", // discovered because its provider API key is set
 			})
 			seen[modelID] = true
 		}

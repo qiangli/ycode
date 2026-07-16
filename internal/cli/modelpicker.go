@@ -18,6 +18,7 @@ type modelPickerItem struct {
 	Alias    string // short alias if any
 	Provider string // provider kind
 	Source   string // "builtin", "config", "env", "ollama"
+	Auth     string // "api-key", "subscription", "pooled"
 	Size     string // human-readable size (ollama only)
 	Current  bool   // true if this is the active model
 }
@@ -41,6 +42,7 @@ func buildModelPickerItems(currentModel string, models []api.ModelInfo) []modelP
 			Alias:    m.Alias,
 			Provider: m.Provider,
 			Source:   m.Source,
+			Auth:     m.Auth,
 			Size:     m.Size,
 			Current:  m.ID == currentModel || m.Alias == currentModel,
 		})
@@ -161,6 +163,7 @@ func renderModelPicker(mp *modelPickerState, width, height int) string {
 	aliasStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#a78bfa")).Bold(true)
 	providerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#737373"))
 	sourceStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#525252"))
+	authStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24")) // amber: how it authenticates
 	currentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#34d399"))
 	selBg := lipgloss.NewStyle().Background(lipgloss.Color("#3b3b5c"))
 
@@ -196,6 +199,12 @@ func renderModelPicker(mp *modelPickerState, width, height int) string {
 		name := nameStyle.Render(item.ID)
 		prov := providerStyle.Render(fmt.Sprintf(" (%s)", item.Provider))
 
+		// Auth tag: how this model authenticates — api-key / subscription / pooled.
+		authTag := ""
+		if item.Auth != "" {
+			authTag = authStyle.Render(fmt.Sprintf(" {%s}", item.Auth))
+		}
+
 		// Show size for ollama models, source tag for others.
 		extra := ""
 		if item.Size != "" {
@@ -204,7 +213,7 @@ func renderModelPicker(mp *modelPickerState, width, height int) string {
 			extra = sourceStyle.Render(fmt.Sprintf(" [%s]", item.Source))
 		}
 
-		line := fmt.Sprintf("  %s%s%s%s%s", marker, alias, name, prov, extra)
+		line := fmt.Sprintf("  %s%s%s%s%s%s", marker, alias, name, prov, authTag, extra)
 
 		if idx == mp.selected {
 			line = selBg.Render(line)

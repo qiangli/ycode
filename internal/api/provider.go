@@ -41,7 +41,7 @@ func DefaultModelForProvider(cfg ProviderConfig) string {
 	case "deepseek":
 		return "deepseek-chat"
 	case "zai":
-		return "glm-4.6"
+		return "glm-5.2"
 	case "gemini":
 		return "gemini-2.5-pro"
 	case "moonshot":

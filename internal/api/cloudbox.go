@@ -102,6 +102,7 @@ func NewCloudboxLister(baseURL, bearerToken string, hc *http.Client) CloudboxLis
 				ID:       m.ID,
 				Provider: providerFromOwnedBy(m.OwnedBy, m.ID),
 				Source:   "cloudbox",
+				Auth:     "pooled", // served by the cloudbox pool via a bearer token
 			})
 		}
 		return out
