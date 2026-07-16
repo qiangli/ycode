@@ -57,9 +57,7 @@ func NewSecurityExecHandler(mode permission.Mode, killTimeout time.Duration) fun
 				Stdin:  hc.Stdin,
 				Stdout: hc.Stdout,
 				Stderr: hc.Stderr,
-				SysProcAttr: &syscall.SysProcAttr{
-					Setpgid: true,
-				},
+				SysProcAttr: processGroupAttr(),
 			}
 
 			runErr = cmd.Start()
@@ -68,12 +66,12 @@ func NewSecurityExecHandler(mode permission.Mode, killTimeout time.Duration) fun
 				stopf := context.AfterFunc(ctx, func() {
 					pgid := cmd.Process.Pid
 					if killTimeout <= 0 {
-						_ = syscall.Kill(-pgid, syscall.SIGKILL)
+						_ = killProcessGroup(pgid, syscall.SIGKILL)
 						return
 					}
-					_ = syscall.Kill(-pgid, syscall.SIGTERM)
+					_ = killProcessGroup(pgid, syscall.SIGTERM)
 					time.Sleep(killTimeout)
-					_ = syscall.Kill(-pgid, syscall.SIGKILL)
+					_ = killProcessGroup(pgid, syscall.SIGKILL)
 				})
 				defer stopf()
 

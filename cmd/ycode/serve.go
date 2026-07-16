@@ -435,7 +435,7 @@ func detachServer() error {
 	attr := &os.ProcAttr{
 		Dir:   ".",
 		Files: []*os.File{os.Stdin, logFile, logFile},
-		Sys:   &syscall.SysProcAttr{Setsid: true},
+		Sys:   daemonSysProcAttr(),
 	}
 	proc, err := os.StartProcess(exe, append([]string{filepath.Base(exe)}, args...), attr)
 	if err != nil {
