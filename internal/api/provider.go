@@ -11,17 +11,17 @@ import (
 
 // ModelAliases maps short names to full model IDs.
 var ModelAliases = map[string]string{
-	"opus":           "claude-opus-4-6-20250415",
-	"sonnet":         "claude-sonnet-4-6-20250514",
-	"haiku":          "claude-haiku-4-5-20251001",
-	"kimi":           "kimi-k2.5",
-	"gemini-pro":     "gemini-2.5-pro",
-	"gemini-flash":   "gemini-2.5-flash",
+	"opus":           "claude-opus-4-8",
+	"sonnet":         "claude-sonnet-5",
+	"haiku":          "claude-haiku-4-5",
+	"kimi":           "kimi-k2.7-code",
+	"gemini-pro":     "gemini-3.1-pro",
+	"gemini-flash":   "gemini-3.5-flash",
 	"deepseek":       "deepseek-chat",
 	"deepseek-r1":    "deepseek-reasoner",
 	"deepseek-flash": "deepseek-v4-flash",
 	"deepseek-pro":   "deepseek-v4-pro",
-	"glm":            "glm-4.6",
+	"glm":            "glm-5.2",
 }
 
 // ProviderConfig holds provider-specific settings for client creation.
@@ -77,7 +77,7 @@ func ResolveModelWithAliases(model string, configAliases map[string]string) stri
 // and available environment variables. It follows this priority:
 //
 //  1. Model name prefix/alias match with available credentials (e.g.
-//     "kimi-k2.5" + KIMI_API_KEY → Moonshot) — beats DHNT so that
+//     "kimi-k2.7-code" + KIMI_API_KEY → Moonshot) — beats DHNT so that
 //     explicit per-provider API keys route directly, not through cloudbox.
 //  2. DHNT_BASE_URL (+ DHNT_API_KEY) → cloudbox-pooled OpenAI-compatible
 //  3. Model name match without credentials → error
