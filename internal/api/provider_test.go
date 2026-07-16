@@ -27,13 +27,13 @@ func TestResolveModel(t *testing.T) {
 	tests := []struct {
 		input, want string
 	}{
-		{"opus", "claude-opus-4-6-20250415"},
-		{"sonnet", "claude-sonnet-4-6-20250514"},
-		{"haiku", "claude-haiku-4-5-20251001"},
-		{"Sonnet", "claude-sonnet-4-6-20250514"},
-		{"kimi", "kimi-k2.5"},
+		{"opus", "claude-opus-4-8"},
+		{"sonnet", "claude-sonnet-5"},
+		{"haiku", "claude-haiku-4-5"},
+		{"Sonnet", "claude-sonnet-5"},
+		{"kimi", "kimi-k2.7-code"},
 		{"gpt-4o", "gpt-4o"},
-		{"claude-sonnet-4-6-20250514", "claude-sonnet-4-6-20250514"},
+		{"claude-sonnet-5", "claude-sonnet-5"},
 	}
 	for _, tt := range tests {
 		if got := ResolveModel(tt.input); got != tt.want {
@@ -49,15 +49,15 @@ func TestResolveModelWithAliases(t *testing.T) {
 		want    string
 	}{
 		// nil aliases falls through to built-in.
-		{"sonnet", nil, "claude-sonnet-4-6-20250514"},
+		{"sonnet", nil, "claude-sonnet-5"},
 		// Config alias overrides built-in.
 		{"sonnet", map[string]string{"sonnet": "my-custom-sonnet"}, "my-custom-sonnet"},
 		// Config alias chains through built-in (fast → haiku → full ID).
-		{"fast", map[string]string{"fast": "haiku"}, "claude-haiku-4-5-20251001"},
+		{"fast", map[string]string{"fast": "haiku"}, "claude-haiku-4-5"},
 		// Config alias for unknown name, no built-in match.
 		{"mymodel", map[string]string{"mymodel": "gpt-4o"}, "gpt-4o"},
 		// Case insensitive.
-		{"Fast", map[string]string{"fast": "opus"}, "claude-opus-4-6-20250415"},
+		{"Fast", map[string]string{"fast": "opus"}, "claude-opus-4-8"},
 		// No match anywhere.
 		{"unknown", map[string]string{"other": "value"}, "unknown"},
 	}
@@ -73,7 +73,7 @@ func TestDetectProvider_Anthropic(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 
-	cfg, err := DetectProvider("claude-sonnet-4-6-20250514")
+	cfg, err := DetectProvider("claude-sonnet-5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestDetectProvider_AnthropicBaseURL(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 	t.Setenv("ANTHROPIC_BASE_URL", "https://custom.anthropic.example/v1/messages")
 
-	cfg, err := DetectProvider("claude-sonnet-4-6-20250514")
+	cfg, err := DetectProvider("claude-sonnet-5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func TestDetectProvider_KimiAlias(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("MOONSHOT_API_KEY", "ms-test")
 
-	// "kimi" alias resolves to "kimi-k2.5" and detects Moonshot provider.
+	// "kimi" alias resolves to "kimi-k2.7-code" and detects Moonshot provider.
 	cfg, err := DetectProvider("moonshot-v1-auto")
 	if err != nil {
 		t.Fatal(err)
@@ -298,7 +298,7 @@ func TestDetectProvider_Gemini(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("GOOGLE_API_KEY", "goog-test")
 
-	cfg, err := DetectProvider("gemini-2.5-pro")
+	cfg, err := DetectProvider("gemini-3.1-pro")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func TestDetectProvider_GeminiAPIKey(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("GEMINI_API_KEY", "gem-test")
 
-	cfg, err := DetectProvider("gemini-2.5-flash")
+	cfg, err := DetectProvider("gemini-3.5-flash")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestDetectProvider_GeminiCustomBaseURL(t *testing.T) {
 	t.Setenv("GOOGLE_API_KEY", "goog-test")
 	t.Setenv("GEMINI_BASE_URL", "https://custom.gemini.example/v1")
 
-	cfg, err := DetectProvider("gemini-2.5-pro")
+	cfg, err := DetectProvider("gemini-3.1-pro")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,8 +360,8 @@ func TestResolveModel_GeminiAliases(t *testing.T) {
 	tests := []struct {
 		input, want string
 	}{
-		{"gemini-pro", "gemini-2.5-pro"},
-		{"gemini-flash", "gemini-2.5-flash"},
+		{"gemini-pro", "gemini-3.1-pro"},
+		{"gemini-flash", "gemini-3.5-flash"},
 	}
 	for _, tt := range tests {
 		if got := ResolveModel(tt.input); got != tt.want {

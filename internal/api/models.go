@@ -9,7 +9,7 @@ import (
 
 // ModelInfo represents a single available model across all sources.
 type ModelInfo struct {
-	ID       string `json:"id"`                // full model ID (e.g. "claude-opus-4-6-20250415", "llama3.2:3b")
+	ID       string `json:"id"`                // full model ID (e.g. "claude-opus-4-8", "llama3.2:3b")
 	Alias    string `json:"alias,omitempty"`   // short alias if any (e.g. "opus")
 	Provider string `json:"provider"`          // provider name (e.g. "anthropic", "openai")
 	Source   string `json:"source"`            // "builtin", "config", "env", "cloudbox"
@@ -32,11 +32,11 @@ func DetectProviderFromModel(model string) string {
 	case strings.HasPrefix(lower, "qwen"):
 		return "dashscope"
 	case strings.HasPrefix(lower, "kimi") || strings.HasPrefix(lower, "moonshot"):
-		return "moonshot"
+		return "kimi"
 	case strings.HasPrefix(lower, "deepseek"):
 		return "deepseek"
 	case strings.HasPrefix(lower, "glm"):
-		return "zai"
+		return "glm"
 	default:
 		return "unknown"
 	}
@@ -56,11 +56,11 @@ func providerEnvKey(provider string) string {
 		return "XAI_API_KEY"
 	case "dashscope":
 		return "DASHSCOPE_API_KEY"
-	case "moonshot":
+	case "kimi", "moonshot":
 		return "MOONSHOT_API_KEY (or KIMI_API_KEY)"
 	case "deepseek":
 		return "DEEPSEEK_API_KEY"
-	case "zai":
+	case "glm", "zai":
 		return "ZAI_API_KEY (or GLM_API_KEY)"
 	default:
 		return ""
@@ -74,24 +74,28 @@ var envKeyModels = []struct {
 	models   []string
 }{
 	{"ANTHROPIC_API_KEY", "anthropic", []string{
-		"claude-opus-4-6-20250415",
-		"claude-sonnet-4-6-20250514",
-		"claude-haiku-4-5-20251001",
+		"claude-opus-4-8",
+		"claude-sonnet-5",
+		"claude-haiku-4-5",
+		"claude-fable-5",
 	}},
 	{"OPENAI_API_KEY", "openai", []string{
-		"gpt-4.1",
-		"gpt-4.1-mini",
-		"gpt-4.1-nano",
+		"gpt-5.5",
+		"gpt-5.6",
+		"gpt-5.6-terra",
+		"gpt-5.6-sol",
+		"gpt-5.6-luna",
+		"gpt-5.4-mini",
 		"o3",
 		"o4-mini",
 	}},
 	{"GOOGLE_API_KEY", "gemini", []string{
-		"gemini-2.5-pro",
-		"gemini-2.5-flash",
+		"gemini-3.1-pro",
+		"gemini-3.5-flash",
 	}},
 	{"GEMINI_API_KEY", "gemini", []string{
-		"gemini-2.5-pro",
-		"gemini-2.5-flash",
+		"gemini-3.1-pro",
+		"gemini-3.5-flash",
 	}},
 	{"XAI_API_KEY", "xai", []string{
 		"grok-3",
@@ -102,26 +106,26 @@ var envKeyModels = []struct {
 		"qwen-plus",
 		"qwen-turbo",
 	}},
-	{"MOONSHOT_API_KEY", "moonshot", []string{
-		"kimi-k2.5",
-		"moonshot-v1-128k",
+	{"MOONSHOT_API_KEY", "kimi", []string{
+		"kimi-k2.7-code",
+		"kimi-k2.6",
 	}},
-	{"KIMI_API_KEY", "moonshot", []string{
-		"kimi-k2.5",
+	{"KIMI_API_KEY", "kimi", []string{
+		"kimi-k2.7-code",
+		"kimi-k2.6",
 	}},
 	{"DEEPSEEK_API_KEY", "deepseek", []string{
-		"deepseek-chat",
-		"deepseek-reasoner",
-		"deepseek-v4-flash",
 		"deepseek-v4-pro",
+		"deepseek-v4-flash",
+		"deepseek-chat",
 	}},
 	// z.ai (Zhipu) GLM. The CODING PLAN endpoint is /api/coding/paas/v4 — a different
 	// path from the general /api/paas/v4, and a coding key is rejected by the latter.
-	{"ZAI_API_KEY", "zai", []string{
-		"glm-4.6",
+	{"ZAI_API_KEY", "glm", []string{
+		"glm-5.2",
 	}},
-	{"GLM_API_KEY", "zai", []string{
-		"glm-4.6",
+	{"GLM_API_KEY", "glm", []string{
+		"glm-5.2",
 	}},
 }
 

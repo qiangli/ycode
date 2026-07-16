@@ -11,17 +11,17 @@ func TestDetectProviderFromModel(t *testing.T) {
 		model    string
 		expected string
 	}{
-		{"claude-opus-4-6-20250415", "anthropic"},
-		{"claude-sonnet-4-6-20250514", "anthropic"},
-		{"gpt-4.1", "openai"},
+		{"claude-opus-4-8", "anthropic"},
+		{"claude-sonnet-5", "anthropic"},
+		{"gpt-5.6-terra", "openai"},
 		{"o3", "openai"},
 		{"o1-preview", "openai"},
 		{"o4-mini", "openai"},
-		{"gemini-2.5-pro", "gemini"},
+		{"gemini-3.1-pro", "gemini"},
 		{"grok-3", "xai"},
 		{"qwen-max", "dashscope"},
-		{"kimi-k2.5", "moonshot"},
-		{"moonshot-v1-128k", "moonshot"},
+		{"kimi-k2.7-code", "kimi"},
+		{"moonshot-v1-128k", "kimi"},
 		{"llama3.2:3b", "unknown"},
 		{"custom-model", "unknown"},
 	}
@@ -129,15 +129,15 @@ func TestDiscoverModels_EnvDetection(t *testing.T) {
 
 		// Anthropic models from env should be deduped against builtins.
 		// Built-in aliases already cover claude-opus, sonnet, haiku — so
-		// env detection should NOT add duplicates.
+		// env detection should add only the new fable flagship.
 		envCount := 0
 		for _, m := range models {
 			if m.Source == "env" && m.Provider == "anthropic" {
 				envCount++
 			}
 		}
-		if envCount != 0 {
-			t.Errorf("expected 0 env anthropic models (all deduped against builtins), got %d", envCount)
+		if envCount != 1 {
+			t.Errorf("expected 1 env anthropic model (fable), got %d", envCount)
 		}
 	})
 
@@ -153,8 +153,8 @@ func TestDiscoverModels_EnvDetection(t *testing.T) {
 				envModels[m.ID] = true
 			}
 		}
-		if !envModels["gpt-4.1"] {
-			t.Error("expected gpt-4.1 from env detection")
+		if !envModels["gpt-5.5"] {
+			t.Error("expected gpt-5.5 from env detection")
 		}
 		if !envModels["o3"] {
 			t.Error("expected o3 from env detection")
