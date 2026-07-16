@@ -204,6 +204,17 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 		slog.Warn("no LLM provider available (agent features disabled until API key is configured)", "error", err)
 	} else {
 		provider = api.NewProvider(providerCfg)
+		if fallbackModel := api.DefaultModelForProvider(*providerCfg); fallbackModel != "" && fallbackModel != cfg.Model {
+			fallbackProvider, fallbackErr := api.NewFallbackProvider(api.FallbackConfig{
+				Providers:     []api.ProviderConfig{*providerCfg},
+				FallbackModel: fallbackModel,
+			})
+			if fallbackErr != nil {
+				slog.Warn("model fallback unavailable", "error", fallbackErr)
+			} else {
+				provider = fallbackProvider
+			}
+		}
 	}
 	// Initialize storage manager (Phase 1: KV store is instant).
 	storageDataDir := filepath.Join(home, ".agents", "ycode", "projects", "data")

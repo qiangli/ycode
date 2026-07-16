@@ -33,6 +33,33 @@ type ProviderConfig struct {
 	BaseURL     string
 }
 
+// DefaultModelForProvider returns ycode's known-good default for a configured
+// provider. It is used only after the requested model is rejected as missing.
+// An empty result means ycode does not know a safe replacement for that endpoint.
+func DefaultModelForProvider(cfg ProviderConfig) string {
+	switch strings.ToLower(cfg.DisplayName) {
+	case "deepseek":
+		return "deepseek-chat"
+	case "zai":
+		return "glm-4.6"
+	case "gemini":
+		return "gemini-2.5-pro"
+	case "moonshot":
+		return "kimi-k2.5"
+	}
+
+	switch cfg.Kind {
+	case ProviderAnthropic:
+		return "claude-sonnet-4-6-20250514"
+	case ProviderOpenAI:
+		return "gpt-4.1"
+	case ProviderGemini:
+		return "gemini-2.5-pro"
+	default:
+		return ""
+	}
+}
+
 // DisplayKind returns the human-readable provider name.
 func (c *ProviderConfig) DisplayKind() string {
 	if c.DisplayName != "" {
