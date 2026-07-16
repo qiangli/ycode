@@ -245,16 +245,18 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 
 	// Pre-generate instance ID so session and OTEL share the same UUID.
 	instanceID := uuid.New().String()
-	instanceDir := filepath.Join(otelDataDir, "instances", instanceID)
 
-	// Create session under the instance directory.
 	sessionDir := cfg.SessionDir
-	if sessionDir == "" {
-		sessionDir = filepath.Join(instanceDir, "session")
+	if sessionDirFlag != "" {
+		sessionDir = sessionDirFlag
 	}
-	sess, err := session.NewWithID(sessionDir, instanceID)
+	sessionDir = resolveSessionDir(home, sessionDir)
+	sess, err := createSessionForRun(sessionDir, instanceID, forkSessionID, resumeSessionID)
 	if err != nil {
-		return nil, fmt.Errorf("create session: %w", err)
+		return nil, err
+	}
+	if err := os.Setenv("YCODE_SESSION_ID", sess.ID); err != nil {
+		return nil, fmt.Errorf("set YCODE_SESSION_ID: %w", err)
 	}
 
 	// Start background prompt cache eviction (waits for SQL to be ready).
@@ -749,6 +751,9 @@ var (
 	dangerSkipPermissions bool
 	connectURL            string
 	eventsFile            string
+	sessionDirFlag        string
+	forkSessionID         string
+	resumeSessionID       string
 	noInteractiveFlag     bool
 	yesFlag               bool
 )
@@ -841,7 +846,7 @@ var rootCmd = &cobra.Command{
 			}
 			// Prefer an already-running server; otherwise fall through to
 			// in-process. ycode no longer auto-spawns `ycode serve`.
-			if os.Getenv("YCODE_NO_SERVER") == "" {
+			if os.Getenv("YCODE_NO_SERVER") == "" && !hasSessionContinuationFlags() {
 				if baseURL, err := ensureServer(); err == nil {
 					return runServerPrompt(baseURL, prompt)
 				} else {
@@ -898,6 +903,10 @@ var rootCmd = &cobra.Command{
 		}
 		return app.RunInteractive(context.Background())
 	},
+}
+
+func hasSessionContinuationFlags() bool {
+	return forkSessionID != "" || resumeSessionID != ""
 }
 
 // ctxWithUnattendedFlag applies the global --no-interactive / --yes flags to
@@ -1249,6 +1258,9 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&dangerSkipPermissions, "danger-skip-permissions", false, "Skip all permission checks (grants full access to all tools)")
 	rootCmd.PersistentFlags().StringVar(&connectURL, "connect", "", "Connect to a remote ycode server (ws:// or nats://)")
 	rootCmd.PersistentFlags().StringVar(&eventsFile, "events", "", "Write NDJSON event log to file")
+	rootCmd.PersistentFlags().StringVar(&sessionDirFlag, "session-dir", "", "Directory for persisted sessions")
+	rootCmd.PersistentFlags().StringVar(&forkSessionID, "fork", "", "Fork an existing session into a new session before running the prompt")
+	rootCmd.PersistentFlags().StringVar(&resumeSessionID, "resume", "", "Resume an existing session before running the prompt")
 	rootCmd.PersistentFlags().BoolVar(&noInteractiveFlag, "no-interactive", false, "Run non-interactively: skip TUI, trust prompts, and confirmations")
 	rootCmd.PersistentFlags().BoolVar(&yesFlag, "yes", false, "Auto-confirm interactive prompts (alias for --no-interactive)")
 	rootCmd.Flags().Bool("dry-run", false, "Preview session setup without calling the model")
