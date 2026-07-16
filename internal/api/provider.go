@@ -103,16 +103,19 @@ func ResolveModelWithAliases(model string, configAliases map[string]string) stri
 // DetectProvider determines which provider to use based on the model name
 // and available environment variables. It follows this priority:
 //
-//  1. Model name prefix/alias match with available credentials (e.g.
+//  1. DHNT_BASE_URL + tagged model name (name:tag) → cloudbox-pooled
+//     OpenAI-compatible, so pooled Ollama-style names are not stolen by
+//     commercial provider prefixes.
+//  2. Model name prefix/alias match with available credentials (e.g.
 //     "kimi-k2.7-code" + KIMI_API_KEY → Moonshot) — beats DHNT so that
 //     explicit per-provider API keys route directly, not through cloudbox.
-//  2. DHNT_BASE_URL (+ DHNT_API_KEY) → cloudbox-pooled OpenAI-compatible
-//  3. Model name match without credentials → error
-//  4. OPENAI_BASE_URL (+ OPENAI_API_KEY) → generic OpenAI-compatible
-//  5. Available API keys: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY,
+//  3. DHNT_BASE_URL (+ DHNT_API_KEY) → cloudbox-pooled OpenAI-compatible
+//  4. Model name match without credentials → error
+//  5. OPENAI_BASE_URL (+ OPENAI_API_KEY) → generic OpenAI-compatible
+//  6. Available API keys: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY,
 //     DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, DEEPSEEK_API_KEY,
 //     GOOGLE_API_KEY, GEMINI_API_KEY
-//  6. OAuth token → Anthropic
+//  7. OAuth token → Anthropic
 //
 // The DHNT_* pair follows the existing per-provider convention
 // (<PROVIDER>_BASE_URL + <PROVIDER>_API_KEY, same as OPENAI_*,
@@ -126,16 +129,28 @@ func ResolveModelWithAliases(model string, configAliases map[string]string) stri
 func DetectProvider(model string) (*ProviderConfig, error) {
 	resolved := ResolveModel(model)
 
-	// 1. Check model name for provider hints with available credentials.
+	// Pooled cloudbox/Ollama models are tagged as name:tag. Some names collide
+	// with direct commercial-provider prefixes (deepseek-*, glm-*, gpt-*), so
+	// route tagged models through DHNT before provider-prefix detection can
+	// capture them.
+	if baseURL := envNonEmpty("DHNT_BASE_URL"); baseURL != "" && strings.Contains(resolved, ":") {
+		return &ProviderConfig{
+			Kind:    ProviderOpenAI,
+			APIKey:  envNonEmpty("DHNT_API_KEY"),
+			BaseURL: baseURL,
+		}, nil
+	}
+
+	// 2. Check untagged model names for provider hints with available credentials.
 	// When the model matches a known provider AND the corresponding API
 	// key is set, route directly — the user's explicit per-provider key
-	// beats the cloudbox override.
+	// beats the cloudbox override for commercial cloud model IDs.
 	cfg, modelMatched := detectFromModel(resolved)
 	if modelMatched && cfg != nil && (cfg.APIKey != "" || cfg.BearerToken != "") {
 		return cfg, nil
 	}
 
-	// 1b. Model matched a commercial provider prefix (deepseek-*, gpt-*,
+	// 2b. Model matched a commercial provider prefix (deepseek-*, gpt-*,
 	// claude-*, …) but its API key is not set. Do NOT fall through to the
 	// DHNT cloudbox pool — commercial cloud model IDs would 404 with a cryptic
 	// "no reachable backend has model <name>". Report a clear, actionable
@@ -148,10 +163,9 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 		return nil, fmt.Errorf("model %q requires provider credentials; set the matching provider API key, or pick a different model", model)
 	}
 
-	// 2. DHNT cloudbox-pooled override. Checked after model-specific
+	// 3. DHNT cloudbox-pooled override. Checked after model-specific
 	// credentials so that explicitly-set per-provider API keys remain
-	// usable alongside DHNT. Reached for local Ollama-tagged models
-	// (non-nil ProviderLocal cfg, no key) so the pool can serve them.
+	// usable alongside DHNT for untagged model names.
 	if baseURL := envNonEmpty("DHNT_BASE_URL"); baseURL != "" {
 		// Allow empty key: cloudbox returns 401 on /v1/* without an
 		// llm:chat bearer, which surfaces as a clear error at the

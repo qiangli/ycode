@@ -17,6 +17,7 @@ func clearEnv(t *testing.T) {
 		"MOONSHOT_API_KEY", "MOONSHOT_BASE_URL",
 		"KIMI_API_KEY", "KIMI_BASE_URL",
 		"DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL",
+		"ZAI_API_KEY", "ZAI_BASE_URL", "GLM_API_KEY",
 		"GOOGLE_API_KEY", "GEMINI_API_KEY", "GEMINI_BASE_URL",
 	} {
 		t.Setenv(key, "")
@@ -176,6 +177,117 @@ func TestDetectProvider_DHNTBeatsOpenAI(t *testing.T) {
 	}
 	if cfg.APIKey != "dhnt-token" {
 		t.Errorf("DHNT_API_KEY must win over OPENAI_API_KEY; got %q", cfg.APIKey)
+	}
+}
+
+func TestDetectProvider_DHNTTaggedModelsBeatDirectProviderPrefixes(t *testing.T) {
+	tests := []struct {
+		name        string
+		model       string
+		extraEnvKey string
+		extraEnvVal string
+		notBaseURL  string
+		notDisplay  string
+	}{
+		{
+			name:        "deepseek tagged model with direct key",
+			model:       "deepseek-r1:70b",
+			extraEnvKey: "DEEPSEEK_API_KEY",
+			extraEnvVal: "sk-deepseek",
+			notBaseURL:  "https://api.deepseek.com/v1",
+			notDisplay:  "deepseek",
+		},
+		{
+			name:  "gpt tagged model",
+			model: "gpt-oss-20b:latest",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("DHNT_BASE_URL", "https://ai.dhnt.io/v1")
+			t.Setenv("DHNT_API_KEY", "dhnt-token")
+			if tt.extraEnvKey != "" {
+				t.Setenv(tt.extraEnvKey, tt.extraEnvVal)
+			}
+
+			cfg, err := DetectProvider(tt.model)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Kind != ProviderOpenAI {
+				t.Errorf("Kind = %v, want %v", cfg.Kind, ProviderOpenAI)
+			}
+			if cfg.BaseURL != "https://ai.dhnt.io/v1" {
+				t.Errorf("BaseURL = %q, want DHNT pool URL", cfg.BaseURL)
+			}
+			if cfg.APIKey != "dhnt-token" {
+				t.Errorf("APIKey = %q, want DHNT token", cfg.APIKey)
+			}
+			if tt.notBaseURL != "" && cfg.BaseURL == tt.notBaseURL {
+				t.Errorf("BaseURL = %q, must not route to direct provider", cfg.BaseURL)
+			}
+			if tt.notDisplay != "" && cfg.DisplayName == tt.notDisplay {
+				t.Errorf("DisplayName = %q, must not route to direct provider", cfg.DisplayName)
+			}
+		})
+	}
+}
+
+func TestDetectProvider_DHNTDoesNotStealUntaggedDirectProviderModels(t *testing.T) {
+	tests := []struct {
+		name        string
+		model       string
+		envKey      string
+		envVal      string
+		wantBaseURL string
+		wantKind    ProviderKind
+		wantDisplay string
+	}{
+		{
+			name:        "glm direct zai",
+			model:       "glm-5.2",
+			envKey:      "ZAI_API_KEY",
+			envVal:      "zai-token",
+			wantBaseURL: "https://api.z.ai/api/coding/paas/v4",
+			wantKind:    ProviderOpenAI,
+			wantDisplay: "zai",
+		},
+		{
+			name:        "claude direct anthropic",
+			model:       "claude-opus-4-8",
+			envKey:      "ANTHROPIC_API_KEY",
+			envVal:      "sk-ant-test",
+			wantKind:    ProviderAnthropic,
+			wantDisplay: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("DHNT_BASE_URL", "https://ai.dhnt.io/v1")
+			t.Setenv("DHNT_API_KEY", "dhnt-token")
+			t.Setenv(tt.envKey, tt.envVal)
+
+			cfg, err := DetectProvider(tt.model)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Kind != tt.wantKind {
+				t.Errorf("Kind = %v, want %v", cfg.Kind, tt.wantKind)
+			}
+			if cfg.BaseURL != tt.wantBaseURL {
+				t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, tt.wantBaseURL)
+			}
+			if cfg.APIKey != tt.envVal {
+				t.Errorf("APIKey = %q, want direct provider token", cfg.APIKey)
+			}
+			if cfg.DisplayName != tt.wantDisplay {
+				t.Errorf("DisplayName = %q, want %q", cfg.DisplayName, tt.wantDisplay)
+			}
+		})
 	}
 }
 
