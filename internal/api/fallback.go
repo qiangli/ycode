@@ -12,17 +12,19 @@ import (
 
 // FallbackProvider wraps multiple providers and falls back on transient errors.
 type FallbackProvider struct {
-	providers []Provider
-	configs   []ProviderConfig
-	mu        sync.RWMutex
-	cooldowns map[int]time.Time // index → cooldown expiry
-	logger    *slog.Logger
+	providers         []Provider
+	configs           []ProviderConfig
+	fallbackModelName string
+	mu                sync.RWMutex
+	cooldowns         map[int]time.Time // index → cooldown expiry
+	logger            *slog.Logger
 }
 
 // FallbackConfig configures the fallback chain.
 type FallbackConfig struct {
-	Providers []ProviderConfig
-	Logger    *slog.Logger
+	Providers     []ProviderConfig
+	FallbackModel string // alternate model to try after a ModelNotFound response
+	Logger        *slog.Logger
 }
 
 // NewFallbackProvider creates a provider that tries each provider in order,
@@ -44,16 +46,20 @@ func NewFallbackProvider(cfg FallbackConfig) (*FallbackProvider, error) {
 	}
 
 	return &FallbackProvider{
-		providers: providers,
-		configs:   cfg.Providers,
-		cooldowns: make(map[int]time.Time),
-		logger:    logger,
+		providers:         providers,
+		configs:           cfg.Providers,
+		fallbackModelName: cfg.FallbackModel,
+		cooldowns:         make(map[int]time.Time),
+		logger:            logger,
 	}, nil
 }
 
 // Send tries each provider in order. On transient failure, it falls back.
 func (fp *FallbackProvider) Send(ctx context.Context, req *Request) (<-chan *StreamEvent, <-chan error) {
-	for i, p := range fp.providers {
+	// Keep the replacement request local: callers may reuse req for later turns.
+	activeReq := req
+	for i := 0; i < len(fp.providers); i++ {
+		p := fp.providers[i]
 		// Skip providers on cooldown.
 		if fp.isOnCooldown(i) {
 			fp.logger.Debug("skipping provider on cooldown",
@@ -63,7 +69,7 @@ func (fp *FallbackProvider) Send(ctx context.Context, req *Request) (<-chan *Str
 			continue
 		}
 
-		events, errCh := p.Send(ctx, req)
+		events, errCh := p.Send(ctx, activeReq)
 
 		// Peek at the first event or error to detect immediate failures.
 		// For streaming providers, transient errors typically arrive as
@@ -99,11 +105,22 @@ func (fp *FallbackProvider) Send(ctx context.Context, req *Request) (<-chan *Str
 				)
 				continue
 			case ActionFallbackModel:
-				fp.setCooldown(i, 5*time.Minute)
-				fp.logger.Warn("model not found, trying fallback provider",
+				fallbackModel := fp.fallbackModel(activeReq.Model)
+				if fallbackModel == "" || fallbackModel == activeReq.Model {
+					return fallbackModelError(activeReq.Model, err)
+				}
+				fp.logger.Warn("configured model not found; retrying with fallback model",
 					"index", i,
 					"provider", fp.configs[i].DisplayKind(),
+					"configured_model", activeReq.Model,
+					"fallback_model", fallbackModel,
 				)
+				fallbackReq := *activeReq
+				fallbackReq.Model = fallbackModel
+				activeReq = &fallbackReq
+				// A missing model is not a provider health failure. Retry this
+				// provider with the configured known-good model before moving on.
+				i--
 				continue
 			default:
 				// ActionAbort, ActionCompressContext — return to caller.
@@ -133,6 +150,22 @@ func (fp *FallbackProvider) Send(ctx context.Context, req *Request) (<-chan *Str
 	emptyCh := make(chan *StreamEvent)
 	close(emptyCh)
 	return emptyCh, resultCh
+}
+
+func (fp *FallbackProvider) fallbackModel(requested string) string {
+	if requested == "" {
+		return ""
+	}
+	return fp.fallbackModelName
+}
+
+func fallbackModelError(model string, cause error) (<-chan *StreamEvent, <-chan error) {
+	events := make(chan *StreamEvent)
+	close(events)
+	errs := make(chan error, 1)
+	errs <- fmt.Errorf("configured model %q does not exist and no alternate model is configured: %w", model, cause)
+	close(errs)
+	return events, errs
 }
 
 // Kind returns the kind of the first (primary) provider.

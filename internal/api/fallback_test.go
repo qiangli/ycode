@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -116,6 +117,69 @@ func TestFallbackProvider_NoFallbackOnNonTransient(t *testing.T) {
 	err := <-errCh
 	if err == nil {
 		t.Fatal("expected error for non-transient failure")
+	}
+}
+
+func TestFallbackProvider_ModelNotFoundRetriesWithFallbackModel(t *testing.T) {
+	var models []string
+	provider := &mockProvider{
+		kind: ProviderOpenAI,
+		sendFn: func(ctx context.Context, req *Request) (<-chan *StreamEvent, <-chan error) {
+			models = append(models, req.Model)
+			events := make(chan *StreamEvent, 1)
+			errs := make(chan error, 1)
+			if req.Model == "missing-model" {
+				close(events)
+				errs <- &ClassifiedError{Reason: ReasonModelNotFound, Action: ActionFallbackModel, StatusCode: 404, Body: "model not found"}
+				close(errs)
+				return events, errs
+			}
+			events <- &StreamEvent{Type: "content_block_delta"}
+			close(events)
+			close(errs)
+			return events, errs
+		},
+	}
+	fp := &FallbackProvider{
+		providers:         []Provider{provider},
+		configs:           []ProviderConfig{{Kind: ProviderOpenAI}},
+		fallbackModelName: "gpt-4.1",
+		cooldowns:         make(map[int]time.Time),
+		logger:            slog.Default(),
+	}
+
+	events, errCh := fp.Send(context.Background(), &Request{Model: "missing-model"})
+	if err := <-errCh; err != nil {
+		t.Fatalf("expected fallback success, got %v", err)
+	}
+	for range events {
+	}
+	if got, want := fmt.Sprint(models), "[missing-model gpt-4.1]"; got != want {
+		t.Errorf("models tried = %s, want %s", got, want)
+	}
+}
+
+func TestFallbackProvider_ModelNotFoundWithoutFallbackIsActionable(t *testing.T) {
+	fp := &FallbackProvider{
+		providers: []Provider{&mockProvider{
+			kind: ProviderOpenAI,
+			sendFn: func(context.Context, *Request) (<-chan *StreamEvent, <-chan error) {
+				events := make(chan *StreamEvent)
+				close(events)
+				errs := make(chan error, 1)
+				errs <- &ClassifiedError{Reason: ReasonModelNotFound, Action: ActionFallbackModel, StatusCode: 404, Body: "model not found"}
+				close(errs)
+				return events, errs
+			},
+		}},
+		configs:   []ProviderConfig{{Kind: ProviderOpenAI}},
+		cooldowns: make(map[int]time.Time),
+		logger:    slog.Default(),
+	}
+
+	_, errCh := fp.Send(context.Background(), &Request{Model: "missing-model"})
+	if err := <-errCh; err == nil || !strings.Contains(err.Error(), "no alternate model is configured") {
+		t.Fatalf("expected actionable fallback error, got %v", err)
 	}
 }
 
