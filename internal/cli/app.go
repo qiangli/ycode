@@ -1073,6 +1073,13 @@ func (a *App) sessionMessages() []api.Message {
 // SwitchModel switches the active model and provider at runtime and persists
 // the choice to the user config file so it survives restarts.
 func (a *App) SwitchModel(name string) (string, error) {
+	// A fleet selector (nickname / agent name / band like L3) resolves to a
+	// concrete ycode model id before the ordinary alias pass — so `/model L3` or
+	// `/model kimi` works alongside a raw id. Non-selectors pass through unchanged.
+	if fm, note := api.ResolveFleetModel(name); fm != name {
+		slog.Info("fleet model selection", "from", name, "resolved", note)
+		name = fm
+	}
 	resolved := api.ResolveModelWithAliases(name, a.config.Aliases)
 	providerCfg, err := api.DetectProvider(resolved)
 	if err != nil {

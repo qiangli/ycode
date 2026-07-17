@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/qiangli/ycode/internal/api"
 )
 
 func newModelCmd() *cobra.Command {
@@ -167,11 +169,18 @@ Examples:
 			if err != nil {
 				return err
 			}
-			m["model"] = args[0]
+			sel := args[0]
+			// Accept a fleet selector (nickname / agent name / band like L3) and
+			// store the resolved concrete model id; a literal id passes through.
+			if fm, note := api.ResolveFleetModel(sel); fm != sel {
+				fmt.Printf("fleet: %s\n", note)
+				sel = fm
+			}
+			m["model"] = sel
 			if err := saveConfig(path, m); err != nil {
 				return err
 			}
-			fmt.Printf("default model set to %q in %s\n", args[0], path)
+			fmt.Printf("default model set to %q in %s\n", sel, path)
 			return nil
 		},
 	}

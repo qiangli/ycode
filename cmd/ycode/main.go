@@ -196,6 +196,12 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	if modelFlag != "" {
 		model = modelFlag
 	}
+	// A fleet selector (nickname / agent name / band like L3) resolves to a
+	// concrete ycode model id; a literal model id passes through unchanged.
+	if fm, note := api.ResolveFleetModel(model); fm != model {
+		slog.Info("fleet model selection", "from", model, "resolved", note)
+		model = fm
+	}
 	cfg.Model = api.ResolveModelWithAliases(model, cfg.Aliases)
 
 	var provider api.Provider
