@@ -219,6 +219,12 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	if err != nil {
 		slog.Warn("no LLM provider available (agent features disabled until API key is configured)", "error", err)
 	} else {
+		// Preflight key-health probe: surface a stale/invalid key at startup —
+		// at the door, not mid-run. Non-fatal: the run itself will also fail
+		// fast with the same clear error, and transient probe problems pass.
+		if err := api.PreflightAuthCheck(rootCtx, providerCfg); err != nil {
+			slog.Warn("provider API key failed preflight authentication — runs will fail until the key is fixed", "error", err)
+		}
 		provider = api.NewProvider(providerCfg)
 		if fallbackModel := api.DefaultModelForProvider(*providerCfg); fallbackModel != "" && fallbackModel != cfg.Model {
 			fallbackProvider, fallbackErr := api.NewFallbackProvider(api.FallbackConfig{

@@ -73,6 +73,7 @@ func (fp *FallbackProvider) send(ctx context.Context, req *Request, outEvents ch
 
 	// Keep the replacement request local: callers may reuse req for later turns.
 	activeReq := req
+	var lastErr error // the most recent provider failure, surfaced if the chain collapses
 	for i := 0; i < len(fp.providers); i++ {
 		p := fp.providers[i]
 		// Skip providers on cooldown.
@@ -91,6 +92,7 @@ func (fp *FallbackProvider) send(ctx context.Context, req *Request, outEvents ch
 		if err == nil {
 			return
 		}
+		lastErr = err
 		if emitted {
 			outErrs <- err
 			return
@@ -154,13 +156,44 @@ func (fp *FallbackProvider) send(ctx context.Context, req *Request, outEvents ch
 			continue
 		}
 
-		// Non-transient error — don't fallback, return immediately.
+		// Non-transient error — don't fallback, return immediately. A PERMANENT auth
+		// failure (401/403) gets a CLEAR error that names the provider and fingerprints
+		// the key (last 4), so a stale/invalid key is obvious at a glance instead of an
+		// opaque abort — and the run fails FAST here rather than hanging (the preflight
+		// probe in preflight.go catches most of these before a run even starts).
+		if sc := statusCodeOf(err); sc == 401 || sc == 403 {
+			authErr := NewAuthError(fp.configs[i].DisplayKind(), sc, fp.configs[i].credential())
+			fp.logger.Warn("provider rejected its API key; failing fast",
+				"provider", fp.configs[i].DisplayKind(),
+				"key", authErr.Fingerprint,
+			)
+			outErrs <- authErr
+			return
+		}
 		outErrs <- err
 		return
 	}
 
-	// All providers exhausted.
-	outErrs <- fmt.Errorf("all providers in fallback chain failed or on cooldown")
+	// All providers exhausted. Carry the last failure so the operator can see WHY the
+	// chain collapsed instead of guessing at cooldowns.
+	if lastErr != nil {
+		outErrs <- fmt.Errorf("all providers in fallback chain failed or on cooldown: %w", lastErr)
+	} else {
+		outErrs <- fmt.Errorf("all providers in fallback chain failed or on cooldown")
+	}
+}
+
+// statusCodeOf extracts an HTTP status code from a classified provider error.
+func statusCodeOf(err error) int {
+	var ce *ClassifiedError
+	if errors.As(err, &ce) {
+		return ce.StatusCode
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode
+	}
+	return 0
 }
 
 // relayProviderAttempt drains both channels concurrently. The old fallback

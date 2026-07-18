@@ -240,6 +240,153 @@ func TestFallbackProvider_NoFallbackOnNonTransient(t *testing.T) {
 	}
 }
 
+// TestFallbackProvider_PermanentAuthFailsFastWithClearError is the regression
+// test for the stale-DEEPSEEK_API_KEY incident: a 401 (invalid key — PERMANENT)
+// was collapsed into "all providers in fallback chain failed or on cooldown",
+// hiding which provider and which key failed, and burning the fallback chain
+// on a key that could never work. A permanent auth failure must instead
+// return IMMEDIATELY with an error naming the provider, the status, and a
+// last-4 key fingerprint — and must NOT put the provider on cooldown.
+func TestFallbackProvider_PermanentAuthFailsFastWithClearError(t *testing.T) {
+	var fallbackTried bool
+	fallback := &mockProvider{
+		kind: ProviderOpenAI,
+		sendFn: func(ctx context.Context, req *Request) (<-chan *StreamEvent, <-chan error) {
+			fallbackTried = true
+			return newSuccessProvider(ProviderOpenAI).sendFn(ctx, req)
+		},
+	}
+	deepseek := &mockProvider{
+		kind: ProviderOpenAI,
+		sendFn: func(ctx context.Context, req *Request) (<-chan *StreamEvent, <-chan error) {
+			events := make(chan *StreamEvent)
+			close(events)
+			errs := make(chan error, 1)
+			errs <- &ClassifiedError{Reason: ReasonAuthPermanent, Action: ActionAbort, StatusCode: 401, Body: `{"error":{"message":"Invalid API key"}}`}
+			close(errs)
+			return events, errs
+		},
+	}
+	fp := &FallbackProvider{
+		providers: []Provider{deepseek, fallback},
+		configs: []ProviderConfig{
+			{Kind: ProviderOpenAI, DisplayName: "deepseek", APIKey: "sk-deepseek-stale-key-1c75"},
+			{Kind: ProviderOpenAI, DisplayName: "openai", APIKey: "sk-openai-good-key-9f8e"},
+		},
+		cooldowns: make(map[int]time.Time),
+		logger:    slog.Default(),
+	}
+
+	_, errCh := fp.Send(context.Background(), &Request{Model: "deepseek-v4-pro"})
+	err := <-errCh
+	if err == nil {
+		t.Fatal("expected error for 401")
+	}
+
+	// The error must name the provider, the status, and the key fingerprint.
+	if !strings.Contains(err.Error(), `provider "deepseek"`) {
+		t.Errorf("error should name the provider, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Errorf("error should include the 401 status, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "…1c75") {
+		t.Errorf("error should include the last-4 key fingerprint, got: %v", err)
+	}
+	// And it must NEVER collapse into the opaque cooldown message.
+	if strings.Contains(err.Error(), "all providers in fallback chain failed or on cooldown") {
+		t.Errorf("401 must not collapse into the cooldown message, got: %v", err)
+	}
+	// The full key must never leak.
+	if strings.Contains(err.Error(), "sk-deepseek-stale-key") {
+		t.Errorf("error leaks key material: %v", err)
+	}
+	// Fail fast: the fallback provider must NOT be tried on a permanent error.
+	if fallbackTried {
+		t.Error("permanent auth failure must fail fast, not burn the fallback chain")
+	}
+	// No cooldown: a permanent failure is not cooldown-eligible.
+	if fp.isOnCooldown(0) {
+		t.Error("permanent auth failure must NOT put the provider on cooldown")
+	}
+	// The surfaced error is recognizably a permanent auth failure.
+	if !IsPermanentAuthError(err) {
+		t.Errorf("surfaced error should classify as permanent auth, got: %v", err)
+	}
+}
+
+// TestFallbackProvider_ClassifiedRateLimitCoolsDownAndFallsBack guards the
+// TRANSIENT path: a 429 still cools the provider down and rotates to the
+// fallback, exactly as before.
+func TestFallbackProvider_ClassifiedRateLimitCoolsDownAndFallsBack(t *testing.T) {
+	fp := &FallbackProvider{
+		providers: []Provider{
+			&mockProvider{
+				kind: ProviderAnthropic,
+				sendFn: func(ctx context.Context, req *Request) (<-chan *StreamEvent, <-chan error) {
+					events := make(chan *StreamEvent)
+					close(events)
+					errs := make(chan error, 1)
+					errs <- &ClassifiedError{Reason: ReasonRateLimit, Action: ActionRetry, StatusCode: 429, Body: "rate limit exceeded"}
+					close(errs)
+					return events, errs
+				},
+			},
+			newSuccessProvider(ProviderOpenAI),
+		},
+		configs: []ProviderConfig{
+			{Kind: ProviderAnthropic},
+			{Kind: ProviderOpenAI},
+		},
+		cooldowns: make(map[int]time.Time),
+		logger:    slog.Default(),
+	}
+
+	events, errCh := fp.Send(context.Background(), &Request{Model: "test"})
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var count int
+	for range events {
+		count++
+	}
+	if count != 1 {
+		t.Errorf("expected 1 event from fallback, got %d", count)
+	}
+	// Transient failure: the rate-limited provider goes on cooldown.
+	if !fp.isOnCooldown(0) {
+		t.Error("transient 429 should put the provider on cooldown")
+	}
+}
+
+// TestFallbackProvider_ExhaustedChainReportsLastError: when every provider
+// fails transiently, the collapse message must carry the underlying cause
+// instead of a bare "failed or on cooldown".
+func TestFallbackProvider_ExhaustedChainReportsLastError(t *testing.T) {
+	fp := &FallbackProvider{
+		providers: []Provider{
+			newFailingProvider(ProviderAnthropic, "429 rate limit exceeded"),
+		},
+		configs: []ProviderConfig{
+			{Kind: ProviderAnthropic, DisplayName: "anthropic"},
+		},
+		cooldowns: make(map[int]time.Time),
+		logger:    slog.Default(),
+	}
+
+	_, errCh := fp.Send(context.Background(), &Request{Model: "test"})
+	err := <-errCh
+	if err == nil {
+		t.Fatal("expected error when the chain is exhausted")
+	}
+	if !strings.Contains(err.Error(), "all providers in fallback chain failed or on cooldown") {
+		t.Errorf("expected the collapse message prefix, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "429 rate limit exceeded") {
+		t.Errorf("collapse message should carry the last provider error, got: %v", err)
+	}
+}
+
 func TestFallbackProvider_ModelNotFoundRetriesWithFallbackModel(t *testing.T) {
 	var models []string
 	provider := &mockProvider{

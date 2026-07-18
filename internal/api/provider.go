@@ -68,6 +68,16 @@ func (c *ProviderConfig) DisplayKind() string {
 	return string(c.Kind)
 }
 
+// credential returns the configured secret material (API key, else OAuth
+// bearer token) for fingerprinting. It must never be printed in full — only
+// via KeyFingerprint.
+func (c *ProviderConfig) credential() string {
+	if c.APIKey != "" {
+		return c.APIKey
+	}
+	return c.BearerToken
+}
+
 // ResolveModel expands a built-in model alias to its full model ID.
 // If the model is not an alias, it is returned as-is.
 func ResolveModel(model string) string {

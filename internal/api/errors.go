@@ -202,13 +202,13 @@ func ClassifyError(statusCode int, body string) FailoverReason {
 		(strings.Contains(bodyLower, "billing") || strings.Contains(bodyLower, "payment")):
 		return ReasonBilling
 
-	case (statusCode == 401 || statusCode == 403) &&
-		(strings.Contains(bodyLower, "invalid") || strings.Contains(bodyLower, "expired")):
-		return ReasonAuth
-
 	case statusCode == 401 || statusCode == 403:
-		// Generic auth error without specific keywords — still an auth issue.
-		return ReasonAuth
+		// The credential itself is rejected (invalid, expired, or forbidden).
+		// That is PERMANENT: no retry, cooldown, or key rotation can make a
+		// rejected key valid again. Classifying it as transient (ReasonAuth →
+		// ActionRotateKey) hid real outages behind cooldowns and the opaque
+		// "all providers failed" collapse — fail fast instead.
+		return ReasonAuthPermanent
 
 	case statusCode == 429:
 		return ReasonRateLimit
@@ -299,6 +299,109 @@ func truncateBody(s string, maxLen int) string {
 func IsClassifiedError(err error) bool {
 	var ce *ClassifiedError
 	return errors.As(err, &ce)
+}
+
+// AuthError is the operator-facing PERMANENT authentication failure: the
+// provider rejected the configured credential (HTTP 401/403). It names the
+// provider, the status, and a last-4 key fingerprint so a stale key is
+// identifiable in seconds — and it never contains full key material.
+type AuthError struct {
+	Provider    string // human-readable provider name, e.g. "deepseek"
+	StatusCode  int    // HTTP status (401/403); 0 when unknown
+	Fingerprint string // KeyFingerprint of the rejected credential
+}
+
+func (e *AuthError) Error() string {
+	if e.StatusCode > 0 {
+		return fmt.Sprintf("provider %q: %d authentication failed (key %s)",
+			e.Provider, e.StatusCode, e.Fingerprint)
+	}
+	return fmt.Sprintf("provider %q: authentication failed (key %s)",
+		e.Provider, e.Fingerprint)
+}
+
+// Unwrap lets errors.As still see the underlying classification
+// (ReasonAuthPermanent → ActionAbort) for recovery routing.
+func (e *AuthError) Unwrap() error {
+	return &ClassifiedError{
+		Reason:     ReasonAuthPermanent,
+		Action:     ActionAbort,
+		StatusCode: e.StatusCode,
+	}
+}
+
+// NewAuthError builds a permanent auth failure for a provider credential.
+// apiKey is used ONLY to derive the last-4 fingerprint; it is never stored
+// or printed.
+func NewAuthError(provider string, statusCode int, apiKey string) *AuthError {
+	return &AuthError{
+		Provider:    provider,
+		StatusCode:  statusCode,
+		Fingerprint: KeyFingerprint(apiKey),
+	}
+}
+
+// KeyFingerprint returns an ellipsis plus the last four characters of key —
+// enough to identify WHICH configured key failed without exposing the secret.
+// Keys of four characters or fewer are not fingerprinted at all: showing
+// their "last 4" would print the whole key.
+func KeyFingerprint(key string) string {
+	if key == "" {
+		return "(no key)"
+	}
+	if len(key) <= 4 {
+		return "…"
+	}
+	return "…" + key[len(key)-4:]
+}
+
+// IsPermanentAuthError reports whether err is a permanent provider
+// authentication failure (HTTP 401/403): the credential itself is rejected.
+// Permanent failures must fail fast — never retried, never cooled down,
+// never rotated, never collapsed into a generic fallback message.
+func IsPermanentAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var authErr *AuthError
+	if errors.As(err, &authErr) {
+		return true
+	}
+	var ce *ClassifiedError
+	if errors.As(err, &ce) {
+		return ce.Reason == ReasonAuthPermanent
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == 401 || apiErr.StatusCode == 403
+	}
+	return false
+}
+
+// IsTransientError reports whether err is a TRANSIENT provider failure —
+// 429 rate limit, provider overload, 5xx, or a network/timeout error — the
+// only failures that justify cooldown, retry, and rotation. Permanent
+// failures (401/403 auth, billing, policy) return false.
+func IsTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ce *ClassifiedError
+	if errors.As(err, &ce) {
+		switch ce.Reason {
+		case ReasonRateLimit, ReasonOverloaded, ReasonServerError, ReasonTimeout:
+			return true
+		default:
+			return false
+		}
+	}
+	var authErr *AuthError
+	if errors.As(err, &authErr) {
+		return false
+	}
+	// Legacy string matching for unclassified errors (network errors, raw
+	// status text from non-classifying code paths).
+	return isTransientError(err)
 }
 
 // extractNumber extracts the first integer from a string.

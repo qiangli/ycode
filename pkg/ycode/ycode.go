@@ -251,9 +251,15 @@ func (a *Agent) ensureService() (service.Service, bus.Bus) {
 // autoDetectProvider finds a provider from available credentials.
 func autoDetectProvider(model string) (api.Provider, error) {
 	providerCfg, err := api.DetectProvider(model)
-	if err == nil {
-		return api.NewProvider(providerCfg), nil
+	if err != nil {
+		return nil, fmt.Errorf("no LLM provider available: set provider credentials such as ANTHROPIC_API_KEY or OPENAI_API_KEY")
 	}
 
-	return nil, fmt.Errorf("no LLM provider available: set provider credentials such as ANTHROPIC_API_KEY or OPENAI_API_KEY")
+	// Preflight key-health probe: a stale/invalid key fails NOW, with a clear
+	// fingerprinted error, instead of mid-run behind an opaque fallback message.
+	if err := api.PreflightAuthCheck(context.Background(), providerCfg); err != nil {
+		return nil, err
+	}
+
+	return api.NewProvider(providerCfg), nil
 }

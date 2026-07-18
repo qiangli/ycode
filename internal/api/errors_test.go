@@ -2,6 +2,8 @@ package api
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -165,18 +167,27 @@ func TestClassifyError(t *testing.T) {
 		wantAction RecoveryAction
 	}{
 		{
+			// A rejected key is PERMANENT: no retry, cooldown, or rotation can
+			// make it valid again. Fail fast (Abort), never ActionRotateKey.
 			name:       "401 with invalid key",
 			statusCode: 401,
 			body:       `{"error":"invalid api key"}`,
-			wantReason: ReasonAuth,
-			wantAction: ActionRotateKey,
+			wantReason: ReasonAuthPermanent,
+			wantAction: ActionAbort,
 		},
 		{
 			name:       "403 with expired token",
 			statusCode: 403,
 			body:       `{"error":"token has expired"}`,
-			wantReason: ReasonAuth,
-			wantAction: ActionRotateKey,
+			wantReason: ReasonAuthPermanent,
+			wantAction: ActionAbort,
+		},
+		{
+			name:       "403 generic forbidden",
+			statusCode: 403,
+			body:       `{"error":"forbidden"}`,
+			wantReason: ReasonAuthPermanent,
+			wantAction: ActionAbort,
 		},
 		{
 			name:       "401 with billing issue",
@@ -377,5 +388,91 @@ func TestIsClassifiedError(t *testing.T) {
 	}
 	if IsClassifiedError(errors.New("plain error")) {
 		t.Error("IsClassifiedError should return false for plain error")
+	}
+}
+
+func TestKeyFingerprint(t *testing.T) {
+	tests := []struct {
+		key  string
+		want string
+	}{
+		{"sk-deepseek-stale-key-1c75", "…1c75"},
+		{"sk-ant-api03-abcdefgh", "…efgh"},
+		{"abcd", "…"},    // too short: revealing 4 chars would expose the whole key
+		{"ab", "…"},      // too short to fingerprint safely
+		{"", "(no key)"}, // no credential configured
+	}
+	for _, tt := range tests {
+		if got := KeyFingerprint(tt.key); got != tt.want {
+			t.Errorf("KeyFingerprint(%q) = %q, want %q", tt.key, got, tt.want)
+		}
+	}
+	// Never leak more than the last 4 chars.
+	fp := KeyFingerprint("sk-deepseek-stale-key-1c75")
+	if strings.Contains(fp, "sk-deepseek") || strings.Contains(fp, "stale") {
+		t.Errorf("fingerprint %q leaks key material", fp)
+	}
+}
+
+func TestAuthError_Error(t *testing.T) {
+	err := NewAuthError("deepseek", 401, "sk-deepseek-stale-key-1c75")
+	got := err.Error()
+	want := `provider "deepseek": 401 authentication failed (key …1c75)`
+	if got != want {
+		t.Errorf("AuthError.Error() = %q, want %q", got, want)
+	}
+	// Without a status code the message still names provider and key.
+	err2 := NewAuthError("zai", 0, "glm-key-9f8e")
+	if got2 := err2.Error(); !strings.Contains(got2, `provider "zai"`) || !strings.Contains(got2, "…9f8e") {
+		t.Errorf("AuthError without status = %q, want provider name + fingerprint", got2)
+	}
+}
+
+func TestIsPermanentAuthError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"auth error", NewAuthError("deepseek", 401, "sk-key-1c75"), true},
+		{"classified 401", &ClassifiedError{Reason: ReasonAuthPermanent, Action: ActionAbort, StatusCode: 401}, true},
+		{"api error 403", &APIError{StatusCode: 403, Body: "forbidden"}, true},
+		{"wrapped auth error", fmt.Errorf("stream: %w", NewAuthError("deepseek", 401, "sk-key-1c75")), true},
+		{"rate limit", &ClassifiedError{Reason: ReasonRateLimit, Action: ActionRetry, StatusCode: 429}, false},
+		{"server error", &ClassifiedError{Reason: ReasonServerError, Action: ActionRetry, StatusCode: 500}, false},
+		{"plain error", errors.New("boom"), false},
+		{"nil", nil, false},
+	}
+	for _, tt := range tests {
+		if got := IsPermanentAuthError(tt.err); got != tt.want {
+			t.Errorf("%s: IsPermanentAuthError() = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestIsTransientErrorExported(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"429 classified", &ClassifiedError{Reason: ReasonRateLimit, StatusCode: 429}, true},
+		{"500 classified", &ClassifiedError{Reason: ReasonServerError, StatusCode: 500}, true},
+		{"529 overloaded", &ClassifiedError{Reason: ReasonOverloaded, StatusCode: 529}, true},
+		{"timeout classified", &ClassifiedError{Reason: ReasonTimeout, StatusCode: 408}, true},
+		{"legacy 429 string", errors.New("429 rate limit exceeded"), true},
+		{"legacy 503 string", errors.New("503 Service Unavailable"), true},
+		{"legacy connection refused", errors.New("connection refused"), true},
+		{"401 permanent", &ClassifiedError{Reason: ReasonAuthPermanent, StatusCode: 401}, false},
+		{"auth error", NewAuthError("deepseek", 401, "sk-key-1c75"), false},
+		{"billing", &ClassifiedError{Reason: ReasonBilling, StatusCode: 401}, false},
+		{"model not found", &ClassifiedError{Reason: ReasonModelNotFound, StatusCode: 404}, false},
+		{"invalid api key string", errors.New("invalid api key"), false},
+		{"nil", nil, false},
+	}
+	for _, tt := range tests {
+		if got := IsTransientError(tt.err); got != tt.want {
+			t.Errorf("%s: IsTransientError() = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

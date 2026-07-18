@@ -1109,6 +1109,11 @@ func (a *App) SwitchModel(name string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("switch model: %w", err)
 	}
+	// Preflight key-health probe: reject a stale/invalid key at selection
+	// time — before the operator discovers it mid-run.
+	if err := api.PreflightAuthCheck(context.Background(), providerCfg); err != nil {
+		return "", fmt.Errorf("switch model: %w", err)
+	}
 	a.provider = api.NewProvider(providerCfg)
 	a.config.Model = resolved
 	a.providerKind = providerCfg.DisplayKind()

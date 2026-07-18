@@ -116,6 +116,47 @@ func TestKeyPool_MarkRateLimited(t *testing.T) {
 	}
 }
 
+// TestKeyPool_MarkFailed_Transient: only TRANSIENT failures (429/5xx/network)
+// cool the current key down and rotate to the next one.
+func TestKeyPool_MarkFailed_Transient(t *testing.T) {
+	kp, _ := NewKeyPool(KeyPoolConfig{
+		Keys:             []string{"key-a", "key-b"},
+		CooldownDuration: time.Second,
+	})
+
+	rateLimited := &ClassifiedError{Reason: ReasonRateLimit, Action: ActionRetry, StatusCode: 429}
+	key, rotated := kp.MarkFailed(rateLimited)
+	if !rotated || key != "key-b" {
+		t.Errorf("transient 429: expected rotation to key-b, got %s (rotated=%v)", key, rotated)
+	}
+	if kp.Available() != 1 {
+		t.Errorf("transient 429: expected 1 key on cooldown, available=%d", kp.Available())
+	}
+}
+
+// TestKeyPool_MarkFailed_PermanentAuth: a PERMANENT auth failure (401/403)
+// means the key itself is rejected. Cooling it down and rotating to a sibling
+// masks the real problem and wastes the pool — the pool must stay put so the
+// caller fails fast with the clear error.
+func TestKeyPool_MarkFailed_PermanentAuth(t *testing.T) {
+	kp, _ := NewKeyPool(KeyPoolConfig{
+		Keys:             []string{"stale-key-1c75", "key-b"},
+		CooldownDuration: time.Second,
+	})
+
+	unauthorized := &ClassifiedError{Reason: ReasonAuthPermanent, Action: ActionAbort, StatusCode: 401}
+	key, rotated := kp.MarkFailed(unauthorized)
+	if rotated {
+		t.Error("permanent 401 must NOT rotate to a sibling key")
+	}
+	if key != "stale-key-1c75" {
+		t.Errorf("permanent 401: current key should stay, got %s", key)
+	}
+	if kp.Available() != 2 {
+		t.Errorf("permanent 401 must NOT cool any key down, available=%d", kp.Available())
+	}
+}
+
 func TestRotatingProviderConfig_ToProviderConfig(t *testing.T) {
 	kp, _ := NewKeyPool(KeyPoolConfig{Keys: []string{"key-x"}})
 	rc := &RotatingProviderConfig{

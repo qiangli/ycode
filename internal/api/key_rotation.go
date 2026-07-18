@@ -73,6 +73,21 @@ func (kp *KeyPool) MarkRateLimited() (string, bool) {
 	return kp.Rotate()
 }
 
+// MarkFailed records a provider failure for the current key and decides
+// whether to rotate. Only TRANSIENT failures (429, 5xx, network) earn a
+// cooldown + rotation — waiting them out can actually help. A PERMANENT
+// failure (401/403 auth) means the key itself is rejected: no sibling key
+// is tried and nothing goes on cooldown, so the caller fails fast with the
+// real error instead of masking it behind rotation.
+//
+// Returns the active key after the call and whether the pool rotated.
+func (kp *KeyPool) MarkFailed(err error) (string, bool) {
+	if !IsTransientError(err) {
+		return kp.Current(), false
+	}
+	return kp.Rotate()
+}
+
 // Available returns the number of keys not on cooldown.
 func (kp *KeyPool) Available() int {
 	kp.mu.Lock()

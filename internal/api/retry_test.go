@@ -101,7 +101,8 @@ func TestDoWithRetry_NonRetryableError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for 401")
 	}
-	// 401 is now classified as an auth error with RotateKey action (non-retryable).
+	// 401 is a PERMANENT auth failure: the key itself is rejected, so no
+	// retry, rotation, or cooldown can help — it must abort immediately.
 	classErr, ok := err.(*ClassifiedError)
 	if !ok {
 		t.Fatalf("expected *ClassifiedError, got %T: %v", err, err)
@@ -109,11 +110,14 @@ func TestDoWithRetry_NonRetryableError(t *testing.T) {
 	if classErr.StatusCode != 401 {
 		t.Errorf("expected status 401, got %d", classErr.StatusCode)
 	}
-	if classErr.Reason != ReasonAuth {
-		t.Errorf("expected ReasonAuth, got %v", classErr.Reason)
+	if classErr.Reason != ReasonAuthPermanent {
+		t.Errorf("expected ReasonAuthPermanent, got %v", classErr.Reason)
 	}
-	if classErr.Action != ActionRotateKey {
-		t.Errorf("expected ActionRotateKey, got %v", classErr.Action)
+	if classErr.Action != ActionAbort {
+		t.Errorf("expected ActionAbort, got %v", classErr.Action)
+	}
+	if !IsPermanentAuthError(err) {
+		t.Error("IsPermanentAuthError should be true for a 401")
 	}
 }
 
