@@ -158,7 +158,7 @@ func TestHelpListsAllCommands(t *testing.T) {
 // TestModelNoArgsListsAllSources verifies /model surfaces builtin, config,
 // and env (*_API_KEY) sources — not just hardcoded aliases.
 func TestModelNoArgsListsAllSources(t *testing.T) {
-	// Use OPENAI_API_KEY because its envKeyModels entries (gpt-4.1, o3, …)
+	// Use OPENAI_API_KEY because its envKeyModels entries (gpt-5.5, o3, …)
 	// don't collide with builtins, so the env-source section is non-empty
 	// after DiscoverModels' ID-based dedup.
 	t.Setenv("ANTHROPIC_API_KEY", "")
@@ -191,11 +191,11 @@ func TestModelNoArgsListsAllSources(t *testing.T) {
 	mustContain := []string{
 		"Model: claude-sonnet-4-6-20250514 (anthropic)",
 		"Built-in:",
-		"sonnet → claude-sonnet-4-6-20250514",
+		"sonnet → claude-sonnet-5",
 		"Config:",
 		"my-custom →",
 		"Env (from *_API_KEY):",
-		"gpt-4.1",
+		"gpt-5.5",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(out, want) {

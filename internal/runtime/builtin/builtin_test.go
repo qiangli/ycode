@@ -249,7 +249,7 @@ func TestResolveModelChain_WithAlias(t *testing.T) {
 		t.Fatalf("expected 2 models, got %d", len(chain.Models))
 	}
 	// "haiku" should resolve to full model ID.
-	if chain.Models[0].Model != "claude-haiku-4-5-20251001" {
+	if chain.Models[0].Model != "claude-haiku-4-5" {
 		t.Errorf("alias should resolve, got %q", chain.Models[0].Model)
 	}
 }
