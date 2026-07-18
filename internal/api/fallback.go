@@ -56,6 +56,21 @@ func NewFallbackProvider(cfg FallbackConfig) (*FallbackProvider, error) {
 
 // Send tries each provider in order. On transient failure, it falls back.
 func (fp *FallbackProvider) Send(ctx context.Context, req *Request) (<-chan *StreamEvent, <-chan error) {
+	outEvents := make(chan *StreamEvent, 64)
+	outErrs := make(chan error, 1)
+	go fp.send(ctx, req, outEvents, outErrs)
+	return outEvents, outErrs
+}
+
+// send owns the fallback state machine and forwards the selected provider's
+// stream as it arrives. Provider error channels are terminal: an attempt may
+// fall back only when it fails before exposing any event. Once callers have
+// observed part of a response, replaying the request against another provider
+// would splice two model responses together and can duplicate tool calls.
+func (fp *FallbackProvider) send(ctx context.Context, req *Request, outEvents chan<- *StreamEvent, outErrs chan<- error) {
+	defer close(outEvents)
+	defer close(outErrs)
+
 	// Keep the replacement request local: callers may reuse req for later turns.
 	activeReq := req
 	for i := 0; i < len(fp.providers); i++ {
@@ -69,18 +84,20 @@ func (fp *FallbackProvider) Send(ctx context.Context, req *Request) (<-chan *Str
 			continue
 		}
 
-		events, errCh := p.Send(ctx, activeReq)
-
-		// Peek at the first event or error to detect immediate failures.
-		// For streaming providers, transient errors typically arrive as
-		// the first (and only) error before any events.
-		err := <-errCh
+		attemptCtx, cancelAttempt := context.WithCancel(ctx)
+		events, errCh := p.Send(attemptCtx, activeReq)
+		emitted, err := relayProviderAttempt(attemptCtx, events, errCh, outEvents)
+		cancelAttempt()
 		if err == nil {
-			// Success — return the event stream.
-			// Re-wrap: the original errCh is drained, create a new closed one.
-			doneCh := make(chan error)
-			close(doneCh)
-			return events, doneCh
+			return
+		}
+		if emitted {
+			outErrs <- err
+			return
+		}
+		if ctx.Err() != nil {
+			outErrs <- ctx.Err()
+			return
 		}
 
 		// Use ClassifiedError for smart recovery when available.
@@ -107,7 +124,8 @@ func (fp *FallbackProvider) Send(ctx context.Context, req *Request) (<-chan *Str
 			case ActionFallbackModel:
 				fallbackModel := fp.fallbackModel(activeReq.Model)
 				if fallbackModel == "" || fallbackModel == activeReq.Model {
-					return fallbackModelError(activeReq.Model, err)
+					outErrs <- fmt.Errorf("configured model %q does not exist and no alternate model is configured: %w", activeReq.Model, err)
+					return
 				}
 				fp.logger.Warn("configured model not found; retrying with fallback model",
 					"index", i,
@@ -137,19 +155,48 @@ func (fp *FallbackProvider) Send(ctx context.Context, req *Request) (<-chan *Str
 		}
 
 		// Non-transient error — don't fallback, return immediately.
-		resultCh := make(chan error, 1)
-		resultCh <- err
-		close(resultCh)
-		return events, resultCh
+		outErrs <- err
+		return
 	}
 
 	// All providers exhausted.
-	resultCh := make(chan error, 1)
-	resultCh <- fmt.Errorf("all providers in fallback chain failed or on cooldown")
-	close(resultCh)
-	emptyCh := make(chan *StreamEvent)
-	close(emptyCh)
-	return emptyCh, resultCh
+	outErrs <- fmt.Errorf("all providers in fallback chain failed or on cooldown")
+}
+
+// relayProviderAttempt drains both channels concurrently. The old fallback
+// implementation waited for errCh before returning events; OpenAI-compatible
+// providers close errCh only after finishing the stream, so their 64-event
+// buffer deadlocked on event 65. Forwarding here preserves streaming and
+// provides backpressure from the actual caller instead of the wrapper buffer.
+func relayProviderAttempt(ctx context.Context, events <-chan *StreamEvent, errs <-chan error, out chan<- *StreamEvent) (bool, error) {
+	emitted := false
+	var terminalErr error
+	for events != nil || errs != nil {
+		select {
+		case <-ctx.Done():
+			return emitted, ctx.Err()
+		case ev, ok := <-events:
+			if !ok {
+				events = nil
+				continue
+			}
+			select {
+			case out <- ev:
+				emitted = true
+			case <-ctx.Done():
+				return emitted, ctx.Err()
+			}
+		case err, ok := <-errs:
+			if !ok {
+				errs = nil
+				continue
+			}
+			if err != nil && terminalErr == nil {
+				terminalErr = err
+			}
+		}
+	}
+	return emitted, terminalErr
 }
 
 // fallbackModel yields the next model to try after a ModelNotFound. It walks an
@@ -168,15 +215,6 @@ func (fp *FallbackProvider) fallbackModel(requested string) string {
 		return requested + ":latest"
 	}
 	return fp.fallbackModelName
-}
-
-func fallbackModelError(model string, cause error) (<-chan *StreamEvent, <-chan error) {
-	events := make(chan *StreamEvent)
-	close(events)
-	errs := make(chan error, 1)
-	errs <- fmt.Errorf("configured model %q does not exist and no alternate model is configured: %w", model, cause)
-	close(errs)
-	return events, errs
 }
 
 // Kind returns the kind of the first (primary) provider.
