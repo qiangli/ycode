@@ -74,8 +74,8 @@ func (s *Store) getOrCreateIndex(name string) (bleve.Index, error) {
 		return idx, nil
 	}
 
-	// Create new index with default mapping.
-	idx, err = bleve.New(indexPath, buildMapping())
+	// Create new index with a mapping tuned to this index's role.
+	idx, err = bleve.New(indexPath, buildMapping(name))
 	if err != nil {
 		return nil, fmt.Errorf("create bleve index %q: %w", name, err)
 	}
@@ -84,18 +84,33 @@ func (s *Store) getOrCreateIndex(name string) (bleve.Index, error) {
 	return idx, nil
 }
 
-// buildMapping creates the default document mapping for ycode content.
-func buildMapping() mapping.IndexMapping {
+// codeSearchIndexName mirrors the indexer's codeIndexName ("code"). It is the
+// large, search-only codebase index; kept here (not imported) to avoid a cycle
+// between this generic store package and the indexer.
+const codeSearchIndexName = "code"
+
+// buildMapping creates the document mapping for a named index.
+//
+// The "code" index is search-only: its results return file PATHS, and match
+// snippets are re-read from disk by ripgrep — the stored content and term
+// vectors are never read back, so storing them just bloats the index (27 GB
+// observed on a real workspace). For that index we INDEX the content (so it
+// stays fully searchable via the inverted index) but do NOT store it or its
+// term vectors. Other indexes (session/memory) DO display their stored snippet
+// (they aren't backed by on-disk files), so they keep Store on.
+func buildMapping(name string) mapping.IndexMapping {
 	im := bleve.NewIndexMapping()
 
 	// Document mapping for code/memory/session content.
 	docMapping := bleve.NewDocumentMapping()
 
+	lean := name == codeSearchIndexName
+
 	// Content field: full-text analyzed.
 	contentField := bleve.NewTextFieldMapping()
 	contentField.Analyzer = "standard"
-	contentField.Store = true
-	contentField.IncludeTermVectors = true
+	contentField.Store = !lean
+	contentField.IncludeTermVectors = !lean
 	docMapping.AddFieldMappingsAt("content", contentField)
 
 	// ID field: keyword (exact match).
