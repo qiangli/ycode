@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -72,6 +73,43 @@ func TestFallbackProvider_PrimarySuccess(t *testing.T) {
 	}
 }
 
+func TestFallbackProvider_StreamsMoreThanProviderBuffer(t *testing.T) {
+	const want = 200
+	provider := &mockProvider{
+		kind: ProviderOpenAI,
+		sendFn: func(context.Context, *Request) (<-chan *StreamEvent, <-chan error) {
+			events := make(chan *StreamEvent, 64)
+			errs := make(chan error, 1)
+			go func() {
+				defer close(events)
+				defer close(errs)
+				for i := 0; i < want; i++ {
+					events <- &StreamEvent{Type: "content_block_delta"}
+				}
+			}()
+			return events, errs
+		},
+	}
+	fp := &FallbackProvider{
+		providers: []Provider{provider},
+		configs:   []ProviderConfig{{Kind: ProviderOpenAI}},
+		cooldowns: make(map[int]time.Time),
+		logger:    slog.Default(),
+	}
+
+	events, errCh := fp.Send(context.Background(), &Request{Model: "deepseek-v4-pro", Stream: true})
+	var got int
+	for range events {
+		got++
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected stream error: %v", err)
+	}
+	if got != want {
+		t.Fatalf("events = %d, want %d", got, want)
+	}
+}
+
 func TestFallbackProvider_FallsBackOnTransient(t *testing.T) {
 	fp := &FallbackProvider{
 		providers: []Provider{
@@ -96,6 +134,88 @@ func TestFallbackProvider_FallsBackOnTransient(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("expected 1 event from fallback, got %d", count)
+	}
+}
+
+func TestFallbackProvider_ErrorAfterFirstEventDoesNotFallback(t *testing.T) {
+	primary := &mockProvider{
+		kind: ProviderOpenAI,
+		sendFn: func(context.Context, *Request) (<-chan *StreamEvent, <-chan error) {
+			events := make(chan *StreamEvent, 1)
+			errs := make(chan error, 1)
+			events <- &StreamEvent{Type: "content_block_delta"}
+			close(events)
+			errs <- fmt.Errorf("503 stream interrupted")
+			close(errs)
+			return events, errs
+		},
+	}
+	var fallbackCalls atomic.Int32
+	fallback := newSuccessProvider(ProviderOpenAI)
+	originalFallbackSend := fallback.sendFn
+	fallback.sendFn = func(ctx context.Context, req *Request) (<-chan *StreamEvent, <-chan error) {
+		fallbackCalls.Add(1)
+		return originalFallbackSend(ctx, req)
+	}
+	fp := &FallbackProvider{
+		providers: []Provider{primary, fallback},
+		configs: []ProviderConfig{
+			{Kind: ProviderOpenAI},
+			{Kind: ProviderOpenAI},
+		},
+		cooldowns: make(map[int]time.Time),
+		logger:    slog.Default(),
+	}
+
+	events, errCh := fp.Send(context.Background(), &Request{Model: "deepseek-v4-pro", Stream: true})
+	var count int
+	for range events {
+		count++
+	}
+	err := <-errCh
+	if err == nil || !strings.Contains(err.Error(), "stream interrupted") {
+		t.Fatalf("error = %v, want late stream error", err)
+	}
+	if count != 1 {
+		t.Fatalf("events = %d, want the one primary event", count)
+	}
+	if got := fallbackCalls.Load(); got != 0 {
+		t.Fatalf("fallback calls = %d, want 0 after partial response", got)
+	}
+}
+
+func TestFallbackProvider_CancellationClosesPromptly(t *testing.T) {
+	provider := &mockProvider{
+		kind: ProviderOpenAI,
+		sendFn: func(context.Context, *Request) (<-chan *StreamEvent, <-chan error) {
+			return make(chan *StreamEvent), make(chan error)
+		},
+	}
+	fp := &FallbackProvider{
+		providers: []Provider{provider},
+		configs:   []ProviderConfig{{Kind: ProviderOpenAI}},
+		cooldowns: make(map[int]time.Time),
+		logger:    slog.Default(),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	events, errCh := fp.Send(ctx, &Request{Model: "deepseek-v4-pro", Stream: true})
+	cancel()
+
+	select {
+	case _, ok := <-events:
+		if ok {
+			t.Fatal("unexpected event after cancellation")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("event channel did not close after cancellation")
+	}
+	select {
+	case err, ok := <-errCh:
+		if !ok || err != context.Canceled {
+			t.Fatalf("error = %v, open = %v; want context.Canceled", err, ok)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("error channel did not close after cancellation")
 	}
 }
 
