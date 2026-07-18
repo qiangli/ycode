@@ -81,7 +81,12 @@ func RegisterSearchHandlers(r *Registry, v *vfs.VFS) {
 				r.NotifyFileAccess(absPath)
 			}
 			start := time.Now()
-			result, err := fileops.IndexedGrepSearch(params, codeSearchIndex)
+			// Pure ripgrep. The former bleve "indexed grep" pre-filter discarded its
+			// candidates and ran a full grep anyway (dead code), and the full-text
+			// code index it needed cost ~27 GB + a 15-min per-workspace build for no
+			// grep benefit — removed. Full-text search, if ever wanted, belongs in
+			// `bashy search`, not baked into the ycode harness.
+			result, err := fileops.GrepSearch(params)
 			dur := time.Since(start)
 			if searchInstruments != nil {
 				searchInstruments.SearchGrepTotal.Add(ctx, 1)
@@ -95,24 +100,6 @@ func RegisterSearchHandlers(r *Registry, v *vfs.VFS) {
 				"files", len(result.Files), "matches", len(result.Matches))
 			if err != nil {
 				return "", err
-			}
-
-			// If ripgrep found no results and Bleve is available, try full-text search.
-			noMatches := len(result.Files) == 0 && len(result.Matches) == 0
-			if noMatches && codeSearchIndex != nil {
-				maxResults := 20
-				bleveResults, bleveErr := codeSearchIndex.Search(ctx, codeIndexName, params.Pattern, maxResults)
-				if bleveErr == nil && len(bleveResults) > 0 {
-					var lines []string
-					for _, r := range bleveResults {
-						path := r.Document.Metadata["path"]
-						if path == "" {
-							path = r.Document.ID
-						}
-						lines = append(lines, path)
-					}
-					return fmt.Sprintf("No regex matches. Full-text search results:\n%s", strings.Join(lines, "\n")), nil
-				}
 			}
 
 			switch params.OutputMode {

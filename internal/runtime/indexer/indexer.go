@@ -9,7 +9,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -85,19 +84,14 @@ func (idx *Indexer) IndexOnce(ctx context.Context) (int, error) {
 			return nil
 		}
 
-		// Read and index the file.
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-
 		lang := strings.TrimPrefix(ext, ".")
-		if err := idx.indexFile(ctx, relPath, string(content), ext); err != nil {
-			slog.Debug("indexer: index file", "path", relPath, "error", err)
-			return nil
-		}
 
-		// Also index symbols from this file.
+		// Full-text content indexing (bleve "code" index) removed: it cost ~27 GB
+		// + a 15-min per-workspace build, yet the grep path discarded its results
+		// (see the former grep_indexed.go) and re-ran a full ripgrep anyway. Symbol
+		// + reference indexing below stay — they give what ripgrep can't.
+
+		// Index symbols from this file.
 		if err := idx.IndexSymbols(ctx, relPath, path, lang); err != nil {
 			slog.Debug("indexer: index symbols", "path", relPath, "error", err)
 		}
@@ -138,55 +132,6 @@ func (idx *Indexer) Run(ctx context.Context) {
 			idx.runIndexPass(ctx, "periodic")
 		}
 	}
-}
-
-// indexFile splits content into chunks and indexes each in Bleve.
-func (idx *Indexer) indexFile(ctx context.Context, relPath, content, ext string) error {
-	lang := strings.TrimPrefix(ext, ".")
-
-	// For small files, index as a single document.
-	if len(content) <= ChunkSize {
-		doc := store.Document{
-			ID:      relPath,
-			Content: content,
-			Metadata: map[string]string{
-				"path":     relPath,
-				"language": lang,
-			},
-		}
-		return idx.search.Index(ctx, codeIndexName, doc)
-	}
-
-	// Split into chunks for larger files.
-	lines := strings.Split(content, "\n")
-	var docs []store.Document
-	var chunk strings.Builder
-	chunkStart := 1
-
-	for i, line := range lines {
-		chunk.WriteString(line)
-		chunk.WriteByte('\n')
-
-		if chunk.Len() >= ChunkSize || i == len(lines)-1 {
-			docID := fmt.Sprintf("%s#L%d", relPath, chunkStart)
-			docs = append(docs, store.Document{
-				ID:      docID,
-				Content: chunk.String(),
-				Metadata: map[string]string{
-					"path":     relPath,
-					"language": lang,
-					"lines":    fmt.Sprintf("%d-%d", chunkStart, i+1),
-				},
-			})
-			chunk.Reset()
-			chunkStart = i + 2
-		}
-	}
-
-	if len(docs) > 0 {
-		return idx.search.BatchIndex(ctx, codeIndexName, docs)
-	}
-	return nil
 }
 
 // hasChanged checks if a file has been modified since the last index.
@@ -259,19 +204,16 @@ func (idx *Indexer) NotifyFileChanged(path string) {
 		return
 	}
 
-	// Read and index.
-	content, err := os.ReadFile(absPath)
-	if err != nil {
-		return
-	}
-
+	// Re-index SYMBOLS for the just-edited file (the full-text code index was
+	// removed — see IndexOnce), so symbol search stays fresh for the active file.
 	ctx := context.Background()
-	if err := idx.indexFile(ctx, relPath, string(content), ext); err != nil {
+	lang := strings.TrimPrefix(ext, ".")
+	if err := idx.IndexSymbols(ctx, relPath, absPath, lang); err != nil {
 		slog.Debug("indexer: notify file changed", "path", relPath, "error", err)
 		return
 	}
 	idx.recordMtime(relPath, info.ModTime())
-	slog.Debug("indexer: re-indexed changed file", "path", relPath)
+	slog.Debug("indexer: re-indexed changed file symbols", "path", relPath)
 }
 
 func hashMtime(t time.Time) string {
