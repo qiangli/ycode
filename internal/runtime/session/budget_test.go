@@ -11,15 +11,16 @@ func TestContextBudgetForModel(t *testing.T) {
 		wantReserved  int
 		wantCompact   int
 	}{
-		{"small 32K", 32_000, 8_000, 12_000},
-		{"medium 64K", 64_000, 16_000, 24_000},
-		{"large 128K", 128_000, 30_000, 49_000},
-		{"claude 200K", 200_000, 40_000, 80_000},
-		{"huge 1M", 1_000_000, 200_000, 400_000},
+		// Compaction = 3/4 of the usable window (late by design; see budget.go).
+		{"small 32K", 32_000, 8_000, 18_000},
+		{"medium 64K", 64_000, 16_000, 36_000},
+		{"large 128K", 128_000, 30_000, 73_500},
+		{"claude 200K", 200_000, 40_000, 120_000},
+		{"huge 1M", 1_000_000, 200_000, 600_000},
 		// An unknown window is assumed SMALL (UnknownModelContextWindow=32K).
 		// Guessing big is the one that breaks: it packs 100K tokens into an 8K model.
-		{"zero", 0, 8_000, 12_000},
-		{"negative", -1, 8_000, 12_000},
+		{"zero", 0, 8_000, 18_000},
+		{"negative", -1, 8_000, 18_000},
 	}
 
 	for _, tt := range tests {

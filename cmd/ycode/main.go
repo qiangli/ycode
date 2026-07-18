@@ -543,8 +543,12 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 		}()
 	}()
 
-	// Start background memory consolidation (stale removal, dedup).
-	go memory.NewDreamer(memManager, true).Start(rootCtx)
+	// Start background memory consolidation (stale removal, dedup). Opt-in via
+	// cfg.AutoDreamEnabled (default off): the SOTA harnesses do not run autonomous
+	// consolidation as a default, and a hard-coded `true` here silently ignored the
+	// config field — an absence-of-evidence bug (a setting nothing read). Off by
+	// default; Start() is a no-op when disabled.
+	go memory.NewDreamer(memManager, cfg.AutoDreamEnabled).Start(rootCtx)
 
 	// Resolve project + agent-tool attribution once per process.
 	// Carried into the OTEL provider as resource attributes so every

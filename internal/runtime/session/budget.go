@@ -69,13 +69,21 @@ func chatHistoryBudgetAggressive(contextWindow int) int {
 // ContextBudgetForModel calculates appropriate thresholds for a given model's
 // context window. This follows Cline's pattern of reserving proportional tokens.
 //
-// | Context Window | Reserved | Compaction At |
-// |---------------|----------|---------------|
-// | ≤ 32K         | 8K       | 20K           |
-// | 64K           | 16K      | 40K           |
-// | 128K          | 30K      | 80K           |
-// | 200K          | 40K      | 100K          |
-// | ≥ 200K        | 20%      | 50% of window |
+// | Context Window | Reserved | Compaction At   |
+// |---------------|----------|-----------------|
+// | ≤ 32K         | 8K       | 18K             |
+// | 64K           | 16K      | 36K             |
+// | 128K          | 30K      | 73K             |
+// | 200K          | 40K      | 120K            |
+// | ≥ 200K        | 20%      | 75% of usable   |
+//
+// Compaction is intentionally LATE (three-quarters of the usable window), matching
+// the SOTA agent harnesses (kimi/cline/codex compact near overflow, not mid-task).
+// Compacting early — the old "halfway" trigger — summarizes away working state in
+// the middle of a multi-step task, which is the single biggest cause of a capable
+// model failing to converge. The ReservedBuffer branch of ShouldCompact remains the
+// hard backstop against a genuine overflow; this ratio branch just stops the
+// premature, routine mid-task churn.
 func ContextBudgetForModel(contextWindow int) ContextBudget {
 	if contextWindow <= 0 {
 		return DefaultContextBudget()
@@ -105,8 +113,9 @@ func ContextBudgetForModel(contextWindow int) ContextBudget {
 		reserved = maxReserve
 	}
 
-	// Compaction threshold = halfway between reserved and total.
-	compactionAt := (contextWindow - reserved) / 2
+	// Compaction threshold = three-quarters of the usable window. Late by design:
+	// see the table comment above — early compaction evicts mid-task working state.
+	compactionAt := (contextWindow - reserved) * 3 / 4
 
 	// The 10_000 floor has the same disease as the reserve: on a 16K window it raises
 	// compaction from 4_000 to 10_000, which is ABOVE the 8_000 that window can
