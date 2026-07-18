@@ -35,15 +35,22 @@ func builtinSpecs() []*ToolSpec {
 		},
 		{
 			Name:            "write_file",
-			Description:     "Write content to a file, creating parent directories as needed.",
+			Description:     "Write content to a file, overwriting it if it exists and creating parent directories as needed. Use write_file to CREATE a new file or fully REPLACE one; for an incremental change to an existing file use edit_file instead.",
 			InputSchema:     mustJSON(writeFileSchema),
 			RequiredMode:    permission.WorkspaceWrite,
 			Source:          SourceBuiltin,
 			AlwaysAvailable: true,
 		},
 		{
-			Name:            "edit_file",
-			Description:     "Perform exact string replacement in a file.",
+			Name: "edit_file",
+			Description: `Perform exact string replacements in a file.
+
+- Prefer edit_file for every incremental change to an existing file, including small or one-line edits. Do not use write_file (which overwrites the whole file) or shell sed/awk for edits.
+- Read the file with read_file before editing it. Do not build old_string from memory or stale context.
+- Copy old_string and new_string from the read_file output, dropping the leading line-number prefix and tab it adds — match only the file's own content, including exact whitespace and indentation.
+- old_string must uniquely identify one location: include enough surrounding context. If it matches more than once the edit fails; add context, or set replace_all to change every occurrence.
+- Do not issue consecutive edit_file calls on the same file — an earlier edit can invalidate a later edit's old_string. Read the file again first.
+- After a successful edit, do not re-read the file just to confirm the write landed.`,
 			InputSchema:     mustJSON(editFileSchema),
 			RequiredMode:    permission.WorkspaceWrite,
 			Source:          SourceBuiltin,
@@ -896,10 +903,10 @@ var (
 	editFileSchema = `{
 		"type": "object",
 		"properties": {
-			"file_path": {"type": "string", "description": "Absolute path to the file"},
-			"old_string": {"type": "string", "description": "Text to replace"},
-			"new_string": {"type": "string", "description": "Replacement text"},
-			"replace_all": {"type": "boolean", "description": "Replace all occurrences"}
+			"file_path": {"type": "string", "description": "Absolute path to the file to edit"},
+			"old_string": {"type": "string", "description": "Exact text to replace, copied from the read_file output WITHOUT its line-number prefix and tab. Must match the file exactly (whitespace and indentation included) and be unique unless replace_all is set."},
+			"new_string": {"type": "string", "description": "Replacement text; must differ from old_string"},
+			"replace_all": {"type": "boolean", "description": "Replace every occurrence of old_string. Set true only to change all matches (e.g. renaming a symbol); otherwise old_string must be unique."}
 		},
 		"required": ["file_path", "old_string", "new_string"]
 	}`
