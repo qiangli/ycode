@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -65,6 +64,17 @@ func selfHealEnabled() bool {
 
 func main() {
 	buildinfo.Set(version, commit)
+	// Internal killable boundary for startup repo-map parsing. This is
+	// intercepted before Cobra so it is not a public verb or capability.
+	if len(os.Args) == 3 && os.Args[1] == "__startup-repomap" {
+		text, err := generateStartupRepoMap(os.Args[2])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Fprint(os.Stdout, text)
+		return
+	}
 	// Intercept `ycode wrap` shim invocations. When the ycode binary is
 	// exec'd via a symlink named `bash`/`rg`/`git`/... that lives in a
 	// wrap-managed shim directory (argv[0]!="ycode" AND YCODE_WRAP_SHIM=1),
@@ -629,7 +639,18 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 }
 
 // buildPromptContext gathers environment and project metadata for the system prompt.
+const promptContextStartupTimeout = 5 * time.Second
+
+const (
+	repoMapPreflightTimeout = time.Second
+	repoMapStartupMaxFiles  = 2000
+	repoMapStartupMaxBytes  = 32 << 20
+)
+
 func buildPromptContext(workDir, model string, configInstructions []string, memManager *memory.Manager) *prompt.ProjectContext {
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), promptContextStartupTimeout)
+	defer cancelStartup()
+
 	ctx := &prompt.ProjectContext{
 		WorkDir:     workDir,
 		CurrentDate: time.Now().Format("2006-01-02"),
@@ -659,45 +680,41 @@ func buildPromptContext(workDir, model string, configInstructions []string, memM
 	}
 
 	// Discover instruction files, load memories, and generate repo map concurrently.
-	var contextFiles []prompt.ContextFile
-	var memories []*memory.Memory
-	var repoMapText string
-	var wg sync.WaitGroup
-
-	wg.Add(1)
+	contextFilesCh := make(chan []prompt.ContextFile, 1)
 	go func() {
-		defer wg.Done()
-		contextFiles = discoverContextFiles(workDir, ctx.ProjectRoot)
+		contextFilesCh <- discoverContextFiles(workDir, ctx.ProjectRoot)
 	}()
 
+	memoriesCh := make(chan []*memory.Memory, 1)
 	if memManager != nil {
-		wg.Add(1)
 		go func() {
-			defer wg.Done()
 			if mems, err := memManager.All(); err != nil {
 				slog.Debug("memory load", "error", err)
+				memoriesCh <- nil
 			} else {
-				memories = mems
+				memoriesCh <- mems
 			}
 		}()
+	} else {
+		close(memoriesCh)
 	}
 
-	// Generate repo map in the background.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		rm, err := repomap.Generate(ctx.ProjectRoot, nil)
-		if err != nil {
-			slog.Debug("repo map generation", "error", err)
-			return
-		}
-		repoMapText = rm.Format()
-	}()
+	// Generate the repo map after a bounded preflight, excluding checked-out submodules. A
+	// repo map for an umbrella should describe the umbrella, not recursively
+	// parse every sibling repository (and its build artifacts) on each prompt.
+	repoMapCh := make(chan string, 1)
+	if text, err := startupRepoMap(startupCtx, ctx.ProjectRoot); err != nil {
+		slog.Debug("startup repo map skipped", "error", err)
+		repoMapCh <- ""
+	} else {
+		repoMapCh <- text
+	}
+	close(repoMapCh)
 
-	wg.Wait()
-	ctx.ContextFiles = contextFiles
-	ctx.Memories = memories
-	ctx.RepoMapText = repoMapText
+	// Startup context is enrichment, not a prerequisite for reaching the model.
+	// Bound the whole phase so a pathological tree or backend cannot make a
+	// one-shot command appear to hang before it even opens a network connection.
+	awaitPromptContext(startupCtx, ctx, contextFilesCh, memoriesCh, repoMapCh)
 
 	// Config-based instruction paths (relative, absolute, ~/home, URLs).
 	if len(configInstructions) > 0 {
@@ -718,6 +735,162 @@ func buildPromptContext(workDir, model string, configInstructions []string, memM
 	}
 
 	return ctx
+}
+
+func awaitPromptContext(
+	startupCtx context.Context,
+	ctx *prompt.ProjectContext,
+	contextFilesCh <-chan []prompt.ContextFile,
+	memoriesCh <-chan []*memory.Memory,
+	repoMapCh <-chan string,
+) {
+	for contextFilesCh != nil || memoriesCh != nil || repoMapCh != nil {
+		select {
+		case files, ok := <-contextFilesCh:
+			if ok {
+				ctx.ContextFiles = files
+			}
+			contextFilesCh = nil
+		case mems, ok := <-memoriesCh:
+			if ok {
+				ctx.Memories = mems
+			}
+			memoriesCh = nil
+		case text, ok := <-repoMapCh:
+			if ok {
+				ctx.RepoMapText = text
+			}
+			repoMapCh = nil
+		case <-startupCtx.Done():
+			slog.Warn("prompt context startup timed out; continuing with available context",
+				"timeout", promptContextStartupTimeout, "error", startupCtx.Err())
+			// Preserve work that completed while the killable repo-map helper
+			// consumed the deadline; only abandon channels that are still pending.
+			select {
+			case files := <-contextFilesCh:
+				ctx.ContextFiles = files
+			default:
+			}
+			select {
+			case mems := <-memoriesCh:
+				ctx.Memories = mems
+			default:
+			}
+			select {
+			case text := <-repoMapCh:
+				ctx.RepoMapText = text
+			default:
+			}
+			return
+		}
+	}
+}
+
+// startupRepoMap performs a cheap, cancellable inventory before invoking the
+// parser. Generate itself has no context-aware API, so starting it in a
+// goroutine and abandoning that goroutine at a deadline would only hide the
+// hang while it continued consuming CPU and memory. The inventory gives the
+// parser an explicit, bounded file set instead.
+func startupRepoMap(ctx context.Context, projectRoot string) (string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return runStartupRepoMapHelper(ctx, executable, "__startup-repomap", projectRoot)
+}
+
+func runStartupRepoMapHelper(ctx context.Context, executable string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, executable, args...)
+	out, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", err
+	}
+	return string(out), nil
+}
+
+func generateStartupRepoMap(projectRoot string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), repoMapPreflightTimeout)
+	defer cancel()
+
+	submodules := repoMapSubmoduleDirs(projectRoot)
+	var files []string
+	var totalBytes int64
+	err := filepath.WalkDir(projectRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if walkErr != nil {
+			return nil
+		}
+		rel, err := filepath.Rel(projectRoot, path)
+		if err != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			if rel == "." {
+				return nil
+			}
+			if _, ok := submodules[filepath.Clean(rel)]; ok {
+				return filepath.SkipDir
+			}
+			switch entry.Name() {
+			case ".git", "node_modules", "vendor", "__pycache__", ".tox", ".venv", "dist", "build", "priorart", "external", "reference", "testdata", "fixtures":
+				return filepath.SkipDir
+			}
+			// Also respect undeclared nested worktrees. Git submodule checkouts
+			// normally have a .git file rather than a directory.
+			if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".go", ".py", ".js", ".ts", ".tsx", ".jsx", ".rs", ".java":
+		default:
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil
+		}
+		files = append(files, path)
+		totalBytes += info.Size()
+		if len(files) > repoMapStartupMaxFiles || totalBytes > repoMapStartupMaxBytes {
+			return fmt.Errorf("source inventory exceeds startup budget (%d files, %d bytes)", len(files), totalBytes)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	rm, err := repomap.GenerateForFiles(projectRoot, files, repomap.DefaultOptions())
+	if err != nil {
+		return "", err
+	}
+	return rm.Format(), nil
+}
+
+func repoMapSubmoduleDirs(projectRoot string) map[string]struct{} {
+	dirs := make(map[string]struct{})
+	data, err := os.ReadFile(filepath.Join(projectRoot, ".gitmodules"))
+	if err != nil {
+		return dirs
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok || strings.TrimSpace(key) != "path" {
+			continue
+		}
+		path := filepath.Clean(strings.TrimSpace(value))
+		if path == "." || filepath.IsAbs(path) || path == ".." || strings.HasPrefix(path, ".."+string(filepath.Separator)) {
+			continue
+		}
+		dirs[path] = struct{}{}
+	}
+	return dirs
 }
 
 // discoverContextFiles finds and loads instruction files from:

@@ -634,6 +634,29 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 	}
 
 	rt := a.conversationRuntime()
+	// One-shot output is a stream, not a post-run report. Waiting for Turn to
+	// assemble the complete response made a provider that emitted text and then
+	// stalled look entirely silent to callers such as bashy meetings. Mirror text
+	// deltas to stdout as they arrive and remember whether this turn streamed so
+	// cached/non-streaming responses can still use the assembled fallback below.
+	streamedText := false
+	answerFlusher := a.stdout
+	rt.SetEventCallback(func(eventType string, data map[string]any) {
+		if eventType != "text.delta" {
+			return
+		}
+		text, _ := data["text"].(string)
+		if text == "" {
+			return
+		}
+		streamedText = true
+		fmt.Fprint(a.stdout, text)
+		// a.stdout may be replaced with a MultiWriter when --events is active;
+		// flush the underlying answer writer retained above.
+		if flusher, ok := answerFlusher.(interface{ Flush() error }); ok {
+			_ = flusher.Flush()
+		}
+	})
 
 	// Build conversation history from session + new user message.
 	messages := a.sessionMessages()
@@ -739,9 +762,10 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 		}
 
 		// Print text output.
-		if result.TextContent != "" {
+		if result.TextContent != "" && !streamedText {
 			fmt.Fprint(a.stdout, result.TextContent)
 		}
+		streamedText = false
 
 		// Save assistant message to session, WITH the provider's token count.
 		//

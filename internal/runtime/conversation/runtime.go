@@ -194,7 +194,6 @@ func NewRuntime(
 		contextBudget = contextBudget.WithReserved(cfg.ContextReserved)
 	}
 
-
 	// Set up completion cache directory under the session.
 	var completionCacheDir string
 	if sess != nil {
@@ -625,7 +624,34 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 	var textParts []string
 	var thinkingParts []string
 
-	for ev := range events {
+	// A provider is expected to close both channels when the request ends, but
+	// cancellation must not depend on an adapter getting that lifecycle exactly
+	// right. In particular, a stalled SSE reader (or a buggy adapter that forgets
+	// to close events) used to keep a one-shot prompt blocked here forever even
+	// after its context was cancelled.
+	for events != nil || errc != nil {
+		var ev *api.StreamEvent
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("stream: %w", ctx.Err())
+		case err, ok := <-errc:
+			if !ok {
+				errc = nil
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("stream: %w", err)
+			}
+		case next, ok := <-events:
+			if !ok {
+				events = nil
+				continue
+			}
+			ev = next
+		}
+		if ev == nil {
+			continue
+		}
 		switch ev.Type {
 		case "message_start":
 			// Capture input token usage from the initial message.
@@ -697,10 +723,6 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 				}
 			}
 		}
-	}
-
-	if err := <-errc; err != nil {
-		return nil, fmt.Errorf("stream: %w", err)
 	}
 
 	result.Duration = time.Since(start)

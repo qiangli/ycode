@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -17,6 +19,148 @@ import (
 // mockTextProvider is an api.Provider that returns a single text response.
 type mockTextProvider struct {
 	reply string
+}
+
+type lifecycleProvider struct {
+	events chan *api.StreamEvent
+	errs   chan error
+}
+
+func newLifecycleProvider() *lifecycleProvider {
+	return &lifecycleProvider{
+		events: make(chan *api.StreamEvent, 4),
+		errs:   make(chan error, 1),
+	}
+}
+
+func (p *lifecycleProvider) Kind() api.ProviderKind { return api.ProviderOpenAI }
+
+func (p *lifecycleProvider) Send(context.Context, *api.Request) (<-chan *api.StreamEvent, <-chan error) {
+	return p.events, p.errs
+}
+
+func textDelta(text string) *api.StreamEvent {
+	delta, _ := json.Marshal(map[string]string{"type": "text_delta", "text": text})
+	return &api.StreamEvent{Type: "content_block_delta", Delta: delta}
+}
+
+type flushBuffer struct {
+	bytes.Buffer
+	flushed chan struct{}
+}
+
+func (b *flushBuffer) Flush() error {
+	select {
+	case b.flushed <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func newLifecycleTestApp(t *testing.T, provider api.Provider, stdout *flushBuffer) *App {
+	t.Helper()
+	dir := t.TempDir()
+	sess, err := session.New(dir)
+	if err != nil {
+		t.Fatalf("session.New: %v", err)
+	}
+	cfg := config.DefaultConfig()
+	cfg.Model = "deepseek-v4-pro"
+	app, err := NewApp(cfg, provider, sess, AppOptions{
+		WorkDir:      dir,
+		ToolRegistry: tools.NewRegistry(),
+		PromptCtx: &prompt.ProjectContext{
+			WorkDir:  dir,
+			Platform: "linux",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.stdout = stdout
+	app.stderr = &bytes.Buffer{}
+	app.SetPrintMode(true)
+	return app
+}
+
+func TestPrintModeStreamsAndFlushesFirstOutputBeforeShutdown(t *testing.T) {
+	provider := newLifecycleProvider()
+	stdout := &flushBuffer{flushed: make(chan struct{}, 1)}
+	app := newLifecycleTestApp(t, provider, stdout)
+	defer app.Close()
+
+	done := make(chan error, 1)
+	go func() { done <- app.RunPrompt(context.Background(), "answer briefly") }()
+	provider.events <- textDelta("first")
+
+	select {
+	case <-stdout.flushed:
+		if got := stdout.String(); got != "first" {
+			t.Fatalf("stdout after first flush = %q, want first", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first text delta was not written and flushed while stream remained open")
+	}
+
+	provider.events <- &api.StreamEvent{Type: "message_delta", Delta: json.RawMessage(`{"stop_reason":"end_turn"}`)}
+	close(provider.events)
+	close(provider.errs)
+	if err := <-done; err != nil {
+		t.Fatalf("RunPrompt: %v", err)
+	}
+	if got := stdout.String(); got != "first" {
+		t.Fatalf("stdout duplicated streamed answer: %q", got)
+	}
+}
+
+func TestPrintModeCancellationDoesNotWaitForStalledProviderChannels(t *testing.T) {
+	provider := newLifecycleProvider()
+	stdout := &flushBuffer{flushed: make(chan struct{}, 1)}
+	app := newLifecycleTestApp(t, provider, stdout)
+	defer app.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- app.RunPrompt(ctx, "answer briefly") }()
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("RunPrompt error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("RunPrompt did not return after cancellation with stalled provider channels")
+	}
+}
+
+func TestPrintModePreservesFlushedPartialOutputOnStreamError(t *testing.T) {
+	provider := newLifecycleProvider()
+	stdout := &flushBuffer{flushed: make(chan struct{}, 1)}
+	app := newLifecycleTestApp(t, provider, stdout)
+	defer app.Close()
+
+	done := make(chan error, 1)
+	go func() { done <- app.RunPrompt(context.Background(), "answer briefly") }()
+	provider.events <- textDelta("partial")
+	select {
+	case <-stdout.flushed:
+	case <-time.After(time.Second):
+		t.Fatal("partial output was not flushed")
+	}
+	provider.errs <- errors.New("adapter failed")
+
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "adapter failed") {
+			t.Fatalf("RunPrompt error = %v, want adapter failure", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("RunPrompt did not return after provider error")
+	}
+	if got := stdout.String(); got != "partial" {
+		t.Fatalf("stdout = %q, want preserved partial output", got)
+	}
 }
 
 func (m *mockTextProvider) Kind() api.ProviderKind { return api.ProviderAnthropic }
