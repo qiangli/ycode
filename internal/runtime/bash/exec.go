@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qiangli/coreutils/pkg/autoretry"
+
 	"github.com/qiangli/ycode/internal/runtime/bash/shellparse"
 	"github.com/qiangli/ycode/internal/runtime/permission"
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
@@ -237,7 +239,68 @@ func Execute(ctx context.Context, params ExecParams) (result *ExecResult, err er
 		return result, fmt.Errorf("command timed out after %v", timeout)
 	}
 
+	// autoretry: a read-only/idempotent, transient-prone command (curl, git,
+	// dig, …) that failed on a TRANSIENT error (a network/resource blip, not a
+	// logic/auth error) is re-run with capped backoff. The agent gets the
+	// eventual result, or an honest "retried N times" note — instead of a round
+	// trip re-issuing a call the shell could recover itself. Gated to a single
+	// simple command so a pipeline/list is never partially re-run.
+	if autoretry.Enabled() && result != nil && result.ExitCode != 0 {
+		if argv0, ok := retryableArgv0(params.Command); ok && autoretry.Eligible(argv0) {
+			result = retryTransient(ctx, executor, execParams, result)
+		}
+	}
+
 	return result, nil
+}
+
+// retryableArgv0 returns argv[0] iff command is a single simple command safe to
+// re-run: no pipeline, subshell, negation, redirects, or assignments (any of
+// which could make a re-run non-equivalent).
+func retryableArgv0(command string) (string, bool) {
+	nodes, err := shellparse.Parse(command)
+	if err != nil || len(nodes) != 1 {
+		return "", false
+	}
+	n := nodes[0]
+	if n.InPipeline || n.InSubshell || n.Negated || len(n.Redirects) != 0 || len(n.Assigns) != 0 {
+		return "", false
+	}
+	if n.Name == "" {
+		return "", false
+	}
+	return n.Name, true
+}
+
+// retryTransient re-runs execParams while it keeps failing on a transient error,
+// up to autoretry.MaxAttempts, then annotates the result's stderr with what was
+// tried. `first` is the already-completed attempt 1.
+func retryTransient(ctx context.Context, executor Executor, execParams ExecParams, first *ExecResult) *ExecResult {
+	result := first
+	attempts := 1
+	var class string
+	for result.ExitCode != 0 && attempts < autoretry.MaxAttempts {
+		c, transient := autoretry.Classify(result.Stderr)
+		if !transient {
+			break
+		}
+		class = c
+		select {
+		case <-time.After(autoretry.Backoff(attempts)):
+		case <-ctx.Done():
+			return result
+		}
+		attempts++
+		r, err := executor.Execute(ctx, execParams)
+		if err != nil || r == nil {
+			break
+		}
+		result = r
+	}
+	if attempts > 1 {
+		result.Stderr += autoretry.Note(class, attempts, result.ExitCode == 0)
+	}
+	return result
 }
 
 // CommandTimeoutHint returns an appropriate timeout duration based on the
