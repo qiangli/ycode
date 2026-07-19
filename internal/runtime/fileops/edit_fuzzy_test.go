@@ -128,21 +128,26 @@ func TestEditFile_FuzzyFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Try to edit with a search string that lacks trailing whitespace.
+	// Edit with a search string that only differs in trailing whitespace. This
+	// is a near-miss, NOT an exact match. The safe behavior (Claude Code's) is to
+	// REFUSE and ask for a re-read rather than guess the region and silently
+	// rewrite it — a fuzzy write from stale context is the biggest way to corrupt
+	// a file with no error.
 	err := EditFile(EditFileParams{
 		Path:      path,
 		OldString: "func main() {\n\tfmt.Println(\"hello\")\n}",
 		NewString: "func main() {\n\tfmt.Println(\"world\")\n}",
 	})
-	if err != nil {
-		t.Fatalf("expected fuzzy match to succeed: %v", err)
+	if err == nil {
+		t.Fatal("expected a non-exact old_string to be REFUSED, but it applied silently")
 	}
-
-	// Verify the replacement was made.
+	if !containsFuzzy(err.Error(), "EXACT") && !containsFuzzy(err.Error(), "re-read") {
+		t.Errorf("error should point the model at a re-read; got: %v", err)
+	}
+	// The file must be UNCHANGED — no guessed write.
 	data, _ := os.ReadFile(path)
-	result := string(data)
-	if !containsFuzzy(result, "world") {
-		t.Errorf("expected 'world' in result, got: %s", result)
+	if containsFuzzy(string(data), "world") {
+		t.Errorf("file was modified on a non-exact match; must stay untouched. got: %s", string(data))
 	}
 }
 

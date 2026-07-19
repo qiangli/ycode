@@ -42,14 +42,15 @@ func EditFile(params EditFileParams) error {
 	}
 
 	if !strings.Contains(content, oldString) {
-		// Fuzzy fallback: try line-trimmed and block-anchor matching.
-		match := FindFuzzyMatch(content, oldString)
-		if match == nil {
-			return fmt.Errorf("old_string not found in %s (tried exact and fuzzy matching). Use read_file to verify current content, or grep_search to find similar text", params.Path)
+		// old_string is not a byte-exact match. DO NOT guess the region: silently
+		// applying a fuzzy match can rewrite the WRONG location when old_string was
+		// built from stale or remembered context — the single biggest way to
+		// corrupt a file with no error. Surface the near-miss (if any) and require
+		// an exact old_string re-read from current content, mirroring Claude Code.
+		if match := FindFuzzyMatch(content, oldString); match != nil {
+			return fmt.Errorf("old_string is not an EXACT match in %s — a SIMILAR block exists (near byte %d), but I will not guess the region. Re-read the file with read_file and copy old_string verbatim from its CURRENT content (whitespace and all)", params.Path, match.StartByte)
 		}
-		// Apply fuzzy-matched replacement.
-		content = content[:match.StartByte] + newString + content[match.EndByte:]
-		return os.WriteFile(params.Path, []byte(bomPrefix+content), 0o644)
+		return fmt.Errorf("old_string not found in %s. Use read_file to see the current content, or grep_search to locate similar text, then copy old_string verbatim", params.Path)
 	}
 
 	if params.ReplaceAll {

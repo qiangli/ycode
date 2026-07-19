@@ -349,7 +349,13 @@ func DefaultConfig() *Config {
 		MaxTokens:          8192,
 		PermissionMode:     "ask",
 		AutoCompactEnabled: true,
-		PersonaEnabled:     true,
+		// Default to an LLM-generated compaction summary (Claude Code always
+		// does), not the heuristic extractive scrape — it materially preserves
+		// task state across a compaction boundary on long runs. The summarizer
+		// chain is already wired (weak→main model) and falls back to the
+		// heuristic on failure, so this is safe.
+		LLMSummarizationEnabled: true,
+		PersonaEnabled:          true,
 		Parallel: ParallelConfig{
 			Enabled:     true,
 			MaxStandard: 8,

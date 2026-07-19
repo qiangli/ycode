@@ -721,6 +721,12 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 
 	maxIter := a.maxToolIterations()
 	loopDetector := conversation.NewLoopDetector()
+	// The text detector above only sees assistant PROSE. The classic
+	// non-convergence failure — re-reading the same file or re-running the same
+	// failing command with little interstitial text — is invisible to it. This
+	// second detector watches the TOOL-CALL signature (name+input), the
+	// umbrella's canonical "total ÷ distinct" stuck signal, in-loop.
+	toolLoopDetector := conversation.NewLoopDetector()
 	for i := 0; i < maxIter; i++ {
 		a.turnIndex++
 		result, recovery, err := rt.InstrumentedTurnWithRecovery(ctx, messages, a.turnIndex)
@@ -854,6 +860,30 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 			Role:    api.RoleUser,
 			Content: toolResults,
 		})
+
+		// Tool-repetition guard: if this turn's tool calls are the same signature
+		// as the last few, the agent is looping on tools without progress even
+		// when its prose varies. Inject a one-time steer telling it to change
+		// approach — the in-loop analog of what the coach does from outside.
+		var sigb strings.Builder
+		for _, tc := range result.ToolCalls {
+			sigb.WriteString(tc.Name)
+			sigb.WriteByte('\x00')
+			sigb.Write(tc.Input)
+			sigb.WriteByte('\n')
+		}
+		switch toolLoopDetector.Record(sigb.String()) {
+		case conversation.LoopWarning, conversation.LoopBreak:
+			fmt.Fprintf(a.chromeWriter(), "\n⚠ Tool-call loop: the same tool call is repeating without progress. Steering.\n\n")
+			messages = append(messages, api.Message{
+				Role: api.RoleUser,
+				Content: []api.ContentBlock{{
+					Type: api.ContentTypeText,
+					Text: "You have issued the same tool call several times in a row with no progress. STOP repeating it — the environment is not changing between attempts. Either try a fundamentally different approach, or if you already have enough information, deliver your final answer now.",
+				}},
+			})
+			toolLoopDetector.Reset()
+		}
 	}
 
 	// FALLING OUT OF THE LOOP MEANS WE CUT THE AGENT OFF. It is not a completion.
