@@ -27,7 +27,14 @@ func builtinSpecs() []*ToolSpec {
 				"Commands run through bashy's in-process pure-Go userland (cat/sed/grep/ls/… " +
 				"execute without forking), so a batched pipeline is nearly free — the cost is " +
 				"the round-trip, not the commands. Prefer one batched call over a sequence of " +
-				"granular tool calls whenever the steps don't depend on each other's output.",
+				"granular tool calls whenever the steps don't depend on each other's output. " +
+				"This shell adds COMPOSABLE STRUCTURED verbs that pipe like any command — prefer " +
+				"them over the separate typed search/read tools when you can compose in one call: " +
+				"`grep --json PATTERN files` emits one NDJSON object per match ({file,line,text}) " +
+				"straight into `jq`; `grep --agentic` skips .gitignore'd/noise paths; " +
+				"`ast symbols|search|refs PATH` finds definitions/callers structurally (better than " +
+				"grepping for a name); `graph` queries the code knowledge graph. Composition is the " +
+				"win: `ast symbols ./pkg | grep --json func` is one in-process call, no round-trip.",
 			InputSchema:     mustJSON(bashSchema),
 			RequiredMode:    permission.DangerFullAccess,
 			Source:          SourceBuiltin,

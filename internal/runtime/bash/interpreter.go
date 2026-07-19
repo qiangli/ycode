@@ -96,8 +96,13 @@ func (e *InterpreterExecutor) Execute(ctx context.Context, params ExecParams) (*
 		interp.Env(expand.ListEnviron(os.Environ()...)),
 		interp.ExecHandlers(
 			telemetry.ExecMiddleware,
-			NewSecurityExecHandler(e.permMode, e.killTimeout),
+			// validate → in-process coreutils → fork. coreutils.Handler() sits
+			// BETWEEN validation and the fork so a registered pure-Go tool
+			// (grep --json, ast, graph, the userland) resolves in-process and
+			// never forks; only a command coreutils declines reaches the fork.
+			NewSecurityValidateHandler(e.permMode),
 			coreutilsshell.Handler(),
+			NewForkExecHandler(e.killTimeout),
 		),
 	}
 

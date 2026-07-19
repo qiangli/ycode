@@ -15,20 +15,48 @@ import (
 	telotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )
 
-// NewSecurityExecHandler creates an ExecHandler middleware that enforces
-// permission mode and creates process groups for signal isolation.
-// The killTimeout controls how long to wait between SIGTERM and SIGKILL.
+// NewSecurityExecHandler is retained as the composition of the two handlers it
+// used to be: permission validation THEN a real fork. It exists so callers that
+// want the old all-in-one behavior keep it, but the runtime now wires the two
+// pieces separately with coreutilsshell.Handler() BETWEEN them (validate →
+// in-process coreutils → fork), so a registered pure-Go tool never reaches the
+// fork below. See NewSecurityValidateHandler + NewForkExecHandler.
 func NewSecurityExecHandler(mode permission.Mode, killTimeout time.Duration) func(interp.ExecHandlerFunc) interp.ExecHandlerFunc {
+	validate := NewSecurityValidateHandler(mode)
+	fork := NewForkExecHandler(killTimeout)
+	return func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
+		return validate(fork(next))
+	}
+}
+
+// NewSecurityValidateHandler enforces permission mode, then DELEGATES to next.
+// Delegating is the whole point: it lets coreutilsshell.Handler() (wired after
+// this handler) resolve a registered pure-Go tool IN-PROCESS instead of the old
+// behavior where this handler forked every command itself and the coreutils
+// handler downstream was dead code.
+func NewSecurityValidateHandler(mode permission.Mode) func(interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	return func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 		return func(ctx context.Context, args []string) error {
 			hc := interp.HandlerCtx(ctx)
-
-			// Validate the command against permission mode.
 			binary := filepath.Base(args[0])
 			if err := validateExecPermission(binary, args, mode); err != nil {
 				fmt.Fprintln(hc.Stderr, err.Error())
 				return interp.ExitStatus(126)
 			}
+			return next(ctx, args)
+		}
+	}
+}
+
+// NewForkExecHandler forks the resolved system binary with process-group signal
+// isolation. It is the TERMINAL handler — it does not call next; a command only
+// reaches it after coreutilsshell.Handler() declined to serve it in-process.
+// The killTimeout controls how long to wait between SIGTERM and SIGKILL.
+func NewForkExecHandler(killTimeout time.Duration) func(interp.ExecHandlerFunc) interp.ExecHandlerFunc {
+	return func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
+		return func(ctx context.Context, args []string) error {
+			hc := interp.HandlerCtx(ctx)
+			binary := filepath.Base(args[0])
 
 			// Resolve path.
 			path, err := interp.LookPathDir(hc.Dir, hc.Env, args[0])
