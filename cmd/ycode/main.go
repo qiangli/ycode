@@ -62,6 +62,17 @@ func selfHealEnabled() bool {
 	return os.Getenv("YCODE_SELF_HEAL") != "0"
 }
 
+// leanStartup reports whether ycode should skip eager, non-essential startup work
+// (repo map, code index, embedder) to reach an input-ready state fast. True for a
+// one-shot `--print` run, and — critically — when `--events` is set, which marks a
+// PROGRAMMATIC DRIVER (a coach / foreman / steerable session) attached: that driver
+// races the TUI to deliver the opening prompt over the control socket, and a slow,
+// chatty startup makes it lose — the keystrokes are swallowed while LSP/memory/OTel
+// churn, the session sits at an empty prompt, and it reads as a model that did
+// nothing (a false verdict about the model for a harness-latency bug). Fast startup
+// is correctness in controlled mode, not merely speed.
+func leanStartup() bool { return printFlag || eventsFile != "" }
+
 func main() {
 	buildinfo.Set(version, commit)
 	// Internal killable boundary for startup repo-map parsing. This is
@@ -458,8 +469,10 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 		// tree-sitter-parses the whole repo (~hundreds of ms) and competes for CPU/DB
 		// with the live turn, yet a one-shot task typically just greps/reads/edits.
 		// The wiring above stays, so grep (ripgrep) works and NotifyFileChanged still
-		// re-indexes lazily; semantic search degrades to empty, not error.
-		if !printFlag {
+		// re-indexes lazily; semantic search degrades to empty, not error. Also
+		// skipped in controlled mode (--events) so a steerable/coached session starts
+		// fast enough that its opening prompt is not swallowed by startup churn.
+		if !leanStartup() {
 			go codeIndexer.Run(rootCtx)
 		}
 	}()
@@ -532,7 +545,8 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 		// to 500 code files + the doc set, competing for CPU/DB with the live turn,
 		// for a semantic index a short task never queries. The vector store wiring
 		// above stays, so semantic tools resolve (to empty) rather than nil-panic.
-		if !printFlag {
+		// Also skipped in controlled mode (--events) for a fast, input-ready startup.
+		if !leanStartup() {
 			// Embed documentation files (CLAUDE.md, README, etc.).
 			go func() {
 				embedCtx := rootCtx
@@ -726,11 +740,13 @@ func buildPromptContext(workDir, model string, configInstructions []string, memM
 	// repo map for an umbrella should describe the umbrella, not recursively
 	// parse every sibling repository (and its build artifacts) on each prompt.
 	repoMapCh := make(chan string, 1)
-	if printFlag {
-		// One-shot `--print`: skip the repo map entirely. It is enrichment, not a
-		// prerequisite, and computing it forks a child process that tree-sitter-parses
-		// the tree — up to several seconds of synchronous pre-turn-1 latency the agent
-		// may never need (it can grep/glob on demand). Interactive sessions still get it.
+	if leanStartup() {
+		// One-shot `--print` OR controlled mode (--events): skip the repo map entirely.
+		// It is enrichment, not a prerequisite, and computing it forks a child process
+		// that tree-sitter-parses the tree — several seconds of SYNCHRONOUS pre-turn-1
+		// latency the agent may never need (it can grep/glob on demand). In a
+		// steerable/coached session that latency is what swallows the opening prompt.
+		// Attended interactive sessions (no --events) still get it.
 		repoMapCh <- ""
 	} else if text, err := startupRepoMap(startupCtx, ctx.ProjectRoot); err != nil {
 		slog.Debug("startup repo map skipped", "error", err)
