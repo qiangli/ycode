@@ -60,23 +60,23 @@ var PricingTable = map[string]ModelPricing{
 	// z.ai GLM. List API prices; note that on the GLM Coding Plan the MARGINAL cost is
 	// zero (a prepaid seat), which is a property of the plan, not of the model — see the
 	// billing split in coreutils/pkg/fleet.
-	"glm-5.2":   {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
-	"glm-5.1":   {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
-	"glm-5":     {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
-	"glm-4.7":   {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
-	"glm-4.6":   {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
-	"glm-4.5":   {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
-	"glm":       {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
+	"glm-5.2": {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
+	"glm-5.1": {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
+	"glm-5":   {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
+	"glm-4.7": {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
+	"glm-4.6": {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
+	"glm-4.5": {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
+	"glm":     {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
 
 	// Moonshot / Kimi
-	"kimi":      {InputPerM: 0.60, OutputPerM: 2.50, CacheReadPerM: 0.15, Known: true},
-	"moonshot":  {InputPerM: 0.60, OutputPerM: 2.50, CacheReadPerM: 0.15, Known: true},
+	"kimi":     {InputPerM: 0.60, OutputPerM: 2.50, CacheReadPerM: 0.15, Known: true},
+	"moonshot": {InputPerM: 0.60, OutputPerM: 2.50, CacheReadPerM: 0.15, Known: true},
 
 	// Alibaba Qwen
-	"qwen":      {InputPerM: 0.40, OutputPerM: 1.20, Known: true},
+	"qwen": {InputPerM: 0.40, OutputPerM: 1.20, Known: true},
 
 	// xAI Grok
-	"grok":      {InputPerM: 3.00, OutputPerM: 15.00, Known: true},
+	"grok": {InputPerM: 3.00, OutputPerM: 15.00, Known: true},
 
 	"local": {InputPerM: 0, OutputPerM: 0, Known: true},
 	// Fallback — a GUESS, and it says so (Known: false).

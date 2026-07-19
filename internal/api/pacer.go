@@ -194,7 +194,7 @@ func parseRetryAfter(v string) time.Duration {
 func IsQuotaExhausted(body string) bool {
 	lower := strings.ToLower(body)
 	for _, marker := range []string{
-		`"code":"1308"`,   // z.ai: usage limit reached for the N-hour window
+		`"code":"1308"`, // z.ai: usage limit reached for the N-hour window
 		"usage limit reached",
 		"quota exceeded",
 		"insufficient_quota",

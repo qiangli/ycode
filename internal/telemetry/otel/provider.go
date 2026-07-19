@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 	"path/filepath"
+	"strings"
 	"time"
 
 	otelruntime "go.opentelemetry.io/contrib/instrumentation/runtime"

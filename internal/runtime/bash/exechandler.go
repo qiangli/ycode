@@ -50,13 +50,13 @@ func NewSecurityExecHandler(mode permission.Mode, killTimeout time.Duration) fun
 
 			// Build the command with process group isolation.
 			cmd := exec.Cmd{
-				Path:   path,
-				Args:   args,
-				Env:    execEnvFromExpand(hc.Env),
-				Dir:    hc.Dir,
-				Stdin:  hc.Stdin,
-				Stdout: hc.Stdout,
-				Stderr: hc.Stderr,
+				Path:        path,
+				Args:        args,
+				Env:         execEnvFromExpand(hc.Env),
+				Dir:         hc.Dir,
+				Stdin:       hc.Stdin,
+				Stdout:      hc.Stdout,
+				Stderr:      hc.Stderr,
 				SysProcAttr: processGroupAttr(),
 			}
 

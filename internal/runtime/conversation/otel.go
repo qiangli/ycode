@@ -12,9 +12,9 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/qiangli/coreutils/pkg/telemetry"
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/runtime/usage"
-	"github.com/qiangli/coreutils/pkg/telemetry"
 
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )

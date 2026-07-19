@@ -75,14 +75,14 @@ func NewShellExecHandler(killTimeout time.Duration, tty TTYRunner) func(interp.E
 			defer func() { finish(exitCode, runErr) }()
 
 			cmd := exec.Cmd{
-				Path:   path,
-				Args:   args,
-				Env:    execEnvFromExpand(hc.Env),
-				Dir:    hc.Dir,
-				Stdin:  hc.Stdin,
-				Stdout: hc.Stdout,
-				Stderr: hc.Stderr,
-			SysProcAttr: processGroupAttr(),
+				Path:        path,
+				Args:        args,
+				Env:         execEnvFromExpand(hc.Env),
+				Dir:         hc.Dir,
+				Stdin:       hc.Stdin,
+				Stdout:      hc.Stdout,
+				Stderr:      hc.Stderr,
+				SysProcAttr: processGroupAttr(),
 			}
 
 			if err := cmd.Start(); err != nil {

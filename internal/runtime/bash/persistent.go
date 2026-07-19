@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	coreutilsshell "github.com/qiangli/coreutils/shell"
 	"github.com/qiangli/coreutils/pkg/telemetry"
+	coreutilsshell "github.com/qiangli/coreutils/shell"
 
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
