@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qiangli/coreutils/pkg/nudge"
 	"github.com/qiangli/coreutils/pkg/telemetry"
 	coreutilsshell "github.com/qiangli/coreutils/shell"
 
@@ -104,6 +105,13 @@ func (e *InterpreterExecutor) Execute(ctx context.Context, params ExecParams) (*
 			coreutilsshell.Handler(),
 			NewForkExecHandler(e.killTimeout),
 		),
+		// Proactive hints: when the agent runs a legacy tool with a better
+		// composable/structured counterpart (recursive grep → --agentic/--json/
+		// ast refs; find → ast symbols), emit ONE rate-limited stderr hint. The
+		// process-singleton keeps rate-limiting per-session across each command's
+		// own Runner. Observer only — never alters the command; self-silences
+		// unless hints are enabled (agent mode / BASHY_HINTS).
+		interp.WithAuditHandler(nudge.Default().OnAudit),
 	}
 
 	if workDir != "" {
