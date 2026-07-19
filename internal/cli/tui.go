@@ -27,6 +27,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/usage"
 	"github.com/qiangli/ycode/internal/service"
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
+	"github.com/qiangli/ycode/internal/wireevents"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -2225,6 +2226,11 @@ func (m *TUIModel) handleBusEvent(ev bus.Event) (tea.Model, tea.Cmd) {
 		m.working = false
 		m.workCancel = nil
 		m.midTurnCh = nil
+		// Mirror the turn boundary to the external --events channel. The internal
+		// bus says turn.complete; a steerable/coached consumer (bashy coach, the
+		// X-cascade) waits on turn.end. Without this the live TUI never emits it,
+		// so WaitIdle waits out the whole timeout even though the turn finished.
+		m.app.emitEvent(wireevents.TurnEnd, wireevents.TurnEndData{Status: "ok", Text: str("text")})
 		m.appendOutput("\n✓ Done.\n\n")
 		m.appendOutput(formatSessionSummary(m.app.usageTracker, m.app.sessionStart))
 		m.appendOutput("\n")

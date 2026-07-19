@@ -400,6 +400,9 @@ func (a *App) SetEventsFile(path string) error {
 }
 
 func (a *App) emitEvent(typ string, data any) {
+	if a.eventsSink == nil {
+		return // no external --events channel; nothing to mirror to
+	}
 	_ = a.eventsSink.Emit(typ, data)
 }
 
