@@ -195,6 +195,28 @@ type Usage struct {
 	CompletionTokens   int `json:"completion_tokens,omitempty"`
 	CacheCreationInput int `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInput     int `json:"cache_read_input_tokens,omitempty"`
+	// PromptTokensDetails is the OpenAI/OpenAI-compatible breakdown of the prompt
+	// tokens. Strong-auto-cache providers (DeepSeek, Moonshot/Kimi, z.ai GLM)
+	// report the automatically cached prefix subset here as cached_tokens, NOT in
+	// Anthropic's flat cache_read_input_tokens field.
+	PromptTokensDetails *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+}
+
+// PromptTokensDetails is the OpenAI-style nested prompt-token breakdown.
+type PromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
+// foldOpenAICache normalizes an OpenAI-compatible usage into the shared shape:
+// the automatically-cached prompt subset (prompt_tokens_details.cached_tokens)
+// is folded into CacheReadInput so pricing, OTel, and the session summary see it
+// exactly as they see Anthropic's cache_read_input_tokens. No-op when the flat
+// field is already populated (Anthropic) or there is no detail block.
+func (u *Usage) foldOpenAICache() {
+	if u == nil || u.CacheReadInput != 0 || u.PromptTokensDetails == nil {
+		return
+	}
+	u.CacheReadInput = u.PromptTokensDetails.CachedTokens
 }
 
 // StreamEvent represents a single SSE event from the streaming API.

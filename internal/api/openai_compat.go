@@ -445,6 +445,7 @@ func (c *OpenAICompatClient) readStream(body io.Reader, events chan<- *StreamEve
 		// not strict; it is wrong for everyone it does not recognise. Read the usage
 		// wherever it appears, and let the choices loop below run as normal.
 		if chunk.Usage != nil {
+			chunk.Usage.foldOpenAICache()
 			if inputTokens := chunk.Usage.InputTokens + chunk.Usage.PromptTokens; inputTokens > 0 {
 				events <- &StreamEvent{
 					Type: "message_start",
@@ -601,6 +602,7 @@ func (c *OpenAICompatClient) readNonStream(body io.Reader, events chan<- *Stream
 
 	// Emit usage if provided.
 	if resp.Usage != nil {
+		resp.Usage.foldOpenAICache()
 		// Emit message_start with input tokens (handle both Anthropic and OpenAI field names).
 		inputTokens := resp.Usage.InputTokens + resp.Usage.PromptTokens
 		if inputTokens > 0 {
@@ -608,7 +610,8 @@ func (c *OpenAICompatClient) readNonStream(body io.Reader, events chan<- *Stream
 				Type: "message_start",
 				Message: &Response{
 					Usage: Usage{
-						InputTokens: inputTokens,
+						InputTokens:    inputTokens,
+						CacheReadInput: resp.Usage.CacheReadInput,
 					},
 				},
 			}

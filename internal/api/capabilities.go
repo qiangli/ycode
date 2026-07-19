@@ -74,11 +74,20 @@ func geminiCapabilities(model string) ProviderCapabilities {
 }
 
 func openaiCapabilities(model string) ProviderCapabilities {
-	// OpenAI has implicit prefix caching for identical prefixes >1024 tokens,
-	// but it's automatic and not as controllable as Anthropic's explicit cache.
-	// Treat as unsupported to enable differential context injection.
-	caps := ProviderCapabilities{CachingSupported: false}
+	// OpenAI proper has only weak implicit prefix caching, so differential context
+	// injection (send just the changed sections after turn 1) wins there — keep it
+	// off. But several OpenAI-COMPATIBLE providers ship STRONG, documented automatic
+	// prefix caching: DeepSeek, Moonshot/Kimi, and z.ai GLM cache a byte-stable
+	// prefix server-side at a large discount AND — the part that matters for
+	// latency — do not reprocess it. For those, a stable prefix (cachingSupported=
+	// true → the cache-friendly builder, not the cache-BREAKING differential one)
+	// beats sending a diff: the cached prompt is ~4x cheaper and materially faster.
+	// The cached subset is read back via prompt_tokens_details.cached_tokens
+	// (Usage.foldOpenAICache) so pricing and the session summary see the hits.
 	lower := strings.ToLower(model)
+	autoCache := strings.Contains(lower, "kimi") || strings.Contains(lower, "moonshot") ||
+		strings.Contains(lower, "deepseek") || strings.Contains(lower, "glm")
+	caps := ProviderCapabilities{CachingSupported: autoCache}
 	switch {
 	case strings.Contains(lower, "gpt-4o"):
 		caps.MaxContextTokens = 128_000
