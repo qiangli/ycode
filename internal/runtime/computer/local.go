@@ -6,7 +6,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
+
+	"github.com/qiangli/coreutils/pkg/recommend"
 
 	"github.com/qiangli/ycode/internal/runtime/bash"
 	"github.com/qiangli/ycode/internal/runtime/fileops"
@@ -103,6 +106,7 @@ func (s *localShell) Run(ctx context.Context, p bash.ExecParams) (*bash.ExecResu
 			AttrExitCode.Int(res.ExitCode),
 		)
 		finish(nil)
+		recommendOnNotFound(res, p.WorkDir)
 		return res, nil
 	}
 
@@ -112,7 +116,57 @@ func (s *localShell) Run(ctx context.Context, p bash.ExecParams) (*bash.ExecResu
 		span.SetAttributes(AttrExitCode.Int(res.ExitCode))
 	}
 	finish(err)
+	recommendOnNotFound(res, p.WorkDir)
 	return res, err
+}
+
+// recommendOnNotFound appends a "did you mean" note when a command failed on a
+// not-found target. It runs at this convergence point so it covers BOTH the
+// in-process builtin fast-path (cat/ls/head/tail — where the agent most often
+// mistypes a filename) and the forked path. The LLM can't see the filesystem;
+// bashy lists what is actually there and recommends the likely intent.
+// Surfaced only — never substituted.
+func recommendOnNotFound(res *bash.ExecResult, workDir string) {
+	if res == nil || res.ExitCode == 0 || !recommend.Enabled() {
+		return
+	}
+	for _, missing := range recommend.NotFoundTargets(res.Stderr) {
+		recs := recommend.Recommend(missing, candidateFiles(workDir, missing), 3)
+		if note := recommend.Note(missing, recs); note != "" {
+			res.Stderr += note
+		}
+	}
+}
+
+// candidateFiles lists the real entries in the directory where `missing` was
+// expected (relative to workDir) plus the workDir root — bashy's ground truth.
+// Bounded; never recursive.
+func candidateFiles(workDir, missing string) []string {
+	if workDir == "" {
+		workDir = "."
+	}
+	dirs := map[string]bool{workDir: true}
+	if d := filepath.Dir(filepath.Join(workDir, missing)); d != "" {
+		dirs[d] = true
+	}
+	seen := map[string]bool{}
+	var out []string
+	for dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for i, e := range entries {
+			if i >= 500 {
+				break
+			}
+			if name := e.Name(); !seen[name] {
+				seen[name] = true
+				out = append(out, name)
+			}
+		}
+	}
+	return out
 }
 
 func (s *localShell) Session(ctx context.Context, opts SessionOpts) (Session, error) {
