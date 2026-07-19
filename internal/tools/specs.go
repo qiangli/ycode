@@ -18,16 +18,26 @@ func builtinSpecs() []*ToolSpec {
 	return []*ToolSpec{
 		// Always-available core tools
 		{
-			Name:            "bash",
-			Description:     "Execute a bash command and return its output.",
+			Name: "bash",
+			Description: "Execute a bash command and return its output. " +
+				"BATCH aggressively: each call is a full model round-trip that resends the " +
+				"conversation, so combine independent steps into ONE call with `&&` (e.g. " +
+				"`go test ./... && go vet ./...`) and read several small files at once " +
+				"(`cat a.go b.go` or `sed -n '1,80p' f.go`) instead of many separate calls. " +
+				"Commands run through bashy's in-process pure-Go userland (cat/sed/grep/ls/… " +
+				"execute without forking), so a batched pipeline is nearly free — the cost is " +
+				"the round-trip, not the commands. Prefer one batched call over a sequence of " +
+				"granular tool calls whenever the steps don't depend on each other's output.",
 			InputSchema:     mustJSON(bashSchema),
 			RequiredMode:    permission.DangerFullAccess,
 			Source:          SourceBuiltin,
 			AlwaysAvailable: true,
 		},
 		{
-			Name:            "read_file",
-			Description:     "Read a file from the local filesystem.",
+			Name: "read_file",
+			Description: "Read a file from the local filesystem. For MORE THAN ONE file, do " +
+				"not call this repeatedly — use read_multiple_files, or a single `bash` call " +
+				"(`cat a b`), so N files cost one round-trip instead of N.",
 			InputSchema:     mustJSON(readFileSchema),
 			RequiredMode:    permission.ReadOnly,
 			Source:          SourceBuiltin,
@@ -49,8 +59,9 @@ func builtinSpecs() []*ToolSpec {
 - Read the file with read_file before editing it. Do not build old_string from memory or stale context.
 - Copy old_string and new_string from the read_file output, dropping the leading line-number prefix and tab it adds — match only the file's own content, including exact whitespace and indentation.
 - old_string must uniquely identify one location: include enough surrounding context. If it matches more than once the edit fails; add context, or set replace_all to change every occurrence.
-- Do not issue consecutive edit_file calls on the same file — an earlier edit can invalidate a later edit's old_string. Read the file again first.
-- After a successful edit, do not re-read the file just to confirm the write landed.`,
+- Make ONE comprehensive edit per file rather than several incremental ones. If you must change multiple regions of a file, do it in a single edit_file call with a larger old_string/new_string that spans them, or replace_all — not a sequence of small edits. Each extra edit is a round-trip AND forces a re-read (below), so batching your edits is the single biggest saving here.
+- Do not issue consecutive edit_file calls on the same file — an earlier edit can invalidate a later edit's old_string. If you truly need a second pass, read the file again first; but prefer to get it right in one edit.
+- After a successful edit, do not re-read the file just to confirm the write landed — the edit result already reflects the new content.`,
 			InputSchema:     mustJSON(editFileSchema),
 			RequiredMode:    permission.WorkspaceWrite,
 			Source:          SourceBuiltin,
@@ -186,8 +197,20 @@ func builtinSpecs() []*ToolSpec {
 			AlwaysAvailable: true,
 		},
 		{
-			Name:            "Agent",
-			Description:     "Spawn a subagent to handle a complex task. Use for independent research, exploration, or implementation subtasks. Set run_in_background=true to run concurrently while continuing other work. Available agent types: Explore (read-only codebase search), Plan (design implementation), Verification (validate changes), general-purpose (full tool access).",
+			Name: "Agent",
+			Description: "Spawn a subagent to handle a substantial subtask. A subagent runs its " +
+				"OWN agentic loop with its own context — real value for genuinely large, " +
+				"parallel, or independent-context work (searching an unfamiliar large codebase, " +
+				"an independent second-opinion review of code you have NOT already seen, N-way " +
+				"parallel investigation). But it is expensive: it multiplies tool calls and " +
+				"tokens. Do NOT spawn it for work you can do inline in one or two steps — a " +
+				"small or single file you have already read, a quick check, a review of a diff " +
+				"already in your context. When the whole subject fits in what you can see now, " +
+				"reason about it directly. Reserve delegation for scale, parallelism, or a " +
+				"deliberately independent perspective — not as a reflex. Set " +
+				"run_in_background=true to run concurrently while continuing other work. " +
+				"Available agent types: Explore (read-only codebase search), Plan (design " +
+				"implementation), Verification (validate changes), general-purpose (full tool access).",
 			InputSchema:     mustJSON(agentSchema),
 			RequiredMode:    permission.DangerFullAccess,
 			Source:          SourceBuiltin,
