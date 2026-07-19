@@ -34,7 +34,15 @@ type Migration struct {
 // Open creates or opens a SQLite database at the given directory.
 func Open(dir string) (*Store, error) {
 	dbPath := filepath.Join(dir, "ycode.db")
-	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_cache_size=-64000&_foreign_keys=ON", dbPath)
+	// modernc.org/sqlite honors ITS OWN `_pragma=NAME(value)` DSN form and applies
+	// each pragma to EVERY pooled connection at open. The old mattn/go-sqlite3
+	// syntax (`_busy_timeout=5000&_journal_mode=WAL`) was silently ignored by
+	// modernc, so busy_timeout was only ever set by the explicit PRAGMA loop below
+	// — which runs over the pool and lands on ONE connection. With SetMaxOpenConns(4)
+	// the other lazily-opened connections had NO busy_timeout and returned
+	// SQLITE_BUSY the instant a concurrent writer held the lock. Setting the
+	// per-connection pragmas in the DSN fixes the lock contention at the source.
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=cache_size(-64000)&_pragma=foreign_keys(ON)", dbPath)
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

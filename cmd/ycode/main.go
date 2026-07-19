@@ -448,7 +448,14 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 		// Wire file write hook for incremental re-indexing.
 		toolReg.SetFileWriteHook(codeIndexer.NotifyFileChanged)
 
-		go codeIndexer.Run(rootCtx)
+		// Skip the eager initial index pass for one-shot `--print` runs: it scans +
+		// tree-sitter-parses the whole repo (~hundreds of ms) and competes for CPU/DB
+		// with the live turn, yet a one-shot task typically just greps/reads/edits.
+		// The wiring above stays, so grep (ripgrep) works and NotifyFileChanged still
+		// re-indexes lazily; semantic search degrades to empty, not error.
+		if !printFlag {
+			go codeIndexer.Run(rootCtx)
+		}
 	}()
 
 	// Attach SQLite dual-writer, index sessions, and start metrics once SQL is ready.
@@ -466,7 +473,7 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 		sess.SetSQLWriter(w)
 
 		// Apply tool usage metrics middleware.
-		metrics := tools.NewMetricsRecorder(sqlStore, sess.ID)
+		metrics := tools.NewMetricsRecorder(rootCtx, sqlStore, sess.ID)
 		metrics.ApplyToRegistry(toolReg)
 
 		// Wire agent-facing metrics query tool.
@@ -515,32 +522,38 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 		// Start background code embedding and doc indexing.
 		embedder := embedding.New(embProvider, vectorStore, storageMgr.KV(), cwd)
 
-		// Embed documentation files (CLAUDE.md, README, etc.).
-		go func() {
-			embedCtx := rootCtx
-			for _, cf := range promptCtx.ContextFiles {
-				if cf.Content != "" {
-					relPath := cf.Path
-					if rel, err := filepath.Rel(cwd, cf.Path); err == nil {
-						relPath = rel
-					}
-					if err := embedder.EmbedDocFile(embedCtx, relPath, cf.Content); err != nil {
-						slog.Debug("embedder: doc file", "path", relPath, "error", err)
+		// Skip the eager embedding passes for one-shot `--print` runs: they embed up
+		// to 500 code files + the doc set, competing for CPU/DB with the live turn,
+		// for a semantic index a short task never queries. The vector store wiring
+		// above stays, so semantic tools resolve (to empty) rather than nil-panic.
+		if !printFlag {
+			// Embed documentation files (CLAUDE.md, README, etc.).
+			go func() {
+				embedCtx := rootCtx
+				for _, cf := range promptCtx.ContextFiles {
+					if cf.Content != "" {
+						relPath := cf.Path
+						if rel, err := filepath.Rel(cwd, cf.Path); err == nil {
+							relPath = rel
+						}
+						if err := embedder.EmbedDocFile(embedCtx, relPath, cf.Content); err != nil {
+							slog.Debug("embedder: doc file", "path", relPath, "error", err)
+						}
 					}
 				}
-			}
-		}()
+			}()
 
-		// Embed code files.
-		go func() {
-			if n, err := embedder.RunCodeEmbedding(rootCtx); err != nil {
-				if rootCtx.Err() == nil { // only log if not a shutdown cancellation
-					slog.Debug("embedder: code pass", "error", err)
+			// Embed code files.
+			go func() {
+				if n, err := embedder.RunCodeEmbedding(rootCtx); err != nil {
+					if rootCtx.Err() == nil { // only log if not a shutdown cancellation
+						slog.Debug("embedder: code pass", "error", err)
+					}
+				} else if n > 0 {
+					slog.Debug("embedder: code pass", "embedded", n)
 				}
-			} else if n > 0 {
-				slog.Debug("embedder: code pass", "embedded", n)
-			}
-		}()
+			}()
+		}
 	}()
 
 	// Start background memory consolidation (stale removal, dedup). Opt-in via
@@ -707,7 +720,13 @@ func buildPromptContext(workDir, model string, configInstructions []string, memM
 	// repo map for an umbrella should describe the umbrella, not recursively
 	// parse every sibling repository (and its build artifacts) on each prompt.
 	repoMapCh := make(chan string, 1)
-	if text, err := startupRepoMap(startupCtx, ctx.ProjectRoot); err != nil {
+	if printFlag {
+		// One-shot `--print`: skip the repo map entirely. It is enrichment, not a
+		// prerequisite, and computing it forks a child process that tree-sitter-parses
+		// the tree — up to several seconds of synchronous pre-turn-1 latency the agent
+		// may never need (it can grep/glob on demand). Interactive sessions still get it.
+		repoMapCh <- ""
+	} else if text, err := startupRepoMap(startupCtx, ctx.ProjectRoot); err != nil {
 		slog.Debug("startup repo map skipped", "error", err)
 		repoMapCh <- ""
 	} else {
