@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qiangli/coreutils/pkg/autofix"
 	"github.com/qiangli/coreutils/pkg/nudge"
 	"github.com/qiangli/coreutils/pkg/telemetry"
 	coreutilsshell "github.com/qiangli/coreutils/shell"
@@ -102,6 +103,11 @@ func (e *InterpreterExecutor) Execute(ctx context.Context, params ExecParams) (*
 			// (grep --json, ast, graph, the userland) resolves in-process and
 			// never forks; only a command coreutils declines reaches the fork.
 			NewSecurityValidateHandler(e.permMode),
+			// autofix rewrites a read-only wrong-dialect flag (e.g. GNU `sed -r`
+			// on macOS → portable `sed -E`) BEFORE it runs, and notes it on the
+			// command's stderr — a result-with-note instead of an error the agent
+			// must round-trip to fix. Sits after validation, before exec.
+			autofix.Handler(),
 			coreutilsshell.Handler(),
 			NewForkExecHandler(e.killTimeout),
 		),
