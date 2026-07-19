@@ -28,8 +28,12 @@ import (
 	"github.com/qiangli/ycode/pkg/memex/memory"
 )
 
-// maxSubagentIterations caps the agentic loop for spawned subagents.
-const maxSubagentIterations = 15
+// maxSubagentIterations caps the agentic loop for spawned subagents. Kept below the
+// top-level default (100) — a delegate is handed a scoped sub-task, not the whole job —
+// but was 15, low enough to truncate a real multi-file investigation. A custom agent def
+// can still override via EffectiveMaxIter(); the cap handler below reports truncation
+// honestly rather than passing off a cut-short run as "found nothing".
+const maxSubagentIterations = 40
 
 // SpawnerConfig holds the dependencies needed to spawn child agent runtimes.
 type SpawnerConfig struct {

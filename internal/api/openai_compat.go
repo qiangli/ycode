@@ -51,6 +51,14 @@ func (c *OpenAICompatClient) Send(ctx context.Context, req *Request) (<-chan *St
 	events := make(chan *StreamEvent, 64)
 	errc := make(chan error, 1)
 
+	// The OpenAI gpt-5 family must go to /v1/responses (chat/completions rejects
+	// function tools alongside reasoning_effort). Everything else stays on
+	// chat/completions. Both paths emit the same Anthropic-shaped StreamEvents.
+	if c.useResponsesAPI(req) {
+		go c.sendResponses(ctx, req, events, errc)
+		return events, errc
+	}
+
 	go func() {
 		defer close(events)
 		defer close(errc)
@@ -116,13 +124,17 @@ func (c *OpenAICompatClient) Send(ctx context.Context, req *Request) (<-chan *St
 
 // openaiRequest is the OpenAI chat completion request format.
 type openaiRequest struct {
-	Model         string               `json:"model"`
-	Messages      []openaiMessage      `json:"messages"`
-	MaxTokens     int                  `json:"max_tokens,omitempty"`
-	Temperature   *float64             `json:"temperature,omitempty"`
-	Stream        bool                 `json:"stream"`
-	Tools         []openaiTool         `json:"tools,omitempty"`
-	StreamOptions *openaiStreamOptions `json:"stream_options,omitempty"`
+	Model    string          `json:"model"`
+	Messages []openaiMessage `json:"messages"`
+	// MaxTokens is the legacy output cap. The gpt-5 family and the o-series REJECT
+	// it ("Unsupported parameter: 'max_tokens' ... Use 'max_completion_tokens'"), so
+	// buildRequest routes the cap to exactly one of these two by model.
+	MaxTokens           int                  `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int                  `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64             `json:"temperature,omitempty"`
+	Stream              bool                 `json:"stream"`
+	Tools               []openaiTool         `json:"tools,omitempty"`
+	StreamOptions       *openaiStreamOptions `json:"stream_options,omitempty"`
 
 	// Thinking controls reasoning behavior for models that support it.
 	// Kimi K2.5: {"type":"enabled"} or {"type":"disabled"}.
@@ -188,12 +200,44 @@ type openaiFunction struct {
 	Arguments   string          `json:"arguments,omitempty"`
 }
 
+// modelUsesCompletionTokens reports whether a model requires the newer
+// max_completion_tokens parameter (and rejects max_tokens + a custom
+// temperature). Covers OpenAI's gpt-5 family and the o-series reasoning models.
+func modelUsesCompletionTokens(model string) bool {
+	m := strings.ToLower(model)
+	// strip a leading provider prefix like "openai/" so gpt-5.6-terra still matches.
+	if i := strings.LastIndex(m, "/"); i >= 0 {
+		m = m[i+1:]
+	}
+	return strings.HasPrefix(m, "gpt-5") || strings.HasPrefix(m, "gpt5") ||
+		strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4")
+}
+
+// isGPT5Family reports whether the model is in OpenAI's gpt-5 family (gpt-5.x,
+// including the terra/sol/luna variants), which has chat/completions restrictions
+// the o-series does not.
+func isGPT5Family(model string) bool {
+	m := strings.ToLower(model)
+	if i := strings.LastIndex(m, "/"); i >= 0 {
+		m = m[i+1:]
+	}
+	return strings.HasPrefix(m, "gpt-5") || strings.HasPrefix(m, "gpt5")
+}
+
 func (c *OpenAICompatClient) buildRequest(req *Request) *openaiRequest {
 	oReq := &openaiRequest{
 		Model:       req.Model,
-		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 		Stream:      req.Stream,
+	}
+	// The gpt-5 family / o-series take max_completion_tokens (not max_tokens) and
+	// reject a non-default temperature — send the cap on the right field and drop
+	// the temperature so the request is accepted rather than 400'd into a retry loop.
+	if modelUsesCompletionTokens(req.Model) {
+		oReq.MaxCompletionTokens = req.MaxTokens
+		oReq.Temperature = nil
+	} else {
+		oReq.MaxTokens = req.MaxTokens
 	}
 
 	// Enable usage reporting in streaming mode.
@@ -223,7 +267,16 @@ func (c *OpenAICompatClient) buildRequest(req *Request) *openaiRequest {
 	}
 
 	// Map reasoning effort to provider-specific fields.
-	if req.ReasoningEffort != "" {
+	//
+	// The gpt-5 family REJECTS reasoning_effort alongside function tools in
+	// /v1/chat/completions ("Function tools with reasoning_effort are not supported
+	// ... use /v1/responses or set reasoning_effort to none/minimal"). ycode is
+	// chat/completions-only, so for a gpt-5 model that carries tools we DROP
+	// reasoning_effort and let the model's own default apply (the terra/sol/luna
+	// variant's baked reasoning), rather than 400 into a doomed retry loop. o-series
+	// (o1/o3/o4) is unaffected — it takes reasoning_effort with tools normally.
+	gpt5WithTools := isGPT5Family(req.Model) && len(req.Tools) > 0
+	if req.ReasoningEffort != "" && !gpt5WithTools {
 		switch req.ReasoningEffort {
 		case "none":
 			// Disable thinking entirely (Kimi K2.5 format).

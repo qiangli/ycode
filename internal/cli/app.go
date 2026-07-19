@@ -540,7 +540,15 @@ func gitConfigEmail(dir string) string {
 
 // defaultMaxToolIterations is the maximum number of tool-use round-trips per turn when
 // the operator has not set one.
-const defaultMaxToolIterations = 25
+//
+// Was 25 — too low. A hard SWE-style task routinely needs >25 read/edit/test round-trips,
+// and codex (which this competes with head-to-head) has NO turn ceiling at all: it loops
+// until the model stops emitting tool calls, backstopped by auto-compaction. A flat 25 cut
+// legitimate work off mid-task and scored it a failure the model never earned. This is a
+// runaway backstop, not a task budget — the LoopDetector is the real stuck-loop guard — so
+// it lives far above any honest task and the BoundHit below still fires (loudly, non-zero)
+// if a run truly runs away. Operators cap it lower per-run via config.MaxToolIterations.
+const defaultMaxToolIterations = 100
 
 // maxToolIterations resolves the loop bound for this run.
 func (a *App) maxToolIterations() int {
