@@ -1,0 +1,110 @@
+# promote — the production half of the two-stage release flow (mirrors the
+# umbrella per-OS release gate; see docs/per-os-release-gate.md).
+#
+# release.yml builds a vX.Y.Z-dev pre-release. Per-OS QA pollers test those
+# exact assets (`YCODE_TEST_VERSION=vX.Y.Z-dev bashy dag qa`) and create
+# refs/qa/<ver>/<os>. This workflow runs for the bare vX.Y.Z tag and
+# byte-promotes the tested pre-release assets to the official release. It never
+# rebuilds from source.
+
+name: promote
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '!v*-*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Base version to promote, e.g. v0.3.0 (its v0.3.0-dev pre-release must exist)'
+        required: true
+      required_os:
+        description: 'Space-separated OS gate that must all be green in refs/qa/<version>/<os>'
+        required: false
+        default: 'windows'
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    name: byte-promote
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Normalize version
+        id: v
+        env:
+          IN: ${{ github.event.inputs.version || github.ref_name }}
+        run: |
+          v="${IN#v}"
+          case "$v" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::version must look like v1.2.3 (got '${IN}')"; exit 1 ;;
+          esac
+          echo "ver=v${v}" >> "$GITHUB_OUTPUT"
+          echo "dev=v${v}-dev" >> "$GITHUB_OUTPUT"
+
+      - name: Gate on per-OS QA refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VER: ${{ steps.v.outputs.ver }}
+          REQUIRED: ${{ github.event.inputs.required_os || 'windows' }}
+        run: |
+          missing=""
+          for os in $REQUIRED; do
+            if gh api "repos/${REPO}/git/refs/qa/${VER}/${os}" >/dev/null 2>&1; then
+              echo "  qa-${os}: green"
+            else
+              echo "::error::qa gate NOT met — missing refs/qa/${VER}/${os}"
+              missing="${missing} ${os}"
+            fi
+          done
+          [ -z "$missing" ] || { echo "blocked on:${missing}"; exit 1; }
+          echo "all required OS gates green for ${VER}"
+
+      - name: Verify pre-release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DEV: ${{ steps.v.outputs.dev }}
+          VER: ${{ steps.v.outputs.ver }}
+        run: |
+          ispre=$(gh api "repos/${REPO}/releases/tags/${DEV}" --jq '.prerelease' 2>/dev/null || echo missing)
+          [ "$ispre" = "true" ] || { echo "::error::${DEV} is not a published pre-release (got: ${ispre})"; exit 1; }
+          if gh api "repos/${REPO}/releases/tags/${VER}" >/dev/null 2>&1; then
+            echo "::error::${VER} is already released — nothing to promote"
+            exit 1
+          fi
+
+      - name: Download tested pre-release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DEV: ${{ steps.v.outputs.dev }}
+        run: |
+          mkdir -p dist
+          gh release download "${DEV}" -R "${REPO}" -D dist
+          echo "downloaded the exact bytes QA tested:"
+          ls -la dist/
+
+      - name: Create official release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VER: ${{ steps.v.outputs.ver }}
+          DEV: ${{ steps.v.outputs.dev }}
+          REQUIRED: ${{ github.event.inputs.required_os || 'windows' }}
+        run: |
+          printf '%s\n' \
+            "Promoted from ${DEV} after per-OS QA (${REQUIRED})." \
+            "Byte-identical to the tested pre-release — no rebuild." > /tmp/notes.md
+          gh release create "${VER}" -R "${REPO}" \
+            --title "${VER}" \
+            --notes-file /tmp/notes.md \
+            --latest \
+            dist/*
+          echo "released ${VER} as --latest from the tested ${DEV} bytes"

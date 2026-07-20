@@ -270,6 +270,160 @@ fi
 go test -tags "${TAG_LIST},release_smoke,embed_runner" -count=1 -timeout 600s -v ./internal/integration/ -run 'TestReleaseSmoke_'
 ```
 
+### qa
+Verify a *published* release build on THIS host OS/arch. This is the per-OS
+runtime gate: it downloads `$YCODE_TEST_VERSION`, verifies the published
+`SHA256SUMS`, extracts the host-matching `ycode-<os>-<arch>` archive, then runs
+a minimal LLM-free smoke (no model call, no API spend — it runs every release
+on every OS) that proves these exact bytes execute on this OS. Bare `vX.Y.Z`
+releases byte-promote the QA-tested `-dev` assets only after this target has
+gone green on each required OS (see promote.yml). No `/tmp`, no grep extraction
+tricks — cwd-local state and awk-only parsing so the target stays inside the
+portable userland.
+Effects: read
+```bash
+set -e
+YC="${YCODE:-bashy}"
+REPO="${YCODE_REPO:-qiangli/ycode}"
+VER="${YCODE_TEST_VERSION:?set YCODE_TEST_VERSION to the tag to test, e.g. v0.3.0-dev}"
+BASEV="${VER%%-*}"
+os=$("$YC" uname -s | awk '{ print tolower($0) }')
+case "$os" in
+  *darwin*) os=darwin ;;
+  *linux*) os=linux ;;
+  *windows*|mingw*|msys*) os=windows ;;
+  *) echo "qa: unsupported os $os" >&2; exit 2 ;;
+esac
+arch=$("$YC" uname -m)
+case "$arch" in
+  arm64|aarch64) arch=arm64 ;;
+  x86_64|amd64) arch=amd64 ;;
+  *) echo "qa: unsupported arch $arch" >&2; exit 2 ;;
+esac
+suffix=tar.gz
+ext=""
+[ "$os" = windows ] && { suffix=zip; ext=.exe; }
+base="https://github.com/${REPO}/releases/download/${VER}"
+d=".qa/ycode-${VER}-${os}-${arch}"
+"$YC" rm -rf "$d"
+"$YC" mkdir -p "$d/ycode"
+echo ">> QA ${VER} on ${os}/${arch}"
+
+asset="ycode-${os}-${arch}.${suffix}"
+archive="$d/$asset"
+
+# Verify the published SHA256SUMS line for this host's asset.
+"$YC" curl -fsSL -o "$d/SHA256SUMS" "$base/SHA256SUMS"
+want=$(awk -v asset="$asset" '
+  {
+    name = $NF
+    sub(/^.*\//, "", name)
+    if (name == asset) {
+      print $1
+      found = 1
+      exit
+    }
+  }
+  END { if (!found) exit 1 }
+' "$d/SHA256SUMS") || { echo "FAIL: missing checksum for $asset"; exit 1; }
+
+"$YC" curl -fsSL -o "$archive" "$base/$asset"
+got=$("$YC" sha256sum "$archive" | awk '{ print $1; exit }')
+{ [ -n "$want" ] && [ "$want" = "$got" ]; } || { echo "FAIL: sha256 $asset (want=$want got=$got)"; exit 1; }
+echo ">> sha256 verified $asset"
+
+case "$archive" in
+  *.tar.gz) "$YC" tar -xzf "$archive" -C "$d/ycode" ;;
+  *.zip)
+    unzipper="$d/unzip.go"
+    cat >"$unzipper" <<'EOF'
+package main
+
+import (
+	"archive/zip"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+func main() {
+	if len(os.Args) != 3 {
+		os.Exit(2)
+	}
+	dst, err := filepath.Abs(os.Args[2])
+	if err != nil {
+		panic(err)
+	}
+	r, err := zip.OpenReader(os.Args[1])
+	if err != nil {
+		panic(err)
+	}
+	defer r.Close()
+	for _, f := range r.File {
+		name := filepath.Clean(filepath.FromSlash(f.Name))
+		if filepath.IsAbs(name) || name == "." || strings.HasPrefix(name, ".."+string(os.PathSeparator)) {
+			panic("unsafe zip path: " + f.Name)
+		}
+		target := filepath.Join(dst, name)
+		if f.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0755); err != nil {
+				panic(err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			panic(err)
+		}
+		in, err := f.Open()
+		if err != nil {
+			panic(err)
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, f.Mode())
+		if err != nil {
+			in.Close()
+			panic(err)
+		}
+		_, err = io.Copy(out, in)
+		cerr := out.Close()
+		in.Close()
+		if err != nil {
+			panic(err)
+		}
+		if cerr != nil {
+			panic(cerr)
+		}
+	}
+}
+EOF
+    "$YC" go run "$unzipper" "$archive" "$d/ycode"
+    ;;
+  *) echo "qa: unsupported archive $archive" >&2; exit 2 ;;
+esac
+
+YC_BIN="$d/ycode/ycode${ext}"
+[ -f "$YC_BIN" ] || { echo "FAIL: extracted ycode binary not found"; exit 1; }
+"$YC" chmod +x "$YC_BIN" 2>/dev/null || true
+
+# 1. version stamp carries the base version (strips any -dev/-rc suffix).
+vout=$("$YC_BIN" version | awk 'NR == 1 { print; exit }')
+echo "   $vout"
+case "$vout" in
+  *"$BASEV"*|*"${BASEV#v}"*) ;;
+  *) echo "FAIL: version stamp is not $BASEV ($vout)"; exit 1 ;;
+esac
+
+# 2. LLM-free headless surface: offline capability docs (no model call).
+"$YC_BIN" docs >/dev/null || { echo "FAIL: docs (offline surface) exited $?"; exit 1; }
+echo ">> docs (offline) ok"
+
+# 3. shell-runner surface: non-interactive -c one-shot.
+shell_out=$("$YC_BIN" shell -c 'echo runtime-ok')
+[ "$shell_out" = "runtime-ok" ] || { echo "FAIL: shell -c ($shell_out)"; exit 1; }
+
+echo "Results: PASS ${VER} ${os}/${arch}"
+```
+
 ### test-oci
 Run OCI self-build integration test (requires podman).
 Effects: read
