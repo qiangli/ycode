@@ -1,11 +1,20 @@
 name: release
 
-# Dual-mode workflow:
+# Two-stage release flow (mirrors the umbrella per-OS release gate; see
+# docs/per-os-release-gate.md):
 #
-# 1. **Tag push (v*)**: full release. Build matrix → package → publish a
-#    GitHub Release with binaries and SHA256SUMS.
+# 1. **`v*-dev` tag push (this workflow)**: build matrix → package → publish a
+#    GitHub PRE-RELEASE with binaries and SHA256SUMS. The binary is stamped with
+#    the BASE version (the `-dev` suffix is stripped) so `ycode version` reports
+#    the version the bare tag will eventually carry. Per-OS QA pollers then run
+#    `YCODE_TEST_VERSION=vX.Y.Z-dev bashy dag qa` against these exact bytes and
+#    create refs/qa/<ver>/<os>.
 #
-# 2. **Manual dispatch / PR touching this workflow**: dryrun. Build matrix
+# 2. **Bare `vX.Y.Z` tag push (promote.yml)**: byte-promotes the QA-tested
+#    `-dev` pre-release assets to the official release — NO rebuild. This
+#    workflow must NOT fire on a bare `v*` tag, or it would race promote.yml.
+#
+# 3. **Manual dispatch / PR touching this workflow**: dryrun. Build matrix
 #    only — no Release is created. This is the gate that must pass green
 #    before any new tag is created (see
 #    feedback_no_tag_while_fixing in user memory: never tag to test a fix).
@@ -13,13 +22,15 @@ name: release
 # Phase 2 unlock: prebuilt binaries are the prerequisite for brew/go install/
 # npx wrappers. See docs/strategy.md#phase-2--on-ramp.
 #
-# Versioning: semver. Pre-1.0 = breaking changes expected. Tags containing a
-# hyphen (e.g., v0.1.0-rc.1) are auto-marked as pre-release.
+# Versioning: semver. Pre-1.0 = breaking changes expected. The `-dev` tag is
+# always marked as a GitHub pre-release (promote.yml refuses a non-prerelease).
 
 on:
   push:
     tags:
-      - 'v*'
+      # Build + publish a PRE-RELEASE only for -dev tags. Bare vX.Y.Z tags are
+      # byte-promotions of QA-tested assets; see promote.yml.
+      - 'v*-dev'
   workflow_dispatch:
   pull_request:
     paths:
@@ -133,24 +144,35 @@ jobs:
           ls -lh internal/container/vfkit_embed/vfkit.gz         2>/dev/null || echo "(no vfkit gz)"
           ls -lh internal/container/gvproxy_embed/gvproxy.gz     2>/dev/null || echo "(no gvproxy gz)"
 
+      # Strip the -dev (or -rc.N) suffix so the binary is stamped with the BASE
+      # version the bare tag will carry. `ycode version` on a v0.1.0-dev build
+      # must report v0.1.0 — the per-OS qa target asserts this, and promote.yml
+      # byte-promotes these bytes to the bare tag.
+      - name: Normalize release version
+        id: version
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          base="${tag%%-*}"
+          echo "base=${base}" >> "$GITHUB_OUTPUT"
+
       - name: Build binary
         shell: bash
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          # On tag push, ref_name is the tag (v0.x.y). On dispatch/PR, it's
-          # the branch name. The dryrun build doesn't create a Release so the
-          # version string just labels the binary "vX.Y.Z-dryrun" — useful
-          # when verifying the workflow without polluting the version
-          # sequence.
-          VERSION: ${{ github.ref_name }}
+          # The base version (stripped of -dev/-rc) for tag builds; the branch
+          # name for dispatch/PR dryruns. The build step below appends -dryrun
+          # to non-tag builds so the resulting binary's `ycode version` makes
+          # it obvious this isn't a release artifact.
+          VERSION: ${{ steps.version.outputs.base }}
           COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           mkdir -p dist
           BIN="dist/ycode-${{ matrix.target }}${{ matrix.ext }}"
           # Suffix non-tag builds with -dryrun so the resulting binary's
-          # `ycode --version` makes it obvious this isn't a release artifact.
+          # `ycode version` makes it obvious this isn't a release artifact.
           if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
             VERSION="${VERSION}-dryrun"
           fi
@@ -288,6 +310,9 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
+          # -dev (and any -rc.N) tags carry a hyphen → pre-release. promote.yml
+          # REFUSES to byte-promote a non-prerelease, so this marking is the
+          # contract that gates promotion.
           PRERELEASE_FLAG=""
           case "$TAG" in
             *-*) PRERELEASE_FLAG="--prerelease" ;;
