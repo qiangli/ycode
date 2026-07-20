@@ -76,6 +76,7 @@ require (
 	github.com/odvcencio/gotreesitter v0.16.0 // indirect
 	github.com/onsi/gomega v1.39.1 // indirect
 	github.com/qiangli/gfy v0.0.0-20260504062854-764095a2877d // indirect
+	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06 // indirect
 )
 
 require (

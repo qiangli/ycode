@@ -6,7 +6,11 @@ import (
 	"testing"
 )
 
-type mockExec struct{ n int; stderr string; code int }
+type mockExec struct {
+	n      int
+	stderr string
+	code   int
+}
 
 func (m *mockExec) Execute(ctx context.Context, p ExecParams) (*ExecResult, error) {
 	m.n++
