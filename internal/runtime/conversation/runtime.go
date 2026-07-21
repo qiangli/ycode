@@ -18,6 +18,7 @@ import (
 	"github.com/qiangli/coreutils/pkg/telemetry"
 
 	"github.com/qiangli/ycode/internal/api"
+	"github.com/qiangli/ycode/internal/observe"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/permission"
 	"github.com/qiangli/ycode/internal/runtime/prompt"
@@ -141,6 +142,10 @@ type Runtime struct {
 
 	// Optional OTEL instrumentation.
 	otel *OTELConfig
+
+	// Optional per-turn action recorder (JSONL + OTel span). Nil-safe: every
+	// method tolerates a nil receiver, so the hooks below run unconditionally.
+	observe *observe.Recorder
 
 	// Optional streaming event callback. Called for each text/thinking delta
 	// and tool call event as they arrive from the LLM provider.
@@ -400,6 +405,43 @@ func (r *Runtime) emitEvent(eventType string, data map[string]any) {
 	}
 }
 
+// providerKind returns the provider identity for the action record: the OTEL
+// provider label when configured, otherwise the live provider's kind.
+func (r *Runtime) providerKind() string {
+	if r.otel != nil && r.otel.Provider != "" {
+		return r.otel.Provider
+	}
+	if r.provider != nil {
+		return string(r.provider.Kind())
+	}
+	return ""
+}
+
+// verbosePrompt serializes the outbound request into a single string for
+// full-prompt capture under --trace-verbose. Secrets are scrubbed by the
+// recorder before the string is written. Only called when verbose is on.
+func verbosePrompt(req *api.Request) string {
+	if req == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(req.System)
+	for _, m := range req.Messages {
+		b.WriteString("\n\n[")
+		b.WriteString(string(m.Role))
+		b.WriteString("]\n")
+		for _, blk := range m.Content {
+			if blk.Text != "" {
+				b.WriteString(blk.Text)
+			}
+			if len(blk.Content) > 0 {
+				b.WriteString(blk.Content)
+			}
+		}
+	}
+	return b.String()
+}
+
 // TurnResult is the outcome of a single conversation turn.
 type TurnResult struct {
 	Response        *api.Response
@@ -614,6 +656,32 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		"reasoning_effort": req.ReasoningEffort,
 	})
 
+	// Open the per-turn action record. served_model is what the client put on
+	// the wire (the cascade's choice); base_model is the configured base; the
+	// recorder derives escalated = served != base. The prompt is referenced by
+	// its request hash — full text only under --trace-verbose.
+	baseModel := r.config.Model
+	reason := ""
+	if r.modelOverride != "" && model == r.modelOverride {
+		reason = "model_override"
+	}
+	begin := observe.BeginParams{
+		Turn:            r.turnCount,
+		ServedModel:     model,
+		BaseModel:       baseModel,
+		Reason:          reason,
+		Provider:        r.providerKind(),
+		Temperature:     req.Temperature,
+		TopP:            req.TopP,
+		MaxTokens:       req.MaxTokens,
+		ReasoningEffort: req.ReasoningEffort,
+		PromptHash:      reqHash,
+	}
+	if r.observe.Verbose() {
+		begin.Prompt = verbosePrompt(req)
+	}
+	r.observe.BeginTurn(ctx, begin)
+
 	// Send request and track timing.
 	start := time.Now()
 	events, errc := r.provider.Send(ctx, req)
@@ -740,6 +808,18 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 		"stop_reason": result.StopReason,
 		"usage":       result.Usage,
 		"duration_ms": result.Duration.Milliseconds(),
+	})
+
+	// Fill the response side of the action record and price it locally. The
+	// tool calls this turn requested are appended later by ExecuteTools, which
+	// then flushes the turn to the JSONL log.
+	r.observe.SetResponse(observe.ResponseParams{
+		FinishReason:     result.StopReason,
+		Completion:       result.TextContent,
+		PromptTokens:     result.Usage.InputTokens,
+		CompletionTokens: result.Usage.OutputTokens,
+		CacheWriteTokens: result.Usage.CacheCreationInput,
+		CacheReadTokens:  result.Usage.CacheReadInput,
 	})
 
 	// Cache the completed response for short-TTL reuse.
@@ -901,7 +981,28 @@ func (r *Runtime) ExecuteTools(ctx context.Context, calls []ToolCall, progress c
 		}
 	}
 
+	// Every tool call this turn requested has now been recorded on the open
+	// action record; flush the completed turn to the JSONL log. Idempotent and
+	// backstopped by the next BeginTurn and by Finish.
+	r.observe.FlushTurn()
+
 	return r.distillResults(ctx, calls, results)
+}
+
+// recordToolCall appends one executed tool call to the open action record.
+// Arguments/results are redacted and truncated by the recorder before writing.
+func (r *Runtime) recordToolCall(call ToolCall, output string, err error, dur time.Duration) {
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	r.observe.AddToolCall(observe.ToolParams{
+		Name:       call.Name,
+		Arguments:  string(call.Input),
+		Result:     output,
+		Error:      errStr,
+		DurationMs: dur.Milliseconds(),
+	})
 }
 
 // activateToolsFromResult parses a ToolSearch result and activates the
@@ -928,7 +1029,9 @@ func (r *Runtime) executeToolsSequential(ctx context.Context, calls []ToolCall, 
 		if progress != nil {
 			progress <- taskqueue.TaskEvent{Index: i, Name: call.Name, Status: taskqueue.StatusRunning, Total: n}
 		}
+		toolStart := time.Now()
 		output, err := r.registry.Invoke(ctx, call.Name, call.Input)
+		r.recordToolCall(call, output, err, time.Since(toolStart))
 		block := api.ContentBlock{
 			Type:      api.ContentTypeToolResult,
 			ToolUseID: call.ID,
@@ -960,6 +1063,8 @@ func (r *Runtime) executeToolsSequential(ctx context.Context, calls []ToolCall, 
 // executeToolsParallel runs tool calls concurrently using the task queue.
 func (r *Runtime) executeToolsParallel(ctx context.Context, calls []ToolCall, progress chan<- taskqueue.TaskEvent) []api.ContentBlock {
 	qCalls := make([]taskqueue.Call, len(calls))
+	// Per-call durations, written from distinct indices by concurrent closures.
+	durations := make([]time.Duration, len(calls))
 	for i, call := range calls {
 		spec, _ := r.registry.Get(call.Name)
 		cat := taskqueue.CatStandard
@@ -974,13 +1079,17 @@ func (r *Runtime) executeToolsParallel(ctx context.Context, calls []ToolCall, pr
 			}
 		}
 		c := call
+		idx := i
 		qCalls[i] = taskqueue.Call{
 			Index:    i,
 			Name:     call.Name,
 			Detail:   call.Name,
 			Category: cat,
 			Invoke: func(ctx context.Context) (string, error) {
-				return r.registry.Invoke(ctx, c.Name, c.Input)
+				toolStart := time.Now()
+				out, err := r.registry.Invoke(ctx, c.Name, c.Input)
+				durations[idx] = time.Since(toolStart)
+				return out, err
 			},
 		}
 	}
@@ -990,6 +1099,7 @@ func (r *Runtime) executeToolsParallel(ctx context.Context, calls []ToolCall, pr
 
 	blocks := make([]api.ContentBlock, len(calls))
 	for i, res := range taskResults {
+		r.recordToolCall(calls[i], res.Output, res.Err, durations[i])
 		block := api.ContentBlock{
 			Type:      api.ContentTypeToolResult,
 			ToolUseID: calls[i].ID,

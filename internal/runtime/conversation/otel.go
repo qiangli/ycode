@@ -14,6 +14,7 @@ import (
 
 	"github.com/qiangli/coreutils/pkg/telemetry"
 	"github.com/qiangli/ycode/internal/api"
+	"github.com/qiangli/ycode/internal/observe"
 	"github.com/qiangli/ycode/internal/runtime/usage"
 
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
@@ -26,11 +27,24 @@ type OTELConfig struct {
 	ReqLogger  *yotel.RequestLogger
 	ConvLogger *yotel.ConversationLogger
 	Provider   string // provider kind for logging
+
+	// ActionRecorder, when set, records the per-turn action log (JSONL +
+	// agent.turn span). Wired through here so a single SetOTEL call installs it.
+	ActionRecorder *observe.Recorder
 }
 
 // SetOTEL configures OTEL instrumentation on the runtime.
 func (r *Runtime) SetOTEL(cfg *OTELConfig) {
 	r.otel = cfg
+	if cfg != nil {
+		r.observe = cfg.ActionRecorder
+	}
+}
+
+// SetActionRecorder installs the per-turn action recorder directly (independent
+// of OTEL). Useful for tests and non-OTEL wiring paths.
+func (r *Runtime) SetActionRecorder(rec *observe.Recorder) {
+	r.observe = rec
 }
 
 // messageStructure captures the shape of a message list for diagnostics.

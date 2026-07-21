@@ -982,6 +982,7 @@ func discoverContextFiles(workDir, projectRoot string) []prompt.ContextFile {
 
 var (
 	printFlag             bool
+	traceVerbose          bool
 	modelFlag             string
 	dangerSkipPermissions bool
 	connectURL            string
@@ -1489,6 +1490,7 @@ var healTestCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&printFlag, "print", false, "Output response as plain text (no markdown rendering)")
+	rootCmd.PersistentFlags().BoolVar(&traceVerbose, "trace-verbose", false, "Capture full prompts in the per-turn action log (secrets still redacted; default logs prompt hashes only)")
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "Model to use (overrides config and env vars)")
 	rootCmd.PersistentFlags().BoolVar(&dangerSkipPermissions, "danger-skip-permissions", false, "Skip all permission checks (grants full access to all tools)")
 	rootCmd.PersistentFlags().StringVar(&connectURL, "connect", "", "Connect to a remote ycode server (ws:// or nats://)")

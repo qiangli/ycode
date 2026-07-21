@@ -148,6 +148,16 @@ func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Reg
 		Provider: providerKind,
 	}
 
+	// Per-turn action log: JSONL to <instanceDir>/actions.jsonl plus an
+	// agent.turn span per turn. actionCleanup writes the session summary on
+	// shutdown.
+	sessionID := ""
+	if sess != nil {
+		sessionID = sess.ID
+	}
+	actionRec, actionCleanup := buildActionRecorder(instanceDir, sessionID, otelProvider.Tracer("ycode.agent"))
+	convCfg.ActionRecorder = actionRec
+
 	// Set up request logger for conversation audit (always enabled in file mode).
 	reqLogger, err := yotel.NewRequestLogger(instanceDir, yotel.RequestLoggerConfig{
 		RetentionDays:  3,
@@ -197,6 +207,9 @@ func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Reg
 
 	return &otelResult{
 		shutdown: func() {
+			// Write the action-log summary before tearing down the exporters so
+			// its final span/metric flush through the same shutdown.
+			actionCleanup()
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			if err := otelProvider.Shutdown(shutdownCtx); err != nil {
@@ -280,6 +293,14 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 		Provider: providerKind,
 	}
 
+	// Per-turn action log: JSONL + agent.turn span (see setupFileOTEL).
+	actionSessionID := ""
+	if sess != nil {
+		actionSessionID = sess.ID
+	}
+	actionRec, actionCleanup := buildActionRecorder(instanceDir, actionSessionID, otelProvider.Tracer("ycode.agent"))
+	convCfg.ActionRecorder = actionRec
+
 	// Set up request logger for conversation audit.
 	if obs.LogConversations {
 		reqLogger, err := yotel.NewRequestLogger(instanceDir, yotel.RequestLoggerConfig{
@@ -319,6 +340,8 @@ func setupOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Registr
 
 	return &otelResult{
 		shutdown: func() {
+			// Write the action-log summary before tearing down the exporters.
+			actionCleanup()
 			// Short timeout: file exports are fast; if gRPC can't flush in 2s
 			// (e.g. collector unreachable), waiting longer won't help.
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
