@@ -23,6 +23,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/agentdef"
 	"github.com/qiangli/ycode/internal/runtime/agentpool"
 	"github.com/qiangli/ycode/internal/runtime/builtin"
+	"github.com/qiangli/ycode/internal/runtime/cascade"
 	"github.com/qiangli/ycode/internal/runtime/codegraph"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
@@ -124,6 +125,18 @@ type App struct {
 	// OTEL conversation instrumentation (optional).
 	convOTEL  *conversation.OTELConfig
 	turnIndex int // monotonically increasing turn counter for OTEL
+
+	// Cascade escalator — climbs config.CascadeModels when the run loops or
+	// stalls. nil for an ordinary single-model run; every call site is
+	// nil-safe. Built once per App, so escalation persists across the prompts
+	// of an interactive session (a model that got stuck does not get demoted
+	// back into the same hole).
+	escalator     *cascade.Escalator
+	escalatorOnce sync.Once
+
+	// providerFactory resolves a model id to a live provider. nil uses the
+	// ordinary api.DetectProvider path; tests substitute a scripted one.
+	providerFactory func(model string) (api.Provider, string, error)
 
 	// NDJSON event log sink (optional).
 	eventsSink *wireevents.Writer
@@ -475,6 +488,13 @@ func (a *App) conversationRuntime() *conversation.Runtime {
 			}
 		}
 	}
+	// A runtime is rebuilt per prompt, but an escalation outlives the prompt
+	// that triggered it: a.provider already points at the premium tier, and a
+	// fresh runtime that reads only config.Model would quietly hand the next
+	// prompt back to the base model id on the wrong provider.
+	if a.escalator.Escalated() {
+		rt.Escalate(a.escalator.Model(), a.escalator.Reason(), nil)
+	}
 	// Restore L1 working memory (active topic) from ghost snapshot
 	// if this is a resumed session with prior compaction.
 	rt.RestoreTopicFromGhost()
@@ -765,12 +785,23 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 		}
 
 		// Check for stuck loops.
+		//
+		// A loop is exactly the signal a cascade exists to answer: the current
+		// model has demonstrated it cannot get out of this on its own. Escalate
+		// FIRST, then decide whether the loop still has to be broken — a run
+		// that just moved to a stronger model deserves the chance to use it,
+		// which is the entire promise of a cascade and precisely what never
+		// happened before.
 		if result.TextContent != "" {
 			loopStatus := loopDetector.Record(result.TextContent)
 			switch loopStatus {
 			case conversation.LoopWarning:
 				fmt.Fprintf(a.chromeWriter(), "\n⚠ Loop detected: agent may be stuck. Injecting intervention.\n\n")
+				a.observeCascade(rt, cascade.SignalLoop)
 			case conversation.LoopBreak:
+				if a.escalateAndContinue(rt, loopDetector) {
+					break
+				}
 				fmt.Fprintf(a.chromeWriter(), "\n✘ Loop detected: agent is stuck after %d similar responses. Breaking loop.\n\n",
 					conversation.LoopHardThreshold)
 				a.printSessionSummary()
@@ -872,9 +903,15 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 			sigb.Write(tc.Input)
 			sigb.WriteByte('\n')
 		}
+		// Feed the turn's outcome to the cascade: a turn whose tool calls all
+		// failed is the stall signal, and N of those in a row is a model that
+		// cannot do this task, not a bad minute.
+		a.observeCascade(rt, turnSignal(result, toolResults))
+
 		switch toolLoopDetector.Record(sigb.String()) {
 		case conversation.LoopWarning, conversation.LoopBreak:
 			fmt.Fprintf(a.chromeWriter(), "\n⚠ Tool-call loop: the same tool call is repeating without progress. Steering.\n\n")
+			a.observeCascade(rt, cascade.SignalLoop)
 			messages = append(messages, api.Message{
 				Role: api.RoleUser,
 				Content: []api.ContentBlock{{
@@ -937,6 +974,12 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 func (a *App) resolvedModel() string {
 	if a == nil || a.config == nil {
 		return ""
+	}
+	// A cascade that has escalated is running a DIFFERENT, more expensive
+	// model than the configured base. Pricing the premium turns at the base's
+	// rate is the one way to make an escalation invisible on the bill.
+	if m := a.escalatedModel(); m != "" {
+		return m
 	}
 	return a.config.Model
 }

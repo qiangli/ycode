@@ -33,10 +33,31 @@ one `"type":"turn"` line; the session ends with one `"type":"summary"` line.
 
 When an OTEL endpoint is configured, the same data is also emitted as an
 `agent.turn` span (attributes: `served_model`, `base_model`, `escalated`,
-`reason`, `provider`, `prompt_tokens`, `completion_tokens`, `cost_usd`,
-`finish_reason`) with a `tool.call` span event per tool call. The JSONL is
-self-sufficient and works air-gapped; the span is an additional vantage point,
-never a dependency.
+`reason`, `provider`, `from_provider`, `prompt_tokens`, `completion_tokens`,
+`cost_usd`, `finish_reason`) with a `tool.call` span event per tool call. The
+JSONL is self-sufficient and works air-gapped; the span is an additional
+vantage point, never a dependency.
+
+## Fleet metrics
+
+Each flushed turn is also published as OTEL metrics, from the same code path
+that writes the JSONL line — the two can never disagree:
+
+| Metric | Type | Attributes | Meaning |
+| --- | --- | --- | --- |
+| `fleet.tokens` | counter | `model`, `provider`, `kind` (`prompt` / `completion` / `cache_read` / `cache_write`) | billed tokens per turn |
+| `fleet.cost_usd` | counter (USD) | `model`, `provider` | locally-priced spend |
+| `fleet.escalation` | counter | `base_model`, `served_model`, `provider`, `reason` | base→premium **switches** — a run that escalates once and stays there counts 1, not once per premium turn |
+
+The names are fleet-scoped rather than ycode-scoped on purpose: the point of a
+per-turn record is comparing agents and models across tools, and a metric named
+after its emitter cannot be summed with its peers.
+
+Metrics ride the standard OTEL env vars and are a **total no-op** when no
+meter provider is configured (`OTEL_EXPORTER_OTLP_ENDPOINT` unset and no file
+exporter): the instruments bind to the SDK's no-op global and export nothing.
+Gate tests: `internal/observe/fleet_otel_test.go` (in-process span recorder +
+manual metric reader).
 
 ## Turn record
 
@@ -82,9 +103,10 @@ never a dependency.
 ```
 
 `escalated=true` is the direct, per-turn premium-intervention signal that
-replaces log-grepping. When cascade escalation is wired to switch the served
-model mid-run, it lands here automatically — the recorder captures whatever model
-the client actually put on the wire.
+replaces log-grepping. Cascade escalation (`docs/cascade-escalation.md`) now
+switches the served model mid-run, and it lands here automatically — the
+recorder captures whatever model the client actually put on the wire, with the
+escalator's reason (`loop`, `stall_x3`, …) in `request.reason`.
 
 ## Session summary
 

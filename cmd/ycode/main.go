@@ -24,6 +24,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/computer"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/conversation"
+	"github.com/qiangli/ycode/internal/runtime/datadir"
 	"github.com/qiangli/ycode/internal/runtime/embedding"
 	"github.com/qiangli/ycode/internal/runtime/git"
 	"github.com/qiangli/ycode/internal/runtime/health"
@@ -217,6 +218,17 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	if modelFlag != "" {
 		model = modelFlag
 	}
+	// A CASCADE agent (ycode-cascade-x4) is a ladder, not a model. Capture the
+	// whole ladder here — this is the only point where the selector still
+	// exists; one line down it has collapsed to the base model id, which is
+	// precisely how a cascade ended up serving its cheapest rung for an entire
+	// session. An explicit config ladder wins over the catalog's.
+	if len(cfg.CascadeModels) == 0 {
+		if ladder, ok := api.ResolveCascadeLadder(model); ok {
+			cfg.CascadeModels = ladder
+			slog.Info("cascade agent selected", "agent", model, "ladder", strings.Join(ladder, " → "))
+		}
+	}
 	// A fleet selector (nickname / agent name / band like L3) resolves to a
 	// concrete ycode model id; a literal model id passes through unchanged.
 	if fm, note := api.ResolveFleetModel(model); fm != model {
@@ -250,11 +262,19 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 		}
 	}
 	// Initialize storage manager (Phase 1: KV store is instant).
-	storageDataDir := filepath.Join(home, ".agents", "ycode", "projects", "data")
+	//
+	// The root is per-session-overridable (YCODE_DATA_DIR / YCODE_HOME) so
+	// concurrent ycode processes need not fight over one host-global
+	// single-writer lock, and losing that lock is FATAL unless --no-store was
+	// passed. See internal/runtime/datadir and docs/store-isolation.md.
+	storageDataDir := datadir.Resolve(home)
+	degraded := noStoreFlag || datadir.NoStore()
+	lockTimeout := datadir.LockTimeout()
 	storageMgr, err := store.NewManager(context.Background(), store.Config{
-		DataDir: storageDataDir,
+		DataDir:       storageDataDir,
+		AllowDegraded: degraded,
 		KVFactory: func(ctx context.Context) (store.KVStore, error) {
-			return kv.Open(storageDataDir)
+			return kv.OpenWithTimeout(storageDataDir, lockTimeout)
 		},
 		SQLFactory: func(ctx context.Context) (store.SQLStore, error) {
 			return sqlstore.Open(storageDataDir)
@@ -267,7 +287,11 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("init storage: %w", err)
+		return nil, storeInitError(storageDataDir, lockTimeout, err)
+	}
+	if degraded {
+		slog.Warn("running WITHOUT persistent storage (--no-store): memory, caches, and the code graph are disabled for this session",
+			"data_dir", storageDataDir)
 	}
 
 	// Start background storage initialization (Phase 2: SQLite, Phase 3: vector/search).
@@ -320,10 +344,15 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 	// under storageDataDir so all persistence shares one root. Best-effort:
 	// failure to open is logged but does not block startup; the codegraph
 	// gfy pipeline keeps working without DQL queryability.
-	memGraph, err := memexgraph.Open(memexgraph.Options{
-		Dir: filepath.Join(storageDataDir, "graph"),
-	})
+	graphDir := filepath.Join(storageDataDir, "graph")
+	memGraph, err := memexgraph.Open(memexgraph.Options{Dir: graphDir})
 	if err != nil {
+		// Same single-writer contention as the KV store: badger takes an
+		// exclusive lock on the directory, so a second concurrent ycode loses
+		// it. Only an explicit --no-store run may shrug that off.
+		if !degraded {
+			return nil, storeInitError(graphDir, lockTimeout, err)
+		}
 		slog.Warn("memex graph unavailable; query_graph_dql disabled", "error", err)
 		memGraph = nil
 	}
@@ -982,6 +1011,7 @@ func discoverContextFiles(workDir, projectRoot string) []prompt.ContextFile {
 
 var (
 	printFlag             bool
+	noStoreFlag           bool
 	traceVerbose          bool
 	modelFlag             string
 	dangerSkipPermissions bool
@@ -1490,6 +1520,7 @@ var healTestCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&printFlag, "print", false, "Output response as plain text (no markdown rendering)")
+	rootCmd.PersistentFlags().BoolVar(&noStoreFlag, "no-store", false, "Run without persistent storage instead of failing when the data directory is locked (see YCODE_DATA_DIR)")
 	rootCmd.PersistentFlags().BoolVar(&traceVerbose, "trace-verbose", false, "Capture full prompts in the per-turn action log (secrets still redacted; default logs prompt hashes only)")
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "Model to use (overrides config and env vars)")
 	rootCmd.PersistentFlags().BoolVar(&dangerSkipPermissions, "danger-skip-permissions", false, "Skip all permission checks (grants full access to all tools)")

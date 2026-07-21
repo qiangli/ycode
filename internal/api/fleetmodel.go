@@ -62,6 +62,63 @@ func ResolveFleetModel(sel string) (string, string) {
 	return sel, "" // not a fleet selector: a literal model id
 }
 
+// ResolveCascadeLadder returns the ordered ycode model ids behind a CASCADE
+// agent selector — the base first, then each escalation rung — so ycode can run
+// the ladder itself instead of only ever serving the base.
+//
+// A cascade agent (ycode-cascade-x4: glm-5.2 → terra → sol) declares
+// `base` + `escalation` in the fleet catalog. Resolving `--model
+// ycode-cascade-x4` through ResolveFleetModel yields only the NOMINAL model,
+// which is the base — correct for starting the run, and exactly why a cascade
+// used to spend an entire session on its cheapest rung. This exposes the rest
+// of the ladder so the runtime can climb it when the base is demonstrably
+// stuck.
+//
+// ok=false when sel is not a cascade agent (a plain model id, a band, a
+// non-cascade agent) — callers then run the single model as before. Rungs that
+// do not resolve to a ycode-runnable model are skipped rather than failing the
+// whole ladder: a partially-usable ladder still beats none.
+func ResolveCascadeLadder(sel string) ([]string, bool) {
+	raw := strings.TrimSpace(sel)
+	if raw == "" {
+		return nil, false
+	}
+	cat := fleet.New()
+	a, ok := cat.Agent(raw)
+	if !ok || !a.IsCascade() {
+		return nil, false
+	}
+
+	var models []string
+	seen := map[string]bool{}
+	for _, rung := range append([]string{a.Base}, a.Escalation...) {
+		id := ycodeModelForAgent(cat, rung)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		models = append(models, id)
+	}
+	if len(models) < 2 {
+		// A one-rung "ladder" is just a model; nothing to escalate to.
+		return nil, false
+	}
+	return models, true
+}
+
+// ycodeModelForAgent resolves an agent name to the model id ycode speaks, or ""
+// when the agent is unknown or not ycode-runnable.
+func ycodeModelForAgent(cat *fleet.Catalog, name string) string {
+	if strings.TrimSpace(name) == "" {
+		return ""
+	}
+	a, _, m, err := cat.Binding(name)
+	if err != nil || a.Tool != "ycode" {
+		return ""
+	}
+	return m.TargetFor("ycode")
+}
+
 // bestYcodeModel returns the id + fleet name of the strongest ycode-runnable model
 // pegged at or above minBand (highest band, then name for determinism).
 func bestYcodeModel(cat *fleet.Catalog, minBand int) (id, name string) {

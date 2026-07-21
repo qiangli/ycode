@@ -6,6 +6,7 @@
 package kv
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/qiangli/ycode/pkg/memex/store"
 
 	bolt "go.etcd.io/bbolt"
+	bolterr "go.etcd.io/bbolt/errors"
 )
 
 // Store implements store.KVStore backed by bbolt.
@@ -21,19 +23,38 @@ type Store struct {
 	db *bolt.DB
 }
 
-// Open creates or opens a bbolt database at the given directory.
+// DefaultOpenTimeout is how long Open waits for another process to release the
+// bbolt file lock before failing.
+const DefaultOpenTimeout = 200 * time.Millisecond
+
+// Open creates or opens a bbolt database at the given directory, failing fast
+// when another process holds the lock.
 func Open(dir string) (*Store, error) {
+	return OpenWithTimeout(dir, DefaultOpenTimeout)
+}
+
+// OpenWithTimeout is Open with an explicit wait budget for the exclusive file
+// lock. bbolt's lock is per-open-file-descriptor, so a second opener — in this
+// process or another one — waits up to timeout and then fails.
+//
+// A lock failure is reported as store.ErrLocked so callers can tell "someone
+// else owns this data dir" (fixable by pointing YCODE_DATA_DIR somewhere else)
+// apart from a corrupt or unwritable database.
+func OpenWithTimeout(dir string, timeout time.Duration) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create kv dir: %w", err)
 	}
 
 	dbPath := filepath.Join(dir, "ycode.kv")
 	db, err := bolt.Open(dbPath, 0o600, &bolt.Options{
-		Timeout:      200 * time.Millisecond, // Fail fast if another process holds the lock.
+		Timeout:      timeout,
 		NoGrowSync:   false,
 		FreelistType: bolt.FreelistMapType,
 	})
 	if err != nil {
+		if errors.Is(err, bolterr.ErrTimeout) {
+			return nil, fmt.Errorf("%w: %s held by another process: %w", store.ErrLocked, dbPath, err)
+		}
 		return nil, fmt.Errorf("open bbolt: %w", err)
 	}
 

@@ -44,6 +44,17 @@ type Config struct {
 	SQLFactory    func(ctx context.Context) (SQLStore, error)
 	VectorFactory func(ctx context.Context) (VectorStore, error)
 	SearchFactory func(ctx context.Context) (SearchIndex, error)
+
+	// AllowDegraded permits startup to continue without a KV store when the
+	// data directory is locked or unopenable.
+	//
+	// It defaults to FALSE on purpose. This used to be the unconditional
+	// behaviour: warn, continue store-less, and exit 0 — so a session that had
+	// silently lost the single-writer lock looked exactly like a session that
+	// worked. Degrading is now something an operator ASKS for (--no-store /
+	// YCODE_NO_STORE=1); otherwise NewManager returns an error and the process
+	// exits non-zero with a message naming the fix.
+	AllowDegraded bool
 }
 
 // NewManager creates a storage manager and immediately initializes the KV store (Phase 1).
@@ -58,11 +69,17 @@ func NewManager(ctx context.Context, cfg Config) (*Manager, error) {
 		searchReady:   make(chan struct{}),
 	}
 
-	// Phase 1: KV store (instant). Non-fatal if locked by another process.
+	// Phase 1: KV store (instant). Fatal unless the caller opted into a
+	// degraded run — a lost single-writer lock must not be laundered into a
+	// clean exit.
 	if cfg.KVFactory != nil {
 		kv, err := cfg.KVFactory(ctx)
 		if err != nil {
-			slog.Warn("kv store unavailable (possibly locked by another ycode process), continuing without it", "error", err)
+			if !cfg.AllowDegraded {
+				return nil, fmt.Errorf("%w: %s: %w", ErrUnavailable, cfg.DataDir, err)
+			}
+			slog.Warn("kv store unavailable; continuing in explicitly-requested degraded (--no-store) mode",
+				"data_dir", cfg.DataDir, "error", err)
 			m.status.KV = BackendStatus{Phase: Phase1, Error: err.Error()}
 		} else {
 			m.kv = kv
