@@ -160,6 +160,11 @@ type Runtime struct {
 	// without mutating the shared config (which is per-workDir, so a
 	// mutation would race across concurrent multi-tenant sessions).
 	modelOverride string
+
+	// overrideReason explains a non-empty modelOverride ("loop", "stall_x3",
+	// "model_override"). It rides into the per-turn action record so an
+	// escalation is self-describing in the log and on the agent.turn span.
+	overrideReason string
 }
 
 // NewRuntime creates a new conversation runtime.
@@ -396,6 +401,33 @@ func (r *Runtime) SetEventCallback(fn func(eventType string, data map[string]any
 // Pass "" to clear the override and revert to r.config.Model.
 func (r *Runtime) SetModelOverride(model string) {
 	r.modelOverride = model
+	r.overrideReason = ""
+}
+
+// Escalate re-points subsequent turns at model and records WHY, so the per-turn
+// action record carries the escalation reason ("loop", "stall_x3") instead of a
+// bare model change nobody can explain afterwards.
+//
+// provider may be nil when the new model is served by the same provider;
+// pass one when the rung crosses providers (glm → OpenAI → Anthropic), because
+// a model id alone cannot reach an endpoint the current provider doesn't own.
+func (r *Runtime) Escalate(model, reason string, provider api.Provider) {
+	r.modelOverride = model
+	r.overrideReason = reason
+	if provider != nil {
+		r.provider = provider
+	}
+}
+
+// ServedModel reports the model the next turn will use.
+func (r *Runtime) ServedModel() string {
+	if r.modelOverride != "" {
+		return r.modelOverride
+	}
+	if r.config != nil {
+		return r.config.Model
+	}
+	return ""
 }
 
 // emitEvent calls the event callback if set.
@@ -663,7 +695,10 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 	baseModel := r.config.Model
 	reason := ""
 	if r.modelOverride != "" && model == r.modelOverride {
-		reason = "model_override"
+		reason = r.overrideReason
+		if reason == "" {
+			reason = "model_override"
+		}
 	}
 	begin := observe.BeginParams{
 		Turn:            r.turnCount,

@@ -32,9 +32,14 @@ type Recorder struct {
 	now       func() time.Time
 
 	cur     *TurnRecord // the open (unflushed) turn
+	curCtx  context.Context
 	curSpan trace.Span
 	summary *Summary
 	closed  bool
+
+	// lastServed is the previous turn's served model, so a flush can tell a
+	// model SWITCH from merely running on an already-escalated tier.
+	lastServed string
 }
 
 // Options configures a Recorder.
@@ -136,16 +141,25 @@ func (r *Recorder) BeginTurn(ctx context.Context, p BeginParams) {
 		rec.Request.Prompt = Redact(p.Prompt)
 	}
 	r.cur = rec
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	r.curCtx = ctx
 
 	if r.tracer != nil {
-		_, span := r.tracer.Start(ctx, "agent.turn", trace.WithAttributes(
+		spanCtx, span := r.tracer.Start(ctx, "agent.turn", trace.WithAttributes(
 			attribute.Int("turn", p.Turn),
 			attribute.String("served_model", p.ServedModel),
 			attribute.String("base_model", p.BaseModel),
 			attribute.Bool("escalated", rec.Request.Escalated),
 			attribute.String("reason", p.Reason),
 			attribute.String("provider", p.Provider),
+			// from_provider is the same value under the fleet's cross-tool
+			// attribute name, so an agent.turn from ycode joins one query with
+			// the turns other harnesses emit.
+			attribute.String("from_provider", p.Provider),
 		))
+		r.curCtx = spanCtx
 		r.curSpan = span
 	}
 }
@@ -306,12 +320,21 @@ func (r *Recorder) flushLocked() {
 		return
 	}
 	rec := r.cur
+	ctx := r.curCtx
 	r.cur = nil
+	r.curCtx = nil
 	rec.EndedAt = r.now()
 	rec.DurationMs = rec.EndedAt.Sub(rec.StartedAt).Milliseconds()
 
 	r.foldSummary(rec)
 	r.writeLocked(rec)
+
+	switched := rec.Request.Escalated && rec.Request.ServedModel != r.lastServed
+	r.lastServed = rec.Request.ServedModel
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	recordMetrics(ctx, rec, switched)
 
 	if r.curSpan != nil {
 		r.curSpan.End()

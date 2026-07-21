@@ -15,6 +15,15 @@ type Config struct {
 	MaxTokens   int      `json:"maxTokens,omitempty"`
 	Temperature *float64 `json:"temperature,omitempty"`
 
+	// CascadeModels is the escalation ladder, base model first. When the run
+	// detects that the current model is looping or stalling, subsequent turns
+	// move up one rung. Populated automatically when --model names a fleet
+	// cascade agent (ycode-cascade-x4), or set explicitly here.
+	//
+	// A single entry (or none) means no escalation — the ordinary single-model
+	// run.
+	CascadeModels []string `json:"cascadeModels,omitempty"`
+
 	// MaxToolIterations caps the agentic loop: how many tool-use round-trips a single
 	// turn may take before ycode stops the agent.
 	//
@@ -481,6 +490,9 @@ func mergeFromFile(cfg *Config, path string) error {
 	// it. TestEveryConfigFieldIsMerged now fails the build on the next one.
 	if overlay.Model != "" {
 		cfg.Model = overlay.Model
+	}
+	if len(overlay.CascadeModels) > 0 {
+		cfg.CascadeModels = overlay.CascadeModels
 	}
 	if overlay.MaxTokens != 0 {
 		cfg.MaxTokens = overlay.MaxTokens
