@@ -23,20 +23,15 @@ func TestMarker_RoundTrip(t *testing.T) {
 }
 
 func TestStateHash_OrderIndependent(t *testing.T) {
-	caps := []CapabilitySpec{
-		{Name: "ycode-loom", Family: "loom"},
-		{Name: "ycode-pulse", Family: "pulse"},
-	}
-	rev := []CapabilitySpec{caps[1], caps[0]}
-	if a, b := stateHash("v1", caps, []string{"claude"}), stateHash("v1", rev, []string{"claude"}); a != b {
+	if a, b := stateHash("v1", []string{"claude", "opencode"}), stateHash("v1", []string{"opencode", "claude"}); a != b {
 		t.Errorf("hash should be order-independent\na=%s\nb=%s", a, b)
 	}
 	// Different version flips it.
-	if a, b := stateHash("v1", caps, nil), stateHash("v2", caps, nil); a == b {
+	if a, b := stateHash("v1", nil), stateHash("v2", nil); a == b {
 		t.Errorf("hash should change on version bump")
 	}
 	// Different tools flip it.
-	if a, b := stateHash("v1", caps, []string{"claude"}), stateHash("v1", caps, []string{"opencode"}); a == b {
+	if a, b := stateHash("v1", []string{"claude"}), stateHash("v1", []string{"opencode"}); a == b {
 		t.Errorf("hash should change on tool list")
 	}
 }

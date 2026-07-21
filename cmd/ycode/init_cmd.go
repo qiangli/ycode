@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -35,10 +36,12 @@ re-runs no-ops.
   --refresh                   Force a regeneration even if the marker matches.
   --doctor                    Print what is/would be registered without writing.
   --opt-out                   Disable selfinit for this repo (writes <repo>/.agents/ycode/.no-init).
-  --register-foreign-agents   Write MCP entries + instruction blocks into
-                              detected foreign agentic CLIs (Claude Code,
+  --register-foreign-agents   Splice ycode's capability block into detected
+                              foreign agentic CLIs' memory files (Claude Code,
                               OpenCode). Off by default — opt-in only.
                               Env: YCODE_SELFINIT_FOREIGN=1 has the same effect.
+                              No MCP server entries are ever written: ycode
+                              does not run one.
 
 Use this command for explicit refreshes after manifest changes or to
 diagnose why a foreign tool isn't seeing a particular ycode capability.`,
@@ -85,7 +88,7 @@ diagnose why a foreign tool isn't seeing a particular ycode capability.`,
 	cmd.Flags().BoolVar(&initOptOut, "opt-out", false, "Disable selfinit for this repo")
 	cmd.Flags().BoolVar(&initJSON, "json", false, "Print result as JSON")
 	cmd.Flags().BoolVar(&initRegisterForeign, "register-foreign-agents", false,
-		"Write MCP entries into detected foreign agentic CLIs (off by default)")
+		"Splice the capability block into detected foreign agentic CLIs' memory files (off by default)")
 	return cmd
 }
 
@@ -95,7 +98,6 @@ func runInitDoctor(cwd string) error {
 		return err
 	}
 	root := selfinit.FindGitRoot(cwd)
-	caps := selfinit.LoadCapabilities(home, selfinit.DefaultPort)
 
 	fmt.Printf("cwd:       %s\n", cwd)
 	fmt.Printf("repo root: %s\n", root)
@@ -104,15 +106,17 @@ func runInitDoctor(cwd string) error {
 	}
 	fmt.Printf("manifest:  %s\n", selfinit.ManifestPath(home))
 	fmt.Println()
-	fmt.Println("Capabilities (from manifest or baseline):")
-	for _, c := range caps {
-		switch c.Transport {
-		case "stdio":
-			fmt.Printf("  %-14s stdio  %s %v\n", c.Name, c.Command, c.Args)
-		case "http":
-			fmt.Printf("  %-14s http   %s\n", c.Name, c.URL)
-		}
+	fmt.Println("Would write:")
+	if root != "" {
+		fmt.Printf("  %s\n", filepath.Join(root, ".agents", "ycode", "AGENTS.md"))
+	} else {
+		fmt.Println("  (nothing project-scoped — not in a git repo)")
 	}
+	fmt.Printf("  %s\n", filepath.Join(home, ".config", "ycode", "skills", "<name>", "skill.md"))
+	fmt.Println()
+	fmt.Println("No MCP server entries: ycode does not run an MCP server.")
+	fmt.Println("Capabilities reach foreign tools as `yc <verb>` shell built-ins;")
+	fmt.Println("run `ycode shell --manifest` for the live catalog.")
 	return nil
 }
 

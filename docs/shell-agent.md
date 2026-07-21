@@ -79,27 +79,16 @@ Claude Code does **not** expose a settings.json key to swap the `Bash`
 tool's underlying shell binary. The integration paths that work today,
 in order of cleanliness:
 
-#### Path 1 — MCP (recommended)
+> ycode used to offer an MCP server as the first-choice path. It no
+> longer runs one — MCP was removed in full (see
+> [plan-remove-mcp.md](./plan-remove-mcp.md)). Do not add a `ycode`
+> entry to any `mcpServers` map; there is nothing listening.
 
-Add to `~/.claude/settings.json` or `.claude/settings.json`:
+#### Path 1 — PATH wrapper (recommended)
 
-```json
-{
-  "mcpServers": {
-    "ycode-shell": {
-      "command": "ycode",
-      "args": ["mcp", "serve"]
-    }
-  }
-}
-```
-
-`ycode mcp serve` exposes the `agent_shell` tool (plus the existing
-treesitter handler). The default permission ceiling is
-`danger-full-access` — agents that intentionally configured
-`ycode mcp serve` have opted into ycode's full surface. Lower with
-`--permission=read-only` or `--permission=workspace-write` for
-sandboxed integrations.
+See Path 3 below — pointing Claude Code's `bash` at `ycode shell --agent`
+is the supported integration and the one `ycode init` documents in
+`~/.claude/CLAUDE.md`.
 
 #### Path 2 — PreToolUse hook that rewrites Bash commands
 
@@ -125,7 +114,8 @@ Sketch (in `~/.claude/settings.json`):
 ```
 
 This is invasive and finicky — debug carefully. Recommended only when
-you want global agent-mode coverage and can't use MCP.
+you want global agent-mode coverage and the PATH wrapper isn't an
+option.
 
 #### Path 3 — PATH wrapper (per-session, recommended for full bash interception)
 
@@ -175,8 +165,8 @@ production Claude Code uses the same `spawn('bash', ...)` form as the
 clone, and the ycode-shell wrapper will work.
 
 If the trace log stays empty, Claude Code is calling something else
-(`/bin/sh -c`, `$SHELL`, a hardcoded path) — fall back to Path 1 (MCP)
-or Path 2 (PreToolUse hook).
+(`/bin/sh -c`, `$SHELL`, a hardcoded path) — fall back to Path 2
+(PreToolUse hook) or Path 4 (ask in the prompt).
 
 #### Path 4 — Tell Claude in the prompt
 
@@ -187,18 +177,13 @@ explicitly. Claude's existing Bash tool runs whatever you ask:
 
 ### OpenCode
 
-Two paths:
-
-1. **MCP** — point OpenCode's MCP config at `ycode mcp serve` (already shipped per `docs/lighthouse.md`). The MCP server can advertise `yc *` built-ins as discrete tools so the agent invokes them without going through bash at all.
-2. **Bash override** — same recipe as Claude Code, point the bash tool at `ycode shell --agent -c`.
+**Bash override** — same recipe as Claude Code: point OpenCode's bash
+tool (or its PATH) at `ycode shell --agent -c`. There is no MCP path;
+ycode runs no MCP server.
 
 ### Codex
 
 Codex's exec layer is configurable via the agent's tool definition. Same recipe: point the bash-equivalent at `ycode shell --agent -c`. Use `--json` for structured parsing.
-
-### Self / older ycode builds
-
-`bin/ycode mcp serve` (Phase 0 per `docs/lighthouse.md`) gains an `agent_shell` tool in Phase B6 whose handler internally calls the same dispatcher. Same code, three transport flavors (stdio MCP, SSE MCP, direct CLI).
 
 ## Permission posture
 
@@ -255,6 +240,6 @@ ycode shell --manifest | jq '.builtins | length'
 ## See also
 
 - [docs/shell.md](./shell.md) — the human-facing interactive shell
-- [docs/lighthouse.md](./lighthouse.md) — exposing ycode capabilities to foreign agents via MCP
+- [docs/lighthouse.md](./lighthouse.md) — exposing ycode capabilities to foreign agents
 - [internal/shell/agentmode/hints.go](../internal/shell/agentmode/hints.go) — the hint catalog (one-line additions)
 - [internal/shell/builtins/](../internal/shell/builtins/) — the `yc <verb>` registry

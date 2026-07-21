@@ -55,8 +55,6 @@ var toolMutabilityMap = map[string]ToolMutability{
 	"Think":               ToolIdempotent,
 	"AgentList":           ToolIdempotent,
 	"CronList":            ToolIdempotent,
-	"ListMcpResources":    ToolIdempotent,
-	"ReadMcpResource":     ToolIdempotent,
 }
 
 // GetToolMutability returns the mutability classification for a tool.

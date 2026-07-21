@@ -2,6 +2,44 @@
 
 *Scope doc, 2026-07-14. Direction set by the user; execution phased so each step builds green.*
 
+## Status — complete (2026-07-20)
+
+Phases **P1 through P5 are done**. This document is now a record of the
+decision and the sequence, not a work plan.
+
+As of 2026-07-20:
+
+- **ycode neither exposes nor consumes MCP.** There is no `ycode mcp`
+  subcommand, no `/mcp/` HTTP route, no `internal/runtime/mcp` package,
+  and no MCP tool implementations in the tree.
+- **`ycode init` writes no MCP config.** The per-tool writers in
+  `internal/selfinit/` splice an instruction block into each detected
+  tool's memory file only; nothing is written to `~/.claude.json`'s
+  `mcpServers` map or `~/.config/opencode/opencode.json`'s `mcp` map.
+- **`ycode pair` advertises no MCP server.** Its snippets describe the
+  HTTP API (`/ycode/`) and the shell path; the emitted text says
+  explicitly that there is nothing to add to a tool's `mcpServers`
+  config.
+- **The serve manifest (`~/.agents/ycode/manifest.json`) lists no MCP
+  server**, and `ycode serve` mounts no MCP route. A regression test in
+  `internal/selfinit/manifest_test.go` asserts the banned strings
+  (`mcpservers`, `ycode-stdio`, `mcp serve`, `/mcp/`) never reappear.
+- **P5 (docs)** brought the prose in line: `internal/docs/agent/mcp.md`
+  was deleted, the embedded topic corpus and `catalog.yaml` now describe
+  only the `yc <verb>` built-ins and ycode's in-session tools, and the
+  integration guides (`integration-{claude-code,opencode,foreign-agents}.md`,
+  `lighthouse.md`, `shell-agent.md`, `loom.md`, `selfinit.md`) document
+  the PATH-wrapper / `ycode shell` path as the supported integration.
+
+Capabilities that had **only** an MCP surface are gone, not migrated —
+most notably **loom** (`loom_lease` / `loom_push` / `loom_merge` /
+`loom_status` / `loom_release`). The replacement is the sibling AgentOS
+command `bashy weave`; see [loom.md](./loom.md).
+
+Historical/analysis docs (`gap-analysis-*.md`, `loom-v2-*.md`,
+`lighthouse-roadmap.md`) still discuss MCP. They are records of past
+analysis and were deliberately left alone.
+
 ## Why
 
 ycode's value is being a **lightweight, steerable executor** — driven by bashy into roles

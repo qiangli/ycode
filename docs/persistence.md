@@ -749,7 +749,6 @@ bbolt wins for ycode because:
 | `tool_registry` | Registered tool metadata | Read on dispatch, write on plugin load |
 | `permission_rules` | Active permission policies | Read on every tool call |
 | `prompt_fragments` | Cached prompt sections | Read on every API call, TTL-based write |
-| `mcp_state` | MCP server connection state | Read/write on MCP operations |
 | `file_metadata` | File hashes, mtimes for change detection | Read-heavy, batch write on scan |
 
 **When NOT to use bbolt:** For anything that needs SQL queries (joins, aggregations, complex filtering) -- use SQLite instead. bbolt is for fast key-based lookups, not relational queries.

@@ -73,7 +73,7 @@
 | Config JSONC / schema validation | Current JSON 3-tier merge is sufficient |
 | Enterprise/MDM config deployment | Out of scope for current project |
 | Electron desktop app | CLI-first; web UI covers GUI needs |
-| MCP SSE/HTTP transport | Stdio transport covers primary use cases |
+| MCP (any transport, either direction) | Removed 2026-07; the `yc <verb>` shell built-ins are the integration surface |
 | File watcher | Nice-to-have for long sessions, low priority |
 | Input provenance tracking | Low impact |
 | Memory retention policies | Memory files are small; manual cleanup sufficient |

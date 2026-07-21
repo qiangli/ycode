@@ -365,7 +365,7 @@ Each successive improvement = another news cycle. Leaderboards are a **renewable
 
 ## Tier-2 (differentiators after tier-1 lands)
 
-- **Sentry / Linear / Jira MCP.** ycode already speaks MCP. A "fix this Sentry error" or "implement this Linear ticket" entry point closes the loop from triage → code.
+- **Sentry / Linear / Jira integration.** A "fix this Sentry error" or "implement this Linear ticket" entry point closes the loop from triage → code. Note ycode no longer has an MCP client ([plan-remove-mcp.md](./plan-remove-mcp.md)), so each of these needs either a native adapter or a re-decision on MCP consumption.
 - **Replay / "why did it do this?"** UI. ycode logs OTEL traces — render them as a developer-friendly timeline, not raw Jaeger.
 - **Speculative parallelism.** Dispatch independent reads/searches in parallel speculatively before the model finishes streaming. Already have parallel agents — apply the same pattern at the tool level.
 - **Watch mode.** Agent runs `make test` / typechecker on file save and self-corrects without prompting.
@@ -487,9 +487,16 @@ The default `ycode` command keeps doing what it does (CLI/TUI). `ycode portal` (
 
 ### MCP-first integration discipline
 
+> **Blocked as written (2026-07).** ycode removed MCP in both directions
+> — there is no `internal/runtime/mcp/` and no MCP client to wire
+> anything into ([plan-remove-mcp.md](./plan-remove-mcp.md)). The
+> *discipline* below still holds — ship integration, not implementation
+> — but the transport is an open question. Reviving an MCP client is a
+> deliberate re-decision, not an implementation detail.
+
 The portal expansion **does not** mean ycode builds 20 OAuth flows, 20 API clients, 20 sync engines. That path is the half-baked-feature trap at industrial scale. The discipline:
 
-1. **Default to MCP.** Gmail, Calendar, Drive, GitHub, Linear, Jira, Sentry, Notion, Slack, DigitalOcean, AWS, Vercel — most have maintained MCP servers (community or official). ycode wires them in via the existing MCP client (`internal/runtime/mcp/`).
+1. **Default to a maintained third-party integration.** Gmail, Calendar, Drive, GitHub, Linear, Jira, Sentry, Notion, Slack, DigitalOcean, AWS, Vercel — most have maintained MCP servers (community or official). Consuming them would require re-adding an MCP client; until that decision is made, prefer the vendor CLI invoked through `bash`.
 2. **Maintenance burden moves to the MCP author.** When Gmail's API changes, the MCP server author fixes it; we don't. This is the cheap path to scale.
 3. **We own only the wedge.** Local-first runtime, single-binary, offline mode, embedded UI, the agent loop itself. Everything else is an MCP integration.
 4. **Build a native fallback only when MCP fails the user** — e.g., MCP requires cloud auth flow that breaks the offline story. In that case, build a thin local shim. Never the default path.
@@ -499,7 +506,7 @@ The portal expansion **does not** mean ycode builds 20 OAuth flows, 20 API clien
 
 The risk: portal expansion = more half-baked feature surface. Mitigations:
 
-- **MCP-first means we ship integration, not implementation.** If the MCP server doesn't exist or doesn't work, we don't promise the integration in the README. Period.
+- **Integration-first means we ship integration, not implementation.** If the upstream integration doesn't exist or doesn't work, we don't promise it in the README. Period.
 - **Per-pillar graduation.** A pillar (e.g., Communications) is only "stable" when ≥2 integrations within it are stable. The README advertises pillars at the lowest tier of any feature inside them.
 - **The default install hides the portal.** First run is still the coding agent. The portal is opt-in via `ycode portal` until the GA gate (Phase 6 below).
 - **No portal feature ships unless it works fully offline OR clearly labels its cloud dependency.** Local-first remains the wedge; portal features that violate it must be explicitly opt-in and labeled.
@@ -720,11 +727,11 @@ When OpenAI/Anthropic/Google ship something we currently wrap, drop the wrapper 
 
 ycode has agent swarms. The roadmap is the prime use case. Three agents working in parallel on Phase 1 leaderboard tuning, Phase 2 brew formula, and Phase 3 cost meter is not a slogan — it's literally the daily operating mode. If we can't roadmap-by-swarm, the swarm feature is broken (or shouldn't be advertised yet — it should be `experimental`).
 
-### 6.5. MCP-first, single-binary sacred
+### 6.5. Integration-first, single-binary sacred
 
 Two architectural commitments protect the wedge through portal expansion:
 
-- **MCP-first integration.** When a capability exists as an MCP server (Gmail, Calendar, Drive, DigitalOcean, Linear, etc.), wire it via `internal/runtime/mcp/`. We do not build OAuth flows, API clients, or sync engines for things MCP already covers. Maintenance burden moves to the MCP author.
+- **Integration-first, not implementation-first.** When a capability already exists as a maintained third-party server or CLI (Gmail, Calendar, Drive, DigitalOcean, Linear, etc.), consume it rather than reimplementing it. We do not build OAuth flows, API clients, or sync engines for things an upstream already covers. (The MCP client that used to be the default transport here was removed — see [plan-remove-mcp.md](./plan-remove-mcp.md).)
 - **Single binary is sacred.** The default install is one Go binary. UI is embedded via `go:embed`. PWA upgrade is free. Optional Tauri shell allowed (separate download). **Electron rejected** — it destroys the wedge and is not worth the bundle cost. Do not relitigate.
 
 Any proposal that adds an external runtime dependency (Node, Python, full Rust stack) to the default install must first explain how the offline / single-binary positioning survives. If it can't, the proposal is wrong, not the wedge.

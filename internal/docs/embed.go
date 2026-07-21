@@ -30,9 +30,9 @@
 //     more than 200 lines, split it into two topics.
 //
 //  5. EVERY DOC ENDS WITH `## Exact calls`.
-//     Copy-pasteable invocations (yc commands, mcp__ycode__* tool calls,
-//     HTTP curl examples). Without this section the agent has to invent
-//     the syntax — which it will, badly.
+//     Copy-pasteable invocations (`yc <verb>` commands, in-session tool
+//     calls, HTTP curl examples). Without this section the agent has to
+//     invent the syntax — which it will, badly.
 //
 //  6. ONE TOPIC PER FILE; FILENAME == TOPIC SLUG.
 //     agent/loom.md → topic "loom". The slug must match `^[a-z][a-z0-9-]*$`.
@@ -48,15 +48,12 @@
 //  8. DISCOVERY SURFACES ARE FIXED. AGENT vs HUMAN AUDIENCES STAY SEPARATE.
 //     Agent surfaces (read the curated prompts here):
 //     (a) `ycode docs` shell command (cmd/ycode/docs.go),
-//     (b) `mcp__ycode__list_docs` / `mcp__ycode__get_doc` MCP tools
-//     (internal/docs/mcpserver.go; mounted into both the stdio
-//     composite at cmd/ycode/mcp.go and the HTTP composite at
-//     cmd/ycode/serve.go),
-//     (c) `ycode://docs/<slug>` MCP resources (same handler),
-//     (d) one-liner in .agents/ycode/AGENTS.md (TODO: extend selfinit).
+//     (b) one-liner in .agents/ycode/AGENTS.md (TODO: extend selfinit).
 //     Human surfaces (auto-generated from cobra):
-//     (d) `ycode help` / `ycode <cmd> --help`,
-//     (e) `yc help` shell built-in list.
+//     (c) `ycode help` / `ycode <cmd> --help`,
+//     (d) `yc help` shell built-in list.
+//     There is no MCP surface: ycode neither exposes nor consumes MCP.
+//     Do not re-add one here without re-opening that decision.
 //     The two sets cross-reference each other but do not share content:
 //     help is structural (flags, args, usage); docs is prose curated for
 //     LLM decision-making. The linter (lint.go) asserts every cobra

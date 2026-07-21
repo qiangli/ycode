@@ -515,35 +515,12 @@ func builtinSpecs() []*ToolSpec {
 		},
 		swarmRunSpec(),
 
-		// Phase 1a: MCP tools (handlers in mcp_tools.go)
-		{
-			Name:         "MCP",
-			Description:  "Call a tool provided by a connected MCP server. Specify the server name and tool name.",
-			InputSchema:  mustJSON(mcpSchema),
-			RequiredMode: permission.DangerFullAccess,
-			Source:       SourceBuiltin,
-		},
-		{
-			Name:         "ListMcpResources",
-			Description:  "List resources available from connected MCP servers.",
-			InputSchema:  mustJSON(listMcpResourcesSchema),
-			RequiredMode: permission.ReadOnly,
-			Source:       SourceBuiltin,
-		},
-		{
-			Name:         "ReadMcpResource",
-			Description:  "Read a specific resource from an MCP server by URI.",
-			InputSchema:  mustJSON(readMcpResourceSchema),
-			RequiredMode: permission.ReadOnly,
-			Source:       SourceBuiltin,
-		},
-		{
-			Name:         "McpAuth",
-			Description:  "Authenticate with an MCP server that requires credentials.",
-			InputSchema:  mustJSON(mcpAuthSchema),
-			RequiredMode: permission.DangerFullAccess,
-			Source:       SourceBuiltin,
-		},
+		// The MCP / ListMcpResources / ReadMcpResource / McpAuth specs
+		// lived here. ycode is no longer an MCP client (nor server) —
+		// see docs/plan-remove-mcp.md — and nothing has registered their
+		// handlers since the runtime/mcp package was deleted, so every
+		// session advertised four tools to the model that could only
+		// fail when called. Advertise nothing the binary can't execute.
 
 		// Phase 1b: Team and Cron tools (handlers in team.go)
 		{
@@ -1512,41 +1489,6 @@ var (
 				"description": "Timeout in seconds (default: 120)."
 			}
 		}
-	}`
-
-	// Phase 1a: MCP schemas
-	mcpSchema = `{
-		"type": "object",
-		"properties": {
-			"server_name": {"type": "string", "description": "Name of the MCP server"},
-			"tool_name": {"type": "string", "description": "Name of the tool to call"},
-			"arguments": {"type": "object", "description": "Arguments to pass to the tool"}
-		},
-		"required": ["server_name", "tool_name"]
-	}`
-
-	listMcpResourcesSchema = `{
-		"type": "object",
-		"properties": {
-			"server_name": {"type": "string", "description": "Name of the MCP server (optional, lists all if omitted)"}
-		}
-	}`
-
-	readMcpResourceSchema = `{
-		"type": "object",
-		"properties": {
-			"server_name": {"type": "string", "description": "Name of the MCP server"},
-			"uri": {"type": "string", "description": "URI of the resource to read"}
-		},
-		"required": ["server_name", "uri"]
-	}`
-
-	mcpAuthSchema = `{
-		"type": "object",
-		"properties": {
-			"server_name": {"type": "string", "description": "Name of the MCP server to authenticate with"}
-		},
-		"required": ["server_name"]
 	}`
 
 	// Phase 1b: Team and Cron schemas

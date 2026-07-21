@@ -122,7 +122,7 @@ the viewport, input untouched.
 1. **Agent mode** (`InterpreterExecutor` + the `bash` tool registered in
    `internal/tools/bash.go`): fresh runner per call, validators V01–V12,
    no streaming. Used by Codex/Claude Code/OpenCode-style agents and by
-   `ycode mcp serve`. Untouched by the shell work.
+   the HTTP API under `ycode serve`. Untouched by the shell work.
 2. **Shell mode** (`(*ShellSession).RunString` + `NewShellExecHandler`):
    long-lived runner, no validators, optional `TTYRunner` for PTY
    handoff. Used by `ycode shell` only.

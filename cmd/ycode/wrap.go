@@ -13,7 +13,7 @@ import (
 
 // newWrapCmd builds `ycode wrap <agent-cmd> [args...]` — the involuntary
 // interception axis complementing ycode's voluntary lighthouse beam
-// (ycode mcp serve). Foreign agents launched this way run with a
+// (the `ycode init` capability block). Foreign agents launched this way run with a
 // shim PATH so their bash, rg, git, jq, sed, awk, ... invocations flow
 // through ycode for OTel observability and best-effort policy.
 //

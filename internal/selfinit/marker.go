@@ -3,7 +3,6 @@ package selfinit
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -25,29 +24,19 @@ const noInitFilename = ".no-init"
 var selfinitSubdir = filepath.Join(".agents", "ycode")
 
 // stateHash returns a stable hash over the inputs that, if changed,
-// require a SelfInit refresh. Order-independent for capabilities so
-// list reordering doesn't trigger spurious work.
-func stateHash(version string, caps []CapabilitySpec, tools []string) string {
+// require a SelfInit refresh: the ycode version (so a binary upgrade
+// regenerates the docs it embeds) and the set of detected foreign
+// tools. Order-independent for tools so registry reordering doesn't
+// trigger spurious work.
+func stateHash(version string, tools []string) string {
 	parts := []string{"v=" + version}
 	sortedTools := append([]string(nil), tools...)
 	sort.Strings(sortedTools)
 	for _, t := range sortedTools {
 		parts = append(parts, "tool="+t)
 	}
-	keys := make([]string, len(caps))
-	for i, c := range caps {
-		keys[i] = capFingerprint(c)
-	}
-	sort.Strings(keys)
-	parts = append(parts, keys...)
 	h := sha256.Sum256([]byte(strings.Join(parts, "\n")))
 	return hex.EncodeToString(h[:])
-}
-
-func capFingerprint(c CapabilitySpec) string {
-	return fmt.Sprintf("cap|%s|%s|%s|%s|%s|%s",
-		c.Name, c.Transport, c.Family, c.Command,
-		strings.Join(c.Args, " "), c.URL)
 }
 
 // markerPath returns <repo>/.agents/ycode/.init-done.

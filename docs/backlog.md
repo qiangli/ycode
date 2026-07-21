@@ -86,14 +86,14 @@ Optional: `created`, `gitea_issue` (auto-populated by reconciler),
 | Role | Holds | Receives instructions via |
 |---|---|---|
 | **Boss** (human) | everything | — |
-| **Foreman** (the chat agent) | source tree, `docs/backlog/` read+write, `ycode backlog`/`ycode foreman` CLIs, full Gitea admin token, all MCP tools | in-band chat **or** out-of-band `ycode foreman <verb>` CLI; both write to `.agents/ycode/foreman/commands.jsonl` |
+| **Foreman** (the chat agent) | source tree, `docs/backlog/` read+write, `ycode backlog`/`ycode foreman` CLIs, full Gitea admin token, the full in-session tool set | in-band chat **or** out-of-band `ycode foreman <verb>` CLI; both write to `.agents/ycode/foreman/commands.jsonl` |
 | **Worker** (`ycode autopilot worker`) | one Gitea issue, one Loom workspace, AST tools inside that workspace clone | SIGTERM from Foreman; comments/labels on its own Gitea issue |
 
 The Worker never reads `docs/backlog/`, never invokes `ycode backlog`
 or `ycode foreman`, and only knows about the issue it was handed and
 the workspace path it was leased. v1 enforcement is conventional
-(tool surface defined in spec, the Worker subprocess only registers
-the two MCP servers it needs); per-Worker scoped Gitea tokens and
+(tool surface defined in spec, the Worker subprocess is launched with
+only the tools it needs); per-Worker scoped Gitea tokens and
 process-level sandboxing are deferred (see `docs/agent-collab.md:48`).
 
 ## Boss control protocol

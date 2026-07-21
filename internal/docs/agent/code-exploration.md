@@ -61,14 +61,10 @@ Picking by previous-instinct:
 - `yc refs <symbol> [--json]` — find references and callers of
   `<symbol>` across the workspace. Resolves through imports/aliases.
 
-MCP equivalents exist for the per-file primitives:
-`mcp__ycode__list_symbols` (single `file_path`),
-`mcp__ycode__search_symbols_by_pattern` (single `file_path`,
-ast-grep-style pattern like `$NAME(...)` — *not* a workspace search),
-`mcp__ycode__get_supported_languages`. The workspace-scope shell verbs
-`yc search-symbols` and `yc refs` have no direct MCP equivalent — call
-them through `agent_shell` instead. The workspace-orientation tool is
-`mcp__ycode__build_repomap`.
+These four verbs are the whole surface. There is no MCP server to
+call — if you are running inside ycode's own session, the in-session
+`grep_search` / `glob_search` / `tree` tools cover the non-AST cases;
+everything AST-aware goes through `yc`.
 
 ## Failure modes
 

@@ -42,8 +42,13 @@ var pairCmd = &cobra.Command{
 Reads (or mints) the server bearer token and prints a paste-ready config
 fragment for the named tool, plus the URLs the tool needs.
 
+ycode does not run an MCP server, so nothing here goes in a tool's
+mcpServers config. The token pairs a client with ycode's HTTP API; code
+capabilities reach a foreign CLI through its bash backend as the
+'yc <verb>' shell built-ins (see docs/shell-agent.md).
+
 Recognized tools: opencode, codex, gemini-cli, claude-code, ycode-tui.
-Passing --tool=<unrecognized-name> falls through to a generic MCP snippet
+Passing --tool=<unrecognized-name> falls through to a generic snippet
 you can adapt to the foreign tool's config schema.
 
 The token is read from ~/.agents/ycode/server.token. If that file does
@@ -87,9 +92,9 @@ func runPair(_ *cobra.Command, _ []string) error {
 
 	snippet, dest, ok := pairSnippet(pairTool, url, token)
 	if !ok {
-		// Generic fallback for unknown tools: print the URL + token + a
-		// boilerplate MCP block that most clients can adapt. Don't error
-		// out — that would be hostile to the long tail.
+		// Generic fallback for unknown tools: print the URL + token + the
+		// discovery endpoint. Don't error out — that would be hostile to
+		// the long tail.
 		snippet = genericSnippet(url, token)
 		dest = "(adapt for your tool's config schema)"
 	}
@@ -129,45 +134,34 @@ func readOrMintServerToken(path string) (string, error) {
 // Closed recognized set per the integration plan (G11):
 // opencode, codex, gemini-cli, claude-code, ycode-tui. Adding a sixth tool
 // is an explicit code change that requires popularity / value justification.
+//
+// Every entry used to be an MCP server block pointing at <url>/mcp/. ycode
+// retired MCP (docs/plan-remove-mcp.md): serve mounts no /mcp/ route, so
+// those snippets configured a server that answers 404 and every tool that
+// pasted one reported a failed MCP server at startup. The surviving
+// integration path for a foreign CLI is the shell one — route its bash
+// backend through `ycode shell -c` and the `yc <verb>` built-ins are in
+// process. Pairing (token + URL) still matters for HTTP API clients, which
+// is what these snippets now describe.
 func pairSnippet(tool, url, token string) (snippet, dest string, ok bool) {
 	switch tool {
-	case "opencode":
-		return fmt.Sprintf(`{
-  "mcp": {
-    "ycode": {
-      "type": "remote",
-      "url": "%s/mcp/",
-      "headers": { "Authorization": "Bearer %s" },
-      "timeout": 30000
-    }
-  }
-}`, url, token), "~/.opencode/opencode.jsonc", true
-	case "claude-code":
-		return fmt.Sprintf(`{
-  "mcpServers": {
-    "ycode": {
-      "type": "http",
-      "url": "%s/mcp/",
-      "headers": { "Authorization": "Bearer %s" }
-    }
-  }
-}`, url, token), "project .mcp.json (recommended) or ~/.claude/settings.json under mcpServers", true
-	case "codex":
-		return fmt.Sprintf(`# Add to your codex config (~/.codex/config.toml):
-[mcp_servers.ycode]
-type = "http"
-url = "%s/mcp/"
-headers = { Authorization = "Bearer %s" }
-`, url, token), "~/.codex/config.toml", true
-	case "gemini-cli":
-		return fmt.Sprintf(`{
-  "mcpServers": {
-    "ycode": {
-      "httpUrl": "%s/mcp/",
-      "headers": { "Authorization": "Bearer %s" }
-    }
-  }
-}`, url, token), "~/.gemini/settings.json", true
+	case "opencode", "claude-code", "codex", "gemini-cli":
+		return fmt.Sprintf(`# ycode does not run an MCP server — there is nothing to add to
+# %s's mcpServers config.
+#
+# To give %s ycode's capabilities, point its bash backend at
+# ycode's shell so the `+"`yc <verb>`"+` built-ins resolve in process:
+#
+#   export YCODE_URL=%s
+#   export YCODE_TOKEN=%s
+#   ycode shell -c "yc symbols ./..."
+#
+# Or install a PATH wrapper that forwards bash to `+"`ycode shell -c`"+`;
+# see docs/shell-agent.md. Run `+"`ycode init`"+` in the repo to write the
+# capability block %s already reads.
+#
+# The token above is for ycode's HTTP API (%s/ycode/), not MCP.
+`, tool, tool, url, token, tool, url), "your shell init (~/.zshrc or ~/.bashrc); see docs/shell-agent.md", true
 	case "ycode-tui":
 		// ycode's own TUI is a peer client. Same public API, same auth.
 		// This is the Agent OS canary in concrete form.
@@ -182,13 +176,15 @@ export YCODE_TOKEN=%s
 }
 
 func genericSnippet(url, token string) string {
-	return fmt.Sprintf(`# Generic MCP server reference:
-URL:     %s/mcp/
+	return fmt.Sprintf(`# ycode HTTP API reference (ycode runs no MCP server):
+URL:     %s/ycode/
 Auth:    Authorization: Bearer %s
-Method:  POST (JSON-RPC body)
 
-# Discovery (no auth required):
+# Discovery (no auth required) — lists every endpoint ycode actually serves:
 %s/.well-known/ycode-manifest.json
+
+# For in-process code capabilities, route the tool's bash through
+# `+"`ycode shell -c`"+` and use the `+"`yc <verb>`"+` built-ins (docs/shell-agent.md).
 `, url, token, url)
 }
 
@@ -198,7 +194,7 @@ func emitPairText(tool, url, token, dest, snippet string) error {
 	fmt.Printf("Server URL:     %s\n", url)
 	fmt.Printf("Bearer token:   %s\n", token)
 	fmt.Printf("Discovery:      %s/.well-known/ycode-manifest.json\n", url)
-	fmt.Printf("MCP endpoint:   %s/mcp/\n", url)
+	fmt.Printf("API endpoint:   %s/ycode/\n", url)
 	fmt.Printf("Place in:       %s\n", dest)
 	fmt.Printf("------------------------------------------\n")
 	fmt.Printf("%s\n", snippet)
@@ -215,7 +211,7 @@ func emitPairJSON(tool, url, token, dest, snippet string) error {
 	fmt.Printf("  \"url\": %q,\n", url)
 	fmt.Printf("  \"token\": %q,\n", token)
 	fmt.Printf("  \"discovery\": %q,\n", url+"/.well-known/ycode-manifest.json")
-	fmt.Printf("  \"mcp\": %q,\n", url+"/mcp/")
+	fmt.Printf("  \"api\": %q,\n", url+"/ycode/")
 	fmt.Printf("  \"dest\": %q,\n", dest)
 	fmt.Printf("  \"snippet\": %q\n", snippet)
 	fmt.Printf("}\n")

@@ -149,8 +149,8 @@ func detectHealingProvider() api.Provider {
 }
 
 // detectExtractProvider mirrors detectHealingProvider but resolves
-// against the user's configured chat model so the extract_json MCP
-// tool inherits the same defaults as in-session extraction. Returns
+// against the user's configured chat model so JSON extraction
+// inherits the same defaults as in-session extraction. Returns
 // nil when no API key is present; callers must guard the registration.
 func detectExtractProvider(model string) api.Provider {
 	if model == "" {
@@ -997,7 +997,7 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "ycode",
 	Short: "ycode – autonomous agent harness for software development",
-	Long: "ycode is a CLI agent harness that provides 50+ tools, MCP/LSP integration, a plugin system, permission enforcement, and session management.\n\n" +
+	Long: "ycode is a CLI agent harness that provides 50+ tools, LSP integration, a plugin system, permission enforcement, and session management.\n\n" +
 		"Agent-facing capability prompts: `ycode docs` (curated for LLMs; complement to this human-facing help).",
 	// Hide cobra's auto-generated `completion` subcommand from the top-level
 	// help — operators who want it can still call `ycode completion <shell>`,
@@ -1063,7 +1063,7 @@ var rootCmd = &cobra.Command{
 
 		// Default to TUI for the root invocation. Per-command RunE
 		// overrides this before calling newApp() (prompt sets
-		// "prompt", mcp serve sets "mcp-serve", etc.).
+		// "prompt", etc.).
 		origin.SetAgentTool(origin.ToolTUI)
 
 		// Check for piped input.
@@ -1530,13 +1530,14 @@ func init() {
 	rootCmd.AddCommand(newDocsCmd())
 
 	// `ycode memory` — operator surface for memex memory inspection.
-	// Agent-callable equivalents live in the memex_* MCP family and
-	// the in-session memory_* tools; this command is the human path.
+	// Agent-callable equivalents live in the `yc remember` / `yc recall`
+	// built-ins and the in-session memory_* tools; this command is the
+	// human path.
 	rootCmd.AddCommand(newMemoryCmd())
 
 	// `ycode tools` — operator surface for "what tools does this binary
-	// expose, to whom?". Mirrors what foreign agents see via MCP, plus
-	// the in-process tool registry and CLI surface. Operator complement
+	// expose, to whom?". Covers the in-process tool registry and the
+	// CLI surface. Operator complement
 	// to `ycode docs` (which is curated for agents).
 	rootCmd.AddCommand(newToolsCmd())
 
@@ -1549,7 +1550,8 @@ func init() {
 
 	// `ycode wrap <agent-cmd>` — PATH-shim involuntary interception for
 	// foreign agentic CLIs (Claude Code, Codex, Aider, Gemini CLI,
-	// opencode, ...). Complements the voluntary lighthouse MCP beam.
+	// opencode, ...). Complements the voluntary lighthouse beam that
+	// `ycode init` writes into those tools' memory files.
 	rootCmd.AddCommand(newWrapCmd())
 
 	// `ycode internal-shell-trace` — hidden subcommand the Python

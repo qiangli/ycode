@@ -1,6 +1,6 @@
 # Agent OS — Reference Model & ycode Gap Analysis
 
-> Companion docs: [`agent-os.md`](./agent-os.md) covers the **involuntary-interception axis** (`ycode wrap`); [`lighthouse.md`](./lighthouse.md) covers the **voluntary axis** (MCP beam for opt-in foreign agents). This file is the **framing-level reference** — what an Agent OS is in 2026, and where ycode stands against that bar.
+> Companion docs: [`agent-os.md`](./agent-os.md) covers the **involuntary-interception axis** (`ycode wrap`); [`lighthouse.md`](./lighthouse.md) covers the **voluntary axis** (the `yc <verb>` shell beam for opt-in foreign agents). This file is the **framing-level reference** — what an Agent OS is in 2026, and where ycode stands against that bar.
 
 ## Context
 
@@ -37,7 +37,7 @@ Seven horizontal layers + four cross-cutting concerns:
 - Cross-cutting: **MCP** (LF-donated Dec 2025, de facto tool protocol), **hybrid retrieval** (vector + BM25 + entity + RRF), **continual learning / skill evolution**, **observability with replay**
 
 ### Lens C — ycode's own lighthouse vision (`strategy.md`, `lighthouse.md`)
-A **local-first hub** for *your* matrix of agents — single binary, offline-capable, MCP-server-and-client, federated peer-to-peer rather than centralized. The Agent OS framing is implicit in autonomous-loop + lighthouse + portal but not yet stated as a public positioning goal.
+A **local-first hub** for *your* matrix of agents — single binary, offline-capable, reachable through the shell, federated peer-to-peer rather than centralized. (MCP was removed in 2026-07: ycode is neither an MCP server nor a client. See [plan-remove-mcp.md](./plan-remove-mcp.md).) The Agent OS framing is implicit in autonomous-loop + lighthouse + portal but not yet stated as a public positioning goal.
 
 The three lenses agree on the components and disagree on framing (kernel vs. layered stack vs. federated hub). All three apply.
 
@@ -49,7 +49,7 @@ Legend: ✅ table-stakes met · 🟡 partial / scaffolded · ❌ missing · ⛔ 
 
 | Component | ycode today | Status | Key code path |
 |---|---|---|---|
-| **K1 / L3 — LLM call interface** | `internal/tools/registry.go` (always-available + deferred + ToolSearch, TTL=8), MCP server mode | ✅ | `internal/tools/registry.go`, `internal/runtime/mcp/`, `cmd/ycode/mcp.go` |
+| **K1 / L3 — LLM call interface** | `internal/tools/registry.go` (always-available + deferred + ToolSearch, TTL=8), `yc <verb>` shell built-ins | ✅ | `internal/tools/registry.go`, `internal/shell/builtins/` |
 | **K2 — Agent scheduler** | Collab orchestrator: N parallel workers, fork checkouts, claim labels, merger auto-merge. **No priorities, no preemption, no per-agent budget, no fairness.** Backlog priority is p1/p2/p3 only at issue layer. | 🟡 | `internal/gitserver/collab/orchestrator.go`, `internal/gitserver/queue/` |
 | **K3 — Context manager** | 4-layer defense (budget-mask, prune, LLM-compact, emergency-flush), ghost snapshots, prompt-cache detection. **No beam-state snapshot/restore. No cross-agent context reuse.** | ✅ for single agent; 🟡 across agents | `internal/runtime/conversation/runtime.go` (`TurnWithRecovery`, lines 925-1167) |
 | **K4 — Memory manager** | 5 layers (working/episodic/compaction/procedural/persistent), RRF+MMR retrieval, entity linking, temporal validity, dreaming/consolidation. **No per-agent isolation as a security boundary; no shared cross-agent pools as first-class.** | ✅ for retrieval; 🟡 for multi-agent | `pkg/memex/memory/memory.go`, `pkg/memex/memory/types.go`, `pkg/memex/memory/consolidation.go` |
@@ -61,10 +61,10 @@ Legend: ✅ table-stakes met · 🟡 partial / scaffolded · ❌ missing · ⛔ 
 | **L5 — Validation / eval** | `make eval-*` targets (contract, smoke, behavioral, e2e), eval-gated progression in autoloop. **No public leaderboard scores yet (SWE-bench, Aider polyglot, Terminal-Bench), no continuous benchmark dashboard, no PR-time regression gate.** | 🟡 | `make eval-*` (root Makefile), `internal/runtime/autoloop/` |
 | **L6 — Multi-agent orchestration** | Collab + Foreman/Worker + Loom workspaces + NATS bus + 40+ event types. **Swarm YAML agent definitions referenced in `swarm.md` but loader/schema not surfaced; no handoff patterns documented (manager-worker, debate, hierarchical, blackboard); no dynamic spawn by planner.** | 🟡 | `internal/gitserver/collab/`, `cmd/ycode/foreman.go`, `pkg/loom/`, `internal/bus/bus.go` |
 | **L7 — Sandbox / runtime** | mvdan/sh interpreter with security ExecHandler, Podman pods + pools, machine management, `yc sandbox`. **No persistent sandbox sessions, no sandbox snapshot/restore, language-specific kernel images (py/node/rust) not standardized.** | ✅ for isolation; 🟡 for persistence | `internal/runtime/bash/`, `internal/container/` |
-| **Cross — MCP** | Full client + server (`ycode mcp serve`), composite handler (treesitter/shell/skills/memex/ollama + http: gitea/loom/pulse), lighthouse manifest at `~/.agents/ycode/manifest.json` | ✅ | `internal/runtime/mcp/`, `cmd/ycode/mcp.go`, [`lighthouse.md`](./lighthouse.md) |
+| **Cross — MCP** | **None, by decision.** Removed 2026-07 in both directions — no server, no client, no `/mcp/` route. The interop surface is the `yc <verb>` shell beam plus the manifest at `~/.agents/ycode/manifest.json` | ⛔ | `internal/shell/builtins/`, [`lighthouse.md`](./lighthouse.md), [`plan-remove-mcp.md`](./plan-remove-mcp.md) |
 | **Cross — Hybrid retrieval** | RRF across vector + Bleve + keyword + entity, MMR diversity, temporal validity | ✅ | `pkg/memex/memory/memory.go` |
 | **Cross — Continual learning** | Skill engine (FIX/DERIVED/CAPTURED), Mesh agents (Researcher/Diagnoser/Fixer/Learner), GRPO training scaffold, dreaming/consolidation. **No active training on user's repo; no user-facing skill-curation UX.** | 🟡 | `internal/runtime/skillengine/`, `internal/mesh/`, `internal/training/` |
-| **Cross — Observability + replay** | OTLP gRPC/HTTP, VictoriaLogs/Jaeger/Prometheus/Alertmanager/Perses, ~25 telemetry MCP tools, OTEL spans on agent identity/tools/permissions. **No developer-facing replay UI (OTEL trace → timeline of decisions).** | ✅ for capture; ❌ for replay UX | `internal/observability/` |
+| **Cross — Observability + replay** | OTLP gRPC/HTTP, VictoriaLogs/Jaeger/Prometheus/Alertmanager/Perses, ~25 telemetry query tools, OTEL spans on agent identity/tools/permissions. **No developer-facing replay UI (OTEL trace → timeline of decisions).** | ✅ for capture; ❌ for replay UX | `internal/observability/` |
 | **Cross — Cost / budget** | Iteration budget in conversation, usage events on bus. **No live cost meter, no soft budget caps, no auto-router (cheap/expensive model per task).** | ❌ | `internal/runtime/conversation/budget.go` |
 | **Wrap (involuntary axis)** | PATH shim + Python/Node runtime hooks + OTel attribution for foreign agents (`claude`, `opencode`, `aider`, `gemini`, `codex`) | ✅ for opencode/aider/gemini; 🟡 for claude (Bun limit), codex (Rust limit) | [`agent-os.md`](./agent-os.md), `cmd/ycode/wrap.go` |
 
@@ -72,29 +72,30 @@ Legend: ✅ table-stakes met · 🟡 partial / scaffolded · ❌ missing · ⛔ 
 
 ## 2a. Foreign-agent coverage matrix
 
-`ycode wrap` and the MCP-server (`ycode mcp serve`) together cover the two interception axes — involuntary and voluntary. Each foreign agent gets a different mix of coverage depending on its runtime. Be honest about what's hooked and what isn't so operators don't expect more than they have.
+`ycode wrap` and the shell beam (`ycode shell` as a foreign tool's bash) together cover the two interception axes — involuntary and voluntary. Each foreign agent gets a different mix of coverage depending on its runtime. Be honest about what's hooked and what isn't so operators don't expect more than they have.
 
-| Agent | Runtime | PATH-shim | Language hook | MCP (via `~/.claude.json` / equivalent) | Notes |
+| Agent | Runtime | PATH-shim | Language hook | `yc` verbs (bash routed through `ycode shell`) | Notes |
 |---|---|---|---|---|---|
-| **claude** (Anthropic Claude Code) | Bun-compiled binary | ✅ | ❌ (Bun ignores `NODE_OPTIONS=--require`) | ✅ — opt-in via `ycode init --register-foreign-agents` or repo-root `.mcp.json` | Wrap emits a one-line `[ycode wrap] claude: Bun runtime …` notice on stderr at start. **Supported integration path is MCP.** |
+| **claude** (Anthropic Claude Code) | Bun-compiled binary | ✅ | ❌ (Bun ignores `NODE_OPTIONS=--require`) | ✅ — spawns a bare `bash`, so a PATH wrapper intercepts it | Wrap emits a one-line `[ycode wrap] claude: Bun runtime …` notice on stderr at start. **Supported integration path is the PATH wrapper** ([integration-claude-code.md](./integration-claude-code.md)). |
 | **opencode** | Bun/Node CLI | ✅ | ✅ (Node `--require`) | ✅ | Full coverage on both axes. |
-| **codex** (OpenAI Codex CLI) | Rust + Node helper | ✅ | ❌ (no language-level hook for Rust) | ⛔ — Codex MCP support TBD | Wrap emits a `[ycode wrap] codex: Rust runtime …` notice. |
-| **aider** | Python CLI | ✅ | ✅ (`sitecustomize.py` patches `subprocess`) | ⛔ — Aider MCP support TBD | Full Python-runtime coverage; absolute-path shell-outs from Python caught by the runtime hook. |
-| **gemini** (Google Gemini CLI) | Node CLI | ✅ | ✅ (Node `--require`) | ⛔ — Gemini MCP support TBD | Full Node-runtime coverage. |
+| **codex** (OpenAI Codex CLI) | Rust + Node helper | ✅ | ❌ (no language-level hook for Rust) | ✅ via PATH wrapper | Wrap emits a `[ycode wrap] codex: Rust runtime …` notice. |
+| **aider** | Python CLI | ✅ | ✅ (`sitecustomize.py` patches `subprocess`) | ✅ via PATH wrapper | Full Python-runtime coverage; absolute-path shell-outs from Python caught by the runtime hook. |
+| **gemini** (Google Gemini CLI) | Node CLI | ✅ | ✅ (Node `--require`) | ✅ via PATH wrapper | Full Node-runtime coverage. |
 
-**Worked example — Claude Code calling ycode tools via MCP** (post-M1):
+**Worked example — Claude Code calling ycode capabilities:**
 
 ```bash
-# 1. Opt in: register ycode in ~/.claude.json (and seed L2 instructions).
-ycode init --register-foreign-agents
+# 1. Seed the L2 instruction block so Claude's LLM knows the verbs exist.
+ycode init
 
-# 2. Run a Claude Code session in any directory.
-claude --print "use the ycode mcp server to build_repomap and summarize the codebase"
+# 2. Put ycode's shell in front of Claude's bash for this session.
+mkdir -p ~/bin/ycode-wrappers
+printf '#!/usr/bin/env -S ycode shell --agent\n' > ~/bin/ycode-wrappers/bash
+chmod +x ~/bin/ycode-wrappers/bash
+PATH="$HOME/bin/ycode-wrappers:$PATH" claude --print "run yc repomap and summarize the codebase"
 ```
 
-Claude's tool surface now includes `mcp__ycode-stdio__build_repomap`, `mcp__ycode-stdio__graph_summary`, `mcp__ycode-stdio__sandbox_exec`, `mcp__ycode-stdio__github_list_prs`, plus the existing `list_symbols`, `agent_shell`, `list_skills`, `memex_recall`, and `ollama_chat`. These resolve to in-process Go implementations — no shelling out to `gh`, `rg`, or `podman` from the model's tool-use loop.
-
-For projects opening Claude Code inside the ycode source tree, the committed `.mcp.json` at the repo root advertises the same servers automatically, without any `ycode init` step.
+Claude's `Bash` tool now resolves `yc repomap`, `yc symbols`, `yc refs`, `yc graph`, `yc git`, `yc remember`/`yc recall`, `yc test`, `yc lsp`, and `yc run` in-process — no shelling out to `gh`, `rg`, or `ctags` from the model's tool-use loop, and no MCP server to configure or keep alive.
 
 ## 3. Gaps grouped by tier
 
@@ -104,7 +105,7 @@ Each blocks a core SOTA claim:
 
 1. **Agent scheduler with priorities + preemption** (K2). Today's collab orchestrator is a worker pool, not a scheduler. Without priorities/preemption you cannot do mixed P1/P2 workloads on shared compute fairly. *Closes K2.*
 2. **Per-agent identity + capability tokens + audit ledger** (K7). The remote permission prompter handles a single human-in-the-loop; multi-agent fanout needs each worker to carry its own grant set and have decisions logged in a structured ledger, not just OTEL spans. *Closes K7.*
-3. **Tool quotas + rate limits + circuit breakers** (K6). Required as soon as multiple agents share the same tool pool (LLM API, MCP server, podman). Without it, one runaway worker starves the rest. *Closes K6.*
+3. **Tool quotas + rate limits + circuit breakers** (K6). Required as soon as multiple agents share the same tool pool (LLM API, inference, podman). Without it, one runaway worker starves the rest. *Closes K6.*
 4. **Eval-as-CI**: leaderboard scores (SWE-bench Verified, Aider polyglot, Terminal-Bench) + PR-time regression gate (L5). Without external benchmarks, "Agent OS" is a marketing claim; with them, it's verifiable. Already Phase 1 of `strategy.md`. *Closes L5 + the wedge proof.*
 5. **`ycode auto` user-facing autonomous loop** (cross). The substrate exists (Ralph + Sprint + Mesh + SkillEngine) but is not exposed as a CLI verb. Without it, the self-improvement story is invisible to users.
 

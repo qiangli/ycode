@@ -55,7 +55,7 @@ type Profile struct {
 var AgentProfiles = map[string]*Profile{
 	"claude": {
 		Name:              "claude",
-		Description:       "Anthropic Claude Code CLI (Bun-compiled). PATH-shim + MCP coverage only; Bun runtime does not honor NODE_OPTIONS=--require.",
+		Description:       "Anthropic Claude Code CLI (Bun-compiled). PATH-shim coverage only; Bun runtime does not honor NODE_OPTIONS=--require.",
 		CmdAliases:        []string{"claude", "claude-code"},
 		ExtraShims:        []string{"node", "npx", "tsc", "eslint", "prettier", "yarn", "pnpm"},
 		PermissionDefault: "workspace-write",
@@ -63,9 +63,10 @@ var AgentProfiles = map[string]*Profile{
 		// NODE_OPTIONS=--require, so the Node language hook we install
 		// for other agents (opencode, gemini) silently no-ops here. The
 		// PATH shim still catches bash/git/rg/etc. — the supported
-		// integration path is "PATH shim + MCP" (see .mcp.json at the
-		// ycode repo root, or run `ycode init --register-foreign-agents`
-		// to seed the user-global Claude config). Leave nil so we don't
+		// integration path is "PATH shim + `ycode shell -c` bash
+		// backend" (run `ycode init --register-foreign-agents` to seed
+		// the user-global Claude config with the capability block; see
+		// docs/shell-agent.md). Leave nil so we don't
 		// pretend coverage we don't have; wrap.go emits a one-line
 		// stderr notice when this profile resolves.
 		RuntimeHooks: nil,

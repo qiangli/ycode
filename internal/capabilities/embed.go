@@ -1,6 +1,6 @@
 // Package capabilities is the embedded capability registry — the single
-// declared mapping of capability families to their CLI / MCP / HTTP /
-// config surfaces. Source of truth lives in registry.yaml in this
+// declared mapping of capability families to their CLI / HTTP / config
+// surfaces. Source of truth lives in registry.yaml in this
 // directory; the lint gate (cmd/ycode/capabilities_test.go) asserts
 // every declared surface resolves at build time.
 //
@@ -33,11 +33,10 @@ type Capability struct {
 	Summary  string   `yaml:"summary"`
 	Audience []string `yaml:"audience"`
 	CLI      []string `yaml:"cli"`
-	MCP      []string `yaml:"mcp"`
 	HTTP     []string `yaml:"http"`
 	Config   []string `yaml:"config"`
-	// Gaps lists intentional asymmetries (e.g. "stdio MCP lacks this
-	// family — requires ycode serve"). The lint suppresses warnings
+	// Gaps lists intentional asymmetries (e.g. "requires a running
+	// ycode serve — no offline path"). The lint suppresses warnings
 	// that match a declared gap.
 	Gaps []string `yaml:"gaps,omitempty"`
 }
@@ -97,22 +96,6 @@ func (r *Registry) AllCLIVerbs() []string {
 			if !seen[v] {
 				seen[v] = true
 				out = append(out, v)
-			}
-		}
-	}
-	return out
-}
-
-// AllMCPTools returns every MCP tool name declared across every
-// capability, flat.
-func (r *Registry) AllMCPTools() []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, c := range r.Capabilities {
-		for _, t := range c.MCP {
-			if !seen[t] {
-				seen[t] = true
-				out = append(out, t)
 			}
 		}
 	}

@@ -19,10 +19,10 @@ import (
 var catalogRaw []byte
 
 // CatalogRow is one task entry in the capability catalog. Surfaces
-// is a fixed three-key map (cli / yc / mcp) — each value is a list of
+// is a fixed two-key map (cli / yc) — each value is a list of
 // invocation strings. Empty surface lists are allowed: a task may
-// legitimately exist on only one surface (e.g. `yc sandbox` has no
-// cobra or MCP face today).
+// legitimately exist on only one surface, or on none at all (loom,
+// whose only surface lived on the removed MCP transport).
 type CatalogRow struct {
 	Task     string              `yaml:"task" json:"task"`
 	Surfaces map[string][]string `yaml:"surfaces" json:"surfaces"`
@@ -58,9 +58,9 @@ func LoadCatalog() (Catalog, error) {
 			}
 			for surf := range r.Surfaces {
 				switch surf {
-				case "cli", "yc", "mcp":
+				case "cli", "yc":
 				default:
-					catalogErr = fmt.Errorf("docs: row %q unknown surface %q (allowed: cli, yc, mcp)", r.Task, surf)
+					catalogErr = fmt.Errorf("docs: row %q unknown surface %q (allowed: cli, yc)", r.Task, surf)
 					return
 				}
 			}
@@ -106,7 +106,7 @@ func (c Catalog) RenderText(w io.Writer) error {
 		if _, err := fmt.Fprintln(w, "  surfaces:"); err != nil {
 			return err
 		}
-		for _, key := range []string{"cli", "yc", "mcp"} {
+		for _, key := range []string{"cli", "yc"} {
 			vals := r.Surfaces[key]
 			if len(vals) == 0 {
 				continue

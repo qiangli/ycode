@@ -20,10 +20,7 @@ func withFakeHome(t *testing.T) string {
 func TestClaude_WriteInstructions(t *testing.T) {
 	home := withFakeHome(t)
 	c := &claude{}
-	caps := []CapabilitySpec{
-		{Name: "ycode-loom", Family: "loom"},
-	}
-	changed, err := c.WriteInstructions(context.Background(), caps)
+	changed, err := c.WriteInstructions(context.Background())
 	if err != nil {
 		t.Fatalf("WriteInstructions: %v", err)
 	}
@@ -34,12 +31,12 @@ func TestClaude_WriteInstructions(t *testing.T) {
 	if !strings.Contains(string(body), BeginMarker) {
 		t.Errorf("missing BEGIN marker:\n%s", body)
 	}
-	if !strings.Contains(string(body), "ycode-loom") {
-		t.Errorf("missing ycode-loom mention:\n%s", body)
+	if !strings.Contains(string(body), "`yc symbols <path>`") {
+		t.Errorf("missing yc built-in inventory:\n%s", body)
 	}
 
 	// Idempotent.
-	changed2, err := c.WriteInstructions(context.Background(), caps)
+	changed2, err := c.WriteInstructions(context.Background())
 	if err != nil {
 		t.Fatalf("WriteInstructions#2: %v", err)
 	}
@@ -109,8 +106,7 @@ func TestClaude_WriteInstructions_PreservesUserContent(t *testing.T) {
 	}
 
 	c := &claude{}
-	caps := []CapabilitySpec{{Name: "ycode-loom", Family: "loom"}}
-	if _, err := c.WriteInstructions(context.Background(), caps); err != nil {
+	if _, err := c.WriteInstructions(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	body, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))

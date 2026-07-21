@@ -23,7 +23,7 @@
 
 ## ycode Current State
 
-**Already implemented:** 50+ tools covering file ops, search, shell, web, user interaction, task management, plan mode, agent spawning, MCP/LSP integration, tool search.
+**Already implemented:** 50+ tools covering file ops, search, shell, web, user interaction, task management, plan mode, agent spawning, LSP integration, tool search.
 
 ---
 
@@ -42,7 +42,7 @@ All projects implement these core categories. **ycode has all of these.**
 | Task management | Todo/task lists | **Done** |
 | Plan mode | Enter/exit planning | **Done** |
 | Agent spawning | Subagent delegation | **Done** |
-| MCP integration | External tool servers | **Done** |
+| MCP integration | External tool servers | **Removed** — ycode neither exposes nor consumes MCP (`docs/plan-remove-mcp.md`) |
 | LSP integration | Code intelligence | **Done** |
 | Skill loading | Reusable prompt definitions | **Done** |
 | Tool search | Deferred tool discovery | **Done** |

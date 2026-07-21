@@ -27,10 +27,10 @@ import (
 // internal/docs would invert the dependency direction.
 //
 // Allowlist intentionally narrow: only the leading word after "ycode "
-// counts. `ycode docs --all` checks "docs"; `ycode mcp serve` checks
-// "mcp". Sub-subcommand drift (e.g., renaming `mcp serve` to `mcp run`)
-// is not caught by this test today — add a deeper check if a future
-// rename actually causes pain.
+// counts. `ycode docs --all` checks "docs"; `ycode model list` checks
+// "model". Sub-subcommand drift (e.g., renaming `model list` to
+// `model ls`) is not caught by this test today — add a deeper check if
+// a future rename actually causes pain.
 func TestDocsCobraCrossRef(t *testing.T) {
 	known := map[string]bool{}
 	collectCommandNames(rootCmd, known)

@@ -3,7 +3,6 @@ package selfinit
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,50 +52,39 @@ func claudeUserMemoryPath() (string, error) {
 
 // WriteInstructions splices the L2 awareness block into Claude Code's
 // user-scope memory file (~/.claude/CLAUDE.md).
-func (c *claude) WriteInstructions(_ context.Context, caps []CapabilitySpec) (bool, error) {
+func (c *claude) WriteInstructions(_ context.Context) (bool, error) {
 	path, err := claudeUserMemoryPath()
 	if err != nil {
 		return false, err
 	}
-	body := buildInstructionsBlock(caps)
+	body := buildInstructionsBlock()
 	existing, _ := os.ReadFile(path)
 	new := SpliceBlock(string(existing), body)
 	return writeIfChanged(path, []byte(new))
 }
 
-// buildInstructionsBlock constructs the manifest-derived L2 content
-// that lands inside <BEGIN/END YCODE> in foreign tools' memory files.
+// buildInstructionsBlock constructs the L2 content that lands inside
+// <BEGIN/END YCODE> in foreign tools' memory files.
 //
-// The block has two halves:
+// One surface only: the **`yc <verb>` shell built-ins** — bash-callable
+// commands active in two scenarios:
 //
-//  1. **MCP capabilities** — manifest-derived, named `ycode-<family>`.
-//     Reachable only when the foreign tool has loaded the corresponding
-//     MCP server entry from `~/.claude.json` / `~/.config/opencode/mcp.json`
-//     etc.
+//   - Foreign tool's bash backend points at `ycode shell -c` (or a PATH
+//     wrapper that does — see docs/shell-agent.md).
+//   - The user types `ycode shell -c "yc <verb> ..."` manually.
 //
-//  2. **`yc <verb>` shell built-ins** — bash-callable commands that
-//     ride the same Go code as the MCP handlers but require zero MCP
-//     setup. Active in two scenarios:
-//
-//     * Foreign tool's bash backend points at `ycode shell -c` (or
-//     a PATH wrapper that does — see docs/shell-agent.md).
-//     * The user types `ycode shell -c "yc <verb> ..."` manually.
-//
-//     The yc family is the recommended primary integration path because
-//     it works without MCP-server consent prompts and is debuggable as
-//     plain bash output.
-func buildInstructionsBlock(caps []CapabilitySpec) string {
+// ycode used to advertise MCP servers here too. It no longer runs any
+// (docs/plan-remove-mcp.md), and naming a server the binary doesn't
+// serve made every foreign CLI report a failed connection at startup.
+// The symbol/graph capabilities that block described live in the `yc`
+// verbs below — same Go code, reachable as plain bash.
+func buildInstructionsBlock() string {
 	var b strings.Builder
 	b.WriteString("## ycode capabilities\n\n")
-	b.WriteString("ycode runs locally and exposes its capabilities through two reachable surfaces. Prefer them over generic shell tools when the language/use-case matches.\n\n")
+	b.WriteString("ycode runs locally and exposes its capabilities as bash-callable shell built-ins. Prefer them over generic shell tools when the language/use-case matches. ycode does not run an MCP server — do not configure one.\n\n")
 
-	b.WriteString("### MCP servers (when the corresponding entry is in your tool's mcpServers config)\n\n")
-	for _, cs := range caps {
-		fmt.Fprintf(&b, "- **`%s`** — %s\n", cs.Name, FamilyDescription(cs.Family))
-	}
-
-	b.WriteString("\n### `yc <verb>` shell built-ins (bash-callable, zero MCP setup)\n\n")
-	b.WriteString("Active whenever your bash backend routes through `ycode shell -c` (e.g., a PATH wrapper at `~/bin/ycode-wrappers/bash`, or direct `ycode shell -c \"...\"` invocation). These are the same Go capabilities as the MCP family, just reachable as plain bash commands. Use them by default — they don't require MCP-server consent and the agent-mode hint engine surfaces suggestions on stderr.\n\n")
+	b.WriteString("### `yc <verb>` shell built-ins\n\n")
+	b.WriteString("Active whenever your bash backend routes through `ycode shell -c` (e.g., a PATH wrapper at `~/bin/ycode-wrappers/bash`, or direct `ycode shell -c \"...\"` invocation). Use them by default — the agent-mode hint engine surfaces suggestions on stderr.\n\n")
 	b.WriteString("Verbs are ordered by typical ROI; top four carry a *why* note so the choice over `grep`/`find`/`git` is explicit.\n\n")
 	b.WriteString("- `yc symbols <path>` — list top-level symbols (treesitter; faster than ctags). Replaces `ctags -R` and most `grep -r` for declarations.\n")
 	b.WriteString("  *Why over grep:* AST-aware; skips comments/string literals; resolves aliases.\n")
@@ -119,7 +107,7 @@ func buildInstructionsBlock(caps []CapabilitySpec) string {
 	b.WriteString("### Discovery & troubleshooting\n\n")
 	b.WriteString("- `ycode shell --manifest` — JSON capability catalog (built-ins + skills + sentinels + hint patterns).\n")
 	b.WriteString("- `ycode shell --suggest \"<cmd>\"` — emit hints for a command without executing it.\n")
-	b.WriteString("- If an MCP tool returns *connection refused*, run `ycode serve` first; live endpoints are advertised in `~/.agents/ycode/manifest.json`.\n")
+	b.WriteString("- If a verb that needs the server returns *connection refused*, run `ycode serve` first; live endpoints are advertised in `~/.agents/ycode/manifest.json`.\n")
 	b.WriteString("- See `docs/shell-agent.md` in the ycode repo for full integration recipes.")
 	return b.String()
 }

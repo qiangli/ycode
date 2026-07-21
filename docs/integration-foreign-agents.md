@@ -1,137 +1,117 @@
 # Integrating foreign agentic tools with ycode
 
 This guide is for the operator of an external agentic coding tool — **claude
-code, opencode, codex, gemini cli, ycode's own TUI**, or any other
-MCP-speaking client — who wants that tool to reach ycode's capabilities
-(Loom workspaces, embedded Gitea, Pulse observability, future memex / repo
-map / inference) without modifying either project.
+code, opencode, codex, gemini cli, ycode's own TUI**, or anything else that
+shells out — who wants that tool to reach ycode's capabilities without
+modifying either project.
+
+> **ycode does not speak MCP, in either direction.** It exposes no MCP
+> server, mounts no `/mcp/` route, and connects to none. If you are
+> holding an older snippet that adds a `ycode` entry to a tool's
+> `mcpServers` map, delete it — nothing is listening, and every foreign
+> CLI configured that way reports a failed server at startup. See
+> [plan-remove-mcp.md](./plan-remove-mcp.md).
+
+The integration surface is the **shell**. Point a foreign tool's bash
+backend at `ycode shell -c` and ycode's capabilities resolve in-process
+as `yc <verb>` built-ins — treesitter AST search, repo map, code graph,
+semantic memory, native git — with no server, no daemon, and no auth.
 
 The contract on both sides is **public APIs only**:
 
-- ycode exposes a single composite MCP endpoint at `${YCODE_URL}/mcp/`,
-  HTTP discovery at `${YCODE_URL}/.well-known/ycode-manifest.json`, and
-  OTLP ingest on standard ports. Nothing else is required of the client.
+- ycode exposes the `yc <verb>` built-ins through `ycode shell`, an HTTP
+  API at `${YCODE_URL}/ycode/`, HTTP discovery at
+  `${YCODE_URL}/.well-known/ycode-manifest.json`, and OTLP ingest on
+  standard ports.
 - The foreign tool stays unmodified — opencode is installed from its
-  official channel, claude code from Anthropic's, etc. Configuration lives
-  in the user's own config directory (`~/.opencode/`, `~/.mcp.json`,
-  `~/.codex/config.toml`, `~/.gemini/settings.json`, ...), never inside
+  official channel, claude code from Anthropic's, etc. Configuration
+  lives in the user's own config directory or in `$PATH`, never inside
   the tool's source tree.
 
 ## Mental model: ycode is the "Agent OS"
 
-ycode's server is the kernel/hub of an Agent OS. Every agentic tool that
-connects to it — including ycode's own TUI — is a peer client. There is no
-privileged path: ycode's TUI reaches Loom, Gitea, and Pulse through the
-exact same `/mcp/` URL that opencode does. If you set `YCODE_URL` to a
-remote host, the integration works identically.
+ycode is the local substrate every agentic tool runs *on top of*. The
+reach is lexical, not networked: a tool whose `bash` resolves to
+`ycode shell` gets the whole `yc` verb set for free, in the same process,
+at bash latency. There is no privileged path — ycode's own TUI uses the
+same built-ins any foreign tool does.
 
-This has one structural consequence worth stating up front: ycode does
-not, and will not, ship tool-specific integration plumbing for the long
-tail of clients. The only places per-client logic exists are (a) the
-config-snippet emitter (`ycode pair --tool`) and (b) the matching
-templates under `templates/<tool>/`. Adding a fifth recognized tool is a
-deliberate ycode code change with a justification; the default answer for
-any other client is **"point it at `/mcp/`."**
+One structural consequence: ycode does not, and will not, ship
+tool-specific integration plumbing for the long tail of clients. The only
+per-client logic is (a) the config-snippet emitter (`ycode pair --tool`)
+and (b) the L2 memory-block writers in `internal/selfinit/`. The default
+answer for any other client is **"point its bash at `ycode shell -c`."**
 
-## Quick start (three commands)
+## Quick start
 
 ```bash
-# 1. Start ycode on the host that will provide the services.
-ycode serve
+# 1. In the repo you're working in, make ycode a first-class citizen.
+#    Writes the capability block into AGENTS.md / CLAUDE.md so the
+#    foreign tool's LLM knows the `yc` verbs exist.
+ycode init
 
-# 2. On the client side, pair with the server:
-ycode pair --tool opencode --url http://your-ycode-host:31415
+# 2. Install a session-scoped PATH wrapper so the tool's `bash` is ycode.
+mkdir -p ~/bin/ycode-wrappers
+printf '#!/usr/bin/env -S ycode shell --agent\n' > ~/bin/ycode-wrappers/bash
+chmod +x ~/bin/ycode-wrappers/bash
+ln -sf bash ~/bin/ycode-wrappers/zsh
 
-# 3. Paste the printed snippet into the location the command shows
-#    (e.g. ~/.opencode/opencode.jsonc), then launch your client.
+# 3. Launch the foreign tool with the wrapper in front.
+PATH="$HOME/bin/ycode-wrappers:$PATH" claude     # or opencode, codex, ...
 ```
 
-After step 2 the foreign tool sees `ycode:loom_lease`, `ycode:list_repos`,
-`ycode:query_traces`, etc. in its tool list. No further configuration.
+Verify from inside the tool: ask it to run `yc symbols ./internal`. If it
+returns declarations rather than `command not found`, the wrapper is live.
+
+The full recipe, including the trace-log check for tools that don't
+`spawn('bash', …)`, is in [shell-agent.md](./shell-agent.md).
 
 ## The public surface
 
 | Endpoint | Auth | Purpose |
 |---|---|---|
-| `GET /.well-known/ycode-manifest.json` | none | Capability discovery. Returns URLs, MCP endpoint, version. No local paths or secrets. |
-| `GET /manifest` | bearer | Full manifest including local-only fields (token paths, sandbox roots). |
-| `POST /mcp/` | bearer | Composite MCP endpoint. JSON-RPC body. Fans out to every registered capability family (treesitter, skills, shell, gitea, loom, pulse). |
+| `ycode shell -c "<cmd>"` | none (local process) | The integration surface. `yc <verb>` built-ins resolve in-process. |
+| `GET /.well-known/ycode-manifest.json` | none | Capability discovery. Returns URLs and version. No local paths or secrets. |
+| `GET /manifest` | bearer | Full manifest including local-only fields (token paths). |
+| `/ycode/` | bearer | ycode's HTTP API, served by `ycode serve`. |
 | `:4317` / `:4318` | none | OTLP ingest (gRPC / HTTP). Standard OpenTelemetry endpoints. |
-
-> Older builds also exposed per-family routes `/gitea-mcp/`, `/loom-mcp/`,
-> and `/pulse/`. These were retired in manifest `schemaVersion: "4"`;
-> clients configured with those URLs must switch to `/mcp/`.
 
 All non-OTLP endpoints listen on the proxy port (default `31415`). All
 bearer-authenticated endpoints accept `Authorization: Bearer <token>`. The
 token is whatever `ycode pair` printed; rotate by deleting
 `~/.agents/ycode/server.token` and re-running `ycode pair`.
 
+`ycode serve` is only needed for the HTTP API and telemetry. The shell
+integration works with no server running at all.
+
 ## Configuring specific clients
 
 `ycode pair --tool <name>` prints the right snippet and tells you where it
-goes. The recognized targets and their destinations:
+goes. Recognized targets: `opencode`, `claude-code`, `codex`,
+`gemini-cli`, `ycode-tui`. Pass `--tool <anything-else>` for a generic
+snippet you can adapt.
 
-| Tool | Destination | Format |
-|---|---|---|
-| `opencode` | `~/.opencode/opencode.jsonc` | JSONC `mcp` block |
-| `claude-code` | project `.mcp.json` (recommended) or `~/.claude/settings.json` | JSON `mcpServers` block |
-| `codex` | `~/.codex/config.toml` | TOML `[mcp_servers.ycode]` block |
-| `gemini-cli` | `~/.gemini/settings.json` | JSON `mcpServers` block |
-| `ycode-tui` | shell init (`~/.zshrc` etc.) | `YCODE_URL` + `YCODE_TOKEN` env vars |
+For all four foreign CLIs the snippet is the same shape — env vars for
+the HTTP API plus a pointer at the shell path. There is no config-file
+block to paste into the tool's own settings, because ycode has nothing
+to register there.
 
-Pass `--tool <anything-else>` to get a generic snippet you can adapt.
+- **claude code** — full recipe in
+  [integration-claude-code.md](./integration-claude-code.md).
+- **opencode** — full recipe in
+  [integration-opencode.md](./integration-opencode.md).
+- **codex / gemini-cli** — same PATH-wrapper recipe; both resolve `bash`
+  through `$PATH` when executing tool calls.
+- **ycode-tui** — `ycode pair --tool ycode-tui` prints the `YCODE_URL` /
+  `YCODE_TOKEN` env pair; launch with `ycode --connect $YCODE_URL/ycode/`.
 
-### opencode
+`ycode init` additionally splices a delimited capability block into each
+detected tool's user-scope memory file (`~/.claude/CLAUDE.md`,
+`~/.config/opencode/AGENTS.md`) so the LLM knows the verbs exist without
+being told per session. It writes no tool-config file. See
+[selfinit.md](./selfinit.md).
 
-`ycode pair --tool opencode` produces:
-
-```jsonc
-{
-  "mcp": {
-    "ycode": {
-      "type": "remote",
-      "url": "${YCODE_URL}/mcp/",
-      "headers": { "Authorization": "Bearer ${YCODE_TOKEN}" },
-      "timeout": 30000
-    }
-  }
-}
-```
-
-Drop it in `~/.opencode/opencode.jsonc` (or your project's
-`.opencode/opencode.jsonc`). opencode auto-discovers MCP servers on
-launch; restart opencode if it was already running.
-
-For the full opencode-specific recipe — including how `ycode_agent_shell`
-threads per-call cwd, per-agent permission expectations, and a loom
-worked example — see [integration-opencode.md](./integration-opencode.md).
-
-### claude code
-
-```json
-{
-  "mcpServers": {
-    "ycode": {
-      "type": "http",
-      "url": "${YCODE_URL}/mcp/",
-      "headers": { "Authorization": "Bearer ${YCODE_TOKEN}" }
-    }
-  }
-}
-```
-
-Goes in `.mcp.json` at the repo root (project-scoped, recommended for
-per-project pairing) or under `mcpServers` in `~/.claude/settings.json`
-(user-global). For the full Claude-Code-specific recipe — `mcp__ycode__*`
-tool naming, permission modes, hooks/plugins as future paths — see
-[integration-claude-code.md](./integration-claude-code.md).
-
-### codex / gemini-cli / ycode-tui
-
-See `ycode pair --tool <name>` output. Each is a one-paste configuration.
-
-## Telemetry: opencode → Pulse
+## Telemetry → Pulse
 
 Any OTEL-emitting client can ship spans / metrics / logs to ycode's
 collector:
@@ -146,91 +126,62 @@ ycode itself appear as distinct services in the same dashboards. There is
 no tool-specific code in Pulse — the OTEL resource attribute is the only
 input.
 
-## The Agent OS canary
-
-ycode's own TUI is configured as a client using the exact same `ycode
-pair --tool ycode-tui` flow. If you change your `YCODE_URL` to a remote
-host, the TUI works against the remote ycode server identically to how it
-works locally. This is by design: there is no in-process back-channel
-that bypasses `/mcp/`. If you ever observe a behavior available to the
-TUI but not to a foreign client through the public API, that is a bug —
-please file it.
-
 ## Auth: today and tomorrow
 
 **Today (v1)** — `ycode pair` reads or mints the single bearer token at
 `~/.agents/ycode/server.token`. Operators distribute it to clients
 out-of-band (paste it into the snippet, store as `YCODE_TOKEN` env var).
 Rotating is `rm ~/.agents/ycode/server.token && ycode pair --tool <x>`.
+The token gates the HTTP API only; the shell path needs no token because
+it is a local process, governed by ycode's own permission modes.
 
-**Later** — scoped per-tool tokens, device-code pairing for cross-host
-flows, and MCP OAuth dynamic client registration (which opencode and
-some other clients already support natively). The `ycode pair --tool`
-CLI surface is the entry point for all of these; the snippet shape is
-forward-compatible.
+**Later** — scoped per-tool tokens and device-code pairing for cross-host
+flows. The `ycode pair --tool` CLI surface is the entry point for both.
 
-## Permission propagation (Agent OS capabilities)
+## Permission posture
 
-Many clients have their own permission tiers — opencode's `plan` vs
-`build` agents, claude code's `read-only` / `acceptEdits` /
-`bypassPermissions` modes. ycode honors a client-provided per-request
-permission hint via the MCP `_meta` field:
+The foreign tool's own permission tiers apply first — opencode's `plan`
+vs `build` agents, claude code's `default` / `acceptEdits` /
+`bypassPermissions` modes. A denied tool call never reaches ycode.
 
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": { "name": "memex:store_memory", "arguments": { ... } },
-  "_meta": { "permission": "ReadOnly" }
-}
+Underneath, `ycode shell -c` defaults to `DangerFullAccess` — the same
+posture as `/bin/bash`, because surprising an agent with a restricted
+shell breaks its existing scripts. Tighten per invocation:
+
+```bash
+ycode shell -c --permission read-only "ls /etc"
+ycode shell -c --permission workspace-write "./build.sh"
 ```
-
-ycode's gate enforces `min(handler ceiling, client hint)`, so a client in
-a restricted mode cannot accidentally invoke a write tool even if the
-ceiling allows it. Use `_meta.permission` rather than custom HTTP headers
-so the convention works across both HTTP and stdio MCP transports and any
-spec-compliant client.
-
-> This is the canonical "generic over tool-specific" change: zero
-> opencode/claude code/codex references in the implementation; benefits
-> every MCP client that has its own permission concept.
 
 ## Troubleshooting
 
-- **"Connection refused" from the client.** ycode server isn't running, or
-  `YCODE_URL` points at the wrong host. Check
+- **Foreign CLI reports a failed `ycode` MCP server at startup.** You
+  have a stale `mcpServers` entry. Remove it; ycode runs no MCP server.
+- **`yc: command not found` inside the tool.** The PATH wrapper isn't
+  being used. Trace it with a logging wrapper (see
+  [shell-agent.md](./shell-agent.md)) — some tools exec `/bin/sh` or a
+  hardcoded shell path and can't be intercepted this way.
+- **"Connection refused" hitting the HTTP API.** `ycode serve` isn't
+  running, or `YCODE_URL` points at the wrong host. Check
   `curl ${YCODE_URL}/.well-known/ycode-manifest.json`.
-- **"Unauthorized" from `/mcp/` or `/manifest`.** Bearer token mismatch.
-  Re-run `ycode pair --tool <name>` and update the client's config.
-- **Tool list empty.** ycode serve hasn't finished bringing up the
-  capability families. Check `ycode serve status`; the composite endpoint
-  is mounted last.
-- **Client doesn't auto-refresh tool list when ycode adds a family.**
-  opencode honors MCP `tools/list_changed`; claude code and codex do not.
-  Restart the client.
+- **"Unauthorized" from `/ycode/` or `/manifest`.** Bearer token
+  mismatch. Re-run `ycode pair --tool <name>`.
 
 ## What's intentionally out of scope
 
-- **Plugins, SDKs, or npm packages.** None of the supported integrations
-  require installing additional code on the client side. If a specific
-  perf bottleneck ever justifies a plugin (e.g., very high tool-call
-  rates), it will be a separate, optional artifact — not a v1 path.
+- **MCP.** Removed entirely, both as a server and as a client. Not a
+  gap to be filled; a decision. See [plan-remove-mcp.md](./plan-remove-mcp.md).
+- **Plugins, SDKs, or npm packages.** No supported integration requires
+  installing additional code on the client side.
 - **Modifying the foreign tool.** opencode, claude code, codex, and
   gemini cli are installed from their official channels and never
   touched. ycode does not write into a foreign tool's source tree.
-- **Filesystem co-location.** Nothing in this guide assumes ycode and the
-  client are on the same host. `YCODE_URL` is the only address; replace
-  `127.0.0.1` with any reachable host and the integration is unchanged.
 
 ## Related docs
 
-- [lighthouse.md](./lighthouse.md) — the "ycode as MCP federation hub"
-  design rationale, of which this integration guide is the operational
-  manifestation.
-- [lighthouse-roadmap.md](./lighthouse-roadmap.md) — the queue of future
-  capability families (memex MCP, repomap MCP, inference MCP, sandbox
-  MCP, browser MCP) that will appear under `/mcp/` as ycode ships them.
-  No client-side config change is required as families come online —
-  opencode et al. just see new tools appear in `tools/list`.
-- [loom.md](./loom.md) — workspace substrate, the five `loom_*` MCP
-  tools exposed today.
+- [shell-agent.md](./shell-agent.md) — the canonical integration recipes
+  and the agent-mode hint engine.
+- [selfinit.md](./selfinit.md) — how `ycode init` makes a repo and the
+  installed foreign tools ycode-aware.
+- [lighthouse.md](./lighthouse.md) — the design rationale for ycode as
+  the local capability hub.

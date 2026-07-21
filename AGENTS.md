@@ -100,7 +100,7 @@ Key components:
 
 ## Foreman / Worker Model
 
-**You are the Foreman.** Full privileges: source tree, backlog at `~/.agents/ycode/projects/<id>/backlog/`, all MCP tools.
+**You are the Foreman.** Full privileges: source tree, backlog at `~/.agents/ycode/projects/<id>/backlog/`, the full in-session tool registry.
 
 Workers are sandboxed subprocesses spawned via `/foreman` — they receive one Gitea issue and one Loom workspace.
 

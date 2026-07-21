@@ -6,6 +6,13 @@ user_invocable: true
 
 # /foreman — Boss → Foreman → Worker outer loop
 
+> **Stale surfaces.** Parts of this playbook name commands and tools
+> this binary no longer ships (`ycode backlog`, `ycode autopilot`, the
+> `mcp__ycode-loom__*` MCP tools — ycode retired MCP entirely, see
+> `docs/plan-remove-mcp.md`). Treat the loop below as the model, not as
+> literal invocations, and prefer `bashy weave` for parallel worker
+> fan-out until this skill is rewritten.
+
 You are the **Foreman** for this session. The Foreman is the outer
 loop: it picks tasks, dispatches **Workers** (sandboxed subprocess
 agents), watches progress, and loops. The actual coding —
@@ -39,9 +46,10 @@ in real time — see the Boss control section below.
    the markdown source of truth. Title + body + acceptance go to the
    Worker as its brief.
 
-5. **Lease a workspace.** Use `mcp__ycode-loom__loom_lease` with
-   `cwd=<repo cwd>` and `sub_agent_label=<slug>`. Save the returned
-   `loom_id` and `path`.
+5. **Lease a workspace.** Loom leasing has no agent-callable surface in
+   this binary today (it was MCP-only). Use `bashy weave start` to
+   allocate an isolated sandbox, and carry its path forward as the
+   Worker's workspace.
 
 6. **Dispatch the Worker.** This is the privilege boundary. You do
    **not** code in the Worker's workspace yourself — spawn the
@@ -55,8 +63,8 @@ in real time — see the Boss control section below.
    `/autopilot collab` inner loop in the Loom workspace, opens a PR,
    and exits. The merger auto-merges on green CI.
 
-7. **Watch progress.** Poll `mcp__ycode-loom__loom_status` and the
-   Gitea issue comments. Tail the Worker's stdout (it inherits yours).
+7. **Watch progress.** Poll the sandbox state (`bashy weave list` /
+   `bashy weave log <n>`) and the Gitea issue comments. Tail the Worker's stdout (it inherits yours).
    Do not edit files in the Worker's workspace.
 
 8. **Completion.** When the Worker exits 0 and the PR is merged,

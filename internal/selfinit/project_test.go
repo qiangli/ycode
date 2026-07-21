@@ -1,7 +1,6 @@
 package selfinit
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,18 +20,13 @@ func makeRepo(t *testing.T) string {
 	return dir
 }
 
-var testCaps = []CapabilitySpec{
-	{Name: "ycode-stdio", Transport: "stdio", Command: "ycode", Args: []string{"mcp", "serve"}, Family: "stdio"},
-	{Name: "ycode-loom", Transport: "http", URL: fmt.Sprintf("http://127.0.0.1:%d/loom-mcp/", DefaultPort), Family: "loom"},
-}
-
 // WriteProjectFiles is intentionally minimal: writes ONLY the
 // foreign-agent breadcrumb at <repo>/.agents/ycode/AGENTS.md. Root
 // AGENTS.md / CLAUDE.md and docs/backlog.md are never touched.
 func TestWriteProjectFiles_BreadcrumbOnly(t *testing.T) {
 	repo := makeRepo(t)
 
-	written, warnings, err := WriteProjectFiles(repo, testCaps)
+	written, warnings, err := WriteProjectFiles(repo)
 	if err != nil {
 		t.Fatalf("WriteProjectFiles: %v", err)
 	}
@@ -50,7 +44,7 @@ func TestWriteProjectFiles_BreadcrumbOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read breadcrumb: %v", err)
 	}
-	if !strings.Contains(string(body), "ycode-loom") {
+	if !strings.Contains(string(body), "`yc symbols <path>`") {
 		t.Errorf("breadcrumb does not list capabilities:\n%s", body)
 	}
 
@@ -81,7 +75,7 @@ func TestWriteProjectFiles_DoesNotPatchExistingRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := WriteProjectFiles(repo, testCaps); err != nil {
+	if _, _, err := WriteProjectFiles(repo); err != nil {
 		t.Fatalf("WriteProjectFiles: %v", err)
 	}
 
@@ -99,12 +93,12 @@ func TestWriteProjectFiles_Idempotent(t *testing.T) {
 	repo := makeRepo(t)
 	breadcrumb := filepath.Join(repo, ".agents", "ycode", "AGENTS.md")
 
-	if _, _, err := WriteProjectFiles(repo, testCaps); err != nil {
+	if _, _, err := WriteProjectFiles(repo); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 	body1, _ := os.ReadFile(breadcrumb)
 
-	if _, _, err := WriteProjectFiles(repo, testCaps); err != nil {
+	if _, _, err := WriteProjectFiles(repo); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	body2, _ := os.ReadFile(breadcrumb)

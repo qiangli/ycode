@@ -193,7 +193,12 @@ ycode provides 50+ tools organized by category:
 `LSP`, `NotebookEdit`
 
 ### External integration
-`MCP`, `ListMcpResources`, `ReadMcpResource`, `McpAuth`, `RemoteTrigger`
+`RemoteTrigger`
+
+ycode does not speak MCP in either direction — it neither exposes an
+MCP server nor connects to one. Foreign capabilities reach ycode through
+`bash` / the `yc <verb>` built-ins, and ycode reaches foreign tools by
+invoking their CLIs.
 
 ### Configuration & mode
 `Config`, `EnterPlanMode`, `ExitPlanMode`
@@ -415,7 +420,7 @@ Only permissive licenses (MIT, Apache-2.0, BSD). Key deps: cobra (CLI), bubblete
 
 ## Key Design Decisions
 
-- Map-based ToolRegistry with runtime registration (plugins/MCP add tools without recompilation)
+- Map-based ToolRegistry with runtime registration (deferred tools load on demand, without recompilation)
 - `RuntimeContext` struct holds all registries — no global state
 - `context.Context` propagation everywhere for cancellation/timeout
 - JSONL sessions for interop with priorart/clawcode format

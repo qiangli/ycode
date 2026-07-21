@@ -22,10 +22,7 @@ func withFakeXDG(t *testing.T) string {
 func TestOpenCode_WriteInstructions(t *testing.T) {
 	xdg := withFakeXDG(t)
 	o := &opencodeTool{}
-	caps := []CapabilitySpec{
-		{Name: "ycode-loom", Family: "loom"},
-	}
-	changed, err := o.WriteInstructions(context.Background(), caps)
+	changed, err := o.WriteInstructions(context.Background())
 	if err != nil {
 		t.Fatalf("WriteInstructions: %v", err)
 	}
@@ -36,11 +33,11 @@ func TestOpenCode_WriteInstructions(t *testing.T) {
 	if !strings.Contains(string(body), BeginMarker) {
 		t.Errorf("missing BEGIN marker:\n%s", body)
 	}
-	if !strings.Contains(string(body), "ycode-loom") {
-		t.Errorf("missing ycode-loom mention:\n%s", body)
+	if !strings.Contains(string(body), "`yc symbols <path>`") {
+		t.Errorf("missing yc built-in inventory:\n%s", body)
 	}
 
-	changed2, err := o.WriteInstructions(context.Background(), caps)
+	changed2, err := o.WriteInstructions(context.Background())
 	if err != nil {
 		t.Fatalf("WriteInstructions#2: %v", err)
 	}

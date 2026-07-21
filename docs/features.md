@@ -40,7 +40,6 @@ Cobra-based CLI with subcommands for different operational modes.
 | `ycode` | Interactive REPL mode (default) |
 | `ycode prompt <msg>` | One-shot agent prompt |
 | `ycode serve` | Start server (Gitea, Ollama, SearXNG on :31415) |
-| `ycode mcp serve` | Expose ycode tools via MCP server |
 | `ycode version` | Print version info |
 | `ycode doctor` | Health checks and readiness diagnostics |
 | `ycode login / logout` | OAuth authentication |
@@ -267,9 +266,6 @@ Five-layer memory system with multi-backend retrieval.
 ### Observability Tools
 `query_metrics`, `query_traces`, `query_logs`, `compact_context`
 
-### MCP Tools
-`MCP`, `ListMcpResources`, `ReadMcpResource`, `McpAuth`
-
 ### Misc
 `AskUserQuestion`, `SendUserMessage`, `AttemptCompletion`, `CreateRule`, `Sleep`, `NotebookEdit`, `RemoteTrigger`, `Config`, `TodoWrite`, `run_tests`
 
@@ -405,7 +401,7 @@ services are delegated to bashy or another external wrapper.
 ### Embedded Git Server
 - In-process Gitea instance (no external binary)
 - Local repos for agent swarm coordination
-- HTTP + MCP interfaces, workspace API for repo operations
+- HTTP interface, workspace API for repo operations
 - Tools: `GitServerRepoList`, `GitServerRepoCreate`, `GitServerWorktreeCreate`, `GitServerWorktreeMerge`, `GitServerWorktreeCleanup`
 - **Package**: `internal/gitserver/` (550 LOC, integration tests)
 
@@ -417,13 +413,14 @@ services are delegated to bashy or another external wrapper.
 
 ---
 
-## 14. MCP (Model Context Protocol)
+## 14. MCP (Model Context Protocol) — removed
 
-- **Server mode**: `ycode mcp serve` exposes ycode tools via MCP JSON-RPC
-- **Client**: connects to external MCP servers via stdio and SSE transports
-- Config-driven: `~/.config/ycode/mcp.json` or `.agents/ycode/mcp.json`
-- Tools: `MCP`, `ListMcpResources`, `ReadMcpResource`, `McpAuth`
-- **Package**: `internal/runtime/mcp/` (400 LOC, tests)
+ycode neither exposes nor consumes MCP. There is no `mcp` subcommand,
+no `/mcp/` HTTP route, no `internal/runtime/mcp` package, and no MCP
+config file is read. Foreign agents reach ycode's capabilities as
+`yc <verb>` shell built-ins by routing their bash backend through
+`ycode shell` — see [shell-agent.md](./shell-agent.md) and
+[plan-remove-mcp.md](./plan-remove-mcp.md).
 
 ---
 
@@ -440,7 +437,7 @@ services are delegated to bashy or another external wrapper.
 ### Permission Modes
 - **ReadOnly**: file reads and search only
 - **WorkspaceWrite**: file modifications within VFS boundaries
-- **DangerFullAccess**: shell, process control, MCP, external APIs
+- **DangerFullAccess**: shell, process control, external APIs
 
 ### Policy Engine
 - Rule-based decisions (Allow, Deny, Ask) with tool name glob + optional args matching

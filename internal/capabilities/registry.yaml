@@ -1,5 +1,5 @@
 # ycode capability registry — the single declared mapping of capability
-# families to their surfaces (config / CLI / HTTP / MCP).
+# families to their surfaces (config / CLI / HTTP).
 #
 # THIS FILE IS THE SOURCE OF TRUTH for which capabilities ycode claims
 # to expose where. It is consumed by:
@@ -7,8 +7,8 @@
 #   - internal/capabilities/embed.go    — embeds + parses this YAML at
 #                                          build time.
 #   - cmd/ycode/capabilities_test.go    — CI gate. Reflect-resolves
-#                                          every declared CLI verb,
-#                                          MCP tool, and config field
+#                                          every declared CLI verb
+#                                          and config field
 #                                          and fails the build on any
 #                                          dangling reference.
 #   - cmd/ycode/docs.go (future)        — `ycode docs <id>` augments
@@ -39,9 +39,12 @@
 #     them with the qualified-name convention `memory/import` (the
 #     lint accepts the slash form and walks one level deeper).
 #
-#  4. MCP TOOLS = exact tool names as they appear in ListTools(). Mirror
-#     the Name: literal. The lint asserts every name resolves to a real
-#     handler call.
+#  4. NO MCP SURFACE. ycode retired MCP entirely
+#     (docs/plan-remove-mcp.md): no `ycode mcp` command, no /mcp/ route,
+#     no tool handlers. Entries carried an `mcp:` key listing tool names
+#     that no longer resolve to anything; the key is gone. Do not
+#     re-add one — a declared surface the binary does not serve is what
+#     made foreign CLIs fail at startup.
 #
 #  5. CONFIG FIELDS = dotted struct paths starting at the Config root,
 #     case-matching the Go field name (NOT the json tag). Examples:
@@ -56,15 +59,16 @@
 #     validation becomes important, lift the route table out of serve.go
 #     into a slice the lint can introspect.
 #
-#  7. AUDIENCE is one or more of: `agent` (foreign LLMs via MCP),
+#  7. AUDIENCE is one or more of: `agent` (foreign LLMs and agentic
+#     CLIs, reaching ycode through the shell built-ins or HTTP API),
 #     `human` (operators using CLI / TUI / web), `ci` (scripts and
 #     CI/CD pipelines), `runtime` (internal ycode subsystems, not a
 #     user-facing surface). Captures who the family is FOR — drives
 #     parity decisions in future audits.
 #
 #  8. INTENTIONAL GAPS are documented in the `gaps` field. Use this
-#     for the "stdio lacks gitea/loom/pulse" pattern — a surface that
-#     is deliberately empty rather than missing-and-broken. The lint
+#     for a surface that is deliberately empty rather than
+#     missing-and-broken. The lint
 #     treats `gaps` entries as suppressed warnings.
 #
 # ============================================================================
@@ -76,23 +80,20 @@ capabilities:
     summary: agent-facing capability prompts (this registry's twin)
     audience: [agent]
     cli: [docs]
-    mcp: [list_docs, get_doc]
     http: []
     config: []
 
-  - id: mcp_server
-    summary: Model Context Protocol server commands
+  - id: pairing
+    summary: client pairing (bearer token) + serve manifest discovery
     audience: [agent, human]
     cli: [pair]
-    mcp: []
-    http: ["/mcp/", "/manifest", "/.well-known/ycode-manifest.json"]
+    http: ["/manifest", "/.well-known/ycode-manifest.json"]
     config: []
 
   - id: cobra_runner
-    summary: invoke ycode CLI verbs over MCP
+    summary: invoke ycode CLI verbs over the HTTP API
     audience: [agent]
     cli: []
-    mcp: [list_ycode_commands, run_ycode_command, run_ycode_command_workspace]
     http: ["/ycode/api/commands"]
     config: []
 
@@ -100,7 +101,6 @@ capabilities:
     summary: polyglot AST search across Go/Python/JS/TS/Rust/Java/C/Ruby
     audience: [agent, human]
     cli: []
-    mcp: [list_symbols, search_symbols_by_pattern, get_supported_languages]
     http: []
     config: []
 
@@ -108,7 +108,6 @@ capabilities:
     summary: agent-callable bash with parse/validate/sandbox hooks
     audience: [agent]
     cli: [shell, wrap]
-    mcp: [agent_shell]
     http: []
     config: []
 
@@ -116,15 +115,13 @@ capabilities:
     summary: ycode's universal skills (foreman et al.)
     audience: [agent, human]
     cli: [skill]
-    mcp: [list_skills, get_skill]
     http: []
     config: []
 
   - id: container
-    summary: sandbox compatibility MCP tool; execution is delegated outside ycode, for example to bashy
+    summary: sandbox compatibility shim; execution is delegated outside ycode, for example to bashy
     audience: [agent]
     cli: []
-    mcp: [sandbox_exec]
     http: []
     config: []
 
@@ -132,7 +129,6 @@ capabilities:
     summary: multi-provider routing and model selection
     audience: [human]
     cli: [model]
-    mcp: []
     http: ["/ycode/api/embed", "/ycode/api/embed/batch", "/ycode/api/embed/dimensions"]
     config: []
 
@@ -140,27 +136,22 @@ capabilities:
     summary: OTEL client telemetry export and local JSONL persistence
     audience: [agent, human]
     cli: [pulse]
-    mcp: []
     http: []
     config: [Observability.CollectorAddr, Observability.SampleRate, Observability.DataDir]
     gaps:
-      - "stdio MCP intentionally lacks this family — requires ycode serve"
+      - "requires a running `ycode serve` — no offline path"
 
   - id: memex
     summary: persistent agent memory (semantic + structured)
     audience: [agent, human]
     cli: [memory]
-    mcp: [memex_recall, memex_save, memex_list, memex_forget, memex_index, search_memex, list_memory_types]
     http: ["/memos/", "/graph/"]
     config: []
-    gaps:
-      - "MCP handlers need a memory.Manager dep; the always-on lint can't enumerate them. Tools are present in both stdio and HTTP composites."
 
   - id: repomap
     summary: token-budgeted file→symbol overview
     audience: [agent]
     cli: []
-    mcp: [build_repomap, repomap_for_files]
     http: []
     config: []
 
@@ -168,7 +159,6 @@ capabilities:
     summary: gfy-backed code knowledge graph (DQL-queryable)
     audience: [agent, human]
     cli: []
-    mcp: [graph_summary, graph_query, graph_node, graph_neighbors, graph_god_nodes, graph_shortest_path]
     http: ["/graph/"]
     config: []
 
@@ -176,7 +166,6 @@ capabilities:
     summary: GitHub PR / issue / check-run access
     audience: [agent]
     cli: []
-    mcp: [github_list_prs, github_get_pr, github_get_pr_diff, github_list_pr_comments, github_list_issues, github_get_issue, github_get_check_runs, github_create_pr, github_create_pr_review, github_create_issue_comment]
     http: []
     config: []
 
@@ -184,17 +173,15 @@ capabilities:
     summary: multi-agent task queue + autopilot loops
     audience: [human, agent]
     cli: [serve, prompt]
-    mcp: []
     http: ["/ycode/api/sessions", "/ycode/api/groups", "/ycode/api/commands", "/chat/"]
     config: [Tasks.CICommand, Tasks.AutoMerge, Chat.Enabled]
     gaps:
-      - "in-process orchestration primitives (Agent, Worker, Team, Handoff) intentionally not exposed via MCP — would let foreign agents fork ycode's runtime"
+      - "in-process orchestration primitives (Agent, Worker, Team, Handoff) intentionally have no remote surface — would let foreign agents fork ycode's runtime"
 
   - id: bootstrap
     summary: repo + foreign-tool initialization
     audience: [human]
     cli: [init, pair, wrap]
-    mcp: []
     http: []
     config: []
 
@@ -202,16 +189,12 @@ capabilities:
     summary: one-shot document text + LLM JSON extraction
     audience: [agent]
     cli: []
-    mcp: [extract_document, extract_json]
     http: ["/ycode/api/extract"]
     config: []
-    gaps:
-      - "extract_json is HTTP-only — stdio MCP doesn't construct a provider"
 
   - id: dev_lifecycle
     summary: operator commands (health, login, training, eval, healing)
     audience: [human]
     cli: [doctor, login, logout, heal, eval, features, version, config, tools]
-    mcp: []
     http: ["/ycode/api/health", "/ycode/api/status", "/debug/pprof/"]
     config: [SelfHeal.SinkPath]

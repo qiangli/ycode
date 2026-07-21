@@ -28,12 +28,13 @@ symbols.
 ## Tool surface
 
 - **`yc repomap [path] [--budget=N] [--query=<text>] [--json]`** —
-  shell built-in. `--budget` is in tokens; default fits in a comfortable
-  context slice. `--query` ranks files by relevance to a text query.
-- **MCP `build_repomap`** — walk a directory; same budget semantics.
-- **MCP `repomap_for_files`** — parse an explicit list of files
-  instead of walking. Use when you already know the files you care
-  about and want their symbol overview specifically.
+  shell built-in, and the only surface. `--budget` is in tokens;
+  default fits in a comfortable context slice. `--query` ranks files by
+  relevance to a text query.
+- **`yc symbols <path> [--json]`** — when you already know which files
+  you care about, skip the walk and list their declarations directly.
+
+There is no MCP or HTTP form; repomap is shell-only.
 
 ## Failure modes
 
@@ -49,5 +50,5 @@ symbols.
 - Filtered by query: `yc repomap --query="auth middleware"`
 - One-file detail (faster than treesitter from scratch each time):
   `yc symbols path/to/file.go`
-- MCP form: `build_repomap` with `{path, budget?, query?}`.
-- MCP for an explicit set: `repomap_for_files` with `{files: [...]}`.
+- Scoped to a subtree: `yc repomap ./internal --budget=6000`
+- Machine-readable: `yc repomap --json`

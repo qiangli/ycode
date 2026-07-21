@@ -18,9 +18,9 @@ import (
 // SAFEGUARDS (mirror of internal/docs/embed.go safeguard #8):
 //
 //   - This is the ONLY cobra entry point for the agent-facing docs.
-//     The MCP-tool surface (`mcp__ycode__docs`) and the AGENTS.md
-//     one-liner are separate registrations that all delegate to
-//     internal/docs functions — never duplicate the content here.
+//     The AGENTS.md one-liner is a separate registration that
+//     delegates to internal/docs functions — never duplicate the
+//     content here.
 //   - Output is plain markdown to stdout. No spinners, no colors, no
 //     pagers, no auto-confirmation prompts. Agents pipe and parse this;
 //     anything extra breaks scripted callers.
@@ -77,7 +77,7 @@ structural metadata for humans.`,
 }
 
 // newDocsCatalogCmd is the task→surfaces catalog. One pull tells an
-// agent which CLI / yc verb / MCP tool reaches a given capability,
+// agent which CLI verb or yc built-in reaches a given capability,
 // without making them probe every surface in turn. Same offline
 // contract as the rest of `ycode docs` — no I/O, no telemetry, exit
 // 0 for documented invocations.
@@ -88,7 +88,7 @@ func newDocsCatalogCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:          "catalog",
-		Short:        "Task → surfaces matrix (cli / yc / mcp) across ycode capabilities",
+		Short:        "Task → surfaces matrix (cli / yc) across ycode capabilities",
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cat, err := docs.LoadCatalog()

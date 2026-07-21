@@ -17,16 +17,18 @@ import (
 
 // --- Phase 1: Verify spec registration for previously-broken tools ---
 
-func TestSpecRegistration_MCPTools(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in short mode")
-	}
+// TestSpecRegistration_NoMCPTools is the inverse of the old
+// TestSpecRegistration_MCPTools: ycode is neither an MCP server nor a
+// client (docs/plan-remove-mcp.md), so these four specs must NOT be
+// advertised to the model — nothing registers their handlers, so a call
+// could only fail.
+func TestSpecRegistration_NoMCPTools(t *testing.T) {
 	r := NewRegistry()
 	RegisterBuiltins(r)
 
 	for _, name := range []string{"MCP", "ListMcpResources", "ReadMcpResource", "McpAuth"} {
-		if _, ok := r.Get(name); !ok {
-			t.Errorf("expected spec %q to be registered", name)
+		if _, ok := r.Get(name); ok {
+			t.Errorf("spec %q is registered but ycode has no MCP client", name)
 		}
 	}
 }
@@ -514,10 +516,6 @@ func TestNewToolPermissions(t *testing.T) {
 		name string
 		mode permission.Mode
 	}{
-		{"MCP", permission.DangerFullAccess},
-		{"ListMcpResources", permission.ReadOnly},
-		{"ReadMcpResource", permission.ReadOnly},
-		{"McpAuth", permission.DangerFullAccess},
 		{"TeamCreate", permission.WorkspaceWrite},
 		{"CronCreate", permission.DangerFullAccess},
 		{"CronList", permission.ReadOnly},
@@ -562,7 +560,6 @@ func TestNewToolsDiscoverable(t *testing.T) {
 
 	// All new tools should NOT be always-available (they're deferred).
 	deferredTools := []string{
-		"MCP", "ListMcpResources", "ReadMcpResource", "McpAuth",
 		"TeamCreate", "TeamDelete", "CronCreate", "CronDelete", "CronList",
 		"WorkerCreate", "WorkerGet", "WorkerObserve",
 		"TaskUpdate", "TaskStop", "TaskOutput",

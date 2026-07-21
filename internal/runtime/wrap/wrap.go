@@ -207,13 +207,15 @@ func Run(ctx context.Context, opts Options) (int, error) {
 
 	// Claude Code limitation warning — Bun-compiled binary doesn't
 	// honor NODE_OPTIONS=--require, so the Node runtime hook would be
-	// a no-op. The PATH shim still catches bash/git/rg/etc., and the
-	// supported integration path remains MCP via ~/.claude.json (see
-	// internal/selfinit/claude.go and the repo-root .mcp.json).
+	// a no-op. The PATH shim still catches bash/git/rg/etc.; the
+	// supported integration path is the shell one — route the agent's
+	// bash through `ycode shell -c` so the `yc <verb>` built-ins
+	// resolve in process (see internal/selfinit/claude.go,
+	// docs/shell-agent.md). ycode runs no MCP server.
 	if isResolvedProfile(&opts, "claude") {
 		_, _ = fmt.Fprintln(noticeOut,
 			"[ycode wrap] claude: Bun runtime — NODE_OPTIONS not honored; "+
-				"PATH-shim coverage only. MCP integration via .mcp.json / ~/.claude.json is the supported path.")
+				"PATH-shim coverage only. Route bash through `ycode shell -c` for the yc built-ins.")
 	}
 
 	// Install the wrap-parent's OTel exporter (file / console / off)

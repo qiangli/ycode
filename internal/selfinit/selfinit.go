@@ -18,10 +18,6 @@ type Options struct {
 	// per-tool config files. Defaults to os.UserHomeDir() if empty.
 	Home string
 
-	// DefaultPort is the fallback proxy port used when no manifest is
-	// readable. Defaults to selfinit.DefaultPort.
-	DefaultPort int
-
 	// YcodeVersion is the running ycode binary's version, mixed into
 	// the state hash so a binary upgrade triggers a refresh.
 	YcodeVersion string
@@ -102,8 +98,6 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		userGlobalFiles = append(userGlobalFiles, paths...)
 	}
 
-	caps := LoadCapabilities(home, opts.DefaultPort)
-
 	// Foreign-tool writers are opt-in. An explicit Tools list means
 	// the caller has already chosen to enumerate writers, so honor it.
 	// Otherwise consult the registry only if RegisterForeignTools or
@@ -123,12 +117,11 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		}
 	}
 
-	want := stateHash(opts.YcodeVersion, caps, detectedNames)
+	want := stateHash(opts.YcodeVersion, detectedNames)
 	if !opts.Force && repoRoot != "" && MarkerMatches(repoRoot, want) {
 		logger.Debug("selfinit: marker matches, skipping", "repo", repoRoot)
 		return Result{
 			RepoRoot:        repoRoot,
-			Capabilities:    capNames(caps),
 			UserGlobalFiles: userGlobalFiles,
 			Skipped:         true,
 		}, nil
@@ -136,14 +129,13 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 
 	res := Result{
 		RepoRoot:        repoRoot,
-		Capabilities:    capNames(caps),
 		UserFilesByTool: map[string][]string{},
 		UserGlobalFiles: userGlobalFiles,
 	}
 
 	// Project-scope writes (only inside a git repo).
 	if repoRoot != "" {
-		written, warnings, err := WriteProjectFiles(repoRoot, caps)
+		written, warnings, err := WriteProjectFiles(repoRoot)
 		if err != nil {
 			return res, err
 		}
@@ -156,7 +148,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	// User-scope writes (per detected foreign tool).
 	for _, t := range detected {
 		var files []string
-		if changed, err := t.WriteInstructions(ctx, caps); err != nil {
+		if changed, err := t.WriteInstructions(ctx); err != nil {
 			logger.Warn("selfinit: write instructions",
 				"tool", t.Name(), "err", err)
 		} else if changed {
@@ -175,15 +167,6 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	return res, nil
-}
-
-// capNames extracts the Name field from each spec for Result reporting.
-func capNames(caps []CapabilitySpec) []string {
-	out := make([]string, len(caps))
-	for i, c := range caps {
-		out[i] = c.Name
-	}
-	return out
 }
 
 // Per-process registry of Tool implementations. Per-tool files

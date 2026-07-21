@@ -1,149 +1,133 @@
 # Claude Code → ycode integration
 
-[Claude Code](https://docs.claude.com/en/docs/claude-code) speaks MCP
-natively. Pointing it at a running `ycode serve` exposes ycode's bash,
-treesitter, skills, gitea, loom, and pulse families as `mcp__ycode__*`
-tools that Claude's LLM can call directly. No plugins, no subprocess.
+[Claude Code](https://docs.claude.com/en/docs/claude-code) reaches ycode
+through its **bash tool**, not through MCP. Point Claude Code's shell at
+`ycode shell` and ycode's treesitter, repomap, code-graph, memory, and
+native-git capabilities resolve in-process as `yc <verb>` built-ins —
+no server, no daemon, no auth.
 
-This is the canonical recipe for the `ycode pair --tool claude-code`
-flow. For the cross-tool guide see
+> ycode runs **no MCP server**. Earlier revisions of this doc told you to
+> paste a `ycode` entry into `.mcp.json` or `~/.claude/settings.json`.
+> That endpoint no longer exists; a stale entry makes Claude Code report
+> a failed MCP server on every launch. Remove it. See
+> [plan-remove-mcp.md](./plan-remove-mcp.md).
+
+For the cross-tool guide see
 [integration-foreign-agents.md](./integration-foreign-agents.md). For
 opencode see [integration-opencode.md](./integration-opencode.md).
 
 ## Steps
 
-### 1. Start ycode serve
+### 1. Make the repo ycode-aware
 
 ```bash
-ycode serve
+ycode init
 ```
 
-The server prints its proxy URL and the composite MCP endpoint:
-```
-ycode MCP at       http://127.0.0.1:31415/mcp/  (ceiling: DangerFullAccess)
-```
+Writes `<repo>/.ycode/AGENTS.md` and splices a delimited capability block
+into `<repo>/CLAUDE.md` (and `~/.claude/CLAUDE.md` at user scope) so
+Claude's LLM knows the `yc` verbs exist. Details in
+[selfinit.md](./selfinit.md).
 
-### 2. Pair with Claude Code
+### 2. Install the PATH wrapper
+
+Claude Code's Bash tool spawns a bare `bash`, which Node resolves through
+the calling process's `$PATH`. That makes a PATH-scoped wrapper the clean
+interception point — scoped to one Claude Code session, not the system:
 
 ```bash
-ycode pair --tool claude-code --url http://127.0.0.1:31415
+mkdir -p ~/bin/ycode-wrappers
+printf '#!/usr/bin/env -S ycode shell --agent\n' > ~/bin/ycode-wrappers/bash
+chmod +x ~/bin/ycode-wrappers/bash
+ln -sf bash ~/bin/ycode-wrappers/zsh
 ```
 
-The printed JSON is a single MCP entry:
+The wrapper is a one-line shebang: ycode *is* bash (its `shell`
+subcommand speaks bash via `mvdan/sh` and adds the `yc <verb>`
+built-ins). `env -S` splits the shebang args on Linux; macOS splits
+natively.
 
-```json
-{
-  "mcpServers": {
-    "ycode": {
-      "type": "http",
-      "url": "http://127.0.0.1:31415/mcp/",
-      "headers": { "Authorization": "Bearer <token>" }
-    }
-  }
-}
+### 3. Launch Claude Code with the wrapper in front
+
+```bash
+PATH="$HOME/bin/ycode-wrappers:$PATH" claude
 ```
 
-Two valid destinations (Claude Code reads both):
+Every `Bash` tool call now runs through ycode's agent-mode shell: the
+`yc` verbs are available, and the hint engine writes suggestions to
+stderr when a plain command (`grep -rn`, `find -name`) has a better `yc`
+answer.
 
-- **`.mcp.json` at the project root** — project-scoped, the recommended
-  spot when you want this pairing only inside one tree. Claude Code
-  reads it from `getCwd()` (`reference/claude-code/services/mcp/config.ts:89`).
-- **`~/.claude/settings.json`, under the `mcpServers` key** —
-  user-global, applies to every Claude Code session. Same shape, just
-  nested under `mcpServers` in the wider settings object.
+## What Claude gets
 
-`~/.mcp.json` (without the `.claude/` prefix) is **not** a Claude Code
-path — don't use it.
-
-### 3. Restart Claude Code
-
-The new tools appear with the `mcp__ycode__` prefix Claude Code applies
-to MCP servers (`reference/claude-code/services/mcp/mcpStringUtils.ts:39-51`).
-Sample names visible to the LLM:
-
-| Family | Tools |
+| Capability | Command |
 |---|---|
-| shell | `mcp__ycode__agent_shell` |
-| treesitter | `mcp__ycode__list_symbols`, `mcp__ycode__search_symbols_by_pattern`, `mcp__ycode__find_symbol_references` |
-| skills | `mcp__ycode__list_skills`, `mcp__ycode__get_skill` |
-| gitea | `mcp__ycode__list_repos`, `mcp__ycode__create_pull_request`, `mcp__ycode__list_issues`, … |
-| loom | `mcp__ycode__loom_lease`, `mcp__ycode__loom_push`, `mcp__ycode__loom_merge`, `mcp__ycode__loom_status`, `mcp__ycode__loom_release` |
-| pulse | `mcp__ycode__query_traces`, `mcp__ycode__query_logs`, `mcp__ycode__query_metrics`, … |
+| Declarations in a file or dir | `yc symbols <path>` |
+| Workspace symbol search | `yc search-symbols <pattern> [path]` |
+| Callers / references | `yc refs <symbol>` |
+| Repo orientation | `yc repomap [--budget=N] [--query=…]` |
+| Code knowledge graph (DQL) | `yc graph "<query>"` |
+| Pure-Go git | `yc git <log\|status\|diff\|branch\|show\|blame>` |
+| Semantic memory | `yc remember "<fact>"` / `yc recall <query>` |
+| Structured test/LSP/exec output | `yc test --json`, `yc lsp <action> --json`, `yc run --json -- <cmd>` |
+| Capability discovery | `yc help`, `yc manifest`, `ycode docs <topic>` |
 
-The `mcp__<server>__` prefix means the ycode tools never collide with
-Claude Code built-ins (e.g. `Bash`, `Read`, `Grep`).
+These are Go functions dispatched before `$PATH` lookup — they cannot be
+shadowed, and they cost a function call rather than a subprocess.
 
-## Calling shell from Claude Code
+### Why route Bash through ycode rather than leave it alone
 
-`mcp__ycode__agent_shell` requires a `cwd` argument when called over
-HTTP (an absolute path; relative or missing paths return a structured
-error in stderr without running the command):
+- The LLM gets the `yc` built-ins without a tool-list change.
+- Pre/post-exec hints from ycode's agent-mode catalog fire on stderr
+  (e.g. suggesting `yc search-symbols` when the agent ran `grep -r`).
+- Telemetry flows through ycode's pulse stack.
 
-```json
-{
-  "command": "ls -la",
-  "cwd": "/Users/you/projects/your-project"
-}
+For plain bash the behavior is identical to `/bin/bash`; the wrapper is
+not a sandbox.
+
+## Alternative paths
+
+If the PATH wrapper doesn't take (some builds exec `/bin/sh` or a
+hardcoded shell), two fallbacks:
+
+- **`PreToolUse` hook** — rewrite `updatedInput.command` to prepend
+  `ycode shell --agent -c`. Invasive and finicky; recipe in
+  [shell-agent.md](./shell-agent.md).
+- **Ask in the prompt** — "Use `ycode shell --agent --json -c \"yc symbols
+  ./src\"`". Claude's existing Bash tool runs whatever you ask. Fine for
+  ad-hoc use, useless for consistency.
+
+Verify which case you're in with a logging wrapper:
+
+```sh
+#!/bin/bash
+echo "[wrapper saw: $@]" >> /tmp/claude-bash-trace.log
+exec /bin/bash "$@"
 ```
 
-The LLM should pass its own project root (Claude Code already exposes
-this via env). Each call gets its own bash session at the requested
-cwd; the shared runtime is never mutated, so concurrent Claude sessions
-on different projects don't collide.
-
-### Why pick mcp__ycode__agent_shell over Claude Code's built-in Bash
-
-Claude Code ships its own `Bash` tool. Both coexist; the LLM picks
-based on tool descriptions. Use `mcp__ycode__agent_shell` when:
-
-- The LLM wants in-process `yc <verb>` builtins (`yc symbols`,
-  `yc search-symbols`, `yc refs`, `yc repomap`, `yc graph`, `yc git`,
-  `yc remember`, `yc recall`, `yc sandbox`).
-- Pre/post-exec hints from ycode's agent-mode catalog are useful
-  (e.g. suggesting `yc search-symbols` when the agent ran `grep -r`).
-- Telemetry should flow through ycode's pulse stack.
-
-For plain bash the built-in is fine.
+If the log fills when Claude runs commands, the ycode wrapper will work.
 
 ## Permission modes
 
-Claude Code has 6 permission modes
-(`reference/claude-code/permissions/...`):
+Claude Code's own permission modes gate the `Bash` tool before anything
+reaches ycode: `bypassPermissions` allows it silently, `acceptEdits` and
+`default` prompt, `plan` blocks it outright. In `plan` mode the `yc`
+verbs are unreachable along with everything else bash-shaped.
 
-| Mode | What ycode tools see |
-|---|---|
-| `bypassPermissions` | All `mcp__ycode__*` tools allowed without prompts. |
-| `acceptEdits` | File-touching tools allowed; `mcp__ycode__agent_shell` and `mcp__ycode__loom_*` writes prompt. |
-| `plan` | Read-only — only `mcp__ycode__list_*`, `mcp__ycode__loom_status`, `mcp__ycode__query_*` allowed; bash and writes blocked. |
-| `default` | Safe tools (`Read`, `Glob`, `Grep`, `LS`, `ToolSearch`) allowed; everything else, including all `mcp__ycode__*` tools, prompts. |
+Underneath, `ycode shell -c` defaults to `DangerFullAccess` — the same
+posture as `/bin/bash`. Tighten it per invocation:
 
-Permission decisions happen on the Claude Code side; the request never
-reaches ycode if the user denies. ycode's own `--mcp-permission`
-ceiling (default `danger-full-access`) is server-side defense in depth
-— set it to `workspace-write` or `read-only` for a stricter cap that
-Claude Code can't override.
-
-## Loom worked example
-
-Claude Code dispatches sub-agents via its `Agent` tool. To give each
-sub-agent an isolated git workspace (Gitea-backed clone + branch +
-author identity that converges through ycode's merger/CI gate), use
-loom:
-
-```text
-1. Parent calls mcp__ycode__loom_lease per sub-agent
-   → returns {loom_id, path, branch, clone_url, author_*}
-2. Parent spawns sub-agents via the Agent tool, each working in
-   cwd=lease.path
-3. As each finishes:
-     mcp__ycode__loom_push  → commit + push lease branch
-     mcp__ycode__loom_merge → open PR against main
-4. Parent polls mcp__ycode__loom_status; merger ticks every 10s,
-   runs CI per PR, merges on green via Gitea's API
-5. Parent calls mcp__ycode__loom_release per lease
+```bash
+ycode shell -c --permission read-only "ls /etc"
+ycode shell -c --permission workspace-write "./build.sh"
 ```
 
-See [loom.md](./loom.md) for the standalone walkthrough.
+## Parallel sub-agents
+
+Claude Code dispatches sub-agents via its `Agent` tool, which share one
+working tree. To give each sub-agent an isolated git workspace, use the
+sibling AgentOS command `bashy weave` — ycode's own loom substrate was
+MCP-only and no longer exists. Start with `bashy weave guide`.
 
 ## Telemetry: Claude Code → pulse
 
@@ -155,60 +139,36 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
 export OTEL_SERVICE_NAME=claude-code
 ```
 
-Claude Code's spans/metrics/logs land in pulse alongside ycode's own
-and any other paired client.
+Claude Code's spans/metrics/logs land in pulse alongside ycode's own and
+any other paired client. This is independent of the shell integration —
+it works whether or not the wrapper is installed.
 
 ## Common gotchas
 
-- **`~/.mcp.json` is not a Claude Code path.** Use project `.mcp.json`
-  or `~/.claude/settings.json`.
-- **Tool prefix differs from opencode.** Claude Code: `mcp__ycode__loom_lease`.
-  opencode: `ycode_loom_lease`. Same ycode server feeds both — the
-  prefix is the client's choice, not ycode's.
-- **Token rotation invalidates the snippet.** `rm
-  ~/.agents/ycode/server.token && ycode pair --tool claude-code` to
-  re-pair.
-- **`cwd` is required over HTTP.** The LLM must pass an absolute path
-  to `mcp__ycode__agent_shell`. Relative or missing paths return a
-  structured stderr error.
-- **Server ceiling vs Claude Code permission.** ycode enforces
-  `min(server-ceiling, client-policy)`. If the server runs with
-  `--mcp-permission read-only`, write tools fail at ycode regardless
-  of Claude Code's mode.
-
-## Better integration: future paths
-
-The MCP path above is production-stable today. Two surfaces in Claude
-Code could yield tighter integration if the marginal value is worth
-the build:
-
-- **Plugin manifest** (`reference/claude-code/plugins/`,
-  `types/plugin.ts`). A plugin at `~/.claude/plugins/ycode/plugin.json`
-  could pre-bundle the MCP entry so users get one-click install
-  through Claude Code's marketplace, plus optional bundled hooks and
-  skills. Highest leverage; not yet shipped on the ycode side.
-- **`PostToolUse` hook** (`reference/claude-code/schemas/hooks.ts`).
-  Lets ycode observe every Claude tool invocation post-execution and
-  feed telemetry/scoring back into ycode's memex. Observation-only —
-  hooks fire after the tool runs, can't change tool selection — but a
-  good signal channel for "what does the LLM actually do here".
-
-Neither is required. The MCP path is sufficient for everything bash +
-gitea + loom needs today.
+- **A `ycode` entry in `mcpServers` breaks startup.** ycode serves no
+  MCP endpoint. Delete the entry from `.mcp.json` and
+  `~/.claude/settings.json`.
+- **`yc: command not found`.** The wrapper isn't in `$PATH` for that
+  session, or Claude isn't spawning a bare `bash`. Run the trace check
+  above.
+- **Wrapper is global when you didn't want it.** Set `PATH` inline on
+  the `claude` invocation rather than in `~/.zshrc`.
+- **`ycode serve` is not required.** The shell path is entirely local.
+  `serve` only matters for the HTTP API and telemetry.
 
 ## Verification (smoke test)
 
-After steps 1-3, in a Claude Code session:
+With the wrapper active, in a Claude Code session:
 
-> "Run `pwd` here using the ycode MCP server."
+> "Run `yc symbols ./internal/docs` and show me the output."
 
-Expected: Claude calls `mcp__ycode__agent_shell` with `command=pwd`
-and `cwd=<your project root>`. The envelope's `stdout` matches your
-project path.
+Expected: Claude calls its `Bash` tool; the output is a treesitter symbol
+listing, not `command not found`.
 
 Then:
 
-> "List the loom lease status."
+> "Run `yc manifest` and tell me which built-ins are available."
 
-Expected: Claude calls `mcp__ycode__loom_status` (read-only, allowed
-in plan mode too). Returns `[]` if no leases are active.
+Expected: a JSON capability catalog naming `symbols`, `search-symbols`,
+`refs`, `repomap`, `graph`, `git`, `remember`, `recall`, `test`, `lsp`,
+`run`.

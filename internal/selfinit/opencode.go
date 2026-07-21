@@ -47,12 +47,12 @@ func opencodeUserMemoryPath() (string, error) {
 
 // WriteInstructions splices the L2 awareness block into OpenCode's
 // user-scope AGENTS.md.
-func (o *opencodeTool) WriteInstructions(_ context.Context, caps []CapabilitySpec) (bool, error) {
+func (o *opencodeTool) WriteInstructions(_ context.Context) (bool, error) {
 	path, err := opencodeUserMemoryPath()
 	if err != nil {
 		return false, err
 	}
-	body := buildInstructionsBlock(caps)
+	body := buildInstructionsBlock()
 	existing, _ := os.ReadFile(path)
 	new := SpliceBlock(string(existing), body)
 	return writeIfChanged(path, []byte(new))

@@ -17,8 +17,7 @@ const frontmatterDelim = "---"
 // slugPattern restricts topic slugs to a portable, URL-safe form. The
 // linter rejects any filename that doesn't match. Keep this strict —
 // loosening it (allowing dots, underscores, capitals) breaks the
-// `ycode docs <topic>` shell ergonomics and the MCP tool's argument
-// validation.
+// `ycode docs <topic>` shell ergonomics and the `--list` JSON contract.
 var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // rawFrontmatter is the shape of the YAML block at the top of every

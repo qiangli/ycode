@@ -1,48 +1,62 @@
 ---
 topic: sandbox
-summary: run a command in a podman-isolated alpine container
+summary: isolated command execution — delegated outside ycode
 when: a tool wants to run untrusted code, or you need network=none isolation
 audience: agent
 max_lines: 80
 ---
 
-`yc sandbox` runs an arbitrary command inside a fresh podman container
-(image: alpine, network=none, cwd mounted at `/workspace`). The
-container is destroyed after the command exits. Use it whenever you
-want a command's filesystem and network blast radius constrained to a
-disposable surface.
+Lean ycode does not execute sandboxed commands itself. The `yc sandbox`
+built-in is a compatibility stub: it validates its arguments and then
+exits non-zero with
+
+```
+yc sandbox: not available in lean ycode; run ycode under bashy or
+another external sandbox wrapper
+```
+
+The former MCP `sandbox_exec` tool no longer exists — ycode neither
+exposes nor consumes MCP, so there is nothing to fall back to on that
+path either.
 
 ## When to use this
 
-- A user-supplied script needs to execute and you don't fully trust it.
-- You want to verify a build / test step in clean isolation, no DNS,
-  no stray env vars from the parent shell.
-- You're an automated agent loop and want a defence-in-depth boundary
-  between the model's suggestions and the user's filesystem.
+Read this topic to decide *where* to run an isolated command, then run
+it there:
 
-## What it does NOT do
+- **Under the AgentOS shell** — `bashy` embeds the podman engine
+  (`bashy podman …`), so an isolated container (alpine,
+  `--network=none`, cwd mounted at `/workspace`) is one command away.
+  This is the supported path.
+- **Under any external wrapper you already trust** — a `podman run`
+  / `docker run` invocation issued through `bash`, a devcontainer, a VM.
+  ycode has no opinion; it just won't do it for you.
 
-- It is NOT a long-running container — one command per call.
-- It has NO network access by default. Tools that need to fetch
-  packages will fail; that's the point.
-- It is NOT available where `podman` is missing. Falls back to a
-  clear error; nothing silently runs unsandboxed.
+If neither is available, say so and do not silently run the command
+unsandboxed. That is the whole point of the boundary.
+
+## What ycode still guarantees
+
+- `yc sandbox` never runs the command on the host. Failure is loud and
+  the exit code is non-zero; nothing degrades to an unisolated run.
+- ycode's own permission modes (ReadOnly / WorkspaceWrite /
+  DangerFullAccess) still gate `bash` and the file tools. Sandboxing is
+  defence in depth on top of that, not a replacement for it.
 
 ## Failure modes
 
 | Symptom | Fix |
 |---|---|
-| `podman: command not found` | Install podman; sandbox can't start. |
-| Command fails with DNS errors | Expected — `--network=none` blocks resolution. |
-| File written inside sandbox vanished | Sandbox cwd is `/workspace`, mounted from your cwd; writes there persist, writes elsewhere don't. |
-| `permission denied` accessing /Users/... | Only the cwd is mounted; sibling directories aren't visible. |
+| `yc sandbox: not available in lean ycode` | Expected. Run the command through `bashy` or an external container wrapper. |
+| Looking for `sandbox_exec` in your tool list | Removed with MCP. There is no replacement tool inside ycode. |
+| Command fails with DNS errors under an external sandbox | Expected when the wrapper sets `--network=none`. |
+| File written inside the container vanished | Only the mounted cwd persists; writes elsewhere die with the container. |
 
 ## Exact calls
 
-- One-shot exec: `yc sandbox -- python3 unsafe.py`
-- With args + redirect (let the host shell handle the redirect):
-  `yc sandbox -- sh -c 'tar tzvf incoming.tgz | head'`
-- Test isolation: `yc sandbox -- go build ./...` (will fail offline if
-  module cache misses — confirm modules are pre-fetched first).
-- MCP equivalent (works on both stdio and HTTP transports):
-  `mcp__ycode__sandbox_exec` with `{command: "python3 unsafe.py"}`.
+- Check the stub's contract: `yc sandbox -- true` (exits 1 with the
+  delegation message; useful to confirm you are on lean ycode).
+- Supported isolated run, via the sibling shell's embedded engine:
+  `bashy podman run --rm --network=none -v "$PWD:/workspace" -w /workspace alpine python3 unsafe.py`
+- Raw external wrapper, no ycode involvement:
+  `podman run --rm --network=none -v "$PWD:/workspace" -w /workspace alpine sh -c 'tar tzvf incoming.tgz | head'`

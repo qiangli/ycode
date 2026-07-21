@@ -28,20 +28,15 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 		apiBase = proxy + "/ycode/"
 	}
 
+	// No "mcp" endpoint: ycode retired MCP entirely
+	// (docs/plan-remove-mcp.md). serve mounts no /mcp/ route and there is
+	// no `ycode mcp serve` command, so advertising either made every
+	// foreign CLI that read this manifest report a dead server at
+	// startup. The manifest describes what the binary actually serves.
 	endpoints := map[string]string{
 		"proxy": proxy,
 		"api":   apiBase,
-		"mcp":   proxy + "/mcp/",
 		"nats":  natsURL,
-	}
-
-	// Composite endpoint — the single URL every foreign agent points at
-	// (Agent OS syscall interface). Always live: treesitter and skills
-	// families are always-on. Per-family routes (/gitea-mcp/, /loom-mcp/,
-	// /pulse/) were retired in schemaVersion 4; clients using those URLs
-	// must switch to /mcp/.
-	mcpHTTP := map[string]string{
-		"ycode": proxy + "/mcp/",
 	}
 
 	authBlock := map[string]any{
@@ -59,17 +54,11 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 	}
 
 	manifest := map[string]any{
-		"schemaVersion": "4",
+		// schemaVersion 5 drops the "mcp" block and the "mcp" endpoint.
+		"schemaVersion": "5",
 		"ycodeVersion":  ycodeVersion,
 		"endpoints":     endpoints,
 		"auth":          authBlock,
-		"mcp": map[string]any{
-			"stdio": map[string]any{
-				"command": "ycode",
-				"args":    []string{"mcp", "serve"},
-			},
-			"http": mcpHTTP,
-		},
 		"discoveryFiles": map[string]string{
 			"pid":   filepath.Join(dir, "serve.pid"),
 			"port":  filepath.Join(dir, "serve.port"),
@@ -79,10 +68,15 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 
 	// Canvas block — agent-rendered generative UI service. Foreign agents
 	// discover the A2UI op format ycode speaks, the bus event types that
-	// carry it, the MCP tools that publish, the canvas route to subscribe
-	// to via WS, and the well-known default session. The block is only
-	// advertised when the API stack is up (canvas requires a bus to
-	// publish onto). See internal/runtime/widget and docs/strategy.md.
+	// carry it, the canvas route to subscribe to via WS, and the
+	// well-known default session. The block is only advertised when the
+	// API stack is up (canvas requires a bus to publish onto). See
+	// internal/runtime/widget and docs/strategy.md.
+	//
+	// The former "tools" map named the MCP tools that published onto the
+	// canvas (agent_render_a2ui / agent_render_widget). Those went with
+	// MCP; nothing registers them today, so the map is gone rather than
+	// pointing callers at tool names they cannot call.
 	if apiUp {
 		canvas := map[string]any{
 			"a2uiVersion":    "v0.9",
@@ -91,14 +85,10 @@ func buildServeManifest(home string, port, natsPort int, stack *stackComponents,
 			"defaultSession": "canvas-default",
 			"route":          proxy + "/ycode/canvas/",
 			"wsTemplate":     proxy + "/ycode/api/sessions/{sessionId}/ws",
-			"tools": map[string]string{
-				"renderA2UI":   "agent_render_a2ui",
-				"renderWidget": "agent_render_widget",
-			},
-			// First-class A2UI surfaces ycode publishes. Foreign agents
-			// can target these by surfaceId via agent_render_a2ui to
-			// enrich the view without redeclaring the component tree.
-			// v2 adds "memos", "kanban", "lanes" as those tracks ship.
+			// First-class A2UI surfaces ycode publishes. Clients target
+			// these by surfaceId to enrich the view without redeclaring
+			// the component tree. v2 adds "memos", "kanban", "lanes" as
+			// those tracks ship.
 			"firstClassSurfaces": []string{"health"},
 		}
 		manifest["canvas"] = canvas
@@ -117,7 +107,6 @@ func publicServeManifest(full map[string]any) map[string]any {
 		"schemaVersion": full["schemaVersion"],
 		"ycodeVersion":  full["ycodeVersion"],
 		"endpoints":     copyStringMapOmitting(full["endpoints"], nil),
-		"mcp":           publicMCPBlock(full["mcp"]),
 	}
 	if auth, ok := full["auth"].(map[string]any); ok {
 		out["auth"] = map[string]any{
@@ -131,20 +120,6 @@ func publicServeManifest(full map[string]any) map[string]any {
 		// re-publish unauthenticated. Foreign agents need the route,
 		// wsTemplate, A2UI version, and tool names to interop.
 		out["canvas"] = canvas
-	}
-	return out
-}
-
-// publicMCPBlock returns the http URLs only (stdio command + discoveryFiles
-// are local-only and stripped).
-func publicMCPBlock(in any) map[string]any {
-	m, _ := in.(map[string]any)
-	if m == nil {
-		return map[string]any{}
-	}
-	out := map[string]any{}
-	if h, ok := m["http"]; ok {
-		out["http"] = h
 	}
 	return out
 }

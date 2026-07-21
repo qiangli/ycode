@@ -86,7 +86,6 @@ internal/
     agent.go         Sub-agent spawning
     container.go     Container operations
     skill.go         Skill loading and execution
-    mcp_tools.go     Model Context Protocol tools
     deferred.go      Deferred tool activation helpers
 
   container/         Podman container management
@@ -370,7 +369,6 @@ type Registry struct {
 | `find_references` | LSP | "references", "used by" |
 | `query_metrics/logs` | Observability | "metrics", "logs", "traces" |
 | `agent` | Orchestration | "spawn", "delegate" |
-| `mcp_*` | MCP | Model Context Protocol tools |
 
 ### Tool Deferral System
 
@@ -530,7 +528,6 @@ Configs are merged in order (later overrides earlier):
 │ DANGER-FULL-ACCESS                                             │
 │ • Shell execution (bash)                                       │
 │ • Process control                                              │
-│ • MCP tool execution                                           │
 │ • Container privileged operations                              │
 ├────────────────────────────────────────────────────────────────┤
 │ WORKSPACE-WRITE (Default)                                      │

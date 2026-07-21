@@ -56,8 +56,8 @@ func TestIndexPresent(t *testing.T) {
 }
 
 // TestTopicsStable asserts Topics() returns alphabetically-sorted
-// slugs. The shell and MCP surfaces rely on stable ordering so the
-// index a human operator sees matches the JSON `--list` output.
+// slugs. The shell surface relies on stable ordering so the index a
+// human operator sees matches the JSON `--list` output.
 func TestTopicsStable(t *testing.T) {
 	topics, err := Topics()
 	if err != nil {

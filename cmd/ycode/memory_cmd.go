@@ -21,7 +21,8 @@ import (
 //
 //   - the in-process agent loop (memory_save / memory_recall / ...
 //     tools in internal/tools)
-//   - foreign agents via MCP (memex_recall, memex_save, ...)
+//   - foreign agents through the shell built-ins (`yc remember` /
+//     `yc recall`)
 //   - the embedded /memos/ HTTP UI
 //
 // There was NO CLI surface for an operator to bulk-list, export, or
@@ -44,8 +45,8 @@ func newMemoryCmd() *cobra.Command {
 		Use:   "memory",
 		Short: "Inspect and manage memex memory (list / show / forget / export)",
 		Long: "Operator surface for the persistent memex memory layer. " +
-			"For agent-callable equivalents see the memex_* MCP tools and " +
-			"the in-session memory_save / memory_recall tools.",
+			"For agent-callable equivalents see the `yc remember` / `yc recall` " +
+			"shell built-ins and the in-session memory_save / memory_recall tools.",
 	}
 	cmd.AddCommand(
 		newMemoryListCmd(),
@@ -60,7 +61,7 @@ func newMemoryCmd() *cobra.Command {
 // rooted at ~/.agents/ycode/memory (global) + <cwd>/.agents/ycode/memory
 // (project). Heavy components (Bleve searcher, vector index, dreamer)
 // are NOT wired — the CLI operates on the raw store and doesn't need
-// semantic search. Mirrors openMemexForMCP for the stdio MCP path.
+// semantic search.
 func openMemoryManagerForCLI() (*memory.Manager, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

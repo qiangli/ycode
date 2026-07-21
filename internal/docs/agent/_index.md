@@ -1,29 +1,31 @@
 # ycode capabilities — agent index
 
-You are reading this because something invoked `ycode docs` (or
-`mcp__ycode__get_doc` with no `topic` arg). This file is the curated
-entry point to every ycode capability that exposes a verb you can call.
+You are reading this because something invoked `ycode docs`. This file
+is the curated entry point to every ycode capability that exposes a
+verb you can call.
 
-**Drill into a topic:** `ycode docs <topic>` (or `mcp__ycode__get_doc({topic: "<topic>"})`).
+**Drill into a topic:** `ycode docs <topic>`.
 **Dump everything for a system prompt:** `ycode docs --all` (one-time, not per turn).
 **Machine-readable index:** `ycode docs --list` (JSON).
 
+ycode has two callable surfaces: the `yc <verb>` shell built-ins
+(in-process, active in any bash that routes through `ycode shell -c`)
+and ycode's own in-session tools. There is no ycode MCP server — ycode
+neither exposes nor consumes MCP; do not try to configure one.
+
 ## Topics
 
-- **mcp** — connect to ycode's MCP composite endpoint (HTTP) or stdio
-  server. Start here if you've never used ycode before; most other
-  capabilities are reachable as MCP tools.
-- **loom** — v1 substrate underneath weave: per-call MCP verbs
-  for lease / push / merge / release. The local parallel subagent
-  surface is now the sibling `bashy weave` command, not a ycode
-  subcommand.
-- **sandbox** — `yc sandbox` podman-isolated command execution.
-- **memex** — semantic memory: save / recall / list / forget.
-- **repomap** — token-budgeted repo orientation (`yc repomap`).
 - **code-exploration** — AST-aware code search and orientation:
   `yc symbols`, `yc search-symbols`, `yc refs`, `yc repomap`. Use
   before reaching for `grep -rn` / `find -name '*.go'` / `ctags -R`
   on Go / Python / JS-TS / Rust / Java / C / Ruby sources.
+- **repomap** — token-budgeted repo orientation (`yc repomap`).
+- **memex** — semantic memory: save / recall / list / forget, via
+  `yc remember` / `yc recall` and the in-session `memory_*` tools.
+- **sandbox** — isolated command execution. Delegated outside lean
+  ycode; read the topic before assuming it runs.
+- **loom** — where the parallel-workspace fan-out went. ycode no
+  longer ships it; the surface is the sibling `bashy weave` command.
 - **structured-output** — typed JSON envelopes for tests, LSP queries,
   and arbitrary commands: `yc test --json`, `yc lsp <action> --json`,
   `yc run --json`. Use when exit-code + duration are data, not text.
@@ -42,7 +44,8 @@ entry point to every ycode capability that exposes a verb you can call.
   or any bash that routes through `ycode shell -c`), run `yc help` or
   `yc manifest`.
 - For **live endpoint discovery** (URLs, ports, tokens for a running
-  `ycode serve`), read `~/.agents/ycode/manifest.json`.
+  `ycode serve`), read `~/.agents/ycode/manifest.json`. It advertises
+  HTTP endpoints only — no MCP servers.
 - For **parallel subagent orchestration**, use the sibling AgentOS shell
   surface: `bashy weave guide`.
 

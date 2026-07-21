@@ -28,7 +28,6 @@ func TestLandingPage(t *testing.T) {
 		_, body := httpGet(t, baseURL(t)+"/")
 		requiredTiles := []string{
 			"/chat/",
-			"/mcp/",
 			"/healthz",
 		}
 		for _, tile := range requiredTiles {

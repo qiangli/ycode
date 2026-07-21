@@ -9,7 +9,7 @@
 //     reference block — or, in greenfield repos where neither exists,
 //     creates AGENTS.md as a fully ycode-owned file (no delimiter);
 //   - detects installed agentic tools (claude, opencode, codex, gemini)
-//     and writes their user-scope MCP config + memory files;
+//     and writes their user-scope memory files;
 //   - drops a marker so subsequent invocations no-op when state hasn't
 //     drifted.
 //
@@ -19,9 +19,8 @@
 //
 // Layered design:
 //
-//   - types.go       — shared types (CapabilitySpec, Tool, Markers).
-//   - manifest.go    — reads ~/.agents/ycode/manifest.json + baseline
-//     fallback + ycode-binary bootstrap detection.
+//   - types.go       — shared types (Tool, Result).
+//   - manifest.go    — serve-manifest location + default port.
 //   - injection.go   — markdown delimited-block splicing utilities.
 //   - marker.go      — <repo>/.agents/ycode/.init-done state hash.
 //   - detect.go      — git-root walker, tool detection.

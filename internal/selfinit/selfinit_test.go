@@ -20,7 +20,7 @@ type stubTool struct {
 func (s *stubTool) Name() string { return s.name }
 func (s *stubTool) Detect() bool { return s.detected }
 
-func (s *stubTool) WriteInstructions(_ context.Context, _ []CapabilitySpec) (bool, error) {
+func (s *stubTool) WriteInstructions(_ context.Context) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.instructionCalls++
@@ -49,9 +49,6 @@ func TestRun_FullFlow(t *testing.T) {
 	}
 	if res.Skipped {
 		t.Errorf("first run should not be skipped")
-	}
-	if len(res.Capabilities) == 0 {
-		t.Errorf("expected baseline caps registered")
 	}
 	if stub.instructionCalls != 1 {
 		t.Errorf("stub not invoked: instr=%d", stub.instructionCalls)
