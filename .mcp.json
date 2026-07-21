@@ -1,12 +1,3 @@
 {
-  "mcpServers": {
-    "ycode-stdio": {
-      "command": "ycode",
-      "args": ["mcp", "serve"]
-    },
-    "ycode": {
-      "type": "http",
-      "url": "http://127.0.0.1:31415/mcp/"
-    }
-  }
+  "mcpServers": {}
 }
