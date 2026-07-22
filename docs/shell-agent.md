@@ -75,20 +75,74 @@ Within a single process, hints dedup by ID (you don't get spammed with the same 
 
 ### Claude Code
 
-Claude Code does **not** expose a settings.json key to swap the `Bash`
-tool's underlying shell binary. The integration paths that work today,
-in order of cleanliness:
+Claude Code exposes **`CLAUDE_CODE_SHELL`** — an env var naming the
+binary its `Bash` tool executes. That is the supported, first-choice
+integration; the wrapper and hook recipes below are fallbacks for
+agents that offer no equivalent.
 
 > ycode used to offer an MCP server as the first-choice path. It no
 > longer runs one — MCP was removed in full (see
 > [plan-remove-mcp.md](./plan-remove-mcp.md)). Do not add a `ycode`
 > entry to any `mcpServers` map; there is nothing listening.
 
-#### Path 1 — PATH wrapper (recommended)
+#### Path 1 — `CLAUDE_CODE_SHELL` (recommended)
 
-See Path 3 below — pointing Claude Code's `bash` at `ycode shell --agent`
-is the supported integration and the one `ycode init` documents in
-`~/.claude/CLAUDE.md`.
+Set it in the `env` block of `~/.claude/settings.json`:
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_SHELL": "/Users/you/bin/ycode-shell"
+  }
+}
+```
+
+Two constraints shape the recipe:
+
+1. **It takes a bare binary path — no arguments.** `ycode shell --agent`
+   cannot be written inline, so point it at a one-line wrapper:
+
+   ```bash
+   cat > ~/bin/ycode-shell <<'EOF'
+   #!/bin/sh
+   exec ycode shell --agent "$@"
+   EOF
+   chmod +x ~/bin/ycode-shell
+   ```
+
+2. **The env block is read at startup.** Restart Claude Code after
+   editing it; a change mid-session has no effect.
+
+##### The `-c -l` invocation contract
+
+Claude Code invokes the shell as:
+
+```
+<shell> -c -l '<command>'
+```
+
+Anything named by `CLAUDE_CODE_SHELL` **must** parse that the way bash
+does — `-c` marks a command as pending, option parsing continues, and
+the *first non-option positional* is the command string. A naive
+getopt binds `-c` to the immediately-following token and runs `-l` as
+the command, with the real payload landing in `$0`:
+
+```
+<the real command>: line 1: -l: command not found      # exit 127
+```
+
+That failure mode takes the shell down for every Bash call, so it is
+worth testing before you commit to a shell:
+
+```sh
+"$CLAUDE_CODE_SHELL" -c -l 'echo ok'    # must print: ok
+```
+
+`ycode shell` handles this (`parseShellArgs` in
+`cmd/ycode/shell_dispatch.go`, with regression cases in
+`shell_dispatch_test.go`); `-l`, `-i`, `-r`, `-s`, `-v`, `-x`,
+`--posix`, `--norc`, `--noprofile` and friends are accepted and applied
+as no-ops for bash compatibility.
 
 #### Path 2 — PreToolUse hook that rewrites Bash commands
 
@@ -117,7 +171,11 @@ This is invasive and finicky — debug carefully. Recommended only when
 you want global agent-mode coverage and the PATH wrapper isn't an
 option.
 
-#### Path 3 — PATH wrapper (per-session, recommended for full bash interception)
+#### Path 3 — PATH wrapper (per-session)
+
+Superseded by Path 1 for Claude Code itself, but still the right shape
+for any agent that spawns a bare `bash` and offers no shell-override
+setting.
 
 Inspection of `reference/open-claude-code/v2/src/tools/bash.mjs`
 (Claude Code clone) shows the Bash tool is implemented as:
@@ -177,9 +235,10 @@ explicitly. Claude's existing Bash tool runs whatever you ask:
 
 ### OpenCode
 
-**Bash override** — same recipe as Claude Code: point OpenCode's bash
-tool (or its PATH) at `ycode shell --agent -c`. There is no MCP path;
-ycode runs no MCP server.
+**Bash override** — OpenCode has no `CLAUDE_CODE_SHELL` equivalent, so
+use the Path 3 shape: point OpenCode's bash tool (or its PATH) at
+`ycode shell --agent -c`. There is no MCP path; ycode runs no MCP
+server.
 
 ### Codex
 
