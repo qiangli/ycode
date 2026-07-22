@@ -285,7 +285,9 @@ Effects: read
 set -e
 YC="${YCODE:-bashy}"
 REPO="${YCODE_REPO:-qiangli/ycode}"
-VER="${YCODE_TEST_VERSION:?set YCODE_TEST_VERSION to the tag to test, e.g. v0.3.0-dev}"
+# Accept the shared QA poller's variable too: it drives every repo's harness
+# and exports OUTPOST_TEST_VERSION regardless of which project it is testing.
+VER="${YCODE_TEST_VERSION:-${OUTPOST_TEST_VERSION:?set YCODE_TEST_VERSION (or OUTPOST_TEST_VERSION, exported by the shared QA poller) to the tag to test, e.g. v0.3.0-dev}}"
 BASEV="${VER%%-*}"
 os=$("$YC" uname -s | awk '{ print tolower($0) }')
 case "$os" in
