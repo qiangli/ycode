@@ -16,6 +16,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
+	"github.com/qiangli/coreutils/pkg/telemetry"
+
 	"github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/buildinfo"
 	"github.com/qiangli/ycode/internal/cli"
@@ -167,6 +169,29 @@ func detectExtractProvider(model string) api.Provider {
 // realMain contains the actual main logic.
 // It returns errors that may be healable by the self-heal system.
 func realMain() error {
+	// Install the shared telemetry plane from the standard OTEL env vars.
+	//
+	// ycode imports coreutils/pkg/telemetry (ExecMiddleware and friends) but
+	// never called Init, and Init is what installs a TracerProvider. Without it
+	// the global provider stays a no-op, so every span ycode produced went
+	// nowhere no matter how the environment was configured — which is why
+	// setting OTEL_EXPORTER_OTLP_ENDPOINT, the thing every doc tells you to do,
+	// exported nothing and did so silently.
+	//
+	// Init is self-gating: with no exporter selected it installs the propagator
+	// and returns, costing nothing. So this is safe on every verb, including
+	// the ones that have no business emitting telemetry.
+	//
+	// This also gives ycode the file sink (OTEL_TRACES_EXPORTER=file) for free,
+	// so ycode records spans with no collector running — the same property
+	// bashy has, from the same code.
+	shutdown := telemetry.Init(context.Background())
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = shutdown(ctx)
+	}()
+
 	return rootCmd.Execute()
 }
 
