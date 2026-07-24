@@ -1,6 +1,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)"
+DHNT_BIN_DIR ?= $(HOME)/.local/bin
 
 # Used by the wildcard expansion in TAG_LIST below — Make's $(,) is
 # not portable.
@@ -172,26 +173,25 @@ tidy: ## Run mod tidy, fmt, and vet
 clean: ## Remove build artifacts
 	rm -rf bin/ dist/
 
-install: build ## Install the ycode binary to ~/bin/ (no shims — opt in via scripts/shims/)
-	@mkdir -p ~/bin
+install: build ## Install ycode into $$DHNT_BIN_DIR (no shims)
+	@mkdir -p "$(DHNT_BIN_DIR)"
 	@# Unlink before copy so the new binary lands on a fresh inode. On macOS,
 	@# overwriting a signed Mach-O in place leaves the kernel's per-vnode
 	@# cs_blob cache pointing at the previous signature; the next exec then
 	@# fails validation ("load code signature error 2") and the process is
 	@# SIGKILLed before main() — surfaced as `zsh: killed ycode ...`.
-	@rm -f ~/bin/ycode
-	@cp bin/ycode ~/bin/ycode
-	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - ~/bin/ycode 2>/dev/null || true; fi
+	@rm -f "$(DHNT_BIN_DIR)/ycode"
+	@cp bin/ycode "$(DHNT_BIN_DIR)/ycode"
+	@if [ "$$(uname)" = "Darwin" ]; then codesign -f -s - "$(DHNT_BIN_DIR)/ycode" 2>/dev/null || true; fi
 	@# Drop-in shims (ollama, podman, docker, bash) are intentionally NOT
 	@# installed here. Routing those commands through ycode hijacks any tool
 	@# that polls them — e.g. an editor's container extension calling
 	@# `podman context ls` on a timer routes into a slow `ycode podman` and
 	@# piles up runaway processes; a `bash` shim in front of /bin/bash
 	@# hijacks every shell. Opt in explicitly only where you want it:
-	@# `cp scripts/shims/<name> ~/bin/<name>` (or wire a per-tool PATH
+	@# `cp scripts/shims/<name> $(DHNT_BIN_DIR)/<name>` (or wire a per-tool PATH
 	@# wrapper) — never blanket-install bash.
-	@echo "Installed ycode to ~/bin/ (shims not installed; see scripts/shims/ to opt in)"
-	@echo 'Make sure ~/bin is in your PATH: export PATH="$$HOME/bin:$$PATH"'
+	@echo "Installed ycode to $(DHNT_BIN_DIR)/ (shims not installed)"
 
 all: build ## Full quality gate (alias for build)
 
