@@ -19,11 +19,12 @@ import (
 // from this table fails the test below.
 var hiddenCommands = map[string]features.Tier{
 	// Nothing behind them at all — the handler returns a canned string.
-	"plugin": features.TierWIP, // internal/plugins is never instantiated
-	"loop":   features.TierWIP, // no timer, no goroutine, nothing to stop
-	"team":   features.TierWIP, // registry is built and discarded at app.go:319
-	"cron":   features.TierWIP, // same
-	"clear":  features.TierWIP, // internal/runtime/session has no clear/truncate API
+	"plugin":  features.TierWIP, // internal/plugins is never instantiated
+	"loop":    features.TierWIP, // no timer, no goroutine, nothing to stop
+	"team":    features.TierWIP, // registry is built and discarded at app.go:319
+	"cron":    features.TierWIP, // same
+	"clear":   features.TierWIP, // internal/runtime/session has no clear/truncate API
+	"compact": features.TierWIP, // CompactContext computes a result and discards it; the session is never rewritten
 
 	// Real work exists to do, and it is small — but not done yet.
 	"doctor": features.TierExperimental, // real checks live in the cobra `ycode doctor`

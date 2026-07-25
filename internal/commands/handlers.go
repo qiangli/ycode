@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/dhnt/dhnt/catalog"
 	"github.com/qiangli/ycode/internal/api"
@@ -14,6 +15,7 @@ import (
 	"github.com/qiangli/ycode/internal/runtime/codegraph"
 	"github.com/qiangli/ycode/internal/runtime/config"
 	"github.com/qiangli/ycode/internal/runtime/session"
+	"github.com/qiangli/ycode/internal/runtime/task"
 	"github.com/qiangli/ycode/internal/selfinit"
 )
 
@@ -30,6 +32,20 @@ func commitSkillBody() string {
 	// loudly.
 	return "Stage changes by name and write a Conventional Commits message."
 }
+
+// reviewScope normalizes the optional scope argument shared by the review-style
+// commands, falling back to the caller's default when none was given.
+func reviewScope(args, fallback string) string {
+	if s := strings.TrimSpace(args); s != "" {
+		return s
+	}
+	return fallback
+}
+
+// retryPrompt carries the recovered message from /retry's handler to its
+// AgentPrompt. A package-level value is acceptable here only because a TUI
+// runs one turn at a time; it is written and read within a single dispatch.
+var retryPrompt atomic.Value
 
 // PlanModeController manages plan mode state.
 type PlanModeController interface {
@@ -68,6 +84,10 @@ type RuntimeDeps struct {
 	// cloudbox-pooled models alongside the other sources. May be nil —
 	// DiscoverModels treats nil as "skip cloudbox".
 	CloudboxLister api.CloudboxLister
+
+	// Tasks lists the background tasks this session is tracking. Nil when the
+	// host has no task registry (thin client, shell mode).
+	Tasks func() []*task.Task
 
 	// RetryTurn removes the last turn and returns the last user message for re-execution.
 	RetryTurn func() (string, error)
@@ -292,7 +312,12 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 	})
 
 	r.Register(&Spec{
-		Name:        "compact",
+		Name: "compact",
+		// HIDDEN: App.CompactContext computes a CompactionResult and discards it —
+		// neither it nor Runtime.CompactNow writes back to the session. Wiring this
+		// up would report "compacted N messages" over an unchanged conversation,
+		// which is a better-disguised lie than the placeholder it replaced.
+		Tier:        features.TierWIP,
 		Description: "Compact conversation by summarizing older messages",
 		Category:    "workspace",
 		Examples: []string{
@@ -326,7 +351,21 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			if prompt == "" {
 				return "", fmt.Errorf("no previous user message to retry")
 			}
+			// Stash it for AgentPrompt below. RetryTurn has just REMOVED the
+			// message from the session, so by the time AgentPrompt runs there is
+			// nothing left to read it back from — and AgentPrompt only receives
+			// args, which is empty on a bare /retry. The handler is the last
+			// place the text exists.
+			retryPrompt.Store(prompt)
 			return fmt.Sprintf("Retrying with: %s", prompt), nil
+		},
+		// Without this the turn was removed and never re-sent: "/retry" did the
+		// destructive half of its job and stopped.
+		AgentPrompt: func(args string) string {
+			if v, ok := retryPrompt.Load().(string); ok {
+				return v
+			}
+			return strings.TrimSpace(args)
 		},
 	})
 
@@ -578,7 +617,26 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			"any tasks in progress",
 		},
 		Handler: func(ctx context.Context, args string) (string, error) {
-			return "No tasks running.", nil
+			// This used to return "No tasks running." unconditionally, which
+			// reads as a finding but was a constant — it said the same thing
+			// with ten tasks in flight.
+			if deps.Tasks == nil {
+				return "", fmt.Errorf("task tracking is not available in this session")
+			}
+			tasks := deps.Tasks()
+			if len(tasks) == 0 {
+				return "No tasks running.", nil
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "%d task(s):\n", len(tasks))
+			for _, t := range tasks {
+				fmt.Fprintf(&b, "  %s  %-9s  %s", truncateID(t.ID), t.Status, t.Description)
+				if t.Error != "" {
+					fmt.Fprintf(&b, "\n      error: %s", truncateForSummary(t.Error, 160))
+				}
+				b.WriteString("\n")
+			}
+			return b.String(), nil
 		},
 	})
 
@@ -589,6 +647,16 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Usage:       "/plan [query]",
 		Category:    "mode",
 		Handler:     planHandler(deps),
+		// A bare /plan is a pure toggle and must NOT start a turn; only
+		// `/plan <query>` has something to plan. Returning "" suppresses the
+		// agentic turn, which is why the empty case is meaningful here.
+		AgentPrompt: func(args string) string {
+			q := strings.TrimSpace(args)
+			if q == "" || q == "status" {
+				return ""
+			}
+			return q
+		},
 	})
 
 	// Automation commands
@@ -625,17 +693,16 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			"check my pull request",
 		},
 		Handler: func(ctx context.Context, args string) (string, error) {
-			scope := "staged"
-			if args != "" {
-				scope = strings.TrimSpace(args)
-			}
-			return fmt.Sprintf("Starting code review (scope: %s)...\n\n"+
-				"Analyzing changes for:\n"+
-				"- Code quality and correctness\n"+
-				"- Potential bugs and edge cases\n"+
-				"- Style and convention adherence\n"+
-				"- Security concerns\n\n"+
-				"[Review agent would execute here with scope: %s]", scope, scope), nil
+			return fmt.Sprintf("Reviewing %s...", reviewScope(args, "staged changes")), nil
+		},
+		// The old handler printed "[Review agent would execute here]" — the
+		// text WAS the spec. A review is an agent turn, not something a
+		// handler computes, so hand the turn to the agent.
+		AgentPrompt: func(args string) string {
+			return fmt.Sprintf("Review %s. Report concrete defects with file:line, "+
+				"ordered most severe first: correctness bugs and edge cases, then style "+
+				"and convention breaks. If you find nothing worth changing, say so plainly "+
+				"rather than inventing findings.", reviewScope(args, "the staged changes"))
 		},
 	})
 
@@ -645,12 +712,12 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Usage:       "/advisor [topic]",
 		Category:    "automation",
 		Handler: func(ctx context.Context, args string) (string, error) {
-			topic := "general architecture"
-			if args != "" {
-				topic = strings.TrimSpace(args)
-			}
-			return fmt.Sprintf("Advisor analyzing: %s\n\n"+
-				"[Advisor agent would analyze the codebase and provide insights on: %s]", topic, topic), nil
+			return fmt.Sprintf("Analyzing %s...", reviewScope(args, "the architecture")), nil
+		},
+		AgentPrompt: func(args string) string {
+			return fmt.Sprintf("Analyze this codebase and give architectural advice on %s. "+
+				"Ground every claim in files you actually read, and name them. Prefer a few "+
+				"load-bearing observations over a survey.", reviewScope(args, "its overall architecture"))
 		},
 	})
 
@@ -660,18 +727,14 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 		Usage:       "/security-review [path|staged]",
 		Category:    "automation",
 		Handler: func(ctx context.Context, args string) (string, error) {
-			scope := "staged changes"
-			if args != "" {
-				scope = strings.TrimSpace(args)
-			}
-			return fmt.Sprintf("Security review (scope: %s)...\n\n"+
-				"Checking for:\n"+
-				"- OWASP Top 10 vulnerabilities\n"+
-				"- Injection risks (SQL, command, XSS)\n"+
-				"- Authentication/authorization issues\n"+
-				"- Sensitive data exposure\n"+
-				"- Dependency vulnerabilities\n\n"+
-				"[Security review agent would execute here]", scope), nil
+			return fmt.Sprintf("Security review of %s...", reviewScope(args, "the staged changes")), nil
+		},
+		AgentPrompt: func(args string) string {
+			return fmt.Sprintf("Perform a security review of %s. Look for injection "+
+				"(SQL/command/XSS), authentication and authorization gaps, sensitive-data "+
+				"exposure, unsafe deserialization, and risky dependencies. Report each finding "+
+				"with file:line and a concrete exploit path — a finding you cannot show a path "+
+				"for is a guess, so label it as one.", reviewScope(args, "the staged changes"))
 		},
 	})
 
@@ -852,17 +915,17 @@ func planHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 			return "Currently in build mode (full access). Use /plan or shift+tab to enter plan mode.", nil
 		}
 
-		// /plan <query>: enter plan mode (if not already) with context.
+		// /plan <query>: enter plan mode (if not already) with context. The
+		// query itself is handed to the agent by planAgentPrompt — echoing it
+		// back, which is all this used to do, is not planning.
 		if !deps.PlanMode.InPlanMode() {
 			result, err := deps.PlanMode.EnterPlanMode()
 			if err != nil {
 				return "", err
 			}
-			return result + "\n\nPlan context: " + args, nil
+			return result, nil
 		}
-
-		// Already in plan mode with a query — just echo the context.
-		return "Already in plan mode. Plan context: " + args, nil
+		return "Already in plan mode.", nil
 	}
 }
 

@@ -331,3 +331,55 @@ func TestIntegration_NonPrintMode_KeepsChromeOnStdout(t *testing.T) {
 		t.Errorf("unexpected stderr output in non-print mode: %q", gotStderr)
 	}
 }
+
+// A slash command with an AgentPrompt must reach the LLM in headless mode.
+//
+// This is the regression that mattered: RunPrompt dispatched the command,
+// printed the handler's preamble, and returned nil — never consulting
+// AgentPrompt. So `ycode -p /review` emitted "Reviewing the staged changes..."
+// and EXITED 0. A gate checking only the exit code would have recorded a pass
+// while no review had happened. The answer, not the preamble, must land on
+// stdout.
+func TestIntegration_PrintMode_SlashCommandChainsAgenticTurn(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test skipped in -short")
+	}
+
+	const answer = "REVIEW-VERDICT-OK"
+	app, stdout, stderr := newPrintModeTestApp(t, answer, true)
+	defer app.Close()
+
+	if err := app.RunPrompt(context.Background(), "/review staged"); err != nil {
+		t.Fatalf("RunPrompt returned error: %v", err)
+	}
+
+	gotStdout := stdout.String()
+	if !strings.Contains(gotStdout, answer) {
+		t.Errorf("stdout = %q, want the agent's answer %q — the agentic turn did not run", gotStdout, answer)
+	}
+	// The handler's preamble is chrome, not the answer.
+	if strings.Contains(gotStdout, "Reviewing ") {
+		t.Errorf("handler preamble leaked into stdout: %q", gotStdout)
+	}
+	if !strings.Contains(stderr.String(), "Reviewing ") {
+		t.Errorf("handler preamble should go to stderr; stderr = %q", stderr.String())
+	}
+}
+
+// A command whose AgentPrompt returns empty (a bare /plan toggle) must NOT
+// start a turn — and must not be treated as an error either.
+func TestIntegration_PrintMode_EmptyAgentPromptStartsNoTurn(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test skipped in -short")
+	}
+
+	app, stdout, _ := newPrintModeTestApp(t, "SHOULD-NOT-APPEAR", true)
+	defer app.Close()
+
+	if err := app.RunPrompt(context.Background(), "/version"); err != nil {
+		t.Fatalf("RunPrompt returned error: %v", err)
+	}
+	if strings.Contains(stdout.String(), "SHOULD-NOT-APPEAR") {
+		t.Errorf("a command with no AgentPrompt started an agentic turn: %q", stdout.String())
+	}
+}

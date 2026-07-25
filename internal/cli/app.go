@@ -278,11 +278,19 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 	// Set up command registry.
 	cmdRegistry := commands.NewRegistry()
 	commands.RegisterBuiltins(cmdRegistry, &commands.RuntimeDeps{
-		SessionID:      sess.ID,
-		MessageCount:   sess.MessageCount,
-		Model:          func() string { return app.config.Model },
-		ProviderKind:   func() string { return app.providerKind },
-		CostSummary:    func() string { return "Cost tracking not yet available" },
+		SessionID:    sess.ID,
+		MessageCount: sess.MessageCount,
+		Model:        func() string { return app.config.Model },
+		ProviderKind: func() string { return app.providerKind },
+		// The tracker has been counting real tokens and cost all along
+		// (usageTracker.AddWithModel, below); only this callback was stubbed,
+		// so /cost reported "not yet available" while the numbers sat next to it.
+		CostSummary: func() string {
+			if !app.usageTracker.HasRequests() {
+				return "No LLM requests yet this session."
+			}
+			return app.usageTracker.Summary()
+		},
 		Version:        o.Version,
 		WorkDir:        o.WorkDir,
 		Config:         cfg,
@@ -292,6 +300,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		Provider:       app.provider,
 		ModelSwitcher:  app.SwitchModel,
 		CloudboxLister: app.cloudboxLister,
+		Tasks:          func() []*task.Task { return app.taskRegistry.List() },
 		RetryTurn:      app.RetryTurn,
 		RevertFiles:    app.RevertFiles,
 		TrackUsage: func(inputTokens, outputTokens, cacheCreate, cacheRead int) {
@@ -589,7 +598,7 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 	if strings.HasPrefix(userPrompt, "/") {
 		rest := userPrompt[1:]
 		name, args, _ := strings.Cut(rest, " ")
-		if _, ok := a.commands.Get(name); ok {
+		if spec, ok := a.commands.Get(name); ok {
 			// Enable progressive output in one-shot mode so long-running
 			// commands (e.g. /init with LLM call) stream lines immediately.
 			// In print mode, progress/delta chrome goes to stderr so stdout
@@ -608,12 +617,35 @@ func (a *App) RunPrompt(ctx context.Context, userPrompt string) (rerr error) {
 			if err != nil {
 				return err
 			}
+
+			// A command with an AgentPrompt is only HALF deterministic: the
+			// handler does its local work, then the real answer comes from an
+			// agentic turn. Returning here would print the handler's preamble
+			// ("Reviewing staged changes…") and exit 0 — a silent no-op wearing
+			// a success code, which is worse than failing. The TUI already
+			// chains this (tui.go); headless must too, or /review, /advisor and
+			// /security-review are a lie in print mode.
+			if spec.AgentPrompt != nil {
+				// An empty prompt means "no turn needed" — a bare /plan is a
+				// pure toggle, for instance. That is a legitimate outcome, not
+				// a failure, so fall through to the normal print-and-return.
+				if next := strings.TrimSpace(spec.AgentPrompt(args)); next != "" {
+					if output != "" {
+						fmt.Fprintln(a.chromeWriter(), output)
+					}
+					userPrompt = next
+					goto agentic
+				}
+			}
+
 			if output != "" {
 				fmt.Fprint(a.stdout, output)
 			}
 			return nil
 		}
 	}
+
+agentic:
 
 	if a.provider == nil {
 		return fmt.Errorf("no LLM provider configured; set one of ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, XAI_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, DEEPSEEK_API_KEY, ZAI_API_KEY (GLM), or run `ycode login`")

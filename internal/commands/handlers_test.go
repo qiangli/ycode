@@ -109,6 +109,7 @@ func TestAllCommandsExecute(t *testing.T) {
 		"rename": true, // requires args
 		"commit": true, // requires Provider
 		"search": true, // requires args
+		"tasks":  true, // requires a task registry — saying "none running" without one would be a guess
 	}
 
 	for _, spec := range r.ListAll() {
@@ -260,7 +261,7 @@ func TestCommandsWithSubcommands(t *testing.T) {
 		{"review", "", "staged"},
 		{"review", "branch", "branch"},
 		// /advisor
-		{"advisor", "", "general architecture"},
+		{"advisor", "", "the architecture"},
 		{"advisor", "performance", "performance"},
 		// /security-review
 		{"security-review", "", "staged changes"},
@@ -561,11 +562,29 @@ func TestPlanCommand(t *testing.T) {
 		if !containsStr(output, "Entered plan mode") {
 			t.Errorf("expected enter message, got: %s", output)
 		}
-		if !containsStr(output, "refactor the auth module") {
-			t.Errorf("expected query context in output, got: %s", output)
-		}
 		if !mock.inPlan {
 			t.Error("expected plan mode to be active")
+		}
+		// The query is no longer ECHOED back — echoing it was the whole of the
+		// old behaviour, and it planned nothing. It is now handed to the agent.
+		spec, ok := r.Get("plan")
+		if !ok || spec.AgentPrompt == nil {
+			t.Fatal("/plan must carry its query into an agentic turn")
+		}
+		if got := spec.AgentPrompt("refactor the auth module"); got != "refactor the auth module" {
+			t.Errorf("AgentPrompt = %q, want the query verbatim", got)
+		}
+	})
+
+	// A bare toggle has nothing to plan, so it must NOT start a turn.
+	t.Run("bare_toggle_starts_no_turn", func(t *testing.T) {
+		r := NewRegistry()
+		RegisterBuiltins(r, &RuntimeDeps{PlanMode: &mockPlanMode{}})
+		spec, _ := r.Get("plan")
+		for _, args := range []string{"", "   ", "status"} {
+			if got := spec.AgentPrompt(args); got != "" {
+				t.Errorf("AgentPrompt(%q) = %q, want empty (no turn)", args, got)
+			}
 		}
 	})
 }
