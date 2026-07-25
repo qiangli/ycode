@@ -9,6 +9,7 @@ import (
 
 	"github.com/dhnt/dhnt/catalog"
 	"github.com/qiangli/ycode/internal/api"
+	"github.com/qiangli/ycode/internal/features"
 	"github.com/qiangli/ycode/internal/runtime/builtin"
 	"github.com/qiangli/ycode/internal/runtime/codegraph"
 	"github.com/qiangli/ycode/internal/runtime/config"
@@ -126,9 +127,11 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 			var b strings.Builder
 			b.WriteString("Available commands:\n\n")
 			cats := r.ListByCategory()
-			for cat, specs := range cats {
+			// Sorted keys: ranging a map directly made this output differ
+			// between runs, which defeats both diffing and golden tests.
+			for _, cat := range Categories(cats) {
 				fmt.Fprintf(&b, "## %s\n", cat)
-				for _, s := range specs {
+				for _, s := range cats[cat] {
 					usage := ""
 					if s.Usage != "" {
 						usage = fmt.Sprintf("  (%s)", s.Usage)
@@ -271,7 +274,9 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 
 	// Workspace commands
 	r.Register(&Spec{
-		Name:        "clear",
+		Name: "clear",
+		// HIDDEN: no session clear/truncate API exists yet — the handler only prints
+		Tier:        features.TierWIP,
 		Description: "Clear conversation history",
 		Category:    "workspace",
 		Examples: []string{
@@ -523,7 +528,9 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 
 	// Discovery commands
 	r.Register(&Spec{
-		Name:        "doctor",
+		Name: "doctor",
+		// HIDDEN: the real checks live in the cobra `ycode doctor`; this one returns a fixed "All checks passed."
+		Tier:        features.TierExperimental,
 		Description: "Run health checks",
 		Category:    "discovery",
 		Handler: func(ctx context.Context, args string) (string, error) {
@@ -545,7 +552,9 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 	})
 
 	r.Register(&Spec{
-		Name:        "skills",
+		Name: "skills",
+		// HIDDEN: skillengine discovery is unwired, and `install-bundled` reports success without installing
+		Tier:        features.TierExperimental,
 		Description: "List available skills",
 		Usage:       "/skills [list|install-bundled]",
 		Category:    "discovery",
@@ -667,7 +676,9 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 	})
 
 	r.Register(&Spec{
-		Name:        "team",
+		Name: "team",
+		// HIDDEN: the team registry is constructed and discarded (app.go); this CRUD is an echo
+		Tier:        features.TierWIP,
 		Description: "Manage parallel agent teams",
 		Usage:       "/team [list|create|delete] [name]",
 		Category:    "automation",
@@ -698,7 +709,9 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 	})
 
 	r.Register(&Spec{
-		Name:        "cron",
+		Name: "cron",
+		// HIDDEN: same as /team — no scheduler is reachable from here
+		Tier:        features.TierWIP,
 		Description: "Manage scheduled recurring tasks",
 		Usage:       "/cron [list|create|delete] [args]",
 		Category:    "automation",
@@ -735,7 +748,9 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 	})
 
 	r.Register(&Spec{
-		Name:        "loop",
+		Name: "loop",
+		// HIDDEN: no timer and no goroutine; "Loop stopped." stops nothing
+		Tier:        features.TierWIP,
 		Description: "Run a command on a recurring interval",
 		Usage:       "/loop [interval] [command] (e.g., /loop 5m /review)",
 		Category:    "automation",
@@ -765,7 +780,9 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 
 	// Plugin commands
 	r.Register(&Spec{
-		Name:        "plugin",
+		Name: "plugin",
+		// HIDDEN: internal/plugins is never instantiated anywhere
+		Tier:        features.TierWIP,
 		Description: "Manage plugins (list, install, enable, disable, uninstall, update)",
 		Usage:       "/plugin [list|install|enable|disable|uninstall|update] [name]",
 		Category:    "plugin",

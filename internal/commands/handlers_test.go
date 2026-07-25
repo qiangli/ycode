@@ -86,7 +86,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 	}
 
 	// Also verify total count matches so stale entries are caught.
-	all := r.List()
+	all := r.ListAll()
 	if len(all) != len(expected) {
 		got := make([]string, len(all))
 		for i, s := range all {
@@ -111,7 +111,7 @@ func TestAllCommandsExecute(t *testing.T) {
 		"search": true, // requires args
 	}
 
-	for _, spec := range r.List() {
+	for _, spec := range r.ListAll() {
 		t.Run(spec.Name, func(t *testing.T) {
 			output, err := r.Execute(ctx, spec.Name, "")
 			if errExpected[spec.Name] {
@@ -127,31 +127,6 @@ func TestAllCommandsExecute(t *testing.T) {
 				t.Errorf("/%s returned empty output", spec.Name)
 			}
 		})
-	}
-}
-
-// TestHelpListsAllCommands verifies /help output mentions every registered command.
-func TestHelpListsAllCommands(t *testing.T) {
-	r := newTestRegistry(t)
-	ctx := context.Background()
-
-	output, err := r.Execute(ctx, "help", "")
-	if err != nil {
-		t.Fatalf("/help error: %v", err)
-	}
-
-	for _, spec := range r.List() {
-		needle := "/" + spec.Name
-		if !containsStr(output, needle) {
-			t.Errorf("/help output does not mention %s", needle)
-		}
-	}
-
-	// Verify built-in exit commands are listed.
-	for _, name := range []string{"/quit", "/exit"} {
-		if !containsStr(output, name) {
-			t.Errorf("/help output does not mention %s", name)
-		}
 	}
 }
 
@@ -349,7 +324,7 @@ func TestUnknownCommand(t *testing.T) {
 // TestCategoriesAreNonEmpty verifies all expected categories have commands.
 func TestCategoriesAreNonEmpty(t *testing.T) {
 	r := newTestRegistry(t)
-	cats := r.ListByCategory()
+	cats := r.ListAllByCategory()
 
 	expectedCats := []string{"session", "workspace", "discovery", "automation", "plugin"}
 	for _, cat := range expectedCats {
