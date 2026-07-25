@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -140,5 +141,97 @@ func TestDoWithRetry_ContextCancellation(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error on cancelled context")
+	}
+}
+
+// A caller with a deadline shorter than the first backoff must NOT sleep into it.
+//
+// This is the tool-pre-activation case: classification gets a 3s budget, the first
+// backoff is 1-2s, so sleeping it would burn the budget and then die mid-attempt.
+// The retry could never have succeeded — it could only turn a fast, honest failure
+// into `context deadline exceeded` plus a wasted API call. So: one attempt, return.
+func TestDoWithRetry_DoesNotSleepPastDeadline(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(429) // retryable, so only the deadline check can stop the loop
+		w.Write([]byte(`{"error":"overloaded"}`))
+	}))
+	defer srv.Close()
+
+	// Well under the ~1-2s first backoff.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	resp, err := doWithRetry(ctx, srv.Client(), func() (*http.Request, error) {
+		return http.NewRequest("GET", srv.URL, nil)
+	})
+	elapsed := time.Since(started)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("expected an error from a server that only ever returns 429")
+	}
+
+	if got := attempts.Load(); got != 1 {
+		t.Errorf("expected exactly 1 attempt when no budget remains for a retry, got %d", got)
+	}
+
+	// THE ASSERTION THAT MATTERS. Previously this path entered the retry branch,
+	// logged "retrying API request", then blocked in a select that lost the race to
+	// ctx.Done() — so the caller got `context deadline exceeded`, which names the
+	// symptom and BURIES the cause. The server said 429; that is what should
+	// surface. Reporting the deadline instead sends whoever reads the log looking
+	// for a slow network when the real answer was rate limiting.
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("returned the deadline instead of the real cause: %v", err)
+	}
+	var status int
+	var classified *ClassifiedError
+	var apiErr *APIError
+	switch {
+	case errors.As(err, &classified):
+		status = classified.StatusCode
+	case errors.As(err, &apiErr):
+		status = apiErr.StatusCode
+	}
+	if status != 429 {
+		t.Errorf("expected the underlying 429 to surface, got %#v", err)
+	}
+
+	// And it must not have slept the backoff to get there.
+	if elapsed > time.Second {
+		t.Errorf("slept into the deadline instead of returning early: took %v", elapsed)
+	}
+}
+
+// The converse: a caller with room to spare still retries normally, so the
+// deadline check cannot silently disable retries for everyone.
+func TestDoWithRetry_StillRetriesWithAmpleDeadline(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(429)
+			w.Write([]byte(`{"error":"overloaded"}`))
+			return
+		}
+		w.WriteHeader(200)
+		w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := doWithRetry(ctx, srv.Client(), func() (*http.Request, error) {
+		return http.NewRequest("GET", srv.URL, nil)
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	resp.Body.Close()
+
+	if got := attempts.Load(); got != 2 {
+		t.Errorf("expected the retry to still happen with an ample deadline, got %d attempts", got)
 	}
 }

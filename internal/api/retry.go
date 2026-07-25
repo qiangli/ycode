@@ -20,6 +20,12 @@ const (
 	defaultInitialBackoff = 1 * time.Second
 	defaultMaxBackoff     = 128 * time.Second
 	defaultMaxRetries     = 8
+
+	// minRetryAttemptRoom is the slack a retry needs BEYOND its backoff delay for
+	// the attempt itself to be worth making. Without it a caller with a tight
+	// deadline sleeps the whole backoff and then dies mid-request, having spent an
+	// API call to learn nothing.
+	minRetryAttemptRoom = 250 * time.Millisecond
 )
 
 // APIError represents an API error with status code information.
@@ -79,6 +85,34 @@ func doWithRetry(ctx context.Context, client *http.Client, makeReq func() (*http
 				delay = serverWait
 				serverWait = 0
 			}
+
+			// NEVER SLEEP PAST THE CALLER'S DEADLINE.
+			//
+			// The backoff was written as if the budget were unbounded, but short-deadline
+			// callers exist: tool pre-activation gives classification 3s total, and the
+			// FIRST backoff is already 1-2s (1s base + up to 1s jitter). So one slow
+			// attempt would burn most of the budget sleeping and then blow the deadline
+			// mid-attempt — the retry could not have succeeded, it could only convert a
+			// fast, honest failure into `context deadline exceeded`, one extra API call,
+			// and two WARN lines the user sees.
+			//
+			// A retry is only worth attempting if the delay AND some room to actually
+			// make the call fit in what is left. Otherwise return what we already know.
+			if deadline, ok := ctx.Deadline(); ok {
+				if remaining := time.Until(deadline); remaining <= delay+minRetryAttemptRoom {
+					if lastErr == nil {
+						lastErr = ctx.Err()
+					}
+					slog.Debug("skipping retry: no budget left before the deadline",
+						"attempt", attempt+1,
+						"delay", delay.Round(time.Millisecond),
+						"remaining", remaining.Round(time.Millisecond),
+						"last_error", lastErr,
+					)
+					return nil, lastErr
+				}
+			}
+
 			yotel.RecordRetry(ctx, attempt, delay, classifyRetryReason(lastErr))
 			slog.Warn("retrying API request",
 				"attempt", attempt+1,

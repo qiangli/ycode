@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -55,6 +56,17 @@ func (r *Router) ClassifyTools(ctx context.Context, userMessage string) []string
 	// Make a single-shot LLM call. The caller owns the timeout context.
 	response, err := singleShot(ctx, best.Provider, best.Model, classifySystemPrompt, userMessage, classifyMaxTokens)
 	if err != nil {
+		// This tier is OPTIONAL — its contract is "returns nil if the call fails",
+		// and every caller already degrades cleanly. Running out of the caller's
+		// short budget is therefore an expected outcome, not an incident, so it
+		// must not reach the user as a warning: the run is fine, only a
+		// best-effort pre-activation was skipped. Anything OTHER than the budget
+		// running out is still unexpected and still warns.
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			slog.Debug("tool classification skipped: out of time budget",
+				"model", best.Model, "error", err)
+			return nil
+		}
 		slog.Warn("tool classification failed", "model", best.Model, "error", err)
 		return nil
 	}
