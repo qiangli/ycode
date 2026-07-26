@@ -11,7 +11,7 @@ ycode — pure Go CLI agent harness. Single static binary, Go 1.26+, permissive-
 - Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one-shot.
 - Core loop: `internal/runtime/conversation/runtime.go` — assemble request → provider → dispatch tool calls → repeat.
 - This checkout usually lives inside the **`dhnt/` umbrella** as a git submodule. Sibling-path replaces in `go.mod` resolve `../sh`, `../nadir`, and `../coreutils` to flat siblings — inside the umbrella those are real submodules; for standalone clones, `scripts/bootstrap-siblings.sh` reads `.sibling-pins` and clones them at the pinned SHAs. `../coreutils` is the shared AgentOS hub: it now owns the code-intel engines (`pkg/{treesitter,repomap,codegraph}`, which ycode's `internal/runtime/{treesitter,repomap,codegraph}` re-export via thin alias shims) and the pure-Go git that loom/weave runs on.
-- Root `go.work` defines the workspace: the main module plus `pkg/oci` and `pkg/otel`, with workspace-level replaces pointing the big vendored deps at local sources. Ollama now lives in the sibling `../coreutils` module: ycode imports `github.com/qiangli/coreutils/pkg/ollm`, and `github.com/ollama/ollama` resolves to `../coreutils/external/ollama/src`. To iterate on a `qiangli/*` dep alongside ycode, clone it under `peers/<name>` (gitignored) and add `./peers/<name>` to the `use` directive.
+- Root `go.work` is minimal — just `use .` (the main module). It has **no** workspace-level `replace` directives, and there are no `pkg/oci`/`pkg/otel` modules in this tree. Cross-repo resolution lives in `go.mod`'s sibling-path replaces (`mvdan.cc/sh/v3 => ../sh`, `github.com/qiangli/nadir => ../nadir`, `github.com/qiangli/coreutils => ../coreutils`). Ollama lives in the sibling `../coreutils` module (ycode imports `github.com/qiangli/coreutils/pkg/ollm`). To iterate on a `qiangli/*` dep alongside ycode, clone it under `peers/<name>` (gitignored, does not exist by default) and add `./peers/<name>` to `go.work`'s `use` directive.
 - **Podman engine relocated to coreutils (2026-06-27, AgentOS Phase 4):** the in-process podman engine now lives in `../coreutils/external/podman/engine` (+ `../coreutils/pkg/oci`), consuming the `qiangli/podman` fork — coreutils is the **canonical home**, so `bashy podman` / outpost embed an isolated podman without ycode. **ycode consumes it:** `internal/container` is now a thin **alias shim** (`shim.go`) re-exporting `coreutils/external/podman/engine` (the `internal/runtime/{treesitter,repomap,codegraph}` precedent); the 35 duplicate impl files + the podman/vfkit/gvproxy embed dirs were deleted. (The one ycode-local piece that survived the move, `MCPHandler`, went with the MCP removal; `internal/container` no longer exists in this tree either.) The 17 consumers are unchanged (they still import `internal/container`); `go.work`/`go.mod` repoint `go.podman.io/podman/v6` + `coreutils/pkg/oci` at coreutils. **Behavior change:** ycode now drives the shared isolated **`bashy`** podman machine (was `ycode-default`). **ycode-revisit follow-ups:** ycode's Makefile embed-tag wiring (point at coreutils' blobs to re-embed podman in a fat `ycode`) + drop the now-orphaned `ycode/pkg/oci` (still used only by `cmd/ycode/podman_machine.go` + `examples/`). See dhnt/docs/agentos-substrate-extraction-plan.md + local-p2p-cicd.md.
 
 ## First-time setup
@@ -24,7 +24,7 @@ make install-hooks                     # pre-push runs `make ci` in the ycode-bu
 
 Skipping `make init` will leave Gitea bindata + Perses plugins missing; many tests and `ycode serve` will fail in subtle ways.
 
-The embedded ollama runner (`../coreutils/external/ollama/runner_embed/ycode-runner.gz`) is produced by `make build` on first run via `runner-build-if-missing` — *not* by `make init`. On `darwin/arm64` no extra toolchain is needed (Metal is in-tree); other platforms need CMake + a C/C++ compiler. Without the toolchain the script warns and skip-cleans — ycode still builds but ollama features degrade to `ErrRunnerNotInstalled` at runtime. The embedded podman binary follows the same shape via `scripts/embed-podman.sh` (system binary first, fallback to a `-tags remote` build from `external/podman/cmd/podman/` on macOS/Windows or native on Linux). `make embed-fetch` downloads all prebuilt embed blobs for the current platform from the latest GitHub release — the fast path when you don't want to build them locally.
+ycode's own Makefile builds exactly **one** embed: the `ycode-spawn` micro-shim (`make spawn-embed`, auto-run by `compile` via `ensure-embeds`). The ollama-runner and podman embed build machinery moved to **coreutils** (see the AgentOS Phase 4 note above) — there is no `make embed-fetch` or `runner-build-if-missing` target in this repo anymore. Runtime behavior is unchanged: ycode still extracts and drives the embedded runner/podman. On `darwin/arm64` no extra toolchain is needed (Metal is in-tree); other platforms need CMake + a C/C++ compiler to build the ollama runner, and without it ollama features degrade to `ErrRunnerNotInstalled` at runtime.
 
 ## Escape hatch — `--use-system-binaries`
 
@@ -55,7 +55,7 @@ make test            # unit tests (-short -race) with default tags
 make ci              # full GitHub Actions matrix in a Linux container (slow, definitive)
 ```
 
-**Build tags** are non-trivial — the default is `sqlite,sqlite_unlock_notify,bindata` plus five auto-added tags, each gated on the presence of its embed `.gz`: `embed_spawn` (ycode-spawn exec shim), `embed_runner` (llama.cpp inference), `embed_vfkit` (macOS podman-machine helper), `embed_podman` (podman client), `embed_gvproxy` (podman user-mode net). The auto-add probes are in the single `TAG_LIST` line near the top of the `Makefile`. Bare `go build` without tags will not produce a working binary. Use the Makefile or:
+**Build tags** are non-trivial — the default is `sqlite,sqlite_unlock_notify,bindata`, plus `embed_spawn` auto-added when `internal/runtime/wrap/spawn_embed/ycode-spawn.gz` exists. That's the **only** auto-added tag now (the ollama/podman `embed_*` tags left with those engines when they relocated to coreutils). The auto-add probe is the single `TAG_LIST` line near the top of the `Makefile`. Bare `go build` without tags will not produce a working binary. Use the Makefile or:
 
 ```bash
 go build -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/
@@ -75,11 +75,12 @@ PACKAGES=$(go list ./... | grep -v '/priorart/')
 
 Specialized test targets that require extra setup (each has prerequisites — read the Makefile comment before running):
 
-- `make test-container` — podman required
+- `make test-integration` — Go integration tests, requires a running server (`-tags integration`)
 - `make test-gitserver` — embedded Gitea, ~4 min
 - `make test-tui` / `make test-tui-e2e` — TUI lifecycle; e2e needs a compiled binary and PTY
 - `make test-ui` — Playwright (`cd e2e && npx playwright test`) against a running server
-- `make eval-{contract,smoke,behavioral,e2e}` — eval tiers; `smoke`/`behavioral`/`e2e` need a live LLM provider
+- `make eval-{contract,smoke,behavioral,e2e,init}` — eval tiers; `smoke`/`behavioral`/`e2e` need a live LLM provider (`eval-contract` and `eval-init` are offline)
+- `make bench-memory[-quality|-competitive|-latency|-all]` — memory-retrieval benchmarks (no LLM)
 
 ## Critical conventions
 
@@ -129,6 +130,39 @@ Supporting layers:
 - **VFS** (`internal/runtime/vfs/`) — boundary-enforced filesystem. File-tool implementations go through this, not `os` directly.
 
 Full deep dive: `docs/architecture.md`. Strategy and feature-tier policy (stable / experimental / wip): `docs/strategy.md`.
+
+## Switching agents — /agent, /tool, /detach
+
+ycode is the bridge BETWEEN agentic tools, not just one of them. From a
+session you can hand the work to any agent in the fleet and the conversation
+goes with it:
+
+```
+/agent                            list the fleet, grouped by capability band
+/agent codex-gpt-5.5              attach — stay in ycode, its replies land here
+/agent Arlo                       the same agent, by nickname
+/agent L4 --fresh                 strongest non-ycode agent, no context carried
+/agent claude-opus4.8 --takeover  hand the terminal to its own full-screen UI
+/tool codex                       switch by tool, using its configured model
+/detach                           end the attached session, come back
+```
+
+The roster comes from the SAME embedded fleet catalog `bashy agents list`
+reads — ycode has no second list to drift from. `/agent` runs `bashy chat`
+underneath, so bashy keeps ownership of agent resolution, the credential
+firewall and sandboxing.
+
+**Attach is the default and carries the conversation**; `--fresh` opts out.
+That carried context is the point — running `bashy chat --agent codex` from a
+terminal is one line, and going through ycode is only worth it because the
+work travels.
+
+Every switch asks the target to leave a handoff note before exiting, and
+ycode folds it into the transcript. When one is missing, the transcript says
+so and labels what it does have (a terminal scrape) as a reconstruction
+rather than a verbatim record.
+
+Full detail, including provenance and limits: `ycode docs agent-switching`.
 
 ## Multi-agent orchestration — Weave and Foreman
 

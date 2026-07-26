@@ -87,3 +87,30 @@ The project includes a suite of specialized tools exposed via the `ycode` binary
 - `docs/architecture.md`: Design decisions and component details.
 - `docs/instructions.md`: Detailed shared conventions and skill system.
 - `docs/pipeline.md`: The six-step dev pipeline (research → plan → build/test → evaluate → commit → codify).
+
+## Switching agents — /agent, /tool, /detach
+
+ycode is the bridge BETWEEN agentic tools, not just one of them. From a
+session you can hand the work to any agent in the fleet and the conversation
+goes with it:
+
+```
+/agent                            list the fleet, grouped by capability band
+/agent codex-gpt-5.5              attach — stay in ycode, its replies land here
+/agent L4 --fresh                 strongest non-ycode agent, no context carried
+/agent claude-opus4.8 --takeover  hand the terminal to its own full-screen UI
+/tool codex                       switch by tool, using its configured model
+/detach                           end the attached session, come back
+```
+
+The roster is the SAME embedded fleet catalog `bashy agents list` reads, and
+`/agent` runs `bashy chat` underneath — bashy keeps ownership of agent
+resolution, the credential firewall and sandboxing.
+
+Attach is the default and carries the conversation; `--fresh` opts out. Every
+switch asks the target to leave a handoff note before exiting; when one is
+missing the transcript says so and labels the terminal scrape it does have as
+a reconstruction rather than a verbatim record.
+
+Full detail: `ycode docs agent-switching`.
+

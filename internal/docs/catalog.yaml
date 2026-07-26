@@ -34,6 +34,18 @@ rows:
     prereq: "delegated outside lean ycode — `yc sandbox` exits non-zero and points at an external wrapper such as `bashy podman`."
     read_more: sandbox
 
+  - task: switch to another agentic tool
+    surfaces:
+      cli: [ycode prompt]
+    prereq: "in-session slash verbs (/agent, /tool, /detach) — needs the interactive TUI and bashy on PATH."
+    read_more: agent-switching
+
+  - task: hand a task to a different agent
+    surfaces:
+      cli: [ycode prompt]
+    prereq: "same as above; the conversation is carried across unless --fresh is given."
+    read_more: agent-switching
+
   - task: semantic memory
     surfaces:
       yc:  [yc remember, yc recall]

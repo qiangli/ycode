@@ -19,6 +19,11 @@ neither exposes nor consumes MCP; do not try to configure one.
   `yc symbols`, `yc search-symbols`, `yc refs`, `yc repomap`. Use
   before reaching for `grep -rn` / `find -name '*.go'` / `ctags -R`
   on Go / Python / JS-TS / Rust / Java / C / Ruby sources.
+- **agent-switching** — hand this session to another agentic tool
+  (claude, codex, opencode, …) carrying the conversation: `/agent`,
+  `/tool`, `/detach`. Attach keeps you in ycode; `--takeover` gives the
+  other tool the terminal. Read this before assuming a task must be
+  done here.
 - **repomap** — token-budgeted repo orientation (`yc repomap`).
 - **memex** — semantic memory: save / recall / list / forget, via
   `yc remember` / `yc recall` and the in-session `memory_*` tools.
