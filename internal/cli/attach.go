@@ -64,9 +64,21 @@ func (a *App) Attach(ctx context.Context, req commands.SwitchRequest) (string, e
 		return "", fmt.Errorf("/tool needs an agent to drive; name one directly (/agent <name>)")
 	}
 
+	// Attended, because an attached session is one a HUMAN is driving: every
+	// message it receives was typed by the operator sitting in this TUI, and every
+	// reply is rendered straight back to them. That is the same relationship
+	// `bashy chat -i` has, with ycode relaying instead of the terminal, so it takes
+	// the same launch: the tool's OWN approval gate stays on rather than being
+	// skipped by --dangerously-skip-permissions and kin.
+	//
+	// Without it the launcher refuses outright — it sees an auto-approve
+	// kill-switch on an uncontained host and cannot tell that anyone is watching —
+	// and /agent fails on exactly the machine where it is most obviously safe.
+	// ReadOnly (plan mode) is stricter and wins.
 	opt := chat.SessionOptions{
 		Cwd:      a.workDir,
 		ReadOnly: a.InPlanMode(),
+		Attended: true,
 		Mode:     "ycode-attach",
 	}
 	if !req.Fresh {
