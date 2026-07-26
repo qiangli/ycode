@@ -118,7 +118,13 @@ type App struct {
 	// ttyExec hands the terminal to a subprocess and takes it back when the
 	// subprocess exits. Nil outside interactive mode — /agent refuses rather
 	// than pretending in --print / shell mode.
-	ttyExec      *TUITTYExecutor
+	ttyExec *TUITTYExecutor
+
+	// attached is the third-party agent ycode is currently driving, or nil
+	// when ycode answers for itself. While set, user input is forwarded to it
+	// and its replies are rendered here — the user never leaves this TUI.
+	attached *attachedSession
+
 	sessionStart time.Time
 
 	// Cloudbox model lister for the cloudbox-pooled gateway (optional).

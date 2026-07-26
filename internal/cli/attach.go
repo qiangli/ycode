@@ -1,0 +1,204 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/qiangli/coreutils/pkg/chat"
+
+	"github.com/qiangli/ycode/internal/agentswitch"
+	"github.com/qiangli/ycode/internal/commands"
+)
+
+// attachQuietPeriod is how long the target must be silent before its turn is
+// considered finished. Same shape as foreman's steer loop.
+const attachQuietPeriod = 2 * time.Second
+
+// attachedSession is a live third-party agent that ycode is driving.
+//
+// ATTACH IS THE DEFAULT MODE, and the difference from --takeover is the whole
+// point: the user never leaves the ycode TUI. Their input is intercepted here,
+// forwarded to the other agent, and its reply is rendered back inside ycode.
+// ycode remains the interface.
+//
+// That is also the only shape with a future. A terminal handover cannot travel
+// over a wire, so it could never serve the web UI reached through periscope and
+// outpost. A proxied session can: ycode owns the session and merely RENDERS it,
+// so the render target is a TUI today and a browser later.
+type attachedSession struct {
+	mu      sync.Mutex
+	live    *chat.Session
+	target  string // human label, e.g. "Arlo (codex:gpt-5.5, L4)"
+	agent   string // canonical agent name
+	started time.Time
+	turns   int
+}
+
+// Attach starts a live session with another agent and leaves ycode in control.
+func (a *App) Attach(ctx context.Context, req commands.SwitchRequest) (string, error) {
+	if err := agentswitch.Guard(); err != nil {
+		return "", err
+	}
+	target, err := agentswitch.Resolve(agentswitch.Request{Agent: req.Agent, Tool: req.Tool})
+	if err != nil {
+		return "", err
+	}
+	if a.attached != nil {
+		return "", fmt.Errorf("already attached to %s — /detach first", a.attached.target)
+	}
+
+	// A tool selector has no single agent behind it; chat.Start needs one, so
+	// resolve the tool's best agent rather than guessing a model.
+	agentName := target.Agent.Name
+	if agentName == "" {
+		return "", fmt.Errorf("/tool needs an agent to drive; name one directly (/agent <name>)")
+	}
+
+	opt := chat.SessionOptions{
+		Cwd:      a.workDir,
+		ReadOnly: a.InPlanMode(),
+		Mode:     "ycode-attach",
+	}
+	if !req.Fresh {
+		// The carried conversation opens the session, so the target starts
+		// knowing what we were doing. This is the reason to attach through
+		// ycode at all rather than running the tool yourself.
+		opt.Prompt = a.handoffContext()
+	}
+
+	live, err := chat.Start(ctx, agentName, opt)
+	if err != nil {
+		return "", fmt.Errorf("attach to %s: %w", target.Label(), err)
+	}
+
+	a.attached = &attachedSession{
+		live:    live,
+		target:  target.Label(),
+		agent:   agentName,
+		started: time.Now(),
+	}
+
+	carried := "carrying this conversation"
+	if req.Fresh {
+		carried = "fresh context"
+	} else if opt.Prompt == "" {
+		carried = "nothing to carry yet"
+	}
+	return fmt.Sprintf("→ attached to %s (%s).\n"+
+		"  Everything you type now goes to it; /detach returns to ycode.",
+		target.Label(), carried), nil
+}
+
+// Forward sends one user message to the attached agent and returns its reply.
+//
+// Say + WaitIdle + Turn is the sanctioned way to get a REPLY out of a stream
+// that has no turn boundaries in it (pkg/foreman/steer.go does the same).
+func (a *App) Forward(ctx context.Context, text string) (string, error) {
+	att := a.attached
+	if att == nil {
+		return "", fmt.Errorf("not attached to an agent")
+	}
+	att.mu.Lock()
+	defer att.mu.Unlock()
+
+	if !att.live.Live() {
+		return "", fmt.Errorf("%s has exited; /detach to return to ycode", att.target)
+	}
+	if err := att.live.Say(text); err != nil {
+		return "", fmt.Errorf("send to %s: %w", att.target, err)
+	}
+	_ = att.live.WaitIdle(ctx, attachQuietPeriod)
+	att.turns++
+
+	out := strings.TrimSpace(renderAgentOutput(att.live.Turn()))
+	if out == "" {
+		// Silence is not an answer. Say so rather than render an empty turn
+		// that looks like the agent replied with nothing.
+		return "", fmt.Errorf("%s produced no output this turn", att.target)
+	}
+	return out, nil
+}
+
+// Detach ends the attached session and returns ycode to driving itself.
+func (a *App) Detach() (string, error) {
+	att := a.attached
+	if att == nil {
+		return "", fmt.Errorf("not attached to an agent")
+	}
+	att.mu.Lock()
+	defer att.mu.Unlock()
+
+	_ = att.live.Quit()
+	att.live.Close()
+	a.attached = nil
+
+	return fmt.Sprintf("← detached from %s — %d turn(s), %s",
+		att.target, att.turns, time.Since(att.started).Round(time.Second)), nil
+}
+
+// AttachedLabel names the currently attached agent, or "" when ycode is
+// driving itself. The TUI uses it to show whose replies these are.
+func (a *App) AttachedLabel() string {
+	if a.attached == nil {
+		return ""
+	}
+	return a.attached.target
+}
+
+// screenControl matches the escape sequences that command the WHOLE TERMINAL
+// rather than styling a span of text.
+//
+// Colour and style are safe to render inline and are deliberately KEPT: the
+// other agent's output should look the way it looks. What cannot survive is
+// anything that moves the cursor absolutely, erases the display, changes the
+// scroll region or switches to the alternate screen — ycode owns the screen,
+// and those would scribble outside its layout and corrupt both renderings.
+//
+// This is the difference between attach and --takeover. Under takeover the
+// child really does own the terminal, so nothing needs filtering.
+// "Final byte 'm' means colour" is NOT sufficient, and assuming it leaks
+// terminal control into the transcript. `\x1b[>4m` (modifyOtherKeys) ends in
+// 'm' but is a private-mode command, and it is exactly the sequence chat's
+// sanitizer records as having leaked into the tail of every claude turn.
+//
+// The reliable discriminator is the PARAMETER, not the final byte: real SGR
+// carries only digits and ';'. A CSI bearing a private marker (< > = ?) is
+// never styling, whatever it ends with.
+var screenControl = regexp.MustCompile(
+	"\x1b\\[[<>=?][0-9;<>=?]*[ -/]*[@-~]" + // private-mode CSI — never SGR
+		"|\x1b\\[[0-9;]*[ -/]*[@-ln-~]" + // ordinary CSI except final 'm'
+		"|\x1b\\][^\x07\x1b]*(\x07|\x1b\\\\)" + // OSC (window title, hyperlinks)
+		"|\x1b[()][0-9A-Za-z]" + // charset select
+		"|\x1b[0-9A-Za-z><=]") // ESC 7/8 cursor save-restore, ESC =
+
+// carriageRepaint collapses a spinner's overwrite-in-place frames. A TUI draws
+// them with \r + redraw, so the captured bytes hold every frame; only the last
+// was ever on screen.
+var carriageRepaint = regexp.MustCompile(`[^\n]*\r`)
+
+// renderAgentOutput prepares another agent's captured output for display
+// INSIDE ycode's viewport.
+//
+// It is deliberately NOT chat.SanitizeTurn: that strips every escape including
+// SGR, which is right for text you intend to store or replay as data, and
+// wrong for text you intend to show a human — it arrives colourless.
+func renderAgentOutput(s string) string {
+	s = strings.ToValidUTF8(s, "")
+	s = screenControl.ReplaceAllString(s, "")
+	s = carriageRepaint.ReplaceAllString(s, "")
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t' || r == 0x1b:
+			return r // keep ESC: the SGR sequences we deliberately preserved
+		case r < 0x20 || (r >= 0x7f && r < 0xa0):
+			return -1
+		default:
+			return r
+		}
+	}, s)
+	return strings.TrimRight(s, " \t\n")
+}
