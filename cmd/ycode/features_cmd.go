@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/features"
 )
 
@@ -116,6 +117,33 @@ func newFeaturesCmd() *cobra.Command {
 	}
 	readmeCmd.Flags().StringVar(&readmeWrite, "write", "", "Path to a file containing BEGIN/END FEATURES markers; replaces the section in-place")
 	cmd.AddCommand(readmeCmd)
+
+	var commandsWrite string
+	commandsCmd := &cobra.Command{
+		Use:   "commands",
+		Short: "Render the VISIBLE slash commands as markdown (hidden ones are never advertised)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			reg := commands.NewRegistry()
+			commands.RegisterBuiltins(reg, &commands.RuntimeDeps{Version: version})
+			rendered := commands.RenderMarkdown(reg)
+			if commandsWrite == "" {
+				fmt.Fprint(cmd.OutOrStdout(), rendered)
+				return nil
+			}
+			changed, err := commands.ReplaceDocSection(commandsWrite, rendered)
+			if err != nil {
+				return err
+			}
+			if changed {
+				fmt.Fprintf(cmd.OutOrStdout(), "updated %s\n", commandsWrite)
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s already up to date\n", commandsWrite)
+			}
+			return nil
+		},
+	}
+	commandsCmd.Flags().StringVar(&commandsWrite, "write", "", "rewrite the generated section of this file in place")
+	cmd.AddCommand(commandsCmd)
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "verify",

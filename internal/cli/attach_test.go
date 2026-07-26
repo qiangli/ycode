@@ -3,6 +3,7 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qiangli/coreutils/pkg/chat"
 
@@ -200,5 +201,38 @@ func TestStatusBarNamesTheAnsweringAgentAndTheModelUnderneath(t *testing.T) {
 	a.attached.matrixKey = ""
 	if got := a.AttachedBinding(); got != "codex-gpt-5.5" {
 		t.Errorf("with no binding, AttachedBinding() = %q, want the agent name as fallback", got)
+	}
+}
+
+// Takeover cannot capture what happened — the child owned the terminal, and
+// the capture wrapper that would have recorded it is the same thing that
+// mangles a nested TUI's rendering.
+//
+// So the gap must be VISIBLE. Without a marker the transcript runs straight
+// from before the handover to after it, and the next agent reads a continuous
+// conversation that never happened. An absence it is TOLD about is
+// recoverable — it can ask; silence is not.
+func TestTakeoverRecordsTheGapItCannotCapture(t *testing.T) {
+	sess, err := session.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{session: sess, workDir: t.TempDir()}
+
+	a.recordTakeoverGap("Beatrix (claude:opus4.8, L3)", 4*time.Minute+12*time.Second, 0)
+
+	if len(sess.Messages) != 1 {
+		t.Fatalf("expected the handover to be recorded, got %d messages", len(sess.Messages))
+	}
+	text := sess.Messages[0].Content[0].Text
+	for _, want := range []string{"handover", "Beatrix", "NOT captured", "Ask the user"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("marker does not convey %q: %q", want, text)
+		}
+	}
+
+	// And it reaches the next tool.
+	if !strings.Contains(a.handoffContext(), "NOT captured") {
+		t.Error("the next agent would not be told the transcript has a gap")
 	}
 }

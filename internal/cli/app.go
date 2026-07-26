@@ -1611,6 +1611,9 @@ func (a *App) RunInteractiveWithClient(ctx context.Context, cl agentClient) erro
 	// another agent and needs it even in thin-client mode, which has no tool
 	// registry but does have a real terminal.
 	a.ttyExec = NewTUITTYExecutor(p)
+
+	// Advertise this session to the fleet so `bashy chat sessions` can see it.
+	defer a.joinRoom()()
 	if a.toolRegistry != nil {
 		prompter := NewTUIPrompter(p)
 		a.toolRegistry.SetPermissionPrompter(prompter.Prompt)
@@ -1642,6 +1645,9 @@ func (a *App) RunInteractive(ctx context.Context) error {
 	// another agent and needs it even in thin-client mode, which has no tool
 	// registry but does have a real terminal.
 	a.ttyExec = NewTUITTYExecutor(p)
+
+	// Advertise this session to the fleet so `bashy chat sessions` can see it.
+	defer a.joinRoom()()
 	if a.toolRegistry != nil {
 		prompter := NewTUIPrompter(p)
 		a.toolRegistry.SetPermissionPrompter(prompter.Prompt)

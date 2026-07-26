@@ -11,6 +11,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/agentswitch"
 	"github.com/qiangli/ycode/internal/commands"
+	"github.com/qiangli/ycode/internal/runtime/session"
 )
 
 // Switch routes a /agent or /tool request to the mode it asked for.
@@ -81,6 +82,22 @@ func (a *App) SwitchAgent(ctx context.Context, req commands.SwitchRequest) (stri
 		return "", fmt.Errorf("switch to %s failed: %w", target.Label(), err)
 	}
 
+	elapsed := time.Since(started).Round(time.Second)
+
+	// RECORD THE GAP.
+	//
+	// Under takeover the child owned the terminal and ycode captured nothing —
+	// the script(1) wrapper that would have captured it is exactly what mangles
+	// a nested TUI's rendering, so the two cannot both be had here.
+	//
+	// What must NOT happen is for the next agent to be handed a transcript that
+	// runs straight from before the handover to after it, as though nothing
+	// occurred. That reads as a continuous conversation and is a lie by
+	// omission. A marker keeps the absence VISIBLE: the next agent is told
+	// plainly that work happened which it cannot see, which is recoverable —
+	// it can ask. Silence is not.
+	a.recordTakeoverGap(target.Label(), elapsed, res.ExitCode)
+
 	note := ""
 	if sw.Mode == agentswitch.ModeFresh {
 		note = ", fresh context"
@@ -88,8 +105,31 @@ func (a *App) SwitchAgent(ctx context.Context, req commands.SwitchRequest) (stri
 		// Say so rather than let the user assume the history travelled.
 		note = ", no context to carry"
 	}
-	return fmt.Sprintf("← back from %s — exit %d, %s%s",
-		target.Label(), res.ExitCode, time.Since(started).Round(time.Second), note), nil
+	return fmt.Sprintf("← back from %s — exit %d, %s%s\n"+
+		"  That exchange is NOT in this transcript (the agent owned the terminal).\n"+
+		"  Attach instead of --takeover to keep it: /agent <name>",
+		target.Label(), res.ExitCode, elapsed, note), nil
+}
+
+// recordTakeoverGap notes in ycode's transcript that a handover happened and
+// that its content is unavailable.
+func (a *App) recordTakeoverGap(target string, elapsed time.Duration, exitCode int) {
+	if a.session == nil {
+		return
+	}
+	_ = a.session.AddMessage(session.ConversationMessage{
+		Role:  session.RoleAssistant,
+		Model: "ycode:handover",
+		Content: []session.ContentBlock{{
+			Type: session.ContentTypeText,
+			Text: fmt.Sprintf(
+				"[handover] The user worked directly with %s for %s (exit %d). "+
+					"That exchange happened in the agent's own terminal and was NOT captured, "+
+					"so it is absent from this transcript. Ask the user what came of it rather "+
+					"than assuming the conversation ran continuously.",
+				target, elapsed, exitCode),
+		}},
+	})
 }
 
 // handoffContext renders the conversation for the target agent.
