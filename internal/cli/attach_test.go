@@ -334,3 +334,176 @@ func TestScrapeFallbackIsLabelledAsAReconstruction(t *testing.T) {
 		t.Error("a session with no turns should produce no provenance note")
 	}
 }
+
+// --- live rendering -------------------------------------------------------
+
+// collect drains an attachStream into one string, the way the TUI's delta
+// callback appends into the viewport.
+func collect(s *string) func(string) {
+	return func(text string) { *s += text }
+}
+
+// THE POINT OF STREAMING. Output must reach the operator BEFORE the turn is
+// judged over. Held until then, an agent that is working and one that is wedged
+// look identical for the whole quiet period, and the operator has no way to tell
+// them apart — which is the complaint this exists to answer.
+func TestStreamRendersBeforeTheTurnEnds(t *testing.T) {
+	var got string
+	s := &attachStream{emit: collect(&got)}
+
+	s.Write([]byte("reading the repo\n"))
+	if !strings.Contains(got, "reading the repo") {
+		t.Fatalf("nothing rendered until the turn ended: %q", got)
+	}
+}
+
+// A pty hands over arbitrary byte boundaries, so an escape sequence can be split
+// across two writes. Rendering the first half would leave garbage on screen that
+// no later filtering can remove — it is already in the viewport.
+func TestStreamHoldsASplitEscapeSequence(t *testing.T) {
+	var got string
+	s := &attachStream{emit: collect(&got)}
+
+	s.Write([]byte("before\x1b[2"))  // erase-display, cut in half
+	s.Write([]byte("J after\ntail")) // ...completed here
+	if strings.Contains(got, "\x1b[2J") || strings.Contains(got, "[2J") {
+		t.Fatalf("a split screen-control sequence reached the viewport: %q", got)
+	}
+	if !strings.Contains(got, "before") || !strings.Contains(got, "after") {
+		t.Fatalf("the surrounding text was lost: %q", got)
+	}
+}
+
+// Colour still survives streaming — same contract as the whole-turn render.
+func TestStreamKeepsColour(t *testing.T) {
+	var got string
+	s := &attachStream{emit: collect(&got)}
+
+	s.Write([]byte("\x1b[31mred\x1b[0m\n"))
+	if !strings.Contains(got, "\x1b[31m") {
+		t.Errorf("streaming dropped SGR: %q", got)
+	}
+}
+
+// The last line of a turn usually arrives with no trailing newline, and it is
+// usually the answer. Held back, the operator reads everything EXCEPT the point.
+func TestFlushRendersTheUnterminatedLastLine(t *testing.T) {
+	var got string
+	s := &attachStream{emit: collect(&got)}
+
+	s.Write([]byte("thinking\nthe answer is 42"))
+	if strings.Contains(got, "42") {
+		t.Fatal("an unterminated line was rendered before it could be sanitized whole")
+	}
+	s.Flush()
+	if !strings.Contains(got, "the answer is 42") {
+		t.Fatalf("Flush lost the last line: %q", got)
+	}
+}
+
+// A tool that repaints a spinner emits a long way without a newline. Waiting for
+// one would reintroduce exactly the silence streaming exists to end.
+func TestStreamDoesNotWaitForeverForANewline(t *testing.T) {
+	var got string
+	s := &attachStream{emit: collect(&got)}
+
+	s.Write([]byte(strings.Repeat("x", attachStreamMaxPending+1)))
+	if got == "" {
+		t.Fatal("a newline-less flood rendered nothing — the operator sees a frozen screen")
+	}
+}
+
+// Newlines inside a chunk are line breaks, not trailing whitespace. Trimming
+// them per-chunk (as the whole-turn renderer does, correctly) would run the
+// agent's output together into one paragraph.
+func TestStreamKeepsInteriorNewlines(t *testing.T) {
+	var got string
+	s := &attachStream{emit: collect(&got)}
+
+	s.Write([]byte("one\ntwo\n"))
+	if !strings.Contains(got, "one\ntwo") {
+		t.Errorf("streaming ate the line break: %q", got)
+	}
+}
+
+// A nil stream is a session nobody is rendering (a test, a headless caller).
+// It must be inert rather than a panic on the forward path.
+func TestNilStreamIsInert(t *testing.T) {
+	var s *attachStream
+	if _, err := s.Write([]byte("x")); err != nil {
+		t.Fatalf("nil Write: %v", err)
+	}
+	s.Flush()
+	s.emitLine("")
+}
+
+// --- what a real pty actually delivers ------------------------------------
+
+// THE BUG THAT MADE ATTACH SHOW A BLANK SCREEN. A pty ends lines with CR LF —
+// the agent CLIs here emit `\r\r\n` — and carriageRepaint deletes everything
+// from the start of a line up to a carriage return. Every line therefore matched
+// and every line was deleted: a measured live session against claude rendered 42
+// bytes, all of them newlines.
+func TestRenderSurvivesPtyLineEndings(t *testing.T) {
+	got := renderAgentOutput("first line\r\r\nsecond line\r\n")
+	for _, want := range []string{"first line", "second line"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("a CR LF line ending ate the line: %q", got)
+		}
+	}
+}
+
+// A repaint is still a repaint: a carriage return NOT at end of line means the
+// text before it was overwritten in place and never seen.
+func TestRenderStillCollapsesRealRepaints(t *testing.T) {
+	got := renderAgentOutput("frame one\rframe two\r\n")
+	if strings.Contains(got, "frame one") {
+		t.Errorf("an overwritten frame survived: %q", got)
+	}
+	if !strings.Contains(got, "frame two") {
+		t.Errorf("the visible frame was lost: %q", got)
+	}
+}
+
+// Claude Code lays out a line with absolute column jumps INSTEAD OF SPACES.
+// Deleting them as screen control welds the words together.
+func TestRenderTurnsColumnJumpsIntoSpaces(t *testing.T) {
+	got := renderAgentOutput("Quick\x1b[8Gsafety\x1b[15Gcheck:\r\n")
+	if !strings.Contains(got, "Quick safety check:") {
+		t.Errorf("column jumps did not become word breaks: %q", got)
+	}
+}
+
+// A TUI redraws its whole frame per spinner tick, so stripping the cursor
+// movement leaves the same box dozens of times over — enough blank lines to
+// scroll a one-word answer off the viewport.
+func TestStreamCapsRunsOfBlankLines(t *testing.T) {
+	var got string
+	s := &attachStream{emit: collect(&got)}
+
+	s.Write([]byte("answer\r\n\r\n\r\n   \r\n\r\nmore\r\n"))
+	if n := strings.Count(got, "\n\n\n"); n > 0 {
+		t.Errorf("a run of blank lines survived: %q", got)
+	}
+	for _, want := range []string{"answer", "more"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("capping blank lines dropped %q: %q", want, got)
+		}
+	}
+}
+
+// The run counter has to survive across writes: a pty delivers one frame in
+// several chunks, and a per-chunk squeeze would leave one blank line per chunk.
+func TestBlankLineCapCarriesAcrossWrites(t *testing.T) {
+	var got string
+	s := &attachStream{emit: collect(&got)}
+
+	s.Write([]byte("answer\n"))
+	for range 5 {
+		s.Write([]byte("\n"))
+	}
+	s.Write([]byte("more\n"))
+	if strings.Contains(got, "\n\n\n") {
+		t.Errorf("blank lines accumulated one per chunk: %q", got)
+	}
+}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"regexp"
@@ -28,11 +29,9 @@ import (
 // declared over. Two seconds is how long a human is willing to wait; it is not
 // how long an agent takes.
 //
-// The cost is honest and worth naming: a finished reply is held for this long
-// before it renders. Streaming the target's output into the viewport as it
-// arrives (chat.SessionOptions.Stream) is what actually fixes that — the quiet
-// period would then only decide when ycode takes the keyboard back, not when the
-// operator gets to read anything.
+// What it does NOT decide is when the operator gets to read anything —
+// attachStream renders the turn as it arrives. This is only how long ycode waits
+// before taking the keyboard back, which is why it can afford to be generous.
 const attachQuietPeriod = 25 * time.Second
 
 // attachedSession is a live third-party agent that ycode is driving.
@@ -58,6 +57,140 @@ type attachedSession struct {
 	// seenHandoffs are the handoff ids that existed when this session began,
 	// so a record written DURING it can be told from one already on disk.
 	seenHandoffs map[string]bool
+
+	// stream renders the agent's output live. Nil when nothing is listening.
+	stream *attachStream
+}
+
+// attachStream renders another agent's output into ycode's viewport AS IT
+// ARRIVES, instead of holding it until the turn is judged over.
+//
+// Without it an attached session is indistinguishable from a hung one. The turn
+// boundary is a silence heuristic, so ycode must wait out the quiet period
+// before it has anything to show — and for that whole time the operator faces a
+// still screen with no way to tell an agent that is working from one that is
+// wedged. A spinner does not resolve it either: it says ycode is waiting, which
+// is true in both cases.
+//
+// Streaming settles it with the only evidence that actually distinguishes them,
+// which is the agent's own output. It also demotes the quiet period from "how
+// long until you see anything" to "how long until ycode takes the keyboard
+// back" — the same 25 seconds, costing far less.
+type attachStream struct {
+	emit func(string)
+
+	mu      sync.Mutex
+	pending []byte
+	blank   int // consecutive blank lines already emitted, carried across chunks
+}
+
+// attachStreamMaxPending bounds the wait for a newline. A tool that repaints a
+// spinner or draws a box can run a long way without one, and holding its output
+// forever would reintroduce exactly the silence this type exists to end.
+const attachStreamMaxPending = 8 << 10
+
+// Write buffers up to the last complete line and renders that much.
+//
+// The cut matters: a pty hands over arbitrary byte boundaries, and the escape
+// filtering below is regex-based, so a sequence split across two writes would
+// survive as garbage on screen. No escape sequence contains a newline, so a line
+// boundary is always a safe place to cut — and it is also where carriage-return
+// repaints (a spinner's overwritten frames) can be collapsed correctly, since
+// the whole line is present to collapse.
+func (s *attachStream) Write(p []byte) (int, error) {
+	if s == nil {
+		return len(p), nil
+	}
+	s.mu.Lock()
+	s.pending = append(s.pending, p...)
+	cut := bytes.LastIndexByte(s.pending, '\n') + 1
+	if cut == 0 && len(s.pending) > attachStreamMaxPending {
+		cut = len(s.pending)
+	}
+	var chunk string
+	if cut > 0 {
+		chunk = string(s.pending[:cut])
+		s.pending = append(s.pending[:0], s.pending[cut:]...)
+	}
+	s.mu.Unlock()
+
+	s.render(chunk)
+	return len(p), nil
+}
+
+// Flush renders whatever is held back, for the end of a turn — an agent's last
+// line often arrives without a trailing newline, and it is usually the answer.
+func (s *attachStream) Flush() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	chunk := string(s.pending)
+	s.pending = s.pending[:0]
+	s.mu.Unlock()
+
+	s.render(chunk)
+}
+
+// emitLine writes text the AGENT did not produce — ycode's own punctuation
+// around a turn. It bypasses the sanitizer for that reason, and always ends in a
+// newline so the next thing on screen starts clean.
+func (s *attachStream) emitLine(text string) {
+	if s == nil || s.emit == nil {
+		return
+	}
+	s.emit(text + "\n")
+}
+
+func (s *attachStream) render(chunk string) {
+	if chunk == "" || s.emit == nil {
+		return
+	}
+	out := s.capBlankLines(sanitizeAgentChunk(chunk))
+	if out != "" {
+		s.emit(out)
+	}
+}
+
+// maxBlankRun is how many blank lines in a row survive. One separates
+// paragraphs; more is the artifact described on capBlankLines.
+const maxBlankRun = 1
+
+// capBlankLines squeezes runs of blank lines out of the live stream.
+//
+// A TUI redraws its ENTIRE frame for every spinner tick. Once the cursor
+// movement that put those frames on top of each other is stripped — as it must
+// be, since ycode owns the screen — what is left is the same box drawn dozens of
+// times, and the vertical whitespace between its rows becomes dozens of blank
+// lines. A measured turn that answered in one word scrolled the real answer well
+// off the top of the viewport.
+//
+// The run counter is carried ACROSS chunks: a pty delivers a frame in several
+// writes, so a per-chunk squeeze would leave one blank line per write and undo
+// most of the effect.
+func (s *attachStream) capBlankLines(text string) string {
+	if text == "" {
+		return ""
+	}
+	lines := strings.SplitAfter(text, "\n")
+	var b strings.Builder
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, line := range lines {
+		if line == "" {
+			continue // SplitAfter's empty tail
+		}
+		if strings.TrimSpace(line) != "" {
+			s.blank = 0
+			b.WriteString(line)
+			continue
+		}
+		if s.blank < maxBlankRun {
+			s.blank++
+			b.WriteString("\n") // normalised: a blank line is a newline, not padding
+		}
+	}
+	return b.String()
 }
 
 // Attach starts a live session with another agent and leaves ycode in control.
@@ -112,6 +245,20 @@ func (a *App) Attach(ctx context.Context, req commands.SwitchRequest) (string, e
 	seenHandoffs := handoffSeen()
 	opt.Prompt = appendHandoffInstruction(opt.Prompt)
 
+	// Render the session live. It is wired BEFORE Start so the target's answer to
+	// the carried conversation — the first and often longest thing it does, and
+	// the moment an operator most wants proof that the attach worked — is visible
+	// as it happens rather than after the fact.
+	//
+	// Only when something is actually listening. LogDelta is a no-op without a
+	// registered sink, and a caller that gets neither the stream nor the returned
+	// turn gets silence — worse than the batching this replaces.
+	var stream *attachStream
+	if a.deltaFunc != nil {
+		stream = &attachStream{emit: a.LogDelta}
+		opt.Stream = stream
+	}
+
 	live, err := chat.Start(ctx, agentName, opt)
 	if err != nil {
 		return "", fmt.Errorf("attach to %s: %w", target.Label(), err)
@@ -119,6 +266,7 @@ func (a *App) Attach(ctx context.Context, req commands.SwitchRequest) (string, e
 
 	a.attached = &attachedSession{
 		live:         live,
+		stream:       stream,
 		target:       target.Label(),
 		agent:        agentName,
 		matrixKey:    target.Agent.Binding,
@@ -158,6 +306,10 @@ func (a *App) Forward(ctx context.Context, text string) (string, error) {
 	_ = att.live.WaitIdle(ctx, attachQuietPeriod)
 	att.turns++
 
+	// The agent's last line usually arrives without a trailing newline, and it is
+	// usually the answer. Push it before reading the turn.
+	att.stream.Flush()
+
 	raw := att.live.Turn()
 	out := strings.TrimSpace(renderAgentOutput(raw))
 	if out == "" {
@@ -187,6 +339,14 @@ func (a *App) Forward(ctx context.Context, text string) (string, error) {
 	// the next agent. That is the whole reason the two paths differ.
 	a.recordAttachedExchange(text, chat.SanitizeTurn(raw), att)
 
+	// Already on screen. Returning it as well would print the whole turn a second
+	// time, directly under the copy the operator has been reading for the last
+	// half minute — so the caller gets a blank, and the only thing left to add is
+	// the separator before the next prompt.
+	if att.stream != nil {
+		att.stream.emitLine("")
+		return "", nil
+	}
 	return out, nil
 }
 
@@ -246,6 +406,9 @@ func (a *App) Detach() (string, error) {
 
 	_ = att.live.Quit()
 	att.live.Close()
+	// Whatever the agent said on its way out is the last thing it will ever say
+	// here; render it rather than dropping it with the session.
+	att.stream.Flush()
 	elapsed := time.Since(att.started).Round(time.Second)
 	a.attached = nil
 
@@ -350,9 +513,34 @@ var screenControl = regexp.MustCompile(
 		"|\x1b[()][0-9A-Za-z]" + // charset select
 		"|\x1b[0-9A-Za-z><=]") // ESC 7/8 cursor save-restore, ESC =
 
+// ptyLineEnding matches the carriage returns a pty puts BEFORE a newline.
+//
+// It has to be normalised away first, and getting this wrong is what made attach
+// render nothing at all for its entire existence. A pty in cooked mode ends every
+// line with CR LF, and the agent CLIs observed here emit `\r\r\n` — so
+// carriageRepaint below, which deletes everything from the start of a line up to
+// a carriage return, was matching EVERY LINE and deleting all of it. A live
+// session against claude rendered 42 bytes, all of them newlines. Not a subtle
+// loss of fidelity: the whole feature showed a blank screen, and the operator had
+// no way to know whether that meant "broken" or "still thinking".
+var ptyLineEnding = regexp.MustCompile(`\r+\n`)
+
+// columnJump is CHA — "move to column N". It is stripped as screen control
+// everywhere else, and it must NOT be simply deleted here, because Claude Code
+// uses it INSTEAD OF SPACES to lay out a line: `Quick\x1b[8Gsafety\x1b[15Gcheck:`
+// is how it writes "Quick safety check:". Delete the sequences and the words are
+// welded together.
+//
+// One space per jump, not a pad to the real column: the source was laid out for
+// the pty's width and is being re-rendered into a viewport of a different one, so
+// reproducing absolute columns would misalign anyway. A space restores the word
+// boundary, which is the part that carries meaning.
+var columnJump = regexp.MustCompile(`\x1b\[[0-9]*G`)
+
 // carriageRepaint collapses a spinner's overwrite-in-place frames. A TUI draws
 // them with \r + redraw, so the captured bytes hold every frame; only the last
-// was ever on screen.
+// was ever on screen. Applied AFTER ptyLineEnding, so it only ever sees a
+// carriage return that really is a repaint.
 var carriageRepaint = regexp.MustCompile(`[^\n]*\r`)
 
 // renderAgentOutput prepares another agent's captured output for display
@@ -362,10 +550,32 @@ var carriageRepaint = regexp.MustCompile(`[^\n]*\r`)
 // SGR, which is right for text you intend to store or replay as data, and
 // wrong for text you intend to show a human — it arrives colourless.
 func renderAgentOutput(s string) string {
+	return strings.TrimRight(sanitizeAgentChunk(s), " \t\n")
+}
+
+// sanitizeAgentChunk is renderAgentOutput without the trailing trim, so it is
+// safe on a PIECE of a turn as well as a whole one.
+//
+// The trim is the one step that cannot be applied incrementally: mid-stream, the
+// newline at the end of a chunk is the line break before the next chunk, not
+// trailing whitespace, and eating it runs the agent's output together into one
+// paragraph. Whole-turn callers still want it — a turn should not end in blank
+// lines — so it stays, one level up.
+// The ORDER of the steps below is load-bearing:
+//
+//	line endings → column jumps → screen control → carriage repaints
+//
+// Line endings first, so carriageRepaint cannot mistake a CR LF for a repaint and
+// eat the line. Column jumps before screen control, because CHA is a CSI ending
+// in 'G' and screenControl would otherwise swallow it before it can become the
+// space it stands for.
+func sanitizeAgentChunk(s string) string {
 	s = strings.ToValidUTF8(s, "")
+	s = ptyLineEnding.ReplaceAllString(s, "\n")
+	s = columnJump.ReplaceAllString(s, " ")
 	s = screenControl.ReplaceAllString(s, "")
 	s = carriageRepaint.ReplaceAllString(s, "")
-	s = strings.Map(func(r rune) rune {
+	return strings.Map(func(r rune) rune {
 		switch {
 		case r == '\n' || r == '\t' || r == 0x1b:
 			return r // keep ESC: the SGR sequences we deliberately preserved
@@ -375,5 +585,4 @@ func renderAgentOutput(s string) string {
 			return r
 		}
 	}, s)
-	return strings.TrimRight(s, " \t\n")
 }
