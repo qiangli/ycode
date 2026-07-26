@@ -16,8 +16,24 @@ import (
 )
 
 // attachQuietPeriod is how long the target must be silent before its turn is
-// considered finished. Same shape as foreman's steer loop.
-const attachQuietPeriod = 2 * time.Second
+// considered finished. It is foreman's number (pkg/foreman.quietPeriod) and it
+// is deliberately the same: a pty gives us no turn boundary, so silence is the
+// only signal, and it has to be sized to the slowest thing an agent legitimately
+// pauses for — a long tool call, a re-prompt, a model thinking before its first
+// token.
+//
+// It was 2s, which is shorter than the gaps a coding agent leaves WITHIN one
+// answer. Every reply was therefore either cut off partway or, once the clock
+// started counting from the steer, waited on for a turn that had already been
+// declared over. Two seconds is how long a human is willing to wait; it is not
+// how long an agent takes.
+//
+// The cost is honest and worth naming: a finished reply is held for this long
+// before it renders. Streaming the target's output into the viewport as it
+// arrives (chat.SessionOptions.Stream) is what actually fixes that — the quiet
+// period would then only decide when ycode takes the keyboard back, not when the
+// operator gets to read anything.
+const attachQuietPeriod = 25 * time.Second
 
 // attachedSession is a live third-party agent that ycode is driving.
 //
@@ -147,7 +163,14 @@ func (a *App) Forward(ctx context.Context, text string) (string, error) {
 	if out == "" {
 		// Silence is not an answer. Say so rather than render an empty turn
 		// that looks like the agent replied with nothing.
-		return "", fmt.Errorf("%s produced no output this turn", att.target)
+		//
+		// Say WHAT was waited for. "produced no output" reads as a broken agent,
+		// and for a long time it was really a broken clock — the turn was declared
+		// over before the model had typed a character. Naming the window makes the
+		// difference legible: an agent that truly said nothing for this long is
+		// wedged or waiting on something, and neither is the operator's fault.
+		return "", fmt.Errorf("%s said nothing for %s — it may be wedged or waiting on input; "+
+			"send another message, or /detach to take ycode back", att.target, attachQuietPeriod)
 	}
 
 	// RECORD THE EXCHANGE IN YCODE'S OWN TRANSCRIPT.
