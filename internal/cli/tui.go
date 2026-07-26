@@ -1167,6 +1167,13 @@ func (m *TUIModel) statusBar() string {
 		modeText = " CONFIRM "
 		modeStyle = modeStyle.Background(lipgloss.Color("#f472b6")) // pink
 	}
+	// While attached, what you type does not reach ycode's own model — it is
+	// forwarded to another agent. That is the single most important thing the
+	// bar can tell you, so it outranks every other mode.
+	if attached := m.app.AttachedLabel(); attached != "" {
+		modeText = " AGENT "
+		modeStyle = modeStyle.Background(lipgloss.Color("#c084fc")) // purple
+	}
 	if !m.working && !m.confirming {
 		input := strings.TrimSpace(m.textarea.Value())
 		if strings.HasPrefix(input, "!!") {
@@ -1180,7 +1187,15 @@ func (m *TUIModel) statusBar() string {
 	mode := modeStyle.Render(modeText)
 
 	// Model info.
+	//
+	// While attached this must name BOTH: the agent actually answering, and
+	// ycode's own model underneath it. Showing only ycode's model would be an
+	// outright lie about where the replies are coming from; showing only the
+	// agent's would hide what you return to on /detach.
 	modelText := fmt.Sprintf(" %s (%s) ", m.app.Model(), m.app.ProviderKind())
+	if binding := m.app.AttachedBinding(); binding != "" {
+		modelText = fmt.Sprintf(" %s → ycode:%s ", binding, m.app.Model())
+	}
 	modelStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#a3a3a3"))
 	model := modelStyle.Render(modelText)

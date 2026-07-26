@@ -173,3 +173,32 @@ func TestRecordedContextIsSanitizedNotColoured(t *testing.T) {
 		t.Errorf("the answer itself was lost: %q", stored)
 	}
 }
+
+// The status bar makes a CLAIM about where replies are coming from. If it
+// says ycode's model while another agent is answering, it is lying about
+// authorship — so both states are pinned.
+func TestStatusBarNamesTheAnsweringAgentAndTheModelUnderneath(t *testing.T) {
+	a := &App{}
+
+	if got := a.AttachedBinding(); got != "" {
+		t.Errorf("detached AttachedBinding() = %q, want empty so the bar shows ycode's own model", got)
+	}
+
+	a.attached = &attachedSession{
+		target:    "Arlo (codex:gpt-5.5, L4)",
+		agent:     "codex-gpt-5.5",
+		matrixKey: "codex:gpt-5.5",
+	}
+	if got := a.AttachedBinding(); got != "codex:gpt-5.5" {
+		t.Errorf("AttachedBinding() = %q, want the tool:model that is actually answering", got)
+	}
+	if got := a.AttachedLabel(); got == "" {
+		t.Error("AttachedLabel() is empty while attached")
+	}
+
+	// A nickname alone would not say which MODEL is producing the text.
+	a.attached.matrixKey = ""
+	if got := a.AttachedBinding(); got != "codex-gpt-5.5" {
+		t.Errorf("with no binding, AttachedBinding() = %q, want the agent name as fallback", got)
+	}
+}

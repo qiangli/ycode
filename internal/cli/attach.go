@@ -31,12 +31,13 @@ const attachQuietPeriod = 2 * time.Second
 // outpost. A proxied session can: ycode owns the session and merely RENDERS it,
 // so the render target is a TUI today and a browser later.
 type attachedSession struct {
-	mu      sync.Mutex
-	live    *chat.Session
-	target  string // human label, e.g. "Arlo (codex:gpt-5.5, L4)"
-	agent   string // canonical agent name
-	started time.Time
-	turns   int
+	mu        sync.Mutex
+	live      *chat.Session
+	target    string // human label, e.g. "Arlo (codex:gpt-5.5, L4)"
+	agent     string // canonical agent name
+	matrixKey string // tool:model, e.g. "codex:gpt-5.5"
+	started   time.Time
+	turns     int
 }
 
 // Attach starts a live session with another agent and leaves ycode in control.
@@ -77,10 +78,11 @@ func (a *App) Attach(ctx context.Context, req commands.SwitchRequest) (string, e
 	}
 
 	a.attached = &attachedSession{
-		live:    live,
-		target:  target.Label(),
-		agent:   agentName,
-		started: time.Now(),
+		live:      live,
+		target:    target.Label(),
+		agent:     agentName,
+		matrixKey: target.Agent.Binding,
+		started:   time.Now(),
 	}
 
 	carried := "carrying this conversation"
@@ -176,6 +178,15 @@ func (s *attachedSession) binding() string {
 	return s.agent
 }
 
+// bindingLabel renders the tool:model for the status bar, falling back to the
+// agent name when the catalog gave no binding.
+func (s *attachedSession) bindingLabel() string {
+	if s.matrixKey != "" {
+		return s.matrixKey
+	}
+	return s.agent
+}
+
 // Detach ends the attached session and returns ycode to driving itself.
 func (a *App) Detach() (string, error) {
 	att := a.attached
@@ -200,6 +211,17 @@ func (a *App) AttachedLabel() string {
 		return ""
 	}
 	return a.attached.target
+}
+
+// AttachedBinding is the tool:model actually answering right now, or "" when
+// ycode answers for itself. The status bar needs the BINDING rather than the
+// friendly label: "codex:gpt-5.5" says which model is producing the text,
+// where a nickname alone does not.
+func (a *App) AttachedBinding() string {
+	if a.attached == nil {
+		return ""
+	}
+	return a.attached.bindingLabel()
 }
 
 // screenControl matches the escape sequences that command the WHOLE TERMINAL
