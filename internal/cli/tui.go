@@ -707,9 +707,21 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ttyDir := msg.WorkDir
 		ttyResultCh := msg.ResultCh
 
+		ttyRaw := msg.Raw
+		ttyEnv := msg.Env
+
 		launchTTY := func() tea.Cmd {
 			m.appendOutput(fmt.Sprintf("> [TTY] %s\n", ttyCmd))
-			scriptFile, cmd := ttyCommandWithCapture(ttyCmd, ttyDir)
+			var (
+				scriptFile string
+				cmd        *exec.Cmd
+			)
+			if ttyRaw {
+				// Hand the screen over whole; capturing would corrupt it.
+				cmd = ttyCommandRaw(ttyCmd, ttyDir, ttyEnv)
+			} else {
+				scriptFile, cmd = ttyCommandWithCapture(ttyCmd, ttyDir)
+			}
 			return tea.ExecProcess(cmd, func(err error) tea.Msg {
 				exitCode := 0
 				if err != nil {
@@ -720,6 +732,14 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return ttyExecDoneMsg{ResultCh: ttyResultCh, ExitCode: exitCode, Err: err, ScriptFile: scriptFile}
 			})
+		}
+
+		// A trusted request came from the USER's own keystroke (/agent, /tool).
+		// The gate below exists to police what the AGENT asked for; asking the
+		// user to confirm the command they just typed is noise, not safety.
+		if msg.Trusted {
+			m.logState("tty_exec_trusted", "command", ttyCmd)
+			return m, launchTTY()
 		}
 
 		// If user previously chose "always allow", auto-approve without prompting.
@@ -1458,7 +1478,12 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 	}
 
 	// --- Thin-client mode: send everything else to the server ---
-	if m.cl != nil {
+	//
+	// Except switching. /agent and /tool hand over THIS terminal, which the
+	// server does not have — routing them remotely would run an interactive
+	// agent on the far end with nobody attached to it. They dispatch locally
+	// in both modes.
+	if m.cl != nil && !isLocalOnlySlash(text) {
 		m.appendOutput(fmt.Sprintf("> %s\n", text))
 		m.resetTitle()
 		return m.startAgentTurn(text)

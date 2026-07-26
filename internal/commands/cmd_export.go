@@ -215,3 +215,21 @@ func truncateForSummary(s string, maxLen int) string {
 	}
 	return s[:maxLen] + "…"
 }
+
+// RenderHandoff renders the conversation as the context handed to another
+// agent when switching.
+//
+// It reuses the /export renderer on purpose. The handoff and the export are
+// the same artifact for the same reason — a faithful, deterministic record of
+// what happened — and keeping one renderer means a fix to either is a fix to
+// both. Deterministic matters here: the slash path must be free and instant,
+// so nothing may call a model to produce it.
+//
+// Returns "" for an empty session, which callers must report rather than
+// silently switching with nothing.
+func RenderHandoff(s *session.Session, workDir string) string {
+	if s == nil || len(s.Messages) == 0 {
+		return ""
+	}
+	return renderExportMarkdown(&RuntimeDeps{Session: s, WorkDir: workDir})
+}

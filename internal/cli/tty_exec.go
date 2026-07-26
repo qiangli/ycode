@@ -24,6 +24,25 @@ type ttyExecRequestMsg struct {
 	Command  string
 	WorkDir  string
 	ResultCh chan ttyExecResult
+
+	// Trusted skips the "Allow interactive command?" gate. The gate exists
+	// because the AGENT asked to run something; when the USER typed the
+	// command (/agent, /tool) asking them to confirm their own keystroke is
+	// noise, not safety.
+	Trusted bool
+
+	// Raw hands the terminal over verbatim, with no script(1) capture.
+	// Capture is right for ssh and sudo, and wrong for a nested full-screen
+	// TUI: script mangles resize and ANSI on darwin, and the capture would
+	// pour the whole nested session's escape sequences into our transcript.
+	// Raw runs give up captured output — deliberately, since there is no
+	// useful text to capture from a program that owned the screen.
+	Raw bool
+
+	// Env is appended to the child's environment (e.g. the recursion-depth
+	// stamp). Set on the CHILD rather than via os.Setenv, which would leak
+	// into every later command this session runs.
+	Env []string
 }
 
 // ttyExecResult is sent back from the TUI after the interactive process exits.
@@ -60,6 +79,26 @@ func NewTUITTYExecutor(p *tea.Program) *TUITTYExecutor {
 // full terminal access. It blocks until the command completes or the
 // context is cancelled. Only one TTY command can run at a time.
 func (te *TUITTYExecutor) ExecuteTTY(ctx context.Context, command string, workDir string) (*bash.ExecResult, error) {
+	return te.execute(ctx, command, workDir, ttyExecOptions{})
+}
+
+// ExecuteTTYRaw hands the terminal to a user-initiated program — another
+// agent's full-screen TUI — and returns when it exits.
+//
+// It differs from ExecuteTTY in exactly two ways, both required for a nested
+// TUI: no permission gate (the user typed this), and no script(1) capture
+// (which would corrupt the child's rendering and flood our transcript).
+func (te *TUITTYExecutor) ExecuteTTYRaw(ctx context.Context, command, workDir string, env []string) (*bash.ExecResult, error) {
+	return te.execute(ctx, command, workDir, ttyExecOptions{Trusted: true, Raw: true, Env: env})
+}
+
+type ttyExecOptions struct {
+	Trusted bool
+	Raw     bool
+	Env     []string
+}
+
+func (te *TUITTYExecutor) execute(ctx context.Context, command string, workDir string, opt ttyExecOptions) (*bash.ExecResult, error) {
 	tracer := otel.Tracer("ycode.tty")
 	ctx, span := tracer.Start(ctx, "ycode.tty.exec",
 		trace.WithAttributes(
@@ -78,6 +117,9 @@ func (te *TUITTYExecutor) ExecuteTTY(ctx context.Context, command string, workDi
 		Command:  command,
 		WorkDir:  workDir,
 		ResultCh: resultCh,
+		Trusted:  opt.Trusted,
+		Raw:      opt.Raw,
+		Env:      opt.Env,
 	})
 
 	execStart := time.Now()
@@ -138,6 +180,20 @@ func ttyCommandWithCapture(command string, workDir string) (string, *exec.Cmd) {
 		cmd.Dir = workDir
 	}
 	return scriptPath, cmd
+}
+
+// ttyCommandRaw runs a command with the terminal handed over verbatim — no
+// script(1) wrapper, so the child owns rendering completely. Used for nested
+// full-screen programs, where capture would corrupt the display.
+func ttyCommandRaw(command, workDir string, env []string) *exec.Cmd {
+	cmd := exec.Command("sh", "-c", command)
+	if workDir != "" {
+		cmd.Dir = workDir
+	}
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	return cmd
 }
 
 // isDarwin returns true if running on macOS.

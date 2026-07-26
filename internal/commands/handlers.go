@@ -89,6 +89,11 @@ type RuntimeDeps struct {
 	// host has no task registry (thin client, shell mode).
 	Tasks func() []*task.Task
 
+	// AgentSwitcher hands the terminal to another agent and returns when it
+	// exits. Nil outside the interactive TUI — /agent then reports the
+	// equivalent `bashy chat` command instead of pretending.
+	AgentSwitcher func(ctx context.Context, req SwitchRequest) (string, error)
+
 	// RetryTurn removes the last turn and returns the last user message for re-execution.
 	RetryTurn func() (string, error)
 
@@ -840,6 +845,7 @@ func RegisterBuiltins(r *Registry, deps *RuntimeDeps) {
 
 	// Search command
 	RegisterSearchCommand(r, deps)
+	registerSwitchCommands(r, deps)
 
 	// Plugin commands
 	r.Register(&Spec{

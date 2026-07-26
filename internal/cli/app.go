@@ -114,6 +114,11 @@ type App struct {
 
 	// Session tracking for summary reporting.
 	usageTracker *usage.Tracker
+
+	// ttyExec hands the terminal to a subprocess and takes it back when the
+	// subprocess exits. Nil outside interactive mode — /agent refuses rather
+	// than pretending in --print / shell mode.
+	ttyExec      *TUITTYExecutor
 	sessionStart time.Time
 
 	// Cloudbox model lister for the cloudbox-pooled gateway (optional).
@@ -192,24 +197,33 @@ func NewThinApp(version, workDir string) (*App, error) {
 	if version == "" {
 		version = "dev"
 	}
-	cmdRegistry := commands.NewRegistry()
-	commands.RegisterBuiltins(cmdRegistry, &commands.RuntimeDeps{
-		Version: version,
-		WorkDir: workDir,
-	})
-	return &App{
+	// Two-phase, matching NewApp: the App has to exist before its methods can
+	// be handed to the command registry. Building the registry first is why
+	// thin mode could never offer a dep backed by an App method.
+	app := &App{
 		renderer:     renderer,
 		version:      version,
 		workDir:      workDir,
 		stdout:       os.Stdout,
 		stderr:       os.Stderr,
 		config:       &config.Config{},
-		commands:     cmdRegistry,
 		taskRegistry: task.NewRegistry(),
 		agentPool:    agentpool.New(),
 		usageTracker: usage.NewTracker(),
 		sessionStart: time.Now(),
-	}, nil
+	}
+
+	cmdRegistry := commands.NewRegistry()
+	commands.RegisterBuiltins(cmdRegistry, &commands.RuntimeDeps{
+		Version: version,
+		WorkDir: workDir,
+		// The TTY is client-side, so switching agents runs HERE even though
+		// everything else in thin mode is served remotely.
+		AgentSwitcher: app.SwitchAgent,
+		Tasks:         func() []*task.Task { return app.taskRegistry.List() },
+	})
+	app.commands = cmdRegistry
+	return app, nil
 }
 
 // NewApp creates a new app instance.
@@ -301,6 +315,7 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		ModelSwitcher:  app.SwitchModel,
 		CloudboxLister: app.cloudboxLister,
 		Tasks:          func() []*task.Task { return app.taskRegistry.List() },
+		AgentSwitcher:  app.SwitchAgent,
 		RetryTurn:      app.RetryTurn,
 		RevertFiles:    app.RevertFiles,
 		TrackUsage: func(inputTokens, outputTokens, cacheCreate, cacheRead int) {
@@ -1584,10 +1599,14 @@ func (a *App) RunInteractiveWithClient(ctx context.Context, cl agentClient) erro
 	m.SetProgram(p)
 	suppressLogOutput(p)
 
+	// The TTY executor is built unconditionally: /agent hands the terminal to
+	// another agent and needs it even in thin-client mode, which has no tool
+	// registry but does have a real terminal.
+	a.ttyExec = NewTUITTYExecutor(p)
 	if a.toolRegistry != nil {
 		prompter := NewTUIPrompter(p)
 		a.toolRegistry.SetPermissionPrompter(prompter.Prompt)
-		a.toolRegistry.SetTTYExecutor(NewTUITTYExecutor(p))
+		a.toolRegistry.SetTTYExecutor(a.ttyExec)
 	}
 
 	_, err := p.Run()
@@ -1611,10 +1630,14 @@ func (a *App) RunInteractive(ctx context.Context) error {
 	// Wire TUI-based permission prompter and TTY executor into the tool
 	// registry so that tools can ask for permission and run interactive
 	// commands (ssh, sudo, etc.) through the TUI.
+	// The TTY executor is built unconditionally: /agent hands the terminal to
+	// another agent and needs it even in thin-client mode, which has no tool
+	// registry but does have a real terminal.
+	a.ttyExec = NewTUITTYExecutor(p)
 	if a.toolRegistry != nil {
 		prompter := NewTUIPrompter(p)
 		a.toolRegistry.SetPermissionPrompter(prompter.Prompt)
-		a.toolRegistry.SetTTYExecutor(NewTUITTYExecutor(p))
+		a.toolRegistry.SetTTYExecutor(a.ttyExec)
 	}
 
 	_, err := p.Run()

@@ -77,6 +77,8 @@ func TestAllCommandsRegistered(t *testing.T) {
 		"commit", "review", "advisor", "security-review", "team", "cron", "loop",
 		// plugin
 		"plugin",
+		// switching
+		"agent", "tool",
 	}
 
 	for _, name := range expected {
