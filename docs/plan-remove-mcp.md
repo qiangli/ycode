@@ -127,3 +127,33 @@ MCP is woven through ycode, not bolted on:
 The steward/secretary/conductor **role TUI** vision this enables is separate downstream work:
 ycode as a steerable front-end bashy drives into `steward` / `meet` / `conductor` roles over
 the event channel. Removing MCP clears the deck for it; building it is its own plan.
+
+## Revisited 2026-07-25 — the agentic verbs, and where MCP goes instead
+
+The question came up again once ycode grew agent switching (`/agent`, `/tool`,
+`/detach`): should those be exported as MCP so other tools can call them?
+
+**Not from ycode.** The decision above stands, and its principle is the reason:
+ycode is *driven, not exposed*. Re-adding a server here would reverse a
+completed removal that a regression test guards.
+
+**The gap is real, but it is bashy's.** The fleet already speaks MCP —
+`coreutils mcp` serves `list_tools` / `run_tool` over the userland registry.
+What is exposed to nothing is the AGENTIC surface: `bashy chat`, `agents`,
+`meet`, `weave`. `bashy mcp` is not even a command. Filling that in bashy costs
+no reversal — the server exists, the operation exists, and bashy already owns
+catalog resolution, the credential firewall and sandboxing. It would serve any
+MCP client rather than only ycode.
+
+**Deferred until the agentic features are stable** (user, 2026-07-25). Two
+things to settle when it is picked up:
+
+- **stdio MCP spawns a fresh process**, so `run_tool` from a child gets a NEW
+  bashy, not a handle on the running parent session. That buys "launch or
+  delegate to an agent" cheaply; "steer the session I am inside" still needs
+  session addressing — an explicit id, or an HTTP/SSE transport to a live
+  server. MCP gives that missing piece a standard shape; it does not remove it.
+- **Exposing agentic verbs is a privilege step-up.** `run_tool ls` and
+  `run_tool chat --agent claude-fable5` are not the same risk: the second
+  spawns a real agent and spends real budget. Scope deliberately — `agents
+  list` and a headless `delegate` are defensible before interactive attach is.
