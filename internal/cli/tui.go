@@ -1492,6 +1492,26 @@ func (m *TUIModel) handleInput(text string) tea.Cmd {
 		return func() tea.Msg { return repaintMsg{} }
 	}
 
+	// --- Attached: forward prose to the agent we are driving ---
+	//
+	// This is what "the user stays in ycode" means in practice: while
+	// attached, typing goes to the other agent, not to ycode's own model.
+	//
+	// Slash commands are deliberately NOT forwarded. They are ycode's control
+	// surface — /detach, /agent to move on, /help — and sending them onward
+	// would strand the user inside a session with no way to steer or leave.
+	if m.app.AttachedLabel() != "" && !strings.HasPrefix(text, "/") {
+		m.appendOutput(fmt.Sprintf("> %s\n", text))
+		m.resetTitle()
+		ctx, cancel := context.WithCancel(context.Background())
+		m.workCancel = cancel
+		m.working = true
+		return tea.Batch(func() tea.Msg {
+			out, err := m.app.Forward(ctx, text)
+			return commandOutputMsg{Text: out, Err: err}
+		}, workingTick())
+	}
+
 	// --- Thin-client mode: send everything else to the server ---
 	//
 	// Except switching. /agent and /tool hand over THIS terminal, which the

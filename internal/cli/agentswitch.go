@@ -13,6 +13,19 @@ import (
 	"github.com/qiangli/ycode/internal/commands"
 )
 
+// Switch routes a /agent or /tool request to the mode it asked for.
+//
+// ATTACH IS THE DEFAULT. You stay in ycode, its replies render here, and the
+// conversation keeps accumulating in one transcript — which is what makes
+// switching again later carry everything. --takeover is the escape hatch for
+// when you actually want the other tool's own full-screen UI.
+func (a *App) Switch(ctx context.Context, req commands.SwitchRequest) (string, error) {
+	if req.Takeover {
+		return a.SwitchAgent(ctx, req)
+	}
+	return a.Attach(ctx, req)
+}
+
 // SwitchAgent hands this terminal to another fleet agent and returns when it
 // exits, carrying the current conversation across by default.
 //
@@ -118,8 +131,9 @@ func shellQuote(s string) string {
 // conversation. Sending one to the server would start an interactive agent
 // on the far end with no one attached to it.
 var localOnlySlash = map[string]bool{
-	"agent": true,
-	"tool":  true,
+	"agent":  true,
+	"tool":   true,
+	"detach": true,
 }
 
 func isLocalOnlySlash(text string) bool {

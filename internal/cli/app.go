@@ -225,7 +225,8 @@ func NewThinApp(version, workDir string) (*App, error) {
 		WorkDir: workDir,
 		// The TTY is client-side, so switching agents runs HERE even though
 		// everything else in thin mode is served remotely.
-		AgentSwitcher: app.SwitchAgent,
+		AgentSwitcher: app.Switch,
+		Detacher:      app.Detach,
 		Tasks:         func() []*task.Task { return app.taskRegistry.List() },
 	})
 	app.commands = cmdRegistry
@@ -321,7 +322,8 @@ func NewApp(cfg *config.Config, provider api.Provider, sess *session.Session, op
 		ModelSwitcher:  app.SwitchModel,
 		CloudboxLister: app.cloudboxLister,
 		Tasks:          func() []*task.Task { return app.taskRegistry.List() },
-		AgentSwitcher:  app.SwitchAgent,
+		AgentSwitcher:  app.Switch,
+		Detacher:       app.Detach,
 		RetryTurn:      app.RetryTurn,
 		RevertFiles:    app.RevertFiles,
 		TrackUsage: func(inputTokens, outputTokens, cacheCreate, cacheRead int) {

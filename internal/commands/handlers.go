@@ -89,10 +89,14 @@ type RuntimeDeps struct {
 	// host has no task registry (thin client, shell mode).
 	Tasks func() []*task.Task
 
-	// AgentSwitcher hands the terminal to another agent and returns when it
-	// exits. Nil outside the interactive TUI — /agent then reports the
-	// equivalent `bashy chat` command instead of pretending.
+	// AgentSwitcher routes to another agent: attached by default (ycode keeps
+	// the screen and proxies), or handing over the terminal under --takeover.
+	// Nil outside the interactive TUI — /agent then reports the equivalent
+	// `bashy chat` command instead of pretending.
 	AgentSwitcher func(ctx context.Context, req SwitchRequest) (string, error)
+
+	// Detacher ends an attached session. Nil when nothing can be attached.
+	Detacher func() (string, error)
 
 	// RetryTurn removes the last turn and returns the last user message for re-execution.
 	RetryTurn func() (string, error)

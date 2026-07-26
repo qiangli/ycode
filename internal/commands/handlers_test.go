@@ -78,7 +78,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 		// plugin
 		"plugin",
 		// switching
-		"agent", "tool",
+		"agent", "tool", "detach",
 	}
 
 	for _, name := range expected {
@@ -112,6 +112,7 @@ func TestAllCommandsExecute(t *testing.T) {
 		"commit": true, // requires Provider
 		"search": true, // requires args
 		"tasks":  true, // requires a task registry — saying "none running" without one would be a guess
+		"detach": true, // nothing is attached, and claiming otherwise would be a lie
 	}
 
 	for _, spec := range r.ListAll() {

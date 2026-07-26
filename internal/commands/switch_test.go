@@ -11,19 +11,22 @@ func TestParseSwitchArgs(t *testing.T) {
 		in       string
 		selector string
 		fresh    bool
+		takeover bool
 		wantErr  bool
 	}{
-		{"", "", false, false},
-		{"codex-gpt-5.5", "codex-gpt-5.5", false, false},
-		{"  L3  ", "L3", false, false},
-		{"codex --fresh", "codex", true, false},
-		{"--fresh codex", "codex", true, false},
-		{"codex --no-context", "codex", true, false},
-		{"codex --bogus", "", false, true},
-		{"codex extra", "", false, true},
+		{"", "", false, false, false},
+		{"codex-gpt-5.5", "codex-gpt-5.5", false, false, false},
+		{"  L3  ", "L3", false, false, false},
+		{"codex --fresh", "codex", true, false, false},
+		{"--fresh codex", "codex", true, false, false},
+		{"codex --no-context", "codex", true, false, false},
+		{"codex --takeover", "codex", false, true, false},
+		{"codex --fresh --takeover", "codex", true, true, false},
+		{"codex --bogus", "", false, false, true},
+		{"codex extra", "", false, false, true},
 	}
 	for _, tc := range cases {
-		sel, fresh, err := parseSwitchArgs(tc.in)
+		sel, fresh, takeover, err := parseSwitchArgs(tc.in)
 		if (err != nil) != tc.wantErr {
 			t.Errorf("parseSwitchArgs(%q) err = %v, wantErr %v", tc.in, err, tc.wantErr)
 			continue
@@ -31,8 +34,9 @@ func TestParseSwitchArgs(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		if sel != tc.selector || fresh != tc.fresh {
-			t.Errorf("parseSwitchArgs(%q) = (%q, %v), want (%q, %v)", tc.in, sel, fresh, tc.selector, tc.fresh)
+		if sel != tc.selector || fresh != tc.fresh || takeover != tc.takeover {
+			t.Errorf("parseSwitchArgs(%q) = (%q, fresh=%v, takeover=%v), want (%q, fresh=%v, takeover=%v)",
+				tc.in, sel, fresh, takeover, tc.selector, tc.fresh, tc.takeover)
 		}
 	}
 }
@@ -41,7 +45,7 @@ func TestParseSwitchArgs(t *testing.T) {
 // --frsh` has to complain, or the user silently loses their context while
 // believing they asked to drop it.
 func TestUnknownFlagIsRejectedNotTreatedAsASelector(t *testing.T) {
-	_, _, err := parseSwitchArgs("codex --frsh")
+	_, _, _, err := parseSwitchArgs("codex --frsh")
 	if err == nil {
 		t.Fatal("a misspelled flag was accepted")
 	}
@@ -131,5 +135,59 @@ func TestContextIsCarriedUnlessFreshIsAsked(t *testing.T) {
 func TestRenderHandoffEmptySession(t *testing.T) {
 	if got := RenderHandoff(nil, "/tmp"); got != "" {
 		t.Errorf("nil session rendered %q, want empty", got)
+	}
+}
+
+// ATTACH IS THE DEFAULT and takeover is opt-in. Getting this backwards would
+// silently change what switching MEANS: the user would be ejected from ycode
+// when they expected its replies to appear in place.
+func TestAttachIsTheDefaultAndTakeoverIsOptIn(t *testing.T) {
+	var got SwitchRequest
+	r := NewRegistry()
+	RegisterBuiltins(r, &RuntimeDeps{
+		AgentSwitcher: func(_ context.Context, req SwitchRequest) (string, error) {
+			got = req
+			return "", nil
+		},
+	})
+
+	if _, err := r.Execute(context.Background(), "agent", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if got.Takeover {
+		t.Error("a plain /agent asked for takeover; attach must be the default")
+	}
+
+	if _, err := r.Execute(context.Background(), "agent", "codex --takeover"); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Takeover {
+		t.Error("--takeover did not reach the switcher")
+	}
+}
+
+func TestDetachWithoutADetacherFailsClearly(t *testing.T) {
+	r := NewRegistry()
+	RegisterBuiltins(r, &RuntimeDeps{})
+
+	_, err := r.Execute(context.Background(), "detach", "")
+	if err == nil {
+		t.Fatal("/detach with nothing attached should error, not claim success")
+	}
+}
+
+func TestDetachReachesTheDetacher(t *testing.T) {
+	called := false
+	r := NewRegistry()
+	RegisterBuiltins(r, &RuntimeDeps{
+		Detacher: func() (string, error) { called = true; return "detached", nil },
+	})
+
+	out, err := r.Execute(context.Background(), "detach", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called || out != "detached" {
+		t.Errorf("/detach did not reach the detacher (called=%v, out=%q)", called, out)
 	}
 }
