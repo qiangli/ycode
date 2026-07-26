@@ -3,6 +3,10 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/qiangli/coreutils/pkg/chat"
+
+	"github.com/qiangli/ycode/internal/runtime/session"
 )
 
 // Colour must SURVIVE. The other agent's output should look the way it looks;
@@ -93,5 +97,79 @@ func TestAttachedLabelEmptyWhenDetached(t *testing.T) {
 	}
 	if _, err := a.Forward(t.Context(), "hello"); err == nil {
 		t.Error("Forward() with nothing attached should error")
+	}
+}
+
+// THE REQUIREMENT: after talking to one third-party tool, switching to another
+// must hand the second one everything the first said.
+//
+// ycode is the system of record across tools, not a pipe between them. Without
+// recording, a handoff would carry a conversation that stops at the moment the
+// first tool took over — losing exactly the part that made the switch worth
+// making.
+func TestAttachedExchangesEnterTheTranscriptAndTravelOnward(t *testing.T) {
+	sess, err := session.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{session: sess, workDir: t.TempDir()}
+
+	before := a.handoffContext()
+	if strings.Contains(before, "ROUTING BUG") {
+		t.Fatal("precondition: the transcript already mentions the reply")
+	}
+
+	att := &attachedSession{target: "Arlo (codex:gpt-5.5, L4)", agent: "codex-gpt-5.5"}
+	a.recordAttachedExchange("why is the retry failing?", "It is a ROUTING BUG in the fallback.", att)
+
+	// The exchange is in ycode's own transcript...
+	if len(sess.Messages) != 2 {
+		t.Fatalf("expected the request and the reply to be recorded, got %d messages", len(sess.Messages))
+	}
+	if sess.Messages[0].Role != session.RoleUser {
+		t.Errorf("first recorded message role = %v, want user", sess.Messages[0].Role)
+	}
+	if sess.Messages[1].Role != session.RoleAssistant {
+		t.Errorf("second recorded message role = %v, want assistant", sess.Messages[1].Role)
+	}
+
+	// ...attributed, so it does not read as though ycode said it...
+	replyText := sess.Messages[1].Content[0].Text
+	if !strings.Contains(replyText, "Arlo") {
+		t.Errorf("reply is not attributed to the agent that produced it: %q", replyText)
+	}
+	if sess.Messages[1].Model == "" {
+		t.Error("reply carries no Model attribution")
+	}
+
+	// ...and it travels to whatever tool is switched to next.
+	after := a.handoffContext()
+	if !strings.Contains(after, "ROUTING BUG") {
+		t.Error("the next tool would not receive what the previous one said")
+	}
+	if !strings.Contains(after, "why is the retry failing?") {
+		t.Error("the next tool would not receive the request either")
+	}
+}
+
+// What is STORED must be clean data, even though what is DISPLAYED keeps
+// colour: this text is replayed as prompt context, where escape sequences are
+// noise to a model and a prompt-injection surface.
+func TestRecordedContextIsSanitizedNotColoured(t *testing.T) {
+	sess, err := session.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{session: sess, workDir: t.TempDir()}
+	att := &attachedSession{target: "Arlo", agent: "codex-gpt-5.5"}
+
+	a.recordAttachedExchange("q", chat.SanitizeTurn("\x1b[31mred answer\x1b[0m"), att)
+
+	stored := sess.Messages[1].Content[0].Text
+	if strings.Contains(stored, "\x1b") {
+		t.Errorf("escape sequences were stored as context: %q", stored)
+	}
+	if !strings.Contains(stored, "red answer") {
+		t.Errorf("the answer itself was lost: %q", stored)
 	}
 }

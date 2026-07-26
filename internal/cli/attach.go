@@ -12,6 +12,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/agentswitch"
 	"github.com/qiangli/ycode/internal/commands"
+	"github.com/qiangli/ycode/internal/runtime/session"
 )
 
 // attachQuietPeriod is how long the target must be silent before its turn is
@@ -114,13 +115,65 @@ func (a *App) Forward(ctx context.Context, text string) (string, error) {
 	_ = att.live.WaitIdle(ctx, attachQuietPeriod)
 	att.turns++
 
-	out := strings.TrimSpace(renderAgentOutput(att.live.Turn()))
+	raw := att.live.Turn()
+	out := strings.TrimSpace(renderAgentOutput(raw))
 	if out == "" {
 		// Silence is not an answer. Say so rather than render an empty turn
 		// that looks like the agent replied with nothing.
 		return "", fmt.Errorf("%s produced no output this turn", att.target)
 	}
+
+	// RECORD THE EXCHANGE IN YCODE'S OWN TRANSCRIPT.
+	//
+	// ycode is the system of record across tools, not merely a pipe. Without
+	// this, attaching to codex and then switching to claude would hand claude
+	// a conversation that stops at the moment codex took over — everything
+	// codex said would be lost precisely when it was needed. Recording here is
+	// what makes "switch again, keep the context" true rather than aspirational.
+	//
+	// Stored with chat.SanitizeTurn, NOT the display rendering: this text will
+	// be replayed as prompt context, and escape sequences are noise to a model
+	// (and a prompt-injection surface). Colour is for the human; data is for
+	// the next agent. That is the whole reason the two paths differ.
+	a.recordAttachedExchange(text, chat.SanitizeTurn(raw), att)
+
 	return out, nil
+}
+
+// recordAttachedExchange appends a forwarded request and its reply to ycode's
+// session, attributed to the agent that produced it.
+//
+// Attribution is not cosmetic: an unlabelled reply in the transcript reads as
+// though YCODE said it, and the next agent to receive this context would be
+// told it had already reasoned things it never saw.
+func (a *App) recordAttachedExchange(request, reply string, att *attachedSession) {
+	if a.session == nil {
+		return
+	}
+	_ = a.session.AddMessage(session.ConversationMessage{
+		Role:    session.RoleUser,
+		Content: []session.ContentBlock{{Type: session.ContentTypeText, Text: request}},
+	})
+	if strings.TrimSpace(reply) == "" {
+		return
+	}
+	_ = a.session.AddMessage(session.ConversationMessage{
+		Role:  session.RoleAssistant,
+		Model: att.binding(),
+		Content: []session.ContentBlock{{
+			Type: session.ContentTypeText,
+			Text: fmt.Sprintf("[via %s]\n%s", att.target, reply),
+		}},
+	})
+}
+
+// binding returns the tool:model this session is driving, for the Model field
+// on recorded messages.
+func (s *attachedSession) binding() string {
+	if s.live != nil && s.live.Nick != "" {
+		return s.live.Nick
+	}
+	return s.agent
 }
 
 // Detach ends the attached session and returns ycode to driving itself.
