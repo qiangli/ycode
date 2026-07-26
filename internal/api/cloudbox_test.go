@@ -212,13 +212,13 @@ func TestDiscoverEnvAndCloudbox_MergesEnvAndCloudbox(t *testing.T) {
 }
 
 func TestDiscoverEnvAndCloudbox_NilLister(t *testing.T) {
-	// All env keys cleared; nil lister.
-	for _, k := range []string{
-		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY",
-		"XAI_API_KEY", "DASHSCOPE_API_KEY", "MOONSHOT_API_KEY", "KIMI_API_KEY",
-		"DEEPSEEK_API_KEY",
-	} {
-		t.Setenv(k, "")
+	// Clear every key the discovery actually consults, derived from the SAME
+	// table it reads. The list used to be hardcoded here and drifted: ZAI_API_KEY
+	// was added to envKeyModels and not to this test, so on any machine with a
+	// GLM key set the test failed — not because the code was wrong, but because
+	// the test was reading the developer's real environment.
+	for _, e := range envKeyModels {
+		t.Setenv(e.envKey, "")
 	}
 	models := DiscoverEnvAndCloudbox(context.Background(), nil)
 	if len(models) != 0 {

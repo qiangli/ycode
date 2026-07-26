@@ -38,6 +38,10 @@ type attachedSession struct {
 	matrixKey string // tool:model, e.g. "codex:gpt-5.5"
 	started   time.Time
 	turns     int
+
+	// notePath is where this agent was asked to write its account before
+	// exiting. Read on detach.
+	notePath string
 }
 
 // Attach starts a live session with another agent and leaves ycode in control.
@@ -72,6 +76,14 @@ func (a *App) Attach(ctx context.Context, req commands.SwitchRequest) (string, e
 		opt.Prompt = a.handoffContext()
 	}
 
+	// The handoff note is the STANDARD protocol between agent tools, not a
+	// takeover workaround. Even here, where ycode does capture each turn, the
+	// agent's own account beats a terminal scrape — the scrape is a
+	// reconstruction that loses whatever the agent repainted over, while the
+	// note is authored by the participant that knows what it did.
+	notePath := a.handoffNotePath()
+	opt.Prompt = appendHandoffInstruction(opt.Prompt, notePath)
+
 	live, err := chat.Start(ctx, agentName, opt)
 	if err != nil {
 		return "", fmt.Errorf("attach to %s: %w", target.Label(), err)
@@ -83,6 +95,7 @@ func (a *App) Attach(ctx context.Context, req commands.SwitchRequest) (string, e
 		agent:     agentName,
 		matrixKey: target.Agent.Binding,
 		started:   time.Now(),
+		notePath:  notePath,
 	}
 
 	carried := "carrying this conversation"
@@ -198,10 +211,62 @@ func (a *App) Detach() (string, error) {
 
 	_ = att.live.Quit()
 	att.live.Close()
+	elapsed := time.Since(att.started).Round(time.Second)
 	a.attached = nil
 
-	return fmt.Sprintf("← detached from %s — %d turn(s), %s",
-		att.target, att.turns, time.Since(att.started).Round(time.Second)), nil
+	// PROVENANCE, in order of fidelity.
+	//
+	// The handoff note is the agent's own account and is authoritative. The
+	// per-turn scrapes recorded during the session are the FALLBACK: a pty
+	// merges stdout and stderr, so a scrape is a reconstruction that loses
+	// whatever the agent repainted over.
+	//
+	// Whichever we end up with, the next agent is told WHICH — a scrape read as
+	// though it were a verbatim record invites confident conclusions drawn from
+	// text that was never quite what was said.
+	summary := ""
+	if note := a.readHandoffNote(att.notePath); note != "" {
+		a.recordHandoffNote(att.target, elapsed, att.turns, note)
+		summary = "\n  It left a handoff note; that is the record of record."
+	} else {
+		a.recordScrapeFallback(att.target, elapsed, att.turns)
+		summary = "\n  It left no handoff note — the record above is a terminal scrape."
+	}
+
+	return fmt.Sprintf("← detached from %s — %d turn(s), %s%s",
+		att.target, att.turns, elapsed, summary), nil
+}
+
+// recordScrapeFallback tells the next agent that the preceding exchange is a
+// reconstruction rather than a verbatim record.
+//
+// Saying nothing would leave a scrape indistinguishable from an authored
+// account, and a reader cannot discount what it does not know is uncertain.
+func (a *App) recordScrapeFallback(target string, elapsed time.Duration, turns int) {
+	if a.session == nil || turns == 0 {
+		return
+	}
+	_ = a.session.AddMessage(session.ConversationMessage{
+		Role:  session.RoleAssistant,
+		Model: "ycode:handover",
+		Content: []session.ContentBlock{{
+			Type: session.ContentTypeText,
+			Text: fmt.Sprintf(
+				"[handover] %s ran for %s over %d turn(s) and left NO handoff note. The %s "+
+					"exchange(s) above were captured by scraping its terminal, which is a "+
+					"reconstruction: a pty merges stdout and stderr, so banners, spinners and "+
+					"repainted text can survive while some of the real answer is lost. Treat it "+
+					"as indicative rather than verbatim, and ask the user if a detail matters.",
+				target, elapsed, turns, plural(turns)),
+		}},
+	})
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return "single"
+	}
+	return "preceding"
 }
 
 // AttachedLabel names the currently attached agent, or "" when ycode is

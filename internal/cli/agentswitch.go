@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -71,6 +72,20 @@ func (a *App) SwitchAgent(ctx context.Context, req commands.SwitchRequest) (stri
 		sw.Context = a.handoffContext()
 	}
 
+	// ASK THE AGENT TO LEAVE A RECORD.
+	//
+	// ycode cannot capture a takeover — the child owns the terminal. But it can
+	// ask the child to write its own account before it exits, and then read
+	// that. The exchange stops being unrecoverable and becomes a handoff note
+	// authored by the one participant who was actually there.
+	//
+	// It is an INSTRUCTION, not a mechanism: the agent may ignore it. So the
+	// file's presence is the evidence. Present, we record what it says and
+	// attribute it; absent, we record the gap instead. What we must never do is
+	// assume compliance and leave the transcript looking continuous.
+	handoffPath := a.handoffNotePath()
+	sw.Context = appendHandoffInstruction(sw.Context, handoffPath)
+
 	argv, _, err := agentswitch.Command(sw)
 	if err != nil {
 		return "", err
@@ -96,19 +111,70 @@ func (a *App) SwitchAgent(ctx context.Context, req commands.SwitchRequest) (stri
 	// omission. A marker keeps the absence VISIBLE: the next agent is told
 	// plainly that work happened which it cannot see, which is recoverable —
 	// it can ask. Silence is not.
-	a.recordTakeoverGap(target.Label(), elapsed, res.ExitCode)
-
-	note := ""
-	if sw.Mode == agentswitch.ModeFresh {
-		note = ", fresh context"
-	} else if sw.Context == "" {
-		// Say so rather than let the user assume the history travelled.
-		note = ", no context to carry"
+	note := a.readHandoffNote(handoffPath)
+	if note != "" {
+		a.recordHandoffNote(target.Label(), elapsed, res.ExitCode, note)
+	} else {
+		a.recordTakeoverGap(target.Label(), elapsed, res.ExitCode)
 	}
-	return fmt.Sprintf("← back from %s — exit %d, %s%s\n"+
-		"  That exchange is NOT in this transcript (the agent owned the terminal).\n"+
-		"  Attach instead of --takeover to keep it: /agent <name>",
-		target.Label(), res.ExitCode, elapsed, note), nil
+
+	carried := "left a handoff note, folded into this conversation"
+	if note == "" {
+		carried = "left no handoff note — that exchange is NOT in this transcript"
+	}
+	return fmt.Sprintf("← back from %s — exit %d, %s\n  %s",
+		target.Label(), res.ExitCode, elapsed, carried), nil
+}
+
+// handoffNotePath is where the agent is asked to write its account. Per
+// session and per switch, so two handovers cannot overwrite each other.
+func (a *App) handoffNotePath() string {
+	dir := filepath.Join(os.TempDir(), "ycode-handoff")
+	_ = os.MkdirAll(dir, 0o700)
+	return filepath.Join(dir, fmt.Sprintf("%s-%d.md", a.SessionID(), time.Now().UnixNano()))
+}
+
+// appendHandoffInstruction adds the request to the context the agent receives.
+func appendHandoffInstruction(ctx, path string) string {
+	instruction := fmt.Sprintf(
+		"\n\n---\nBEFORE YOU EXIT: write a short account of this session to %s — "+
+			"what you did, what you changed, what you concluded, and anything the next "+
+			"agent needs to know. Plain markdown. The human is returning to another tool "+
+			"that cannot see this terminal, and that file is the only way your work "+
+			"reaches it.", path)
+	return strings.TrimSpace(ctx) + instruction
+}
+
+// readHandoffNote returns the agent's account, or "" when it wrote none.
+func (a *App) readHandoffNote(path string) string {
+	data, err := os.ReadFile(path)
+	_ = os.Remove(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// recordHandoffNote folds the agent's own account into the transcript.
+//
+// Attributed and labelled as a CLAIM: it is the agent's self-report, not
+// something ycode observed. The next agent should weigh it accordingly.
+func (a *App) recordHandoffNote(target string, elapsed time.Duration, exitCode int, note string) {
+	if a.session == nil {
+		return
+	}
+	_ = a.session.AddMessage(session.ConversationMessage{
+		Role:  session.RoleAssistant,
+		Model: "ycode:handover",
+		Content: []session.ContentBlock{{
+			Type: session.ContentTypeText,
+			Text: fmt.Sprintf(
+				"[handover] The user worked directly with %s for %s (exit %d). That exchange "+
+					"was not captured, but the agent left this account of it — its own report, "+
+					"not an observed transcript:\n\n%s",
+				target, elapsed, exitCode, note),
+		}},
+	})
 }
 
 // recordTakeoverGap notes in ycode's transcript that a handover happened and

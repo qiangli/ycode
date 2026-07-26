@@ -1140,8 +1140,6 @@ var rootCmd = &cobra.Command{
 			if os.Getenv("YCODE_NO_SERVER") == "" && !hasSessionContinuationFlags() {
 				if baseURL, err := ensureServer(); err == nil {
 					return runServerPrompt(baseURL, prompt)
-				} else {
-					fmt.Fprintf(os.Stderr, "ycode: %s; running in-process (some server-mode features unavailable)\n", err)
 				}
 			}
 			app, err := newApp()
@@ -1168,7 +1166,6 @@ var rootCmd = &cobra.Command{
 			if _, ok := detectServer(); ok {
 				return runThinTUIAsync()
 			}
-			fmt.Fprintf(os.Stderr, "ycode: %s; running in-process (some server-mode features unavailable)\n", ErrServerNotRunning)
 		}
 
 		// In-process mode: full feature set, self-contained TUI.

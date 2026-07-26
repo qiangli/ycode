@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -234,5 +235,94 @@ func TestTakeoverRecordsTheGapItCannotCapture(t *testing.T) {
 	// And it reaches the next tool.
 	if !strings.Contains(a.handoffContext(), "NOT captured") {
 		t.Error("the next agent would not be told the transcript has a gap")
+	}
+}
+
+// The handoff note turns an unrecoverable gap into a record authored by the
+// one participant who was actually there.
+//
+// It is an INSTRUCTION though, not a mechanism — the agent may ignore it. So
+// the file's PRESENCE is the evidence: present, we fold in what it says and
+// label it a self-report; absent, we record the gap. Assuming compliance and
+// leaving the transcript looking continuous is the one thing that must not
+// happen.
+func TestHandoffNoteIsRecordedWhenWrittenAndGapWhenNot(t *testing.T) {
+	sess, err := session.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{session: sess, workDir: t.TempDir()}
+
+	// The agent complied.
+	path := a.handoffNotePath()
+	if err := os.WriteFile(path, []byte("Fixed the retry budget in retry.go."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := a.readHandoffNote(path)
+	if got != "Fixed the retry budget in retry.go." {
+		t.Fatalf("note not read back: %q", got)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("the note file should be consumed, not left behind")
+	}
+	a.recordHandoffNote("Beatrix", time.Minute, 0, got)
+
+	text := sess.Messages[0].Content[0].Text
+	if !strings.Contains(text, "retry budget") {
+		t.Errorf("the agent's account did not reach the transcript: %q", text)
+	}
+	// Labelled as a claim, because ycode did not observe it.
+	if !strings.Contains(text, "its own report") {
+		t.Errorf("the note is not marked as a self-report: %q", text)
+	}
+
+	// The agent ignored the instruction.
+	if note := a.readHandoffNote(a.handoffNotePath()); note != "" {
+		t.Errorf("a missing note read as %q, want empty", note)
+	}
+}
+
+func TestHandoffInstructionNamesThePathAndKeepsContext(t *testing.T) {
+	out := appendHandoffInstruction("prior conversation", "/tmp/note.md")
+	if !strings.Contains(out, "prior conversation") {
+		t.Error("the carried context was dropped")
+	}
+	if !strings.Contains(out, "/tmp/note.md") {
+		t.Error("the instruction does not name the file to write")
+	}
+	if !strings.Contains(out, "BEFORE YOU EXIT") {
+		t.Error("the instruction does not say when to write it")
+	}
+}
+
+// Provenance must be stated, not implied. A scrape read as though it were a
+// verbatim record invites confident conclusions drawn from text that was never
+// quite what was said — and a reader cannot discount what it does not know is
+// uncertain.
+func TestScrapeFallbackIsLabelledAsAReconstruction(t *testing.T) {
+	sess, err := session.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{session: sess, workDir: t.TempDir()}
+
+	a.recordScrapeFallback("Arlo (codex:gpt-5.5, L4)", 2*time.Minute, 3)
+
+	if len(sess.Messages) != 1 {
+		t.Fatalf("expected the provenance note, got %d messages", len(sess.Messages))
+	}
+	text := sess.Messages[0].Content[0].Text
+	for _, want := range []string{"NO handoff note", "reconstruction", "indicative rather than verbatim"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("provenance note does not convey %q: %q", want, text)
+		}
+	}
+
+	// With no turns there is nothing to qualify, so nothing is said.
+	sess2, _ := session.New(t.TempDir())
+	b := &App{session: sess2}
+	b.recordScrapeFallback("Arlo", time.Second, 0)
+	if len(sess2.Messages) != 0 {
+		t.Error("a session with no turns should produce no provenance note")
 	}
 }

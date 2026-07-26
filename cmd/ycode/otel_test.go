@@ -68,3 +68,22 @@ func TestResolveCollectorAddrUsesDiscoveryFile(t *testing.T) {
 		t.Fatalf("discovered collector addr = %q, want 127.0.0.1:9999", got)
 	}
 }
+
+func TestFileOTELExportModeReflectsCollectorConnection(t *testing.T) {
+	tests := []struct {
+		name      string
+		connected bool
+		want      string
+	}{
+		{name: "file only", want: "file-only"},
+		{name: "collector connected", connected: true, want: "dual-export (file + collector)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := fileOTELExportMode(tt.connected); got != tt.want {
+				t.Fatalf("fileOTELExportMode(%t) = %q, want %q", tt.connected, got, tt.want)
+			}
+		})
+	}
+}

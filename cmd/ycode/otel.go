@@ -179,8 +179,12 @@ func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Reg
 	// if OTEL_EXPORTER_OTLP_ENDPOINT is present in the environment.
 	// This enables the workflow: start ycode solo, then start ycode serve,
 	// and ycode auto-publishes to the shared collector.
+	collectorConnected := false
 	collectorAddr := resolveCollectorAddrForEnabledObservability(cfg)
-	if collectorAddr != "" && otelProvider.TryConnectCollector(ctx, collectorAddr) {
+	if collectorAddr != "" {
+		collectorConnected = otelProvider.TryConnectCollector(ctx, collectorAddr)
+	}
+	if collectorConnected {
 		if otelProvider.LoggerProvider != nil {
 			convCfg.ConvLogger = yotel.NewConversationLogger(otelProvider.LoggerProvider, instanceID)
 		}
@@ -198,12 +202,7 @@ func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Reg
 		slog.SetDefault(slog.New(teeHandler))
 	}
 
-	slog.Debug("otel: initialized", "mode", func() string {
-		if otelProvider.LoggerProvider != nil {
-			return "dual-export (file + collector)"
-		}
-		return "file-only"
-	}(), "dataDir", dataDir)
+	slog.Debug("otel: initialized", "mode", fileOTELExportMode(collectorConnected), "dataDir", dataDir)
 
 	return &otelResult{
 		shutdown: func() {
@@ -218,6 +217,13 @@ func setupFileOTEL(cfg *config.Config, sess *session.Session, toolReg *tools.Reg
 		},
 		convOTEL: convCfg,
 	}
+}
+
+func fileOTELExportMode(collectorConnected bool) string {
+	if collectorConnected {
+		return "dual-export (file + collector)"
+	}
+	return "file-only"
 }
 
 // setupOTEL initializes full OTEL instrumentation with gRPC export to collector.
