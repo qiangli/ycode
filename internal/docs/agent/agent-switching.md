@@ -64,11 +64,14 @@ so a misspelled `--fresh` cannot silently keep context you asked to drop.
 
 ## Provenance — how much to trust what you read
 
-Every switch asks the target to write an account of its session to a file
-before exiting, which ycode folds into the transcript. It is an instruction,
-not a mechanism, so the transcript states which of three it holds:
+Every switch asks the target to run `bashy handoff` before exiting — the
+fleet-wide way work moves between agentic tools, capturing the brief, the next
+action AND the in-flight diff into a record `bashy resume` picks up cold, in
+another tool, on another machine. ycode folds it into the transcript. It is an
+instruction, not a mechanism, so the transcript states which of three it holds:
 
-- **`… its own report`** — the agent wrote a note. Most reliable, but a
+- **`… its own report`** — the agent ran `bashy handoff`. Most reliable, and
+  the in-flight work is recoverable with `bashy resume <id>`. Still a
   self-report: ycode did not observe it.
 - **`… reconstruction`** — no note; scraped from the terminal. A pty merges
   stdout and stderr, so banners survive while some of the answer is lost.

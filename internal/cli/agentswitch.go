@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/qiangli/coreutils/pkg/handoff"
 	"golang.org/x/term"
 
 	"github.com/qiangli/ycode/internal/agentswitch"
@@ -83,8 +83,8 @@ func (a *App) SwitchAgent(ctx context.Context, req commands.SwitchRequest) (stri
 	// file's presence is the evidence. Present, we record what it says and
 	// attribute it; absent, we record the gap instead. What we must never do is
 	// assume compliance and leave the transcript looking continuous.
-	handoffPath := a.handoffNotePath()
-	sw.Context = appendHandoffInstruction(sw.Context, handoffPath)
+	seenHandoffs := handoffSeen()
+	sw.Context = appendHandoffInstruction(sw.Context)
 
 	argv, _, err := agentswitch.Command(sw)
 	if err != nil {
@@ -111,48 +111,95 @@ func (a *App) SwitchAgent(ctx context.Context, req commands.SwitchRequest) (stri
 	// omission. A marker keeps the absence VISIBLE: the next agent is told
 	// plainly that work happened which it cannot see, which is recoverable —
 	// it can ask. Silence is not.
-	note := a.readHandoffNote(handoffPath)
-	if note != "" {
-		a.recordHandoffNote(target.Label(), elapsed, res.ExitCode, note)
+	rec := newHandoffSince(seenHandoffs)
+	if rec != nil {
+		a.recordHandoffNote(target.Label(), elapsed, res.ExitCode, summarizeHandoff(rec))
 	} else {
 		a.recordTakeoverGap(target.Label(), elapsed, res.ExitCode)
 	}
 
-	carried := "left a handoff note, folded into this conversation"
-	if note == "" {
-		carried = "left no handoff note — that exchange is NOT in this transcript"
+	carried := "handed off via bashy; the brief is in this conversation"
+	if rec == nil {
+		carried = "left no handoff — that exchange is NOT in this transcript"
 	}
 	return fmt.Sprintf("← back from %s — exit %d, %s\n  %s",
 		target.Label(), res.ExitCode, elapsed, carried), nil
 }
 
-// handoffNotePath is where the agent is asked to write its account. Per
-// session and per switch, so two handovers cannot overwrite each other.
-func (a *App) handoffNotePath() string {
-	dir := filepath.Join(os.TempDir(), "ycode-handoff")
-	_ = os.MkdirAll(dir, 0o700)
-	return filepath.Join(dir, fmt.Sprintf("%s-%d.md", a.SessionID(), time.Now().UnixNano()))
-}
-
-// appendHandoffInstruction adds the request to the context the agent receives.
-func appendHandoffInstruction(ctx, path string) string {
-	instruction := fmt.Sprintf(
-		"\n\n---\nBEFORE YOU EXIT: write a short account of this session to %s — "+
-			"what you did, what you changed, what you concluded, and anything the next "+
-			"agent needs to know. Plain markdown. The human is returning to another tool "+
-			"that cannot see this terminal, and that file is the only way your work "+
-			"reaches it.", path)
-	return strings.TrimSpace(ctx) + instruction
-}
-
-// readHandoffNote returns the agent's account, or "" when it wrote none.
-func (a *App) readHandoffNote(path string) string {
-	data, err := os.ReadFile(path)
-	_ = os.Remove(path)
+// handoffSeen snapshots the handoff record ids that already exist, so a record
+// written DURING this switch can be told from one that was already there.
+//
+// This matters: `bashy resume` happily returns a pending handoff from days ago.
+// Recording that as though the agent had just written it would manufacture
+// evidence — the exact false positive the whole provenance design exists to
+// prevent.
+func handoffSeen() map[string]bool {
+	seen := map[string]bool{}
+	records, err := handoff.List(handoff.DefaultDir())
 	if err != nil {
-		return ""
+		return seen
 	}
-	return strings.TrimSpace(string(data))
+	for _, r := range records {
+		seen[r.ID] = true
+	}
+	return seen
+}
+
+// appendHandoffInstruction asks the agent to hand off through BASHY rather than
+// to an ad-hoc file.
+//
+// `bashy handoff` already solves this properly and for every tool: it captures
+// the continuity brief, the next action AND the in-flight working tree (the
+// diff against HEAD plus untracked files by content), into a durable record
+// that travels between machines and is picked up by `bashy resume` from a cold
+// session in a different tool. A private note file in $TMPDIR carried prose
+// only, died with the temp directory, and taught the agent a ycode-shaped
+// habit no other tool shares.
+func appendHandoffInstruction(ctx string) string {
+	return strings.TrimSpace(ctx) + "\n\n---\n" +
+		"BEFORE YOU EXIT, hand the work back:\n\n" +
+		"    bashy handoff -m \"<what you did, what you learned>\" --next \"<the one thing to do next>\"\n\n" +
+		"The human is returning to another tool that cannot see this terminal. " +
+		"`bashy handoff` is how work moves between agentic tools here: it records your " +
+		"brief, your next action and your in-flight diff into a record any tool can " +
+		"resume. Do not write a private note file instead — nothing will read it."
+}
+
+// newHandoffSince returns a record written during this switch, or nil.
+func newHandoffSince(before map[string]bool) *handoff.Record {
+	records, err := handoff.List(handoff.DefaultDir())
+	if err != nil {
+		return nil
+	}
+	var newest *handoff.Record
+	for _, r := range records {
+		if before[r.ID] {
+			continue
+		}
+		if newest == nil || r.CreatedAt.After(newest.CreatedAt) {
+			newest = r
+		}
+	}
+	return newest
+}
+
+// summarize renders a handoff record as the account folded into the transcript.
+func summarizeHandoff(r *handoff.Record) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimSpace(r.Continuity))
+	if next := strings.TrimSpace(r.NextAction); next != "" {
+		fmt.Fprintf(&b, "\n\nNext: %s", next)
+	}
+	for _, blocker := range r.Blockers {
+		fmt.Fprintf(&b, "\nBlocked: %s", blocker)
+	}
+	// The working tree is the part prose cannot carry. Name it so the reader
+	// knows a diff is recoverable via `bashy resume`, without inlining it.
+	if r.Work.Repo != "" {
+		fmt.Fprintf(&b, "\n\n(in-flight work captured in handoff %s — `bashy resume %s` to apply it)",
+			r.ID, r.ID)
+	}
+	return b.String()
 }
 
 // recordHandoffNote folds the agent's own account into the transcript.

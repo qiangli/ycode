@@ -39,9 +39,9 @@ type attachedSession struct {
 	started   time.Time
 	turns     int
 
-	// notePath is where this agent was asked to write its account before
-	// exiting. Read on detach.
-	notePath string
+	// seenHandoffs are the handoff ids that existed when this session began,
+	// so a record written DURING it can be told from one already on disk.
+	seenHandoffs map[string]bool
 }
 
 // Attach starts a live session with another agent and leaves ycode in control.
@@ -81,8 +81,8 @@ func (a *App) Attach(ctx context.Context, req commands.SwitchRequest) (string, e
 	// agent's own account beats a terminal scrape — the scrape is a
 	// reconstruction that loses whatever the agent repainted over, while the
 	// note is authored by the participant that knows what it did.
-	notePath := a.handoffNotePath()
-	opt.Prompt = appendHandoffInstruction(opt.Prompt, notePath)
+	seenHandoffs := handoffSeen()
+	opt.Prompt = appendHandoffInstruction(opt.Prompt)
 
 	live, err := chat.Start(ctx, agentName, opt)
 	if err != nil {
@@ -90,12 +90,12 @@ func (a *App) Attach(ctx context.Context, req commands.SwitchRequest) (string, e
 	}
 
 	a.attached = &attachedSession{
-		live:      live,
-		target:    target.Label(),
-		agent:     agentName,
-		matrixKey: target.Agent.Binding,
-		started:   time.Now(),
-		notePath:  notePath,
+		live:         live,
+		target:       target.Label(),
+		agent:        agentName,
+		matrixKey:    target.Agent.Binding,
+		started:      time.Now(),
+		seenHandoffs: seenHandoffs,
 	}
 
 	carried := "carrying this conversation"
@@ -225,9 +225,9 @@ func (a *App) Detach() (string, error) {
 	// though it were a verbatim record invites confident conclusions drawn from
 	// text that was never quite what was said.
 	summary := ""
-	if note := a.readHandoffNote(att.notePath); note != "" {
-		a.recordHandoffNote(att.target, elapsed, att.turns, note)
-		summary = "\n  It left a handoff note; that is the record of record."
+	if rec := newHandoffSince(att.seenHandoffs); rec != nil {
+		a.recordHandoffNote(att.target, elapsed, att.turns, summarizeHandoff(rec))
+		summary = fmt.Sprintf("\n  It handed off via bashy (%s); that is the record of record.", rec.ID)
 	} else {
 		a.recordScrapeFallback(att.target, elapsed, att.turns)
 		summary = "\n  It left no handoff note — the record above is a terminal scrape."

@@ -1,12 +1,12 @@
 package cli
 
 import (
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/qiangli/coreutils/pkg/chat"
+	"github.com/qiangli/coreutils/pkg/handoff"
 
 	"github.com/qiangli/ycode/internal/runtime/session"
 )
@@ -238,60 +238,68 @@ func TestTakeoverRecordsTheGapItCannotCapture(t *testing.T) {
 	}
 }
 
-// The handoff note turns an unrecoverable gap into a record authored by the
-// one participant who was actually there.
-//
-// It is an INSTRUCTION though, not a mechanism — the agent may ignore it. So
-// the file's PRESENCE is the evidence: present, we fold in what it says and
-// label it a self-report; absent, we record the gap. Assuming compliance and
-// leaving the transcript looking continuous is the one thing that must not
-// happen.
-func TestHandoffNoteIsRecordedWhenWrittenAndGapWhenNot(t *testing.T) {
-	sess, err := session.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := &App{session: sess, workDir: t.TempDir()}
-
-	// The agent complied.
-	path := a.handoffNotePath()
-	if err := os.WriteFile(path, []byte("Fixed the retry budget in retry.go."), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got := a.readHandoffNote(path)
-	if got != "Fixed the retry budget in retry.go." {
-		t.Fatalf("note not read back: %q", got)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Error("the note file should be consumed, not left behind")
-	}
-	a.recordHandoffNote("Beatrix", time.Minute, 0, got)
-
-	text := sess.Messages[0].Content[0].Text
-	if !strings.Contains(text, "retry budget") {
-		t.Errorf("the agent's account did not reach the transcript: %q", text)
-	}
-	// Labelled as a claim, because ycode did not observe it.
-	if !strings.Contains(text, "its own report") {
-		t.Errorf("the note is not marked as a self-report: %q", text)
-	}
-
-	// The agent ignored the instruction.
-	if note := a.readHandoffNote(a.handoffNotePath()); note != "" {
-		t.Errorf("a missing note read as %q, want empty", note)
-	}
-}
-
-func TestHandoffInstructionNamesThePathAndKeepsContext(t *testing.T) {
-	out := appendHandoffInstruction("prior conversation", "/tmp/note.md")
+// Handoff goes through BASHY, not a private note file. bashy handoff already
+// solves this for every tool — brief, next action AND the in-flight diff, into
+// a durable record that travels and that `bashy resume` picks up cold, in a
+// different tool, on a different machine.
+func TestHandoffInstructionDirectsToBashy(t *testing.T) {
+	out := appendHandoffInstruction("prior conversation")
 	if !strings.Contains(out, "prior conversation") {
 		t.Error("the carried context was dropped")
 	}
-	if !strings.Contains(out, "/tmp/note.md") {
-		t.Error("the instruction does not name the file to write")
+	if !strings.Contains(out, "bashy handoff") {
+		t.Error("the instruction does not name `bashy handoff`")
+	}
+	if !strings.Contains(out, "--next") {
+		t.Error("the instruction does not ask for a next action")
 	}
 	if !strings.Contains(out, "BEFORE YOU EXIT") {
-		t.Error("the instruction does not say when to write it")
+		t.Error("the instruction does not say when to hand off")
+	}
+	// The old ad-hoc mechanism taught a ycode-shaped habit no other tool shares.
+	if strings.Contains(out, "note file") && !strings.Contains(out, "Do not write a private note file") {
+		t.Error("the instruction should steer AWAY from private note files")
+	}
+}
+
+// `bashy resume` will happily return a handoff from days ago. Recording that as
+// though the agent had just written it would MANUFACTURE evidence — the exact
+// false positive the provenance design exists to prevent. Only ids absent
+// before the switch count.
+func TestOnlyHandoffsWrittenDuringTheSwitchCount(t *testing.T) {
+	before := handoffSeen()
+
+	// Nothing new has been written, so nothing may be attributed to this switch
+	// — even though pre-existing records almost certainly exist on this host.
+	if rec := newHandoffSince(before); rec != nil {
+		t.Errorf("a pre-existing handoff was attributed to this switch: %s", rec.ID)
+	}
+
+	// And the snapshot is not vacuously empty on a host that has records.
+	if all, err := handoff.List(handoff.DefaultDir()); err == nil && len(all) > 0 && len(before) == 0 {
+		t.Error("handoffSeen() returned nothing while records exist — every one would look new")
+	}
+}
+
+func TestSummarizeHandoffCarriesBriefNextAndBlockers(t *testing.T) {
+	rec := &handoff.Record{
+		ID:         "20260725T000000Z-abc",
+		Continuity: "Fixed the retry budget.",
+		NextAction: "Run the gate.",
+		Blockers:   []string{"waiting on a key"},
+	}
+	rec.Work.Repo = "/tmp/repo"
+
+	got := summarizeHandoff(rec)
+	for _, want := range []string{"Fixed the retry budget.", "Next: Run the gate.", "Blocked: waiting on a key"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("summary missing %q: %q", want, got)
+		}
+	}
+	// The in-flight diff cannot be inlined, but the reader must know it exists
+	// and how to apply it.
+	if !strings.Contains(got, "bashy resume 20260725T000000Z-abc") {
+		t.Errorf("summary does not tell the reader how to recover the in-flight work: %q", got)
 	}
 }
 
