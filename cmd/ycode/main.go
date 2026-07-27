@@ -232,35 +232,7 @@ func newApp(workDirOverride ...string) (*cli.App, error) {
 		cfg.PersonaEnabled = false
 	}
 
-	// Model resolution: --model flag > ANTHROPIC_MODEL > YCODE_MODEL > config > default.
-	model := cfg.Model
-	if envModel := os.Getenv("YCODE_MODEL"); envModel != "" {
-		model = envModel
-	}
-	if envModel := os.Getenv("ANTHROPIC_MODEL"); envModel != "" {
-		model = envModel
-	}
-	if modelFlag != "" {
-		model = modelFlag
-	}
-	// A CASCADE agent (ycode-cascade-x4) is a ladder, not a model. Capture the
-	// whole ladder here — this is the only point where the selector still
-	// exists; one line down it has collapsed to the base model id, which is
-	// precisely how a cascade ended up serving its cheapest rung for an entire
-	// session. An explicit config ladder wins over the catalog's.
-	if len(cfg.CascadeModels) == 0 {
-		if ladder, ok := api.ResolveCascadeLadder(model); ok {
-			cfg.CascadeModels = ladder
-			slog.Info("cascade agent selected", "agent", model, "ladder", strings.Join(ladder, " → "))
-		}
-	}
-	// A fleet selector (nickname / agent name / band like L3) resolves to a
-	// concrete ycode model id; a literal model id passes through unchanged.
-	if fm, note := api.ResolveFleetModel(model); fm != model {
-		slog.Info("fleet model selection", "from", model, "resolved", note)
-		model = fm
-	}
-	cfg.Model = api.ResolveModelWithAliases(model, cfg.Aliases)
+	cfg.Model = selectModel(cfg)
 
 	var provider api.Provider
 	providerCfg, err := api.DetectProvider(cfg.Model)
@@ -1076,15 +1048,14 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Unattended contexts (weave workspace, CI, --no-interactive,
-		// --yes) must never open an interactive TUI or prompt on stdin.
-		// Piped input and positional args are treated as the prompt; with
-		// no prompt we emit a readiness report and exit cleanly.
+		// --yes) must never prompt the user. Piped input and positional args
+		// are treated as the prompt and run headless.
 		if unattended.IsUnattended(ctx) {
-			origin.SetAgentTool(origin.ToolPrompt)
 			stat, _ := os.Stdin.Stat()
 			isPiped := (stat.Mode() & os.ModeCharDevice) == 0
 
 			if isPiped {
+				origin.SetAgentTool(origin.ToolPrompt)
 				input, err := io.ReadAll(os.Stdin)
 				if err != nil {
 					return fmt.Errorf("read stdin: %w", err)
@@ -1103,6 +1074,7 @@ var rootCmd = &cobra.Command{
 			}
 
 			if len(args) > 0 {
+				origin.SetAgentTool(origin.ToolPrompt)
 				app, err := newApp()
 				if err != nil {
 					return err
@@ -1112,8 +1084,24 @@ var rootCmd = &cobra.Command{
 				return app.RunPrompt(ctx, strings.Join(args, " "))
 			}
 
-			printReadinessReport()
-			return nil
+			// No prompt on the command line and nothing piped in. Two very
+			// different callers reach this point:
+			//
+			//   --no-interactive / --yes — the caller PROMISED no UI would
+			//     open. Report readiness and exit, as before.
+			//
+			//   ambient unattended (WEAVE_ID / CI=true) with a TERMINAL still
+			//     attached — somebody allocated a pty and is about to type into
+			//     it. That is exactly how `bashy coach` opens a steerable
+			//     session: launch the TUI, then send the task over the pty.
+			//     Exiting here killed every coached ycode session at startup,
+			//     so the one harness built to be supervised was the one that
+			//     could not be. Open the TUI; unattended still governs
+			//     permission prompting inside the session.
+			if unattendedShouldReportAndExit(noInteractiveFlag || yesFlag, !isPiped) {
+				printReadinessReport()
+				return nil
+			}
 		}
 
 		// Default to TUI for the root invocation. Per-command RunE
@@ -1207,12 +1195,19 @@ func ctxWithUnattendedFlag(ctx context.Context, cmd *cobra.Command) context.Cont
 
 // printReadinessReport prints a quick provider/workspace readiness report to
 // stdout. It does not construct a full App and is safe to call without a TTY.
+//
+// The provider verdict comes from api.CheckCredentials — the same resolver the
+// run itself uses (newApp → api.DetectProvider). This function used to test
+// ANTHROPIC_API_KEY/OPENAI_API_KEY inline, so a session bound to a z.ai GLM
+// model was declared "blocked" here while `ycode prompt` ran it fine, and the
+// message sent the operator after two variables their model never reads.
 func printReadinessReport() {
 	report := health.NewReadinessReport()
-	if os.Getenv("ANTHROPIC_API_KEY") != "" || os.Getenv("OPENAI_API_KEY") != "" {
-		report.Add("provider", health.StatusReady, "API key found")
+	check := api.CheckCredentials(selectedModel())
+	if check.OK {
+		report.Add("provider", health.StatusReady, check.Message)
 	} else {
-		report.Add("provider", health.StatusBlocked, "No API key (set ANTHROPIC_API_KEY or OPENAI_API_KEY)")
+		report.Add("provider", health.StatusBlocked, check.Message)
 	}
 	if _, err := os.Getwd(); err == nil {
 		report.Add("workspace", health.StatusReady, "Working directory accessible")
@@ -1260,10 +1255,11 @@ var doctorCmd = &cobra.Command{
 		// Dry-run mode: quick readiness check without starting the full system.
 		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
 			report := health.NewReadinessReport()
-			if os.Getenv("ANTHROPIC_API_KEY") != "" || os.Getenv("OPENAI_API_KEY") != "" || os.Getenv("XAI_API_KEY") != "" {
-				report.Add("provider", health.StatusReady, "API key found")
+			check := api.CheckCredentials(selectedModel())
+			if check.OK {
+				report.Add("provider", health.StatusReady, check.Message)
 			} else {
-				report.Add("provider", health.StatusBlocked, "No API key set")
+				report.Add("provider", health.StatusBlocked, check.Message)
 			}
 			if wd, err := os.Getwd(); err == nil {
 				report.Add("workspace", health.StatusReady, wd)
@@ -1291,35 +1287,18 @@ var doctorCmd = &cobra.Command{
 			{"Go version", func() (string, bool) {
 				return "go1.24+ (compiled)", true
 			}},
+			// Same resolver as readiness and as the run itself. The list of
+			// accepted keys used to be spelled out here by hand — three copies
+			// of it across this file, all of them missing ZAI_API_KEY.
 			{"API key", func() (string, bool) {
-				if os.Getenv("ANTHROPIC_API_KEY") != "" {
-					return "ANTHROPIC_API_KEY set", true
+				check := api.CheckCredentials(selectedModel())
+				if check.OK {
+					return check.Message, true
 				}
-				if os.Getenv("OPENAI_API_KEY") != "" {
-					return "OPENAI_API_KEY set", true
+				if token, err := oauth.LoadCredentials(); err == nil && token.IsExpired() {
+					return "OAuth token expired (run: ycode login)", false
 				}
-				if os.Getenv("XAI_API_KEY") != "" {
-					return "XAI_API_KEY set", true
-				}
-				if os.Getenv("DASHSCOPE_API_KEY") != "" {
-					return "DASHSCOPE_API_KEY set", true
-				}
-				if os.Getenv("MOONSHOT_API_KEY") != "" {
-					return "MOONSHOT_API_KEY set", true
-				}
-				if os.Getenv("KIMI_API_KEY") != "" {
-					return "KIMI_API_KEY set", true
-				}
-				if os.Getenv("DEEPSEEK_API_KEY") != "" {
-					return "DEEPSEEK_API_KEY set", true
-				}
-				if token, err := oauth.LoadCredentials(); err == nil {
-					if token.IsExpired() {
-						return "OAuth token expired (run: ycode login)", false
-					}
-					return "OAuth credentials found", true
-				}
-				return "No API key or OAuth credentials found (set ANTHROPIC_API_KEY or run: ycode login)", false
+				return check.Message, false
 			}},
 			{"Config directory", func() (string, bool) {
 				home, _ := os.UserHomeDir()

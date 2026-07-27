@@ -43,28 +43,49 @@ func DetectProviderFromModel(model string) string {
 	}
 }
 
-// providerEnvKey returns the conventional API-key env var(s) for a provider
-// name as returned by DetectProviderFromModel. Empty for "unknown".
-func providerEnvKey(provider string) string {
+// providerEnvVars returns the credential env vars ycode consults for a provider
+// name as returned by DetectProviderFromModel, most-preferred first. Nil for
+// "unknown".
+//
+// This is the single table the human-readable form (providerEnvKey) and the
+// machine-readable form (api.CredentialEnvVars, used by readiness) both read.
+// They were separate lists once, which is how a readiness message came to name
+// ANTHROPIC_API_KEY at an operator whose model authenticates with ZAI_API_KEY.
+func providerEnvVars(provider string) []string {
 	switch provider {
 	case "anthropic":
-		return "ANTHROPIC_API_KEY"
+		return []string{"ANTHROPIC_API_KEY"}
 	case "openai":
-		return "OPENAI_API_KEY"
+		return []string{"OPENAI_API_KEY"}
 	case "gemini":
-		return "GOOGLE_API_KEY (or GEMINI_API_KEY)"
+		return []string{"GOOGLE_API_KEY", "GEMINI_API_KEY"}
 	case "xai":
-		return "XAI_API_KEY"
+		return []string{"XAI_API_KEY"}
 	case "dashscope":
-		return "DASHSCOPE_API_KEY"
+		return []string{"DASHSCOPE_API_KEY"}
 	case "kimi", "moonshot":
-		return "MOONSHOT_API_KEY (or KIMI_API_KEY)"
+		return []string{"MOONSHOT_API_KEY", "KIMI_API_KEY"}
 	case "deepseek":
-		return "DEEPSEEK_API_KEY"
+		return []string{"DEEPSEEK_API_KEY"}
 	case "glm", "zai":
-		return "ZAI_API_KEY (or GLM_API_KEY)"
+		return []string{"ZAI_API_KEY", "GLM_API_KEY"}
 	default:
+		return nil
+	}
+}
+
+// providerEnvKey returns the conventional API-key env var(s) for a provider
+// name as returned by DetectProviderFromModel, rendered for humans
+// ("MOONSHOT_API_KEY (or KIMI_API_KEY)"). Empty for "unknown".
+func providerEnvKey(provider string) string {
+	vars := providerEnvVars(provider)
+	switch len(vars) {
+	case 0:
 		return ""
+	case 1:
+		return vars[0]
+	default:
+		return vars[0] + " (or " + strings.Join(vars[1:], ", ") + ")"
 	}
 }
 
