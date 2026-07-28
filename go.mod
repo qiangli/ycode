@@ -73,10 +73,13 @@ require (
 )
 
 require (
+	github.com/a2aproject/a2a-go/v2 v2.3.1 // indirect
+	github.com/coder/acp-go-sdk v0.13.5 // indirect
 	github.com/odvcencio/gotreesitter v0.16.0 // indirect
 	github.com/onsi/gomega v1.39.1 // indirect
 	github.com/qiangli/gfy v0.0.0-20260504062854-764095a2877d // indirect
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06 // indirect
+	golang.org/x/mod v0.36.0 // indirect
 )
 
 require (

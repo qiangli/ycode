@@ -111,6 +111,13 @@ capabilities:
     http: []
     config: []
 
+  - id: acp_agent
+    summary: ACP agent endpoint for external orchestrators over stdio
+    audience: [agent]
+    cli: [acp]
+    http: []
+    config: []
+
   - id: skills
     summary: ycode's universal skills (foreman et al.)
     audience: [agent, human]
