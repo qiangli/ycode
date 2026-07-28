@@ -428,6 +428,18 @@ func (a *App) SetPrintMode(enabled bool) {
 	a.printMode = enabled
 }
 
+// SetOutput redirects answer and diagnostic output. Protocol adapters use this
+// to keep their framing stream separate from RunPrompt's plain-text output.
+// Nil writers leave the corresponding destination unchanged.
+func (a *App) SetOutput(stdout, stderr io.Writer) {
+	if stdout != nil {
+		a.stdout = stdout
+	}
+	if stderr != nil {
+		a.stderr = stderr
+	}
+}
+
 // SetEventsFile opens the EXTERNAL event stream (--events).
 //
 // One writer, one vocabulary, both paths. See internal/wireevents: ycode used to

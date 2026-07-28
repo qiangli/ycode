@@ -1540,7 +1540,7 @@ func init() {
 	_ = rootCmd.PersistentFlags().MarkHidden("no-otel")
 
 	doctorCmd.Flags().Bool("dry-run", false, "Quick readiness check without starting the full system")
-	rootCmd.AddCommand(promptCmd, versionCmd, doctorCmd, loginCmd, logoutCmd)
+	rootCmd.AddCommand(promptCmd, versionCmd, doctorCmd, loginCmd, logoutCmd, newACPCmd())
 
 	// Self-heal commands
 	healCmd.AddCommand(healStatusCmd, healTestCmd)
