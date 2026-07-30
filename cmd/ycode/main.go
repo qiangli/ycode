@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -1030,9 +1029,26 @@ var rootCmd = &cobra.Command{
 	// help — operators who want it can still call `ycode completion <shell>`,
 	// it's just not surfaced in the `ycode --help` listing.
 	CompletionOptions: cobra.CompletionOptions{HiddenDefaultCmd: true},
-	// No PersistentPreRun: ycode does not auto-modify a repo on first
-	// invocation. To establish ycode in a repo (write
-	// <repo>/.agents/ycode/AGENTS.md), run `ycode init` explicitly.
+	// Cobra printed the error AND main printed it again, so every failure came
+	// out twice. Root's flag governs the whole tree, so this makes main the one
+	// printer. (It also drops the pointless "Error: exit N" for the errors that
+	// carry their own exit code.)
+	SilenceErrors: true,
+	// The usage banner belongs to MALFORMED ARGV, not to a command that ran and
+	// failed. A twenty-line command listing after "no prompt on stdin" buries
+	// the one line that matters.
+	//
+	// Set here rather than as a field because flag-parse and Args validation both
+	// happen BEFORE PersistentPreRunE — so `ycode --nope` and a missing required
+	// arg still print usage, while anything failing inside RunE does not.
+	//
+	// (This is ycode's only PersistentPreRunE, and it stays true to the note that
+	// used to be here: it touches nothing in the repo. ycode still does not
+	// auto-modify a repo on first invocation — run `ycode init` explicitly.)
+	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		cmd.SilenceUsage = true
+		return nil
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := ctxWithUnattendedFlag(cmd.Context(), cmd)
 
@@ -1047,30 +1063,27 @@ var rootCmd = &cobra.Command{
 			return runRemoteTUI(connectURL)
 		}
 
+		// Resolve stdin ONCE, before either branch. It was read in two places
+		// with the same four lines, and stdin can only be consumed once — so the
+		// duplication was not merely untidy, it was a second reader that could
+		// only ever have found an empty pipe. See stdin.go for what a prompt on
+		// stdin is taken to mean.
+		stdinTTY := stdinIsTerminal()
+		pipedPrompt, hasPipedPrompt := stdinPrompt()
+
 		// Unattended contexts (weave workspace, CI, --no-interactive,
 		// --yes) must never prompt the user. Piped input and positional args
 		// are treated as the prompt and run headless.
 		if unattended.IsUnattended(ctx) {
-			stat, _ := os.Stdin.Stat()
-			isPiped := (stat.Mode() & os.ModeCharDevice) == 0
-
-			if isPiped {
+			if hasPipedPrompt {
 				origin.SetAgentTool(origin.ToolPrompt)
-				input, err := io.ReadAll(os.Stdin)
-				if err != nil {
-					return fmt.Errorf("read stdin: %w", err)
-				}
-				prompt := strings.TrimSpace(string(input))
-				if prompt == "" {
-					return fmt.Errorf("empty input from stdin")
-				}
 				app, err := newApp()
 				if err != nil {
 					return err
 				}
 				defer app.Close()
 				app.SetPrintMode(true)
-				return app.RunPrompt(ctx, prompt)
+				return app.RunPrompt(ctx, pipedPrompt)
 			}
 
 			if len(args) > 0 {
@@ -1098,36 +1111,24 @@ var rootCmd = &cobra.Command{
 			//     so the one harness built to be supervised was the one that
 			//     could not be. Open the TUI; unattended still governs
 			//     permission prompting inside the session.
-			if unattendedShouldReportAndExit(noInteractiveFlag || yesFlag, !isPiped) {
+			// The second argument is "a terminal is attached", and it is now
+			// asked as such. It used to be `!isPiped` — "stdin is not a
+			// character device" — which calls `ycode < /dev/null` a terminal,
+			// because /dev/null IS one, and so opened a TUI nobody could type
+			// into instead of reporting readiness.
+			if unattendedShouldReportAndExit(noInteractiveFlag || yesFlag, stdinTTY) {
 				printReadinessReport()
 				return nil
 			}
 		}
 
-		// Default to TUI for the root invocation. Per-command RunE
-		// overrides this before calling newApp() (prompt sets
-		// "prompt", etc.).
-		origin.SetAgentTool(origin.ToolTUI)
-
-		// Check for piped input.
-		stat, _ := os.Stdin.Stat()
-		isPiped := (stat.Mode() & os.ModeCharDevice) == 0
-
-		if isPiped {
+		if hasPipedPrompt {
 			origin.SetAgentTool(origin.ToolPrompt)
-			input, err := io.ReadAll(os.Stdin)
-			if err != nil {
-				return fmt.Errorf("read stdin: %w", err)
-			}
-			prompt := strings.TrimSpace(string(input))
-			if prompt == "" {
-				return fmt.Errorf("empty input from stdin")
-			}
 			// Prefer an already-running server; otherwise fall through to
 			// in-process. ycode no longer auto-spawns `ycode serve`.
 			if os.Getenv("YCODE_NO_SERVER") == "" && !hasSessionContinuationFlags() {
 				if baseURL, err := ensureServer(); err == nil {
-					return runServerPrompt(baseURL, prompt)
+					return runServerPrompt(baseURL, pipedPrompt)
 				}
 			}
 			app, err := newApp()
@@ -1143,8 +1144,21 @@ var rootCmd = &cobra.Command{
 					return fmt.Errorf("events file: %w", err)
 				}
 			}
-			return app.RunPrompt(ctx, prompt)
+			return app.RunPrompt(ctx, pipedPrompt)
 		}
+
+		// Nothing piped in, so this is a session — if there is anywhere to hold
+		// one. Refuse plainly when there is not, rather than painting an
+		// alt-screen into a captured pipe and blocking forever.
+		if !interactiveCapable() {
+			return errNoInput
+		}
+
+		// Default to TUI for the root invocation. Per-command RunE
+		// overrides this before calling newApp() (prompt sets
+		// "prompt", etc.). Set AFTER the piped branch, so a stdin that turned
+		// out to be empty does not leave origin mislabelled as ToolPrompt.
+		origin.SetAgentTool(origin.ToolTUI)
 
 		// Client-server mode if a server is already running; otherwise
 		// fall through to in-process. ycode does not auto-spawn the
