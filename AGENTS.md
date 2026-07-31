@@ -98,20 +98,22 @@ Key components:
 - **Memex** (`pkg/memex/`) — five-layer memory system (KV, SQL, vector, graph, memo)
 - **Agent-mode hints** (`internal/shell/agentmode/`) — regex-driven nudges fired on stderr when bash commands would be better served by `yc <verb>`
 
-## Foreman / Worker Model
+## Foreman / Worker Model — REMOVED
 
-**You are the Foreman.** Full privileges: source tree, backlog at `~/.agents/ycode/projects/<id>/backlog/`, the full in-session tool registry.
+**This model no longer exists in ycode.** There is no `ycode foreman` and no
+`ycode backlog` (the binary answers `unknown command`), no
+`internal/foreman` or `internal/backlog` package, and no `/foreman` skill
+path worth invoking. It went with the loom/MCP removal.
 
-Workers are sandboxed subprocesses spawned via `/foreman` — they receive one Gitea issue and one Loom workspace.
+What replaced it:
 
-**Planning:**
-```bash
-ycode backlog new "title" --priority p1|p2|p3
-```
+- **isolated parallel work** → `bashy weave` (see `bashy weave guide`)
+- **the goal-driven director above it** → the conductor playbook in
+  `bashy/skills/conductor`
+- **switching agents mid-session** → `/agent`, `/tool`, `/detach` (still here)
 
-**Working:** If no specific task, run `/foreman` (or: `ycode backlog list --priority p1`).
-
-Boss control: `ycode foreman pause/resume/stop/skip/prio/tell/status`
+`skills/ycode-foreman/` and `docs/backlog*` survive as history only. Do not
+follow them; they describe commands that were deleted.
 
 ## Documentation
 

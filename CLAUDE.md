@@ -107,7 +107,7 @@ Don't push test logic into bash, and don't grow shell blocks inside the Makefile
 
 ## `yc <verb>` quick reference
 
-When your bash backend routes through `ycode shell -c`, the `yc <verb>` built-ins are in-process and unshadowable. The canonical, ROI-ordered list with one-line "why use this instead of grep/find/git" rationale lives in `AGENTS.md` (§ `yc <verb>` quick reference) — see that table before reaching for `grep -rn`, `find . -name`, or `git log` on a code question. Highlights:
+When your bash backend routes through `ycode shell -c`, the `yc <verb>` built-ins are in-process and unshadowable. **They are reachable ONLY through the shell — there is no `ycode yc` subcommand** (the binary answers `unknown command "yc"`). An E2E suite assumed otherwise and failed for months; if you want to drive a verb from a script, it is `ycode shell -c "yc symbols …"`. The canonical, ROI-ordered list with one-line "why use this instead of grep/find/git" rationale lives in `AGENTS.md` (§ `yc <verb>` quick reference) — see that table before reaching for `grep -rn`, `find . -name`, or `git log` on a code question. Highlights:
 
 - **Code exploration**: `yc symbols` (declarations) → `yc repomap` (orientation) → `yc search-symbols` (AST-aware substring) → `yc refs` (callers).
 - **Structured output**: `yc test --json`, `yc lsp <action> --json`, `yc run --json -- <cmd>` all emit typed envelopes instead of per-tool text formats.
@@ -180,15 +180,19 @@ The **loom** substrate (`pkg/loom` + `internal/gitserver/`) is **gone from this 
 
 The operating playbook (blocked-agent protocol, verify-a-prompt-is-live-before-answering, full-suite regression gate after every round) lives **with the tool** now: `bashy weave guide` (terse, discoverable by any tool) + `coreutils/pkg/weave/{CONDUCTOR-PLAYBOOK,WEAVE-RUNBOOK}.md` (the rich playbook + worked example). Loom design: `docs/loom-v2-plan.md`.
 
-**Foreman/Worker** is the older model, invoked through `/foreman` skills. The active session is the **Foreman** — full privileges, full source tree, backlog at `~/.agents/ycode/projects/<id>/backlog/`. Workers are sandboxed subprocesses, each pinned to one Gitea issue and one Loom workspace.
+**Foreman/Worker is GONE from this tree.** There is no `ycode foreman` and
+no `ycode backlog` — the binary answers `unknown command`, and no
+`internal/foreman` or `internal/backlog` package exists. It was removed
+alongside loom/MCP; the isolated-workspace job it did is now `bashy weave`,
+and the goal-driven layer above it is the conductor playbook in
+`bashy/skills/conductor`.
 
-```bash
-ycode backlog new "title" --priority p1|p2|p3   # plan
-ycode backlog list --priority p1                # see what's next
-ycode foreman pause|resume|stop|skip|prio|tell|status
-```
-
-Protocol: `docs/backlog.md`. CLI/UX walk-through: `docs/usage.md`.
+Only documentation and a skill directory outlived the code
+(`skills/ycode-foreman/`, `docs/backlog*`) — treat those as history, not
+instructions. This section previously listed `ycode backlog new` and
+`ycode foreman pause|resume|…` as if they worked; four E2E tests asserted
+against them and failed with `unknown command "backlog"` for however long
+nobody ran `make ci`.
 
 **Conductor** is the goal-oriented *director* that sits above all three:
 it drives a team of agent CLIs through plan → research → fan-out → steer

@@ -1,5 +1,14 @@
 # Backlog — Boss → Foreman → Worker
 
+> **DEPRECATED — describes removed code.** `ycode backlog` and
+> `ycode foreman` do not exist (the binary answers `unknown command`),
+> and there is no `internal/backlog` or `internal/foreman` package.
+> Removed alongside loom/MCP. Kept as a design record only.
+>
+> Use `bashy weave` for parallel isolated work (`bashy weave guide`)
+> and `bashy/skills/conductor` for the goal-driven layer above it.
+
+
 This is ycode's own task queue. The flow:
 
 > A **Boss** (the human user) writes tasks as markdown files in the

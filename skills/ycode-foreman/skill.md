@@ -1,17 +1,31 @@
 ---
 name: foreman
-description: Foreman loop — pop the highest-priority docs/backlog item, dispatch a Worker, mark done, repeat
-user_invocable: true
+description: "DEPRECATED — historical Boss/Foreman/Worker model; the commands it names were removed. Use `bashy weave` + bashy/skills/conductor."
+user_invocable: false
 ---
 
-# /foreman — Boss → Foreman → Worker outer loop
+# /foreman — DEPRECATED, kept as a design record
 
-> **Stale surfaces.** Parts of this playbook name commands and tools
-> this binary no longer ships (`ycode backlog`, `ycode autopilot`, the
-> `mcp__ycode-loom__*` MCP tools — ycode retired MCP entirely, see
-> `docs/plan-remove-mcp.md`). Treat the loop below as the model, not as
-> literal invocations, and prefer `bashy weave` for parallel worker
-> fan-out until this skill is rewritten.
+> **Do not follow the steps below as written.** The subsystem this
+> playbook drives is **gone from ycode** — there is no `ycode backlog`
+> and no `ycode foreman` (the binary answers `unknown command`), no
+> `internal/backlog` or `internal/foreman` package, and MCP was retired
+> entirely (`docs/plan-remove-mcp.md`). The four E2E tests that asserted
+> against these commands were deleted rather than repaired.
+>
+> `user_invocable` is now **false**: this skill was still being offered
+> to users as `/foreman` while its own header admitted the commands did
+> not exist, which is worse than removing it — an agent following step 3
+> runs `ycode backlog list` and gets an error it cannot act on.
+>
+> **What to use instead:**
+> - parallel isolated work → `bashy weave` (`bashy weave guide`)
+> - the goal-driven director above it → `bashy/skills/conductor`
+>
+> The loop below is retained because the MODEL (an outer loop that picks
+> work, dispatches sandboxed workers, and converges) is still how weave
+> and the conductor are organised. Read it for the shape, never for the
+> invocations.
 
 You are the **Foreman** for this session. The Foreman is the outer
 loop: it picks tasks, dispatches **Workers** (sandboxed subprocess
