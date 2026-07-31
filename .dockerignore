@@ -8,3 +8,24 @@ dist/
 priorart/
 examples/
 *.exe
+
+# HOST-BUILT, PLATFORM-SPECIFIC ARTIFACT — must not enter the Linux image.
+#
+# ycode-spawn.gz is an untracked build artifact produced by `make
+# spawn-embed` for whatever platform you are on, and the Makefile turns on
+# the `embed_spawn` build tag CONDITIONALLY on the file existing
+# ($(wildcard ...) in TAG_LIST). So a mac-built shim copied into the CI
+# image flips the tag on and TestSpawnerShimDispatch dies with
+# "exec format error" — a Mach-O binary cannot exec under Linux.
+#
+# GitHub Actions never sees this: a fresh checkout has no artifact, the tag
+# stays off, and the test takes its soft-skip path. Excluding it is what
+# makes this image actually mirror CI instead of inheriting the host.
+internal/runtime/wrap/spawn_embed/ycode-spawn.gz
+
+# Local agent scratch — never part of a build, and pure cache churn for
+# layer invalidation. (.agents itself is deliberately NOT excluded above:
+# TestRegistryFilesExist reads the skill registry under it.)
+.agents/ycode/memory/
+.agents/ycode/qacache/
+.aider.tags.cache.v4/

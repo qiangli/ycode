@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -274,11 +275,20 @@ func (r *WorkspaceResolver) List(owner string) ([]Workspace, error) {
 	}
 	// Newest first — most-recently-touched is what the user is most
 	// likely to want to reattach to.
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j].CreatedAt.After(out[j-1].CreatedAt); j-- {
-			out[j-1], out[j] = out[j], out[j-1]
+	//
+	// CreatedAt here is the directory's ModTime, which is deliberately
+	// "last touched" rather than "created" — but it is also MUTABLE and
+	// coarse, so two workspaces can tie or even invert. The ID is the
+	// tiebreak because it is immutable and (since it carries microseconds)
+	// lexically ordered by creation. Without a tiebreak the order was
+	// whatever the sort happened to do with equal keys, which is how this
+	// produced a test that passed on slow machines and failed on fast ones.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
 		}
-	}
+		return out[i].ID > out[j].ID
+	})
 	return out, nil
 }
 
@@ -323,14 +333,29 @@ func (r *WorkspaceResolver) workspaceDir(owner, id string) string {
 }
 
 // newWorkspaceID generates a sortable, human-scannable identifier
-// YYYYMMDD-HHMMSS-<6 hex>. Lexical order matches creation order,
+// YYYYMMDD-HHMMSS.uuuuuu-<6 hex>. Lexical order matches creation order,
 // which makes operator-side `ls -1` listings useful.
+//
+// The microseconds are load-bearing, not decoration. The timestamp used to
+// stop at whole seconds, so two workspaces created in the SAME second
+// differed only by the random suffix — and sorted by those random bytes.
+// "Lexical order matches creation order" was therefore false exactly when
+// it mattered, and TestList_NewestFirst failed on any machine fast enough
+// to allocate twice inside one second (observed: 23 microseconds apart).
+//
+// Microsecond resolution is enough: allocation involves a mkdir, so two IDs
+// colliding inside one microsecond is not reachable in practice, and the
+// random suffix still covers it if it were.
+//
+// idRe already permits '.', so existing IDs stay valid and no migration is
+// needed — old second-granularity IDs simply sort before same-second new
+// ones, which is harmless.
 func newWorkspaceID() string {
 	now := time.Now().UTC()
 	var randBytes [3]byte
 	_, _ = rand.Read(randBytes[:])
 	return fmt.Sprintf("%s-%s",
-		now.Format("20060102-150405"),
+		now.Format("20060102-150405.000000"),
 		hex.EncodeToString(randBytes[:]),
 	)
 }

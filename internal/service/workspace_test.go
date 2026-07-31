@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSanitizeOwner(t *testing.T) {
@@ -171,8 +172,14 @@ func TestList_NewestFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Touch the mod time of the second so the test isn't flaky.
-	_ = os.Chtimes(first.Path, first.CreatedAt, first.CreatedAt)
+	// Push `first` clearly into the past. This line previously set its
+	// mtime to first.CreatedAt — the value it already had — so it was a
+	// no-op, and the assertion silently depended on two mkdirs landing in
+	// distinguishable mtimes. On a fast machine they did not (observed 23
+	// microseconds apart, in the wrong order), so the test failed for a
+	// reason that had nothing to do with ordering logic.
+	past := time.Now().Add(-time.Hour)
+	_ = os.Chtimes(first.Path, past, past)
 	second, err := r.Resolve(ResolveHint{Owner: "alice@example.com"})
 	if err != nil {
 		t.Fatal(err)
