@@ -169,6 +169,7 @@ func BuildDefault(ctx *ProjectContext, mode string, cachingSupported bool, basel
 		b.AddDynamicSection(SectionInstructions, InstructionsSection(ctx.ContextFiles))
 		b.AddDynamicSection(SectionRepoMap, ctx.RepoMapText)
 		b.AddDynamicSection(SectionMemory, MemoriesSection(ctx.Memories))
+		b.AddDynamicSection(SectionKnowledge, KnowledgeSection(ctx.RecalledKnowledge))
 		b.AddDynamicSection(SectionPersona, PersonaSection(ctx.Persona))
 		b.AddDynamicSection(SectionTodos, TodosSection(ctx.TodoBoard))
 

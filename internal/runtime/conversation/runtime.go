@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/qiangli/coreutils/pkg/recall"
 	"github.com/qiangli/coreutils/pkg/telemetry"
 
 	"github.com/qiangli/ycode/internal/api"
@@ -546,6 +547,24 @@ func (r *Runtime) Turn(ctx context.Context, messages []api.Message) (*TurnResult
 				}
 				r.promptCtx.Diagnostics.RecentAnswer = block
 			}
+		}
+	}
+
+	// STAGE 1 — ASSEMBLE. Recall what this HOST knows about what the user just
+	// asked, and hand it to the prompt builder as its own section.
+	//
+	// This is the gap the lifecycle map names as industry-wide, and ycode had it
+	// too: Memories are loaded once at startup with All() and are true of the
+	// USER; nothing in the assembly path ever ran a QUERY keyed on the current
+	// request. So a lesson another agent recorded on this machine last week was
+	// present on disk and unreachable at the only moment it mattered.
+	//
+	// Gated by BASHY_KNOWLEDGE so ycode is one arm of the same A/B as every other
+	// harness — one switch across the fleet, or the comparison is not controlled.
+	// Best-effort: a memory lookup must never be able to fail a turn.
+	if recall.Enabled() {
+		if userMsg := lastUserText(messages); userMsg != "" {
+			r.promptCtx.RecalledKnowledge = recall.PreambleForHost(userMsg)
 		}
 	}
 
