@@ -113,5 +113,17 @@ if [ "${YCODE_SKIP_CI_HOOK:-0}" = "1" ]; then
   exit 0
 fi
 
+# Run the matrix on another machine when one is configured. The image build needs
+# several GB of container storage, and on a dev box that also holds live state
+# that is a gate competing with production for disk — which is how it ends up
+# routinely bypassed. YCODE_CI_HOST moves it somewhere with room; unset, nothing
+# changes and CI runs locally exactly as before.
+if [ -n "${YCODE_CI_HOST:-}" ]; then
+  echo "pre-push: running 'make ci' on $YCODE_CI_HOST (unset YCODE_CI_HOST to run locally)..." >&2
+  # NOT $0-relative: this file is SYMLINKED into .git/hooks, so dirname $0 is
+  # .git/hooks and ../ci-remote.sh would resolve inside .git. Ask git instead.
+  exec "$(git rev-parse --show-toplevel)/scripts/ci-remote.sh"
+fi
+
 echo "pre-push: running 'make ci' (set YCODE_SKIP_CI_HOOK=1 to bypass)..." >&2
 make ci
