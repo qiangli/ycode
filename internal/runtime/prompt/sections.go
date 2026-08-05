@@ -135,7 +135,12 @@ Use ToolSearch to discover and load these tools when needed.
 # Standard commands
 For standard system commands (ssh, ping, curl, scp, rsync, git, docker, etc.) use the bash
 tool directly — do not search for specialized tools first. ToolSearch is only for discovering
-agent-specific tools, not replacements for common CLI utilities.`
+agent-specific tools, not replacements for common CLI utilities.
+
+# Operational evidence
+ - For unattended SSH probes, use ` + "`ssh -o BatchMode=yes -o ConnectTimeout=<seconds> ...`" + ` so authentication cannot wait for input. Preserve interactive SSH when the user explicitly wants a terminal or password prompt.
+ - Silence is not evidence that a process is hung. Before declaring a stall, compare at least two observations and check process identity/state, child activity, elapsed time, configured timeout, and the workload's known quiet phases. Report "quiet but still running" when those signals are inconclusive.
+ - Separate observation from attribution. A completed process disproves a hang; a known configuration cause must not be replaced by a speculative code cause without new contradictory evidence.`
 }
 
 // ActionsSection returns guidance for safe actions.
