@@ -94,8 +94,8 @@ func TestE2E_Init_FreshRepo_WritesAllFiles(t *testing.T) {
 			t.Errorf("ycode init should not create %s (got err=%v)", p, err)
 		}
 	}
-	// User-global bundled skill.
-	skill := filepath.Join(home, ".config", "ycode", "skills", "ycode-autopilot", "skill.md")
+	// User-global Foreman skill.
+	skill := filepath.Join(home, ".config", "ycode", "skills", "ycode-foreman", "skill.md")
 	if _, err := os.Stat(skill); err != nil {
 		t.Errorf("expected user-global skill at %s: %v", skill, err)
 	}
@@ -132,7 +132,7 @@ func TestE2E_Init_Refresh_NoContentDrift_NoMtimeChange(t *testing.T) {
 	}
 	files := []string{
 		filepath.Join(repo, ".agents/ycode/AGENTS.md"),
-		filepath.Join(home, ".config/ycode/skills/ycode-autopilot/skill.md"),
+		filepath.Join(home, ".config/ycode/skills/ycode-foreman/skill.md"),
 	}
 	before := make(map[string]int64)
 	for _, f := range files {
@@ -165,7 +165,7 @@ func TestE2E_Init_SelfHealsDeletedUserSkill(t *testing.T) {
 	}
 	repo := initRepo(t)
 	home := t.TempDir()
-	skill := filepath.Join(home, ".config/ycode/skills/ycode-autopilot/skill.md")
+	skill := filepath.Join(home, ".config/ycode/skills/ycode-foreman/skill.md")
 
 	if _, err := runYcode(t, repo, home, "init"); err != nil {
 		t.Fatalf("first init: %v", err)

@@ -187,9 +187,9 @@ alongside loom/MCP; the isolated-workspace job it did is now `bashy weave`,
 and the goal-driven layer above it is the conductor playbook in
 `bashy/skills/conductor`.
 
-Only historical documentation outlived the code (`docs/backlog*`) — treat it
-as history, not instructions. The deprecated `skills/ycode-foreman/` bundle
-was removed in 2026-08. This section previously listed `ycode backlog new` and
+Only documentation and a skill directory outlived the code
+(`skills/ycode-foreman/`, `docs/backlog*`) — treat those as history, not
+instructions. This section previously listed `ycode backlog new` and
 `ycode foreman pause|resume|…` as if they worked; four E2E tests asserted
 against them and failed with `unknown command "backlog"` for however long
 nobody ran `make ci`.
@@ -208,7 +208,7 @@ longer bundled here.
 
 ## Skills
 
-Bundled skills live at top-level `skills/` (`ycode-autopilot`, `ycode-learn`, …), are embedded in the binary via `skills/embed.go`, and install user-globally. Edit them there — not in `.agents/ycode/skills/`, which is the installed copy. (The general conductor playbook moved to `bashy/skills/conductor`; ycode can still drive the runnable dhnt `ConductorSkill` via `dhnt conductor`.)
+Bundled skills live at top-level `skills/` (`ycode-foreman`, `ycode-autopilot`, `ycode-learn`, …), are embedded in the binary via `skills/embed.go`, and install user-globally. Edit them there — not in `.agents/ycode/skills/`, which is the installed copy. (The general conductor playbook moved to `bashy/skills/conductor`; ycode can still drive the runnable dhnt `ConductorSkill` via `dhnt conductor`.)
 
 ## Umbrella interaction
 

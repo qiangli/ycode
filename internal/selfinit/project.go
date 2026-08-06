@@ -142,7 +142,7 @@ func buildLongFormDoc() string {
 	// etc.; agents pick up the inventory when they read this file.
 	if len(SkillInventory) > 0 {
 		b.WriteString("## Skills available via ycode\n\n")
-		b.WriteString("Universal skills shipped with the ycode binary. Invoke from any chat with a leading slash (e.g. `/autopilot`); ycode resolves the body from cwd → project → user (`~/.config/ycode/skills/`) → embedded. To customize a skill globally, edit the user-global copy; to override per-repo, drop a copy at `.agents/ycode/skills/<name>/skill.md`.\n\n")
+		b.WriteString("Universal skills shipped with the ycode binary. Invoke from any chat with a leading slash (e.g. `/foreman`); ycode resolves the body from cwd → project → user (`~/.config/ycode/skills/`) → embedded. To customize a skill globally, edit the user-global copy; to override per-repo, drop a copy at `.agents/ycode/skills/<name>/skill.md`.\n\n")
 		b.WriteString("| Skill | When to use | Body |\n")
 		b.WriteString("|---|---|---|\n")
 		for _, s := range SkillInventory {

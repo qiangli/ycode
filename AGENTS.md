@@ -112,9 +112,8 @@ What replaced it:
   `bashy/skills/conductor`
 - **switching agents mid-session** → `/agent`, `/tool`, `/detach` (still here)
 
-`docs/backlog*` survives as history only. The deprecated
-`skills/ycode-foreman/` bundle has been removed; do not follow historical
-documents that describe those deleted commands.
+`skills/ycode-foreman/` and `docs/backlog*` survive as history only. Do not
+follow them; they describe commands that were deleted.
 
 ## Documentation
 
@@ -156,3 +155,4 @@ missing the transcript says so and labels the terminal scrape it does have as
 a reconstruction rather than a verbatim record.
 
 Full detail: `ycode docs agent-switching`.
+

@@ -150,7 +150,7 @@ settings without committing them through git.
 
 ### Backups
 
-ycode keeps per-user-per-project state (settings and active runtime state)
+ycode keeps per-user-per-project state (backlog, foreman, settings)
 under `~/.agents/ycode/`. Back this directory up alongside your
 repos — losing it loses your task queue. The repo itself contains
 only the protocol doc (`docs/backlog.md`) and team-shared bits

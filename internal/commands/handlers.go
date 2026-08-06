@@ -963,8 +963,9 @@ func initHandler(deps *RuntimeDeps) func(context.Context, string) (string, error
 		}
 
 		// Phase 0: Run selfinit so the TUI /init is a strict superset of
-		// `ycode init` (CLI). This installs the bundled user-global skills,
-		// .agents/ycode/AGENTS.md, and registers ycode capabilities for
+		// `ycode init` (CLI). This installs Foreman protocol scaffolding
+		// (docs/backlog.md, docs/backlog/, user-global /foreman skill,
+		// .agents/ycode/AGENTS.md) and registers ycode capabilities for
 		// any detected foreign agent. Idempotent — no-op if marker matches.
 		if siRes, err := selfinit.Run(ctx, selfinit.Options{Cwd: cwd}); err != nil {
 			progress(fmt.Sprintf("⚠ selfinit failed: %v", err))
