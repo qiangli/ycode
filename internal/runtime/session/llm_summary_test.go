@@ -13,11 +13,13 @@ import (
 type mockProvider struct {
 	response string
 	err      error
+	request  *api.Request
 }
 
 func (m *mockProvider) Kind() api.ProviderKind { return api.ProviderAnthropic }
 
 func (m *mockProvider) Send(ctx context.Context, req *api.Request) (<-chan *api.StreamEvent, <-chan error) {
+	m.request = req
 	events := make(chan *api.StreamEvent, 4)
 	errc := make(chan error, 1)
 
@@ -41,6 +43,52 @@ func (m *mockProvider) Send(ctx context.Context, req *api.Request) (<-chan *api.
 	}()
 
 	return events, errc
+}
+
+func TestLLMSummarizer_UsesLowReasoningWithOutputHeadroom(t *testing.T) {
+	provider := &mockProvider{response: "summary"}
+	summarizer := NewLLMSummarizer(provider, "test-model")
+
+	if _, err := summarizer.Summarize(context.Background(), []ConversationMessage{{
+		Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeText, Text: "hello"}},
+	}}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.request == nil {
+		t.Fatal("provider did not receive a request")
+	}
+	if got := provider.request.ReasoningEffort; got != "low" {
+		t.Fatalf("ReasoningEffort = %q, want low", got)
+	}
+	if got := provider.request.MaxTokens; got != LLMSummaryMaxTokens || got < 4096 {
+		t.Fatalf("MaxTokens = %d, want at least 4096", got)
+	}
+}
+
+type contentBlockProvider struct{}
+
+func (*contentBlockProvider) Kind() api.ProviderKind { return api.ProviderAnthropic }
+
+func (*contentBlockProvider) Send(context.Context, *api.Request) (<-chan *api.StreamEvent, <-chan error) {
+	events := make(chan *api.StreamEvent, 1)
+	errc := make(chan error)
+	events <- &api.StreamEvent{ContentBlock: &api.ContentBlock{Type: api.ContentTypeText, Text: "content block summary"}}
+	close(events)
+	close(errc)
+	return events, errc
+}
+
+func TestLLMSummarizer_AcceptsCompletedContentBlock(t *testing.T) {
+	summarizer := NewLLMSummarizer(&contentBlockProvider{}, "test-model")
+	summary, err := summarizer.Summarize(context.Background(), []ConversationMessage{{
+		Role: RoleUser, Content: []ContentBlock{{Type: ContentTypeText, Text: "hello"}},
+	}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !contains(summary, "content block summary") {
+		t.Fatalf("summary = %q", summary)
+	}
 }
 
 func TestLLMSummarizer_Summarize(t *testing.T) {

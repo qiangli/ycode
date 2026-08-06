@@ -15,8 +15,10 @@ const (
 	// LLMSummaryTimeout is the maximum time to wait for an LLM summarization call.
 	LLMSummaryTimeout = 30 * time.Second
 
-	// LLMSummaryMaxTokens limits the output length for summarization.
-	LLMSummaryMaxTokens = 1024
+	// LLMSummaryMaxTokens includes hidden reasoning tokens on providers that use
+	// the OpenAI Responses API. A 1K ceiling can be exhausted before the model
+	// emits any visible summary, so leave enough headroom for a short checkpoint.
+	LLMSummaryMaxTokens = 4096
 
 	llmSummaryPrompt = `You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM instance that will resume this task. The next instance has access to the current file/tool state but NOT the conversation history.
 
@@ -97,8 +99,9 @@ func (s *LLMSummarizer) summarizeWith(ctx context.Context, ms ModelSpec, convers
 	defer cancel()
 
 	req := &api.Request{
-		Model:     ms.Model,
-		MaxTokens: LLMSummaryMaxTokens,
+		Model:           ms.Model,
+		MaxTokens:       LLMSummaryMaxTokens,
+		ReasoningEffort: "low",
 		Messages: []api.Message{
 			{
 				Role: api.RoleUser,
@@ -121,6 +124,11 @@ func (s *LLMSummarizer) summarizeWith(ctx context.Context, ms ModelSpec, convers
 			if err := json.Unmarshal(ev.Delta, &delta); err == nil && delta.Text != "" {
 				textParts = append(textParts, delta.Text)
 			}
+		}
+		// Some provider adapters deliver completed non-streaming text as a
+		// content block even when the request asked for a stream.
+		if ev.ContentBlock != nil && ev.ContentBlock.Text != "" {
+			textParts = append(textParts, ev.ContentBlock.Text)
 		}
 	}
 
