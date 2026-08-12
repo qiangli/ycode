@@ -13,47 +13,39 @@ Core loop: `internal/runtime/conversation/runtime.go` — assemble request → p
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY (+ optional OPENAI_BASE_URL)
-make install-hooks                     # pre-push hook runs `make ci`
-make compile                           # ~35s warm; binary at bin/ycode
+bashy dag install-hooks                # pre-push hook runs `bashy dag ci`
+bashy dag compile                      # ~4s warm; binary at bin/ycode
 ```
 
-**There is no required setup step.** `make compile` works on a fresh checkout inside the umbrella — the only embed this repo builds is the `ycode-spawn` micro-shim, produced automatically by `ensure-embeds`. Standalone clones need `scripts/bootstrap-siblings.sh` first, which materialises `../sh`, `../nadir`, and `../coreutils` at the SHAs in `.sibling-pins`.
-
-**`make init` is currently broken** — it calls `scripts/build-gitea-frontend.sh`, which hard-exits because `external/gitea` no longer exists (see *Removed subsystems*). Do not run it, and do not document it as a prerequisite.
+**There is no required setup step and no Makefile.** A fresh checkout inside the umbrella compiles as-is. Standalone clones need `scripts/bootstrap-siblings.sh` first, which materialises `../sh`, `../nadir` and `../coreutils` at the SHAs in `.sibling-pins`.
 
 ## Build & Test
 
 ```bash
-make build           # full gate: tidy → fmt → vet → compile → test → verify
-make compile         # quick compile only
-make test            # unit tests (-short -race)
-make install         # build + copy into $DHNT_BIN_DIR (shims deliberately NOT installed)
-make ci              # full GitHub Actions matrix in Docker (slow, definitive)
+bashy dag compile     # quick compile only (~4s warm); binary at bin/ycode
+bashy dag build       # full gate: fmtcheck → vet → verify-features → compile → test
+bashy dag test        # unit tests (-short -race), priorart/ excluded
+bashy dag install     # build + copy into $DHNT_BIN_DIR (shims deliberately NOT installed)
+bashy dag ci          # containerized matrix (slow, definitive)
+bashy dag --list      # every target
 ```
 
-**Build tags** (see `Makefile`):
-- Default: `sqlite,sqlite_unlock_notify,bindata`
-- Auto-added when `.gz` exists: `embed_spawn`
-- Manual: `go build -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/`
+`export ANTHROPIC_API_KEY=…` (or `OPENAI_API_KEY` + optional `OPENAI_BASE_URL`) before running the binary.
 
-**Test patterns**:
+**There is no Makefile.** It was retired in favour of `DAG.md` + `bashy dag`; `scripts/gate.sh` is the same gate as one command, for contexts without bashy (the builder image, `dag ci`). Keep the three in step.
+
+**There are no build tags.** One binary, no variants. The old `TAG_LIST` carried `sqlite`, `sqlite_unlock_notify` and `bindata`, all three of which gate **zero files** in this tree — they were Gitea's, and Gitea left with `internal/gitserver`. `embed_spawn` selected a variant (embedded shim vs. the symlink fallback `spawn_embed.Available()` implements) and is not used by the release. So a bare `go build ./cmd/ycode/` now works and is what the pipeline runs.
+
+**Releases are `bashy release`**, driven by `.goreleaser.yaml`: cross-compilation, `ycode-<os>-<arch>.tar.gz`, `SHA256SUMS` and a `bashy-release-v1` ledger. `bashy dag release-check` / `release-plan` / `release-snapshot`. **The asset names are load-bearing** — the umbrella's fleet-upgrade path resolves artifacts by name, so renaming one strands hosts.
+
+**Single test / package** — never run bare `./...`; always exclude `priorart/`:
+
 ```bash
-# Single package / test
 go test -short -race -run TestName ./internal/path/to/package/
-
-# Never use bare `./...` — always exclude priorart/:
 PACKAGES=$(go list ./... | grep -v '/priorart/')
 ```
 
-**Specialized test targets** (read Makefile comments for prerequisites):
-- `make test-integration` — `-tags integration`, requires a running server
-- `make test-tui` / `make test-tui-e2e` — TUI lifecycle; e2e needs compiled binary + PTY
-- `make test-ui` — Playwright (`cd e2e && npx playwright test`) against running server
-- `make eval-{contract,smoke,behavioral,e2e,init}` — eval tiers; smoke/behavioral/e2e need a live LLM provider (`eval-contract` and `eval-init` are offline)
-- `make bench-memory[-quality|-competitive|-latency|-all]` — memory-retrieval benchmarks (no LLM)
-- `make verify-features` — runs `./internal/features/...`, asserting every path in `internal/features/registry.yaml` still exists. Part of `make build`, and the usual failure after moving or deleting a package.
-
-**Stale targets:** `make test-gitserver` points at `./internal/gitserver/...`, which no longer exists — it fails, and so does `make test-all`, which depends on it.
+Targets that need setup (read the note in `DAG.md` first): `test-integration`, `test-tui`, `test-tui-e2e`, `test-ui`, `eval-contract`, `eval-init`, `bench-memory`. `verify-features` asserts every path in `internal/features/registry.yaml` still exists — it runs inside `build` and is the usual failure after moving or deleting a package.
 
 ## Critical Conventions
 
@@ -65,11 +57,11 @@ PACKAGES=$(go list ./... | grep -v '/priorart/')
 **Code standards:**
 - No package-level `var` for mutable state — use `RuntimeContext` (see `internal/runtime/conversation/runtime.go`)
 - No `log.Printf` or `fmt.Println` — use structured logger from `RuntimeContext`
-- Stage files by name (never `git add -A` or `git add .`) — the umbrella tree carries loose artifacts and unrelated submodule pointers; `make compile` alone dirties `go.work.sum`
-- **Always run `make build` before committing**
+- Stage files by name (never `git add -A` or `git add .`) — the umbrella tree carries loose artifacts and unrelated submodule pointers; `bashy dag compile` alone dirties `go.work.sum`
+- **Always run `bashy dag build` before committing**
 
 **Layered build system:**
-1. **Makefile** — dependency graph only. Targets declare deps and delegate. No multi-line shell.
+1. **`DAG.md`** — dependency graph only. Targets declare deps and delegate.
 2. **scripts/** — bash orchestration only. Sequencing, env, process management. No assertions.
 3. **Go** — all logic, including test assertions and integration checks.
 
@@ -126,7 +118,7 @@ Several large subsystems left this tree. Historical docs describing them survive
 
 Switching agents mid-session (`/agent`, `/tool`, `/detach`) is still here — see below.
 
-Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, and the `test-gitserver` / `init` Makefile targets.
+Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, and the retired `test-gitserver` / `init` targets.
 
 ## Documentation
 

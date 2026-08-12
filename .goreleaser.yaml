@@ -1,0 +1,68 @@
+# ycode release configuration — consumed by `bashy release`.
+#
+# This reproduces the asset names .github/workflows/release.yml has always
+# produced, and those names are load-bearing beyond this repo: the umbrella's
+# fleet-upgrade path resolves per-platform artifacts by name
+# (`ycode-linux-arm64.tar.gz`, …), so renaming one strands hosts at the
+# receiver's probe. Do not "tidy" the templates.
+#
+# Matrix note: linux/amd64, linux/arm64 and darwin/arm64 are the three targets
+# the workflow actually builds today. darwin/amd64 and windows/amd64 are
+# deliberately absent rather than aspirational — see release.yml for the reason
+# each is held back.
+version: 2
+
+project_name: ycode
+
+builds:
+  - id: ycode
+    main: ./cmd/ycode
+    binary: ycode
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    # No build tags: ONE binary, no variants.
+    #
+    # The Makefile's TAG_LIST carried sqlite, sqlite_unlock_notify and bindata,
+    # and all three are now vestigial — they gate zero files in this tree
+    # (`grep '^//go:build' | grep -E 'sqlite|bindata'` finds nothing). They were
+    # Gitea's tags, and Gitea left with internal/gitserver.
+    #
+    # `embed_spawn` is the only tag that still gates anything (2 files), and it
+    # selects a VARIANT rather than fixing a build: with it, the ycode-spawn shim
+    # is embedded; without it, `spawn_embed.Available()` reports false and wrap
+    # falls back to symlinking shims at the ycode binary — a designed, working
+    # path. A release that builds one artifact per platform and no variants is
+    # worth more than the shim, so the fallback is what ships.
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: darwin
+        goarch: amd64
+
+archives:
+  - id: ycode
+    ids:
+      - ycode
+    # `ycode-linux-amd64.tar.gz` — the historical name, not goreleaser's default
+    # (which would interpose the version and use x86_64/arm64 spellings).
+    name_template: "ycode-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - tar.gz
+    # The archive holds the bare binary at its root, as `tar -czf … ycode` did.
+    wrap_in_directory: false
+    files: []
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ .Version }}-snapshot"

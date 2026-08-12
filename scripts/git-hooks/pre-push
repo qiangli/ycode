@@ -3,7 +3,7 @@
 #   1. gofmt          (~0.2s)  reports unformatted files; NEVER rewrites
 #   2. .sibling-pins  (~0.0s)  refuses a push while a pin disagrees with its
 #                              sibling HEAD, because CI clones the PINNED SHA
-#   3. `make ci`      (minutes) the full GitHub Actions matrix in Docker
+#   3. `bashy dag ci`      (minutes) the full GitHub Actions matrix in Docker
 #
 # The order is the point: a stale pin or a stray tab should not cost a full
 # Docker matrix run to discover.
@@ -16,7 +16,7 @@
 # commits behind the commit introducing a package it imports; every CI run
 # failed to compile, every local build was green, and nothing said so.
 #
-# Installed by `make install-hooks` (symlinks this file into .git/hooks/).
+# Installed by `bashy dag install-hooks` (symlinks this file into .git/hooks/).
 # Bypass for a one-off: `git push --no-verify`.
 #
 # Skipped automatically when:
@@ -100,16 +100,16 @@ PINEOF
 fi
 
 # The escape hatch now skips ONLY the minutes-long matrix. The two gates above
-# cost ~0.2s and catch things `make ci` would not even look at (a stale pin is
+# cost ~0.2s and catch things `bashy dag ci` would not even look at (a stale pin is
 # invisible to a local build), so bypassing them saves nothing and hides the
 # failures that are hardest to diagnose later. `git push --no-verify` is still
 # the total bypass.
 if $only_tags; then
-  echo "pre-push: tag-only push, skipping make ci (fast gates still ran)" >&2
+  echo "pre-push: tag-only push, skipping bashy dag ci (fast gates still ran)" >&2
   exit 0
 fi
 if [ "${YCODE_SKIP_CI_HOOK:-0}" = "1" ]; then
-  echo "pre-push: YCODE_SKIP_CI_HOOK=1, skipping make ci (fast gates still ran)" >&2
+  echo "pre-push: YCODE_SKIP_CI_HOOK=1, skipping bashy dag ci (fast gates still ran)" >&2
   exit 0
 fi
 
@@ -119,11 +119,11 @@ fi
 # routinely bypassed. YCODE_CI_HOST moves it somewhere with room; unset, nothing
 # changes and CI runs locally exactly as before.
 if [ -n "${YCODE_CI_HOST:-}" ]; then
-  echo "pre-push: running 'make ci' on $YCODE_CI_HOST (unset YCODE_CI_HOST to run locally)..." >&2
+  echo "pre-push: running 'bashy dag ci' on $YCODE_CI_HOST (unset YCODE_CI_HOST to run locally)..." >&2
   # NOT $0-relative: this file is SYMLINKED into .git/hooks, so dirname $0 is
   # .git/hooks and ../ci-remote.sh would resolve inside .git. Ask git instead.
   exec "$(git rev-parse --show-toplevel)/scripts/ci-remote.sh"
 fi
 
-echo "pre-push: running 'make ci' (set YCODE_SKIP_CI_HOOK=1 to bypass)..." >&2
-make ci
+echo "pre-push: running 'bashy dag ci' (set YCODE_SKIP_CI_HOOK=1 to bypass)..." >&2
+bashy dag ci

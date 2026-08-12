@@ -41,8 +41,8 @@ Other platforms (darwin-amd64, linux-arm64, windows) are not yet packaged — se
 ```bash
 git clone https://github.com/qiangli/ycode.git
 cd ycode
-make init   # initialize submodules (first time only)
-make build  # full quality gate; binary lands at bin/ycode
+scripts/bootstrap-siblings.sh   # sibling deps, standalone clones only
+bashy dag build                 # full quality gate; binary lands at bin/ycode
 ```
 
 ## Quick start

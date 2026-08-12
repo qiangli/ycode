@@ -36,7 +36,7 @@ if command -v realpath > /dev/null 2>&1; then
   YCODE_BIN="$(realpath "$YCODE_BIN" 2>/dev/null || echo "$YCODE_BIN")"
 fi
 if [[ ! -x "$YCODE_BIN" ]]; then
-  echo "wrap-smoke: $YCODE_BIN is not executable; run 'make compile' first" >&2
+  echo "wrap-smoke: $YCODE_BIN is not executable; run 'bashy dag compile' first" >&2
   exit 1
 fi
 mkdir -p "$RESULTS_DIR"

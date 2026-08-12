@@ -4,8 +4,8 @@ name: CI
 # fast test subset is green. That's the GH contract.
 #
 # Heavy work — full -race unit suite, TUI integration, TUI E2E, container
-# tests, evals — runs locally via `make ci` (Docker, parity with what GH used
-# to do here). The pre-push git hook (`make install-hooks`) enforces it
+# tests, evals — runs locally via `bashy dag ci` (a container, parity with what GH
+# used to do here). The pre-push git hook (`bashy dag install-hooks`) enforces it
 # before push, so coverage on PR is preserved without paying the GH cost on
 # every push.
 #
@@ -55,7 +55,7 @@ jobs:
       # Note: `go vet` is intentionally NOT here. Vet's cold-cache cost is the
       # same as a full compile (it builds every package to analyse it), which
       # doubles the CI time for the same byte-paths the compile step already
-      # covers. Vet runs in `make ci` locally via the pre-push hook, where
+      # covers. Vet runs in `bashy dag ci` locally via the pre-push hook, where
       # warm caches make it fast.
 
       # Compile-only check — proves the binary builds. We don't need to
@@ -68,7 +68,7 @@ jobs:
 
       # Tiny fast test subset: deterministic, no network, no -race, no
       # container, no LLM. Race detector + the rest of the suite live in
-      # `make ci` locally.
+      # `bashy dag ci` locally.
       - name: Fast unit tests
         run: |
           go test -short -count=1 -timeout 120s \

@@ -122,28 +122,6 @@ jobs:
       - name: Verify feature registry
         run: go test -count=1 ./internal/features/...
 
-      # Build all embeds from source (no fetch fallback in CI — release
-      # builds are the canonical producer of the .gz blobs). Sets
-      # BUILD_EMBEDS_FROM_SOURCE=1 so the *-if-missing wrappers skip
-      # the embed-fetch step. Each platform builds only the embeds
-      # applicable to it (per Makefile gates: vfkit darwin-only,
-      # gvproxy darwin+windows-only).
-      - name: Build embed blobs from source
-        shell: bash
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          BUILD_EMBEDS_FROM_SOURCE: "1"
-          CC: "ccache cc"
-          CXX: "ccache c++"
-        run: |
-          set -euo pipefail
-          make ensure-embeds
-          echo "--- embed blobs produced ---"
-          ls -lh internal/container/podman_embed/podman.gz       2>/dev/null || echo "(no podman gz)"
-          ls -lh internal/container/vfkit_embed/vfkit.gz         2>/dev/null || echo "(no vfkit gz)"
-          ls -lh internal/container/gvproxy_embed/gvproxy.gz     2>/dev/null || echo "(no gvproxy gz)"
-
       # Strip the -dev (or -rc.N) suffix so the binary is stamped with the BASE
       # version the bare tag will carry. `ycode version` on a v0.1.0-dev build
       # must report v0.1.0 — the per-OS qa target asserts this, and promote.yml
@@ -176,15 +154,11 @@ jobs:
           if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
             VERSION="${VERSION}-dryrun"
           fi
-          # Use `make _compile-inner` so TAG_LIST's wildcard probe runs
-          # AFTER `Build embed blobs from source` above, picking up the
-          # newly-produced .gz files and adding the corresponding
-          # embed_* tags. (Calling `make compile` would re-trigger the
-          # embed prereqs unnecessarily — _compile-inner is just the
-          # final go-build step.) VERSION/COMMIT propagate into
-          # Makefile's LDFLAGS substitution.
-          make --no-print-directory _compile-inner
-          mv bin/ycode "$BIN"
+          # One binary, no build tags — see DAG.md. This is the same command
+          # `bashy dag compile` and scripts/gate.sh run; keep the three in step.
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
+            -o "$BIN" ./cmd/ycode/
           # Ad-hoc codesign on macOS so binaries don't get killed by Gatekeeper.
           if [ "$RUNNER_OS" = "macOS" ]; then
             codesign -f -s - "$BIN" 2>/dev/null || true

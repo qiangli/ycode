@@ -17,24 +17,21 @@ ycode — pure Go CLI agent harness. Single static binary, Go 1.26+, permissive-
 ## Build & test
 
 ```bash
-make compile         # quick compile only (~35s warm); binary at bin/ycode
-make build           # full gate: tidy → fmt → vet → compile → test → verify
-make test            # unit tests (-short -race) with default tags
-make ci              # full GitHub Actions matrix in a Linux container (slow, definitive)
-make install-hooks   # pre-push hook runs `make ci` in the ycode-builder image
+bashy dag compile     # quick compile only (~4s warm); binary at bin/ycode
+bashy dag build       # full gate: fmtcheck → vet → verify-features → compile → test
+bashy dag test        # unit tests (-short -race), priorart/ excluded
+bashy dag install     # build + copy into $DHNT_BIN_DIR (shims deliberately NOT installed)
+bashy dag ci          # containerized matrix (slow, definitive)
+bashy dag --list      # every target
 ```
 
 `export ANTHROPIC_API_KEY=…` (or `OPENAI_API_KEY` + optional `OPENAI_BASE_URL`) before running the binary.
 
-**There is no required setup step.** `make compile` works on a fresh checkout inside the umbrella — the only embed this repo builds is the `ycode-spawn` micro-shim, produced automatically by `ensure-embeds`. **`make init` is currently broken**: it calls `scripts/build-gitea-frontend.sh`, which hard-exits because `external/gitea` no longer exists (see *Removed subsystems* below). Do not run it, and do not tell anyone it is a prerequisite.
+**There is no Makefile.** It was retired in favour of `DAG.md` + `bashy dag`; `scripts/gate.sh` is the same gate as one command, for contexts without bashy (the builder image, `dag ci`). Keep the three in step.
 
-**Build tags** are non-trivial. Default is `sqlite,sqlite_unlock_notify,bindata`, plus `embed_spawn` auto-added when `internal/runtime/wrap/spawn_embed/ycode-spawn.gz` exists — that auto-add is the single `TAG_LIST` line near the top of the `Makefile`. Bare `go build` without tags does not produce a working binary:
+**There are no build tags.** One binary, no variants. The old `TAG_LIST` carried `sqlite`, `sqlite_unlock_notify` and `bindata`, all three of which gate **zero files** in this tree — they were Gitea's, and Gitea left with `internal/gitserver`. `embed_spawn` selected a variant (embedded shim vs. the symlink fallback `spawn_embed.Available()` implements) and is not used by the release. So a bare `go build ./cmd/ycode/` now works and is what the pipeline runs.
 
-```bash
-go build -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/
-```
-
-(`compile` re-invokes Make as a sub-make on purpose: `TAG_LIST`'s `$(wildcard …)` probes expand once at parse time, so embeds produced during the same invocation would otherwise be missing from the tag list.)
+**Releases are `bashy release`**, driven by `.goreleaser.yaml`: cross-compilation, `ycode-<os>-<arch>.tar.gz`, `SHA256SUMS` and a `bashy-release-v1` ledger. `bashy dag release-check` / `release-plan` / `release-snapshot`. **The asset names are load-bearing** — the umbrella's fleet-upgrade path resolves artifacts by name, so renaming one strands hosts.
 
 **Single test / package** — never run bare `./...`; always exclude `priorart/`:
 
@@ -43,16 +40,7 @@ go test -short -race -run TestName ./internal/path/to/package/
 PACKAGES=$(go list ./... | grep -v '/priorart/')
 ```
 
-Specialized targets (read the Makefile comment before running — each has prerequisites):
-
-- `make test-integration` — `-tags integration`, requires a running server
-- `make test-tui` / `make test-tui-e2e` — TUI lifecycle; e2e needs a compiled binary and a PTY
-- `make test-ui` — Playwright (`cd e2e && npx playwright test`) against a running server
-- `make eval-{contract,smoke,behavioral,e2e,init}` — eval tiers; `smoke`/`behavioral`/`e2e` need a live LLM provider (`eval-contract` and `eval-init` are offline)
-- `make bench-memory[-quality|-competitive|-latency|-all]` — memory-retrieval benchmarks (no LLM)
-- `make verify-features` — runs `./internal/features/...`, which asserts every path in `internal/features/registry.yaml` still exists. This is part of `make build` and is the usual failure after moving or deleting a package.
-
-**Stale targets:** `make test-gitserver` points at `./internal/gitserver/...`, which no longer exists — it fails, and so does `make test-all`, which depends on it.
+Targets that need setup (read the note in `DAG.md` first): `test-integration`, `test-tui`, `test-tui-e2e`, `test-ui`, `eval-contract`, `eval-init`, `bench-memory`. `verify-features` asserts every path in `internal/features/registry.yaml` still exists — it runs inside `build` and is the usual failure after moving or deleting a package.
 
 ## Critical conventions
 
@@ -64,18 +52,18 @@ Specialized targets (read the Makefile comment before running — each has prere
 **Code standards:**
 - No package-level `var` for mutable state — thread `RuntimeContext` from `internal/runtime/conversation/runtime.go`.
 - No `log.Printf` / `fmt.Println` — use the structured logger on `RuntimeContext`.
-- Stage files by name (`git add path/to/file`). Never `git add -A` / `git add .` — the umbrella tree carries loose artifacts and unrelated submodule pointers that must not get swept up. (`make compile` alone dirties `go.work.sum`.)
-- Run `make build` before committing anything non-trivial.
+- Stage files by name (`git add path/to/file`). Never `git add -A` / `git add .` — the umbrella tree carries loose artifacts and unrelated submodule pointers that must not get swept up. (`bashy dag compile` alone dirties `go.work.sum`.)
+- Run `bashy dag build` before committing anything non-trivial.
 
 ## Layered build system
 
-The Makefile / scripts / Go split is enforced:
+The `DAG.md` / scripts / Go split is enforced:
 
-1. **Makefile** — dependency graph only. Targets declare deps and delegate. No multi-line shell.
+1. **`DAG.md`** — dependency graph only. Targets declare deps and delegate.
 2. **scripts/** — bash orchestration only. Sequencing, env, process management. No assertions or computation.
 3. **Go** — all logic, including test assertions and integration checks.
 
-Don't push test logic into bash, and don't grow shell blocks inside the Makefile.
+Don't push test logic into bash, and don't grow shell blocks inside `DAG.md`.
 
 ## Architecture pillars
 
@@ -84,7 +72,7 @@ Read these before non-trivial changes:
 - **Conversation runtime** (`internal/runtime/conversation/`) — the event loop; assembles the prompt, dispatches tool calls, manages tool activation TTLs (`preactivate.go`).
 - **Tool registry** (`internal/tools/registry.go`, `specs.go`) — `ToolSpec` declares `RequiredMode` (ReadOnly / WorkspaceWrite / DangerFullAccess). Tools are either always-available or **deferred** — discovered at runtime via `ToolSearch` and loaded only when needed (`deferred.go`, `availability.go`).
 - **Memory** (`pkg/memex/`) — five-layer system (KV / SQL / vector / graph / memo) behind a single `Memex` facade. Don't reach into a single backend directly.
-- **Feature registry** (`internal/features/registry.yaml`) — the source of truth for feature tiers (stable / experimental / wip) *and* their file paths; surfaced by `ycode features list|readme|verify`. Adding or moving a feature means editing this file, or `make build` fails.
+- **Feature registry** (`internal/features/registry.yaml`) — the source of truth for feature tiers (stable / experimental / wip) *and* their file paths; surfaced by `ycode features list|readme|verify`. Adding or moving a feature means editing this file, or `bashy dag build` fails.
 
 Supporting layers:
 
@@ -139,7 +127,7 @@ Several large subsystems left this tree. Historical docs describing them survive
 | MCP server/client (`docs/plan-remove-mcp.md`) | the `yc` shell verbs and the deferred tool registry |
 | `internal/container`, `pkg/oci`, podman + ollama embeds | `coreutils/external/podman/engine`, `coreutils/pkg/{oci,ollm}`; ycode drives the shared isolated **`bashy`** podman machine |
 
-Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, the `test-gitserver` / `init` Makefile targets, and `AGENTS.md`'s "Sub-directory Instructions" pointing at `external/{gitea,podman}/AGENTS.md`.
+Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, the retired `test-gitserver` / `init` targets, and `AGENTS.md`'s "Sub-directory Instructions" pointing at `external/{gitea,podman}/AGENTS.md`.
 
 ## Skills
 

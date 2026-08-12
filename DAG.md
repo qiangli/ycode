@@ -1,981 +1,224 @@
 ---
 name: ycode
-description: Pure Go CLI agent harness build/test/eval targets as a bashy dag pipeline
+description: ycode build, test, release and deploy tasks
 default: help
 ---
 
 # ycode — DAG task file
 
-The agent-first equivalent of this repo's `Makefile`, runnable with the
-`bashy dag` task runner:
+The task runner for this repo, run with `bashy dag <target>`. It replaces the
+Makefile, which is gone.
+
+Two things changed with the migration, both simplifications rather than
+translations:
+
+- **One binary, no build tags.** The Makefile's `TAG_LIST` carried `sqlite`,
+  `sqlite_unlock_notify` and `bindata`, and all three gate **zero files** in this
+  tree today — they were Gitea's, and Gitea left with `internal/gitserver`. The
+  fourth, `embed_spawn`, selected a *variant* (embedded shim vs. the symlink
+  fallback `spawn_embed.Available()` already implements). Dropping the tag set
+  also dissolves the Makefile's sub-make trick, which existed only because
+  `$(wildcard)` expands once per invocation.
+- **Releases are `bashy release`.** Cross-compilation, archives and checksums are
+  a config (`.goreleaser.yaml`) rather than a matrix of `dist/%` rules.
+
+Targets carry `Requires:` (dependency edges) and `Effects:` (declared caps).
 
 ```bash
-bashy dag --list            # what `make help` showed
-bashy dag build             # build binary with quality gates
-bashy dag test              # run unit tests
+bashy dag --list        # what `make help` showed
+bashy dag build         # full gate
+bashy dag test          # unit tests
 ```
-
-Targets carry `Requires:` (dependency edges), `Sources:`/`Generates:` (content-fingerprint up-to-date skips), and `Effects:`/`Tools:` annotations.
 
 ## Tasks
 
 ### help
-Show this list of targets and help.
+Show the target list.
+Effects: read
 ```bash
 bashy dag --list
 ```
 
-### init
-Initialize submodules, fetch plugins, and prepare embedded assets.
+### tidy
+Run go mod tidy, gofmt and vet.
 Effects: write
 ```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-git submodule init 2>&1 | grep -v 'already registered' || true
-git submodule update --recursive 2>&1 | grep -v '^From \|^Submodule path\| \* branch' || true
-bashy ./scripts/fetch-perses-plugins.sh
-bashy ./scripts/gzip-embeds.sh
-bashy ./scripts/build-gitea-frontend.sh
-echo "Generating Gitea bindata..."
-cd external/gitea && go run build/generate-bindata.go options modules/options/bindata.dat 2>&1
-cd external/gitea && go run build/generate-bindata.go templates modules/templates/bindata.dat 2>&1
-cd external/gitea && go run build/generate-bindata.go public modules/public/bindata.dat 2>&1
-cd external/gitea && go run build/generate-bindata.go modules/migration/schemas modules/migration/bindata.dat 2>&1
+./scripts/tidy.sh
 ```
 
-### sync
-Pull latest changes for all submodules (skips on conflict).
-Effects: write
-```bash
-bashy ./scripts/sync-submodules.sh
-```
-
-### priorart-list
-List all priorart repos with branch and latest commit.
+### fmtcheck
+Fail if any file is not gofmt-clean. Read-only; `tidy` is the apply step.
 Effects: read
 ```bash
-bashy ./scripts/sync-priorart.sh list
-```
-
-### priorart-sync
-Pull latest changes for all priorart repos.
-Effects: write
-```bash
-bashy ./scripts/sync-priorart.sh sync
-```
-
-### spawn-embed
-Build + compress the ycode-spawn micro shim for embedding.
-Sources: cmd/ycode-spawn/
-Generates: internal/runtime/wrap/spawn_embed/ycode-spawn.gz
-Effects: write
-```bash
-bashy ./scripts/embed-spawn.sh
-```
-
-### runner-build-if-missing
-Idempotent wrapper to build or fetch Ollama inference runner.
-Generates: ../coreutils/external/ollama/runner_embed/ycode-runner.gz
-Effects: write
-```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-if [ ! -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
-  if [ -z "${BUILD_EMBEDS_FROM_SOURCE:-}" ]; then
-    bashy ./scripts/embed-fetch.sh runner
-  fi
-fi
-if [ ! -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
-    bashy ./scripts/build-runner-thin.sh
-fi
-```
-
-### ensure-embeds
-Ensure all embedded binaries are built/fetched.
-Requires: spawn-embed, runner-build-if-missing
-```bash
-echo "Embeds ensured"
-```
-
-### _compile-inner
-Internal compilation target.
-Sources: cmd/ycode/, internal/
-Generates: bin/ycode
-Effects: write
-```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-mkdir -p bin
-VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
-COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
-LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}"
-
-TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
-if [ -f internal/runtime/wrap/spawn_embed/ycode-spawn.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_spawn"
-fi
-if [ -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_runner"
-fi
-
-go build -trimpath -tags "${TAG_LIST}" -ldflags "${LDFLAGS}" -o bin/ycode ./cmd/ycode/
-echo "Built bin/ycode (tags: ${TAG_LIST})"
-```
-
-### compile
-Compile the ycode binary to bin/ (no checks, ensuring embeds first).
-Requires: ensure-embeds, _compile-inner
-```bash
-echo "compile complete"
-```
-
-### verify-features
-Verify the feature registry structure (paths exist, no malformed entries).
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -count=1 ./internal/features/...
-```
-
-### compile-full
-Alias for compile, with codesign on macOS.
-Requires: compile
-```bash
-if [ "$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
-```
-
-### compile-debug
-Compile with debug symbols (for profiling/debugging).
-Effects: write
-```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-mkdir -p bin
-VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
-COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
-
-TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
-if [ -f internal/runtime/wrap/spawn_embed/ycode-spawn.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_spawn"
-fi
-if [ -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_runner"
-fi
-
-go build -trimpath -tags "${TAG_LIST}" -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o bin/ycode ./cmd/ycode/
-if [ "$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
-```
-
-### build
-Build with full quality gate: tidy -> fmt -> vet -> compile -> test -> verify.
-Requires: ensure-embeds
-Effects: write
-```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
-COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
-PACKAGES="${PACKAGES:-$(go list ./... | grep -v '/priorart/')}"
-
-TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
-if [ -f internal/runtime/wrap/spawn_embed/ycode-spawn.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_spawn"
-fi
-if [ -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_runner"
-fi
-
-export VERSION COMMIT PACKAGES TAG_LIST
-bashy ./scripts/build.sh
-```
-
-### test
-Run unit tests with race detector (-short flag).
-Effects: read
-```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-PACKAGES="${PACKAGES:-$(go list ./... | grep -v '/priorart/')}"
-TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
-if [ -f internal/runtime/wrap/spawn_embed/ycode-spawn.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_spawn"
-fi
-if [ -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_runner"
-fi
-
-go test -short -race -tags "${TAG_LIST}" ${PACKAGES}
-```
-
-### test-integration
-Run Go integration tests (requires running server).
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -tags integration -v -count=1 ./internal/integration/...
-```
-
-### test-container
-Run container integration tests (requires podman).
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -tags integration -race -count=1 -timeout 180s -v ./internal/container/...
-```
-
-### test-release-smoke
-Fast e2e: ollama pull/run + podman build/pull/run (gates releases).
-Effects: read
-```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
-if [ -f internal/runtime/wrap/spawn_embed/ycode-spawn.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_spawn"
-fi
-if [ -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_runner"
-fi
-
-go test -tags "${TAG_LIST},release_smoke,embed_runner" -count=1 -timeout 600s -v ./internal/integration/ -run 'TestReleaseSmoke_'
-```
-
-### qa
-Verify a *published* release build on THIS host OS/arch. This is the per-OS
-runtime gate: it downloads `$YCODE_TEST_VERSION`, verifies the published
-`SHA256SUMS`, extracts the host-matching `ycode-<os>-<arch>` archive, then runs
-a minimal LLM-free smoke (no model call, no API spend — it runs every release
-on every OS) that proves these exact bytes execute on this OS. Bare `vX.Y.Z`
-releases byte-promote the QA-tested `-dev` assets only after this target has
-gone green on each required OS (see promote.yml). No `/tmp`, no grep extraction
-tricks — cwd-local state and awk-only parsing so the target stays inside the
-portable userland.
-Effects: read
-```bash
-set -e
-YC="${YCODE:-bashy}"
-REPO="${YCODE_REPO:-qiangli/ycode}"
-# Accept the shared QA poller's variable too: it drives every repo's harness
-# and exports OUTPOST_TEST_VERSION regardless of which project it is testing.
-VER="${YCODE_TEST_VERSION:-${OUTPOST_TEST_VERSION:?set YCODE_TEST_VERSION (or OUTPOST_TEST_VERSION, exported by the shared QA poller) to the tag to test, e.g. v0.3.0-dev}}"
-BASEV="${VER%%-*}"
-os=$("$YC" uname -s | awk '{ print tolower($0) }')
-case "$os" in
-  *darwin*) os=darwin ;;
-  *linux*) os=linux ;;
-  *windows*|mingw*|msys*) os=windows ;;
-  *) echo "qa: unsupported os $os" >&2; exit 2 ;;
-esac
-arch=$("$YC" uname -m)
-case "$arch" in
-  arm64|aarch64) arch=arm64 ;;
-  x86_64|amd64) arch=amd64 ;;
-  *) echo "qa: unsupported arch $arch" >&2; exit 2 ;;
-esac
-suffix=tar.gz
-ext=""
-[ "$os" = windows ] && { suffix=zip; ext=.exe; }
-base="https://github.com/${REPO}/releases/download/${VER}"
-d=".qa/ycode-${VER}-${os}-${arch}"
-"$YC" rm -rf "$d"
-"$YC" mkdir -p "$d/ycode"
-echo ">> QA ${VER} on ${os}/${arch}"
-
-asset="ycode-${os}-${arch}.${suffix}"
-archive="$d/$asset"
-
-# Verify the published SHA256SUMS line for this host's asset.
-"$YC" curl -fsSL -o "$d/SHA256SUMS" "$base/SHA256SUMS"
-want=$(awk -v asset="$asset" '
-  {
-    name = $NF
-    sub(/^.*\//, "", name)
-    if (name == asset) {
-      print $1
-      found = 1
-      exit
-    }
-  }
-  END { if (!found) exit 1 }
-' "$d/SHA256SUMS") || { echo "FAIL: missing checksum for $asset"; exit 1; }
-
-"$YC" curl -fsSL -o "$archive" "$base/$asset"
-got=$("$YC" sha256sum "$archive" | awk '{ print $1; exit }')
-{ [ -n "$want" ] && [ "$want" = "$got" ]; } || { echo "FAIL: sha256 $asset (want=$want got=$got)"; exit 1; }
-echo ">> sha256 verified $asset"
-
-case "$archive" in
-  *.tar.gz) "$YC" tar -xzf "$archive" -C "$d/ycode" ;;
-  *.zip)
-    unzipper="$d/unzip.go"
-    cat >"$unzipper" <<'EOF'
-package main
-
-import (
-	"archive/zip"
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
-)
-
-func main() {
-	if len(os.Args) != 3 {
-		os.Exit(2)
-	}
-	dst, err := filepath.Abs(os.Args[2])
-	if err != nil {
-		panic(err)
-	}
-	r, err := zip.OpenReader(os.Args[1])
-	if err != nil {
-		panic(err)
-	}
-	defer r.Close()
-	for _, f := range r.File {
-		name := filepath.Clean(filepath.FromSlash(f.Name))
-		if filepath.IsAbs(name) || name == "." || strings.HasPrefix(name, ".."+string(os.PathSeparator)) {
-			panic("unsafe zip path: " + f.Name)
-		}
-		target := filepath.Join(dst, name)
-		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0755); err != nil {
-				panic(err)
-			}
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-			panic(err)
-		}
-		in, err := f.Open()
-		if err != nil {
-			panic(err)
-		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, f.Mode())
-		if err != nil {
-			in.Close()
-			panic(err)
-		}
-		_, err = io.Copy(out, in)
-		cerr := out.Close()
-		in.Close()
-		if err != nil {
-			panic(err)
-		}
-		if cerr != nil {
-			panic(cerr)
-		}
-	}
-}
-EOF
-    "$YC" go run "$unzipper" "$archive" "$d/ycode"
-    ;;
-  *) echo "qa: unsupported archive $archive" >&2; exit 2 ;;
-esac
-
-YC_BIN="$d/ycode/ycode${ext}"
-[ -f "$YC_BIN" ] || { echo "FAIL: extracted ycode binary not found"; exit 1; }
-"$YC" chmod +x "$YC_BIN" 2>/dev/null || true
-
-# 1. version stamp carries the base version (strips any -dev/-rc suffix).
-vout=$("$YC_BIN" version | awk 'NR == 1 { print; exit }')
-echo "   $vout"
-case "$vout" in
-  *"$BASEV"*|*"${BASEV#v}"*) ;;
-  *) echo "FAIL: version stamp is not $BASEV ($vout)"; exit 1 ;;
-esac
-
-# 2. LLM-free headless surface: offline capability docs (no model call).
-"$YC_BIN" docs >/dev/null || { echo "FAIL: docs (offline surface) exited $?"; exit 1; }
-echo ">> docs (offline) ok"
-
-# 3. shell-runner surface: non-interactive -c one-shot.
-shell_out=$("$YC_BIN" shell -c 'echo runtime-ok')
-[ "$shell_out" = "runtime-ok" ] || { echo "FAIL: shell -c ($shell_out)"; exit 1; }
-
-echo "Results: PASS ${VER} ${os}/${arch}"
-```
-
-### test-oci
-Run OCI self-build integration test (requires podman).
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -tags integration -race -count=1 -timeout 600s -v ./internal/container/... -run TestOCIBuildSelf
-```
-
-### test-gitserver
-Run git server workspace integration tests.
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -tags "integration,sqlite,sqlite_unlock_notify,bindata" -race -count=1 -timeout 240s -v ./internal/gitserver/...
-```
-
-### test-ui
-Run Playwright browser tests (requires running server + npx).
-Effects: read
-```bash
-cd e2e && npx playwright test
-```
-
-### test-tui
-Run TUI integration tests (direct Update + teatest lifecycle).
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -tags integration -count=1 -timeout 60s ./internal/cli/...
-```
-
-### test-tui-e2e
-Run TUI E2E tests in a PTY (requires compiled binary).
-Requires: compile
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -tags e2e -count=1 -timeout 120s ./internal/cli/...
-```
-
-### test-tui-fuzz
-Run TUI fuzz tests for 30s each.
-Effects: read
-```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -run='^$' -fuzz=FuzzToolDetail -fuzztime=30s ./internal/cli/
-go test -run='^$' -fuzz=FuzzTUIUpdate -fuzztime=30s ./internal/cli/
-```
-
-### test-all
-Run all tests: unit + container + gitserver + TUI + integration + browser.
-Requires: test, test-container, test-gitserver, test-tui, test-tui-e2e, test-integration, test-ui
-```bash
-echo "all tests passed"
-```
-
-### eval-agentsmd
-Validate AGENTS.md quality (static analysis, no LLM).
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -v -run TestAnalyze -race ./internal/eval/agentsmd/...
-```
-
-### bench-init
-Run /init E2E benchmark.
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -tags benchmark -count=1 -timeout 35m -v ./internal/eval/benchmark/...
-```
-
-### eval-contract
-Run contract-tier evals (no LLM, deterministic, fast).
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -short -race ./internal/eval/...
-```
-
-### eval-smoke
-Run smoke-tier evals (real LLM, pass@k, requires provider).
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -tags eval -count=1 -timeout 5m ./internal/eval/smoke/...
-```
-
-### eval-behavioral
-Run behavioral evals (trajectory analysis, requires provider).
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -tags eval_behavioral -count=1 -timeout 30m ./internal/eval/behavioral/...
-```
-
-### eval-e2e
-Run E2E evals (full coding tasks, requires provider).
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -tags eval_e2e -count=1 -timeout 45m ./internal/eval/e2e/...
-```
-
-### eval-init
-Replay /init via aperio (offline; skips if cassette unrecorded).
-Requires: compile
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -count=1 -timeout 120s ./internal/eval/init/...
-```
-
-### eval-all-evals
-Run all eval tiers.
-Requires: eval-contract, eval-smoke, eval-behavioral, eval-e2e, eval-init
-```bash
-echo "all evaluation tiers completed"
-```
-
-### bench-memory
-Memory retrieval quality benchmarks (no LLM, fast).
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -run TestBenchmark -v -count=1 ./internal/runtime/memory/...
-```
-
-### bench-memory-quality
-Comprehensive memory quality (large corpus, context metrics).
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -run 'TestBenchmark_Quality|TestContextMetrics' -v -count=1 -timeout 2m ./internal/runtime/memory/...
-```
-
-### bench-memory-competitive
-Competitive benchmark (LoCoMo subset, fusion ablation, latency).
-Effects: read
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -run TestCompetitive -v -count=1 -timeout 5m ./internal/runtime/memory/...
-```
-
-### bench-memory-latency
-Memory and storage operation latency benchmarks.
-Effects: read
-```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-go test -bench BenchmarkRecall -benchmem -count=3 ./internal/runtime/memory/...
-go test -bench 'BenchmarkBleve|BenchmarkVector' -benchmem -count=3 ./internal/storage/...
-```
-
-### bench-memory-all
-All memory benchmarks.
-Requires: bench-memory, bench-memory-quality, bench-memory-competitive, bench-memory-latency
-```bash
-echo "all memory benchmarks completed"
+./scripts/fmtcheck.sh
 ```
 
 ### vet
-Run static analysis.
+Static analysis over every package except priorart/.
 Effects: read
 ```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-PACKAGES="${PACKAGES:-$(go list ./... | grep -v '/priorart/')}"
-TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
-if [ -f internal/runtime/wrap/spawn_embed/ycode-spawn.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_spawn"
-fi
-if [ -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_runner"
-fi
-
-go vet -tags "${TAG_LIST}" ${PACKAGES}
+go vet $(go list ./... | grep -v '/priorart/')
 ```
 
-### tidy
-Run mod tidy, fmt, and vet.
+### verify-features
+Validate the feature registry: every path in internal/features/registry.yaml
+must exist. This is the usual failure after moving or deleting a package.
+Effects: read
+```bash
+go test -count=1 ./internal/features/...
+```
+
+### compile
+Compile bin/ycode. One binary, no tags.
 Effects: write
 ```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-export PACKAGES="${PACKAGES:-$(go list ./... | grep -v '/priorart/')}"
-bashy ./scripts/tidy.sh
+go build -trimpath \
+  -ldflags "-s -w -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev) -X main.commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+  -o bin/ycode ./cmd/ycode/
+if [ "$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
+echo "Built bin/ycode"
+```
+
+### test
+Unit tests with the race detector, excluding priorart/.
+Effects: read
+```bash
+go test -short -race -count=1 $(go list ./... | grep -v '/priorart/')
+```
+
+### build
+The full gate: fmtcheck → vet → verify-features → compile → test.
+Requires: fmtcheck vet verify-features compile test
+Effects: write
+```bash
+echo "build: gate passed"
+```
+
+### install
+Install bin/ycode into $DHNT_BIN_DIR. Shims are deliberately NOT installed —
+routing podman/docker/bash through ycode hijacks any tool that polls them.
+Requires: build
+Effects: write
+```bash
+dir="${DHNT_BIN_DIR:-$HOME/.local/bin}"
+mkdir -p "$dir"
+# Unlink before copy so the new binary lands on a fresh inode: on macOS,
+# overwriting a signed Mach-O in place leaves the kernel's per-vnode cs_blob
+# cache pointing at the old signature and the next exec is SIGKILLed.
+rm -f "$dir/ycode"
+cp bin/ycode "$dir/ycode"
+if [ "$(uname)" = "Darwin" ]; then codesign -f -s - "$dir/ycode" 2>/dev/null || true; fi
+echo "Installed ycode to $dir/ (shims not installed)"
 ```
 
 ### clean
 Remove build artifacts.
-Effects: destroy
-```bash
-rm -rf bin/ dist/
-```
-
-### install
-Install the ycode binary to ~/bin/ (no shims).
-Requires: build
 Effects: write
 ```bash
-set -e
-mkdir -p ~/bin
-rm -f ~/bin/ycode
-cp bin/ycode ~/bin/ycode
-if [ "$(uname)" = "Darwin" ]; then codesign -f -s - ~/bin/ycode 2>/dev/null || true; fi
-echo "Installed ycode to ~/bin/"
-```
-
-### all
-Full quality gate (alias for build).
-Requires: build
-```bash
-echo "all complete"
-```
-
-### ci-image
-Build the ycode-builder Docker image used by GitHub Actions.
-Effects: write
-```bash
-set -e
-DOCKER="${DOCKER:-$(command -v docker 2>/dev/null || command -v podman)}"
-if [ -z "${DOCKER}" ]; then
-  echo "neither docker nor podman found in PATH" >&2
-  exit 1
-fi
-CI_IMAGE="${CI_IMAGE:-ycode-builder}"
-${DOCKER} build -t "${CI_IMAGE}" .
-```
-
-### ci
-Run the full GitHub Actions matrix locally (Docker).
-Requires: ci-image
-Effects: write
-```bash
-set -e
-DOCKER="${DOCKER:-$(command -v docker 2>/dev/null || command -v podman)}"
-CI_IMAGE="${CI_IMAGE:-ycode-builder}"
-${DOCKER} run --rm "${CI_IMAGE}" go build -trimpath -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/
-${DOCKER} run --rm "${CI_IMAGE}" go vet -tags "sqlite,sqlite_unlock_notify,bindata" $(go list ./... | grep -v '/priorart/')
-${DOCKER} run --rm "${CI_IMAGE}" go test -short -race -tags "sqlite,sqlite_unlock_notify,bindata" $(go list ./... | grep -v '/priorart/')
-${DOCKER} run --rm "${CI_IMAGE}" go test -count=1 ./internal/features/...
-${DOCKER} run --rm "${CI_IMAGE}" go test -short -race ./internal/features/...
-${DOCKER} run --rm "${CI_IMAGE}" go test -tags integration -count=1 -timeout 60s ./internal/cli/...
-${DOCKER} run --rm "${CI_IMAGE}" go test -tags e2e -count=1 -timeout 120s ./internal/cli/...
-echo "=== CI parity PASSED ==="
-```
-
-### ci-fast
-Run only the verify-features + unit-test subset in Docker.
-Effects: write
-```bash
-set -e
-DOCKER="${DOCKER:-$(command -v docker 2>/dev/null || command -v podman)}"
-if [ -z "${DOCKER}" ]; then
-  echo "neither docker nor podman found in PATH" >&2
-  exit 1
-fi
-CI_IMAGE="${CI_IMAGE:-ycode-builder}"
-${DOCKER} run --rm "${CI_IMAGE}" go test -count=1 ./internal/features/...
-${DOCKER} run --rm "${CI_IMAGE}" go test -short -race ./internal/features/...
-echo "=== ci-fast PASSED ==="
+rm -rf bin dist
 ```
 
 ### install-hooks
 Symlink scripts/git-hooks/* into .git/hooks/.
 Effects: write
 ```bash
-bashy ./scripts/install-hooks.sh
+./scripts/install-hooks.sh
 ```
 
-### dist/ycode-linux-amd64
-Cross-compile for Linux amd64.
-Generates: dist/ycode-linux-amd64
-Effects: write
-```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
-COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
-LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}"
-TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
-if [ -f internal/runtime/wrap/spawn_embed/ycode-spawn.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_spawn"
-fi
-if [ -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_runner"
-fi
+**Release.** Cross-compilation, archives and checksums now come from
+`.goreleaser.yaml` via `bashy release`.
 
-mkdir -p dist
-GOOS=linux GOARCH=amd64 go build -trimpath -tags "${TAG_LIST}" -ldflags "${LDFLAGS}" -o dist/ycode-linux-amd64 ./cmd/ycode/
-```
-
-### dist/ycode-linux-arm64
-Cross-compile for Linux arm64.
-Generates: dist/ycode-linux-arm64
-Effects: write
-```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
-COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
-LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}"
-TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
-if [ -f internal/runtime/wrap/spawn_embed/ycode-spawn.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_spawn"
-fi
-if [ -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_runner"
-fi
-
-mkdir -p dist
-GOOS=linux GOARCH=arm64 go build -trimpath -tags "${TAG_LIST}" -ldflags "${LDFLAGS}" -o dist/ycode-linux-arm64 ./cmd/ycode/
-```
-
-### dist/ycode-darwin-amd64
-Cross-compile for macOS amd64.
-Generates: dist/ycode-darwin-amd64
-Effects: write
-```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
-COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
-LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}"
-TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
-if [ -f internal/runtime/wrap/spawn_embed/ycode-spawn.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_spawn"
-fi
-if [ -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_runner"
-fi
-
-mkdir -p dist
-GOOS=darwin GOARCH=amd64 go build -trimpath -tags "${TAG_LIST}" -ldflags "${LDFLAGS}" -o dist/ycode-darwin-amd64 ./cmd/ycode/
-codesign -f -s - dist/ycode-darwin-amd64 2>/dev/null || true
-```
-
-### dist/ycode-darwin-arm64
-Cross-compile for macOS arm64.
-Generates: dist/ycode-darwin-arm64
-Effects: write
-```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
-COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
-LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}"
-TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
-if [ -f internal/runtime/wrap/spawn_embed/ycode-spawn.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_spawn"
-fi
-if [ -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_runner"
-fi
-
-mkdir -p dist
-GOOS=darwin GOARCH=arm64 go build -trimpath -tags "${TAG_LIST}" -ldflags "${LDFLAGS}" -o dist/ycode-darwin-arm64 ./cmd/ycode/
-codesign -f -s - dist/ycode-darwin-arm64 2>/dev/null || true
-```
-
-### dist/ycode-windows-amd64.exe
-Cross-compile for Windows amd64.
-Generates: dist/ycode-windows-amd64.exe
-Effects: write
-```bash
-set -e
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
-COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
-LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}"
-TAG_LIST="sqlite,sqlite_unlock_notify,bindata"
-if [ -f internal/runtime/wrap/spawn_embed/ycode-spawn.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_spawn"
-fi
-if [ -f ../coreutils/external/ollama/runner_embed/ycode-runner.gz ]; then
-  TAG_LIST="${TAG_LIST},embed_runner"
-fi
-
-mkdir -p dist
-GOOS=windows GOARCH=amd64 go build -trimpath -tags "${TAG_LIST}" -ldflags "${LDFLAGS}" -o dist/ycode-windows-amd64.exe ./cmd/ycode/
-```
-
-### cross
-Cross-compile for all platforms.
-Requires: dist/ycode-linux-amd64, dist/ycode-linux-arm64, dist/ycode-darwin-amd64, dist/ycode-darwin-arm64, dist/ycode-windows-amd64.exe
-```bash
-echo "cross compile complete"
-```
-
-### runner-build
-Build Ollama runner from source (requires C++ toolchain).
-Effects: write
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-bashy ./scripts/build-runner.sh
-```
-
-### embed-fetch
-Download prebuilt embed blobs (runner+podman+vfkit+gvproxy) from the latest GitHub release.
-Effects: write
-```bash
-bashy ./scripts/embed-fetch.sh
-```
-
-### runner-build-thin
-Build thin runner and compress for embedding.
-Effects: write
-```bash
-if ! (go version 2>/dev/null | grep -qE "go1.26.[4-9]|go1.2[7-9]|go1.[3-9]"); then
-  export GOROOT="$(bashy go env GOROOT)"
-  export PATH="$GOROOT/bin:$PATH"
-fi
-bashy ./scripts/build-runner-thin.sh
-```
-
-### runner-check
-Verify runner binary exists and responds to health check.
+### release-check
+Validate .goreleaser.yaml, its stages and its name templates. Builds nothing.
 Effects: read
 ```bash
-bashy ./scripts/check-runner.sh
+bashy release check
 ```
 
-### build-single
-Alias for compile, with codesign on macOS.
+### release-plan
+Print what a release would build and package.
+Effects: read
+```bash
+bashy release plan
+```
+
+### release-snapshot
+Build, archive and checksum every platform without a tag. Produces
+dist/ycode-<os>-<arch>.tar.gz, SHA256SUMS and release-ledger.json.
+Effects: write
+```bash
+bashy release --snapshot
+```
+
+**Tests beyond the unit suite.** Each needs setup — read the note before running.
+
+### test-integration
+Go integration tests. Requires a running server.
+Effects: read net
+```bash
+go test -tags integration -v -count=1 ./internal/integration/...
+```
+
+### test-tui
+TUI integration tests (direct Update + teatest lifecycle).
+Effects: read
+```bash
+go test -tags integration -count=1 -timeout 60s ./internal/cli/...
+```
+
+### test-tui-e2e
+TUI end-to-end in a PTY. Needs a compiled binary and a real terminal.
 Requires: compile
-```bash
-if [ "$(uname)" = "Darwin" ]; then codesign -f -s - bin/ycode 2>/dev/null || true; fi
-echo ""
-echo "=== Single binary ready: bin/ycode ==="
-ls -lh bin/ycode
-```
-
-### deploy
-Deploy ycode serve.
-Effects: write
-```bash
-set -e
-HOST="${HOST:-localhost}"
-if [ "${HOST}" = "localhost" ] || [ "${HOST}" = "127.0.0.1" ]; then
-  bashy ./scripts/deploy-local.sh
-else
-  bashy ./scripts/deploy-remote.sh
-fi
-```
-
-### deploy-local
-Deploy to localhost.
-Effects: write
-```bash
-bashy ./scripts/deploy-local.sh
-```
-
-### deploy-remote
-Deploy to remote host.
-Effects: write
-```bash
-bashy ./scripts/deploy-remote.sh
-```
-
-### validate
-Run Go integration tests against running instance.
 Effects: read
 ```bash
-bashy ./scripts/validate.sh
+go test -tags e2e -count=1 -timeout 120s ./internal/cli/...
 ```
 
-### validate-ui
-Run Playwright browser tests against running instance.
-Effects: read
+### test-ui
+Playwright browser tests. Requires a running server and npx.
+Effects: read net
 ```bash
 cd e2e && npx playwright test
 ```
 
-### validate-all
-Run all validation: integration + browser.
-Requires: validate, validate-ui
+**Evaluation.**
+
+### eval-contract
+Contract-tier evals: deterministic, no LLM.
+Effects: read
 ```bash
-echo "all validation targets complete"
+go test -count=1 ./internal/eval/contract/...
+```
+
+### eval-init
+Replay /init via aperio. Offline; skips if the cassette is unrecorded.
+Requires: compile
+Effects: read
+```bash
+go test -count=1 -tags eval ./internal/eval/init/...
+```
+
+### bench-memory
+Memory retrieval quality benchmarks. No LLM.
+Effects: read
+```bash
+go test -run XXX -bench . -benchtime 1x ./pkg/memex/...
+```
+
+**CI.**
+
+### ci-image
+Build the ycode-builder image used by the containerized matrix.
+Effects: write net
+```bash
+${DOCKER:-podman} build -t ycode-builder .
+```
+
+### ci
+Run the containerized matrix locally. Slow, definitive. Needs a container
+engine; set YCODE_CI_HOST to run it on another machine instead.
+Requires: ci-image
+Effects: write net
+```bash
+${DOCKER:-podman} run --rm -v "$PWD":/src -w /src ycode-builder ./scripts/gate.sh
 ```

@@ -8,7 +8,7 @@ PORT="${PORT:-31415}"
 echo "=== Deploy to localhost:${PORT} ==="
 
 if [ ! -f bin/ycode ]; then
-    echo "ERROR: bin/ycode not found — run 'make build' first"
+    echo "ERROR: bin/ycode not found — run 'bashy dag build' first"
     exit 1
 fi
 

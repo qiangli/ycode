@@ -12,7 +12,7 @@ echo "=== Validating ${BASE_URL} ==="
 echo "--- Pre-flight: Connectivity ---"
 if ! curl -sf --max-time 5 "${BASE_URL}/healthz" > /dev/null 2>&1; then
     echo "ERROR: No server reachable at ${BASE_URL}"
-    echo "Run 'make deploy' first."
+    echo "Run the deploy script first."
     exit 1
 fi
 echo "  Server reachable."

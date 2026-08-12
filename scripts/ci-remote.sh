@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ci-remote.sh — run the containerized CI matrix on another machine.
 #
-# WHY THIS EXISTS. `make ci` builds a Linux image and runs the whole GitHub
+# WHY THIS EXISTS. `bashy dag ci` builds a Linux image and runs the whole GitHub
 # Actions matrix in it. That is the right gate and the wrong thing to run on a
 # laptop that is also the dev box: the image build alone needs several GB of
 # container storage, and on 2026-08-02 it failed mid-layer with "no space left on
@@ -13,12 +13,12 @@
 # So: point CI at a machine with room.
 #
 #   export YCODE_CI_HOST=builder.example        # ssh target; NOT set by default
-#   make ci                                     # now runs there
+#   bashy dag ci                                     # now runs there
 #
 # Optional:
 #   YCODE_CI_DIR    remote checkout dir      (default ~/ci/ycode)
 #   YCODE_CI_DOCKER remote container engine  (default "bashy podman")
-#   YCODE_CI_TARGET make target to run       (default "ci")
+#   YCODE_CI_TARGET dag target to run       (default "ci")
 #
 # There is deliberately NO default host. A hostname baked into an OSS repo is
 # someone's real machine leaking into a public tree, and it would silently send
@@ -109,5 +109,5 @@ fi
 cd \"\$DIR\"
 $FETCH
 echo \"ci-remote: building \$(git rev-parse --short HEAD)\" >&2
-make $TARGET DOCKER='$ENGINE'
+bashy dag $TARGET DOCKER='$ENGINE'
 "

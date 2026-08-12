@@ -50,5 +50,6 @@ RUN go mod download
 # Copy the rest of the source (invalidates on code changes only).
 COPY . .
 
-# Default: full quality gate (same as make build).
-CMD ["make", "build"]
+# Default: full quality gate (same as `bashy dag build`, minus the need for
+# bashy inside the image).
+CMD ["./scripts/gate.sh"]

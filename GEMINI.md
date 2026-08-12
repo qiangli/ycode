@@ -16,42 +16,36 @@ This file provides context and instructions for AI agents working on the `ycode`
 ### Architecture
 - **Entry Point:** `cmd/ycode/main.go` using Cobra CLI.
 - **Main App Loop:** `internal/cli/app.go` (REPL) and `internal/runtime/conversation/runtime.go`.
-- **Registry:** Features are defined in `internal/features/registry.yaml` — the source of truth for feature tiers *and* their file paths. `make build` fails if a listed path disappears.
+- **Registry:** Features are defined in `internal/features/registry.yaml` — the source of truth for feature tiers *and* their file paths. `bashy dag build` fails if a listed path disappears.
 - **Sibling modules:** `go.mod` replaces resolve `../sh`, `../nadir`, and `../coreutils` as flat siblings (real submodules inside the `dhnt/` umbrella). `../coreutils` is the shared AgentOS hub and owns the code-intel engines that `internal/runtime/{treesitter,repomap,codegraph}` re-export via thin alias shims.
 - **Vendorized Deps:** Submodules under `external/` (`jaeger`, `perses`, `victorialogs` — not imported by the main module today) and read-only reference code under `priorart/`.
 
 ## Building and Running
 
-### First-Time Setup
-**No setup step is required.** `make compile` works on a fresh checkout inside the umbrella (~35s warm); the only embed this repo builds is the `ycode-spawn` micro-shim, produced automatically. Standalone clones need `scripts/bootstrap-siblings.sh` first, which materialises the siblings at the SHAs in `.sibling-pins`.
-
-**Do not run `make init`** — it calls `scripts/build-gitea-frontend.sh`, which hard-exits because `external/gitea` no longer exists (see *Removed Subsystems*).
+**There is no Makefile** — it was retired in favour of `DAG.md` + `bashy dag`.
+There is also **no required setup step** and **no build tags**: one binary, no variants.
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY (+ optional OPENAI_BASE_URL)
-make install-hooks                     # pre-push hook runs `make ci`
-make compile
+bashy dag compile          # quick compile; binary at bin/ycode
+bashy dag build            # full gate: fmtcheck → vet → verify-features → compile → test
+bashy dag test             # unit tests (-short -race)
+bashy dag install          # copy into $DHNT_BIN_DIR (shims deliberately NOT installed)
+bashy dag ci               # containerized matrix
+bashy dag --list           # every target
 ```
 
-### Key Commands
-- **Build full quality gate:** `make build` (tidy → fmt → vet → compile → test → verify)
-- **Quick compile:** `make compile` (binary at `bin/ycode`)
-- **Install:** `make install` — copies into `$DHNT_BIN_DIR`. Drop-in shims (`ollama`, `podman`, `docker`, `bash`) are deliberately NOT installed; never blanket-install the `bash` shim.
-- **Unit tests:** `make test` (runs `-short -race`)
-- **Feature registry check:** `make verify-features` — the usual `make build` failure after moving or deleting a package
-- **CI Parity:** `make ci` (runs the GitHub Actions matrix in Docker)
-- **Broken:** `make test-gitserver` (targets the deleted `internal/gitserver/`) and therefore `make test-all`
+`scripts/gate.sh` is the same gate as one command, for contexts without bashy
+(the builder image, `dag ci`). Standalone clones run
+`scripts/bootstrap-siblings.sh` first.
 
-### Build Tags
-Bare `go build` without tags does not produce a working binary.
-- `sqlite`, `sqlite_unlock_notify`, `bindata` (default)
-- `embed_spawn` — auto-added when `internal/runtime/wrap/spawn_embed/ycode-spawn.gz` exists. This is the **only** auto-added tag; the `embed_runner` / `embed_vfkit` / `embed_podman` / `embed_gvproxy` tags left with the ollama and podman engines when they moved to coreutils.
-- Manual: `go build -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/`
+**Releases** are `bashy release` over `.goreleaser.yaml` — cross-compilation,
+`ycode-<os>-<arch>.tar.gz`, `SHA256SUMS`, and a `bashy-release-v1` ledger.
+The asset names are load-bearing for the umbrella's fleet-upgrade path.
 
 ## Development Conventions
 
 ### Layered Build System
-1. **Makefile:** Dependency graph only. No multi-line shell logic.
+1. **`DAG.md`:** Dependency graph only. Targets declare deps and delegate.
 2. **scripts/:** Bash orchestration (sequencing, environment, processes). No assertions.
 3. **Go:** All logic, including unit/integration tests and assertions.
 
@@ -73,7 +67,7 @@ Bare `go build` without tags does not produce a working binary.
 ### Git & Commits
 - **Prefixes:** Use prefixes like `fix:`, `feat:`, `docs:`, `test:`.
 - **Staging:** Stage files by name. **NEVER** use `git add .` or `git add -A`.
-- **Pre-commit:** Always run `make build` before committing.
+- **Pre-commit:** Always run `bashy dag build` before committing.
 
 ## Removed Subsystems — do not resurrect from stale docs
 
@@ -86,7 +80,7 @@ Several large subsystems left this tree. Historical docs describing them survive
 | MCP server/client (`docs/plan-remove-mcp.md`) | the `yc` shell verbs and the deferred tool registry |
 | `internal/container`, `pkg/oci`, podman + ollama embeds | `coreutils/external/podman/engine`, `coreutils/pkg/{oci,ollm}` |
 
-Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, `docs/embedding-{gitea,podman}.md`, and the `test-gitserver` / `init` Makefile targets.
+Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, `docs/embedding-{gitea,podman}.md`, and the retired `test-gitserver` / `init` targets.
 
 ## Agent-Specific Tools (`yc <verb>`)
 These are in-process shell built-ins, **reachable ONLY through `ycode shell`** — there is no `ycode yc` subcommand (the binary answers `unknown command "yc"`). From a script it is `ycode shell -c "yc symbols …"`. Use these over standard Unix tools when possible:

@@ -16,12 +16,12 @@ if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "${HOST}" "echo ok" > /dev/null 2>
     echo "  1. Generate a key (if needed):  ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N \"\""
     echo "  2. Copy key to remote host:     ssh-copy-id ${HOST}"
     echo "  3. Verify:                      ssh -o BatchMode=yes ${HOST} \"echo ok\""
-    echo "  4. Re-run:                      make deploy HOST=${HOST} PORT=${PORT}"
+    echo "  4. Re-run:                      bashy dag deploy HOST=${HOST} PORT=${PORT}"
     exit 1
 fi
 
 if [ ! -f bin/ycode ]; then
-    echo "ERROR: bin/ycode not found — run 'make build' first"
+    echo "ERROR: bin/ycode not found — run 'bashy dag build' first"
     exit 1
 fi
 
