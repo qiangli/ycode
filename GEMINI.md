@@ -8,39 +8,45 @@ This file provides context and instructions for AI agents working on the `ycode`
 
 ### Core Technologies
 - **Language:** Go 1.26+
-- **Database:** SQLite (embedded via Gitea/Bbolt)
-- **Messaging:** NATS
-- **Observability:** OpenTelemetry (Traces, Metrics, Logs), Prometheus, Jaeger, VictoriaLogs, Perses.
-- **Inference:** Embedded Ollama/llama.cpp.
-- **Containers:** Embedded Podman.
-- **Git Server:** Embedded Gitea.
+- **Storage:** `modernc.org/sqlite` (pure Go) + bbolt; sessions and memex live under the ycode data dir
+- **Messaging:** NATS (optionally embedded in `ycode serve`)
+- **Observability:** OpenTelemetry export only — client-side, no embedded backend. Dashboards and storage come from an external collector such as `bashy otel`.
+- **Inference / containers:** provided by the sibling `../coreutils` module (`pkg/ollm`, `external/podman/engine`, `pkg/oci`), **not** embedded in this repo.
 
 ### Architecture
 - **Entry Point:** `cmd/ycode/main.go` using Cobra CLI.
 - **Main App Loop:** `internal/cli/app.go` (REPL) and `internal/runtime/conversation/runtime.go`.
-- **Registry:** Features are defined in `internal/features/registry.yaml`.
-- **Vendorized Deps:** Submodules under `external/` and read-only reference code under `priorart/`.
+- **Registry:** Features are defined in `internal/features/registry.yaml` — the source of truth for feature tiers *and* their file paths. `make build` fails if a listed path disappears.
+- **Sibling modules:** `go.mod` replaces resolve `../sh`, `../nadir`, and `../coreutils` as flat siblings (real submodules inside the `dhnt/` umbrella). `../coreutils` is the shared AgentOS hub and owns the code-intel engines that `internal/runtime/{treesitter,repomap,codegraph}` re-export via thin alias shims.
+- **Vendorized Deps:** Submodules under `external/` (`jaeger`, `perses`, `victorialogs` — not imported by the main module today) and read-only reference code under `priorart/`.
 
 ## Building and Running
 
 ### First-Time Setup
-You **MUST** run this once to initialize submodules and generate embedded assets:
+**No setup step is required.** `make compile` works on a fresh checkout inside the umbrella (~35s warm); the only embed this repo builds is the `ycode-spawn` micro-shim, produced automatically. Standalone clones need `scripts/bootstrap-siblings.sh` first, which materialises the siblings at the SHAs in `.sibling-pins`.
+
+**Do not run `make init`** — it calls `scripts/build-gitea-frontend.sh`, which hard-exits because `external/gitea` no longer exists (see *Removed Subsystems*).
+
 ```bash
-make init
+export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY (+ optional OPENAI_BASE_URL)
+make install-hooks                     # pre-push hook runs `make ci`
+make compile
 ```
 
 ### Key Commands
 - **Build full quality gate:** `make build` (tidy → fmt → vet → compile → test → verify)
 - **Quick compile:** `make compile` (binary at `bin/ycode`)
-- **Install to ~/bin:** `make install`
+- **Install:** `make install` — copies into `$DHNT_BIN_DIR`. Drop-in shims (`ollama`, `podman`, `docker`, `bash`) are deliberately NOT installed; never blanket-install the `bash` shim.
 - **Unit tests:** `make test` (runs `-short -race`)
-- **All tests:** `make test-all` (unit, container, gitserver, TUI, integration, browser)
+- **Feature registry check:** `make verify-features` — the usual `make build` failure after moving or deleting a package
 - **CI Parity:** `make ci` (runs the GitHub Actions matrix in Docker)
+- **Broken:** `make test-gitserver` (targets the deleted `internal/gitserver/`) and therefore `make test-all`
 
 ### Build Tags
-The build system uses several auto-detected tags based on available compressed assets (`.gz` files):
+Bare `go build` without tags does not produce a working binary.
 - `sqlite`, `sqlite_unlock_notify`, `bindata` (default)
-- `embed_runner`, `embed_vfkit`, `embed_podman`, `embed_gvproxy` (added if assets exist)
+- `embed_spawn` — auto-added when `internal/runtime/wrap/spawn_embed/ycode-spawn.gz` exists. This is the **only** auto-added tag; the `embed_runner` / `embed_vfkit` / `embed_podman` / `embed_gvproxy` tags left with the ollama and podman engines when they moved to coreutils.
+- Manual: `go build -tags "sqlite,sqlite_unlock_notify,bindata" -o bin/ycode ./cmd/ycode/`
 
 ## Development Conventions
 
@@ -51,10 +57,10 @@ The build system uses several auto-detected tags based on available compressed a
 
 ### Project Structure Rules
 - **`internal/`:** Implementation details.
-- **`pkg/`:** Reusable packages (some are workspace members in `go.work`).
+- **`pkg/`:** Reusable packages (`memex`, `ycode`). Root `go.work` is minimal — just `use .`, no workspace-level replaces.
 - **`external/`:** Submodules. Do not modify directly; update the SHA.
 - **`priorart/`:** **READ-ONLY.** Never modify these files.
-- **`peers/`:** Local clones of related repos for side-by-side development.
+- **`peers/`:** Local clones of related repos for side-by-side development (gitignored, absent by default). To activate one, add `./peers/<name>` to `go.work`'s `use` and run `go mod tidy` inside the peer, not at root.
 
 ### Coding Standards
 - **No package-level mutable state:** Use `RuntimeContext`.
@@ -69,8 +75,21 @@ The build system uses several auto-detected tags based on available compressed a
 - **Staging:** Stage files by name. **NEVER** use `git add .` or `git add -A`.
 - **Pre-commit:** Always run `make build` before committing.
 
+## Removed Subsystems — do not resurrect from stale docs
+
+Several large subsystems left this tree. Historical docs describing them survive; treat them as history, not instructions.
+
+| Gone from this tree | Where the job lives now |
+|---|---|
+| `ycode weave`, `pkg/loom`, `internal/gitserver`, `external/gitea` | `bashy weave` (`coreutils/pkg/weave`); playbook via `bashy weave guide` |
+| `ycode foreman`, `ycode backlog`, `internal/foreman`, `internal/backlog` | `bashy weave` below, the conductor playbook in `bashy/skills/conductor` above |
+| MCP server/client (`docs/plan-remove-mcp.md`) | the `yc` shell verbs and the deferred tool registry |
+| `internal/container`, `pkg/oci`, podman + ollama embeds | `coreutils/external/podman/engine`, `coreutils/pkg/{oci,ollm}` |
+
+Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, `docs/embedding-{gitea,podman}.md`, and the `test-gitserver` / `init` Makefile targets.
+
 ## Agent-Specific Tools (`yc <verb>`)
-The project includes a suite of specialized tools exposed via the `ycode` binary (often aliased as `yc` in documentation). Use these over standard Unix tools when possible:
+These are in-process shell built-ins, **reachable ONLY through `ycode shell`** — there is no `ycode yc` subcommand (the binary answers `unknown command "yc"`). From a script it is `ycode shell -c "yc symbols …"`. Use these over standard Unix tools when possible:
 
 | Command | Use For |
 |---------|---------|

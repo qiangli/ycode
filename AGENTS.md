@@ -12,12 +12,14 @@ Core loop: `internal/runtime/conversation/runtime.go` — assemble request → p
 ## First-Time Setup
 
 ```bash
- make init                              # REQUIRED: submodules and Gitea bindata/assets
-export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY
+export ANTHROPIC_API_KEY="sk-ant-..."  # or OPENAI_API_KEY (+ optional OPENAI_BASE_URL)
 make install-hooks                     # pre-push hook runs `make ci`
+make compile                           # ~35s warm; binary at bin/ycode
 ```
 
-Skipping `make init` leaves Gitea bindata/assets missing; tests and `ycode serve` fail in subtle ways.
+**There is no required setup step.** `make compile` works on a fresh checkout inside the umbrella — the only embed this repo builds is the `ycode-spawn` micro-shim, produced automatically by `ensure-embeds`. Standalone clones need `scripts/bootstrap-siblings.sh` first, which materialises `../sh`, `../nadir`, and `../coreutils` at the SHAs in `.sibling-pins`.
+
+**`make init` is currently broken** — it calls `scripts/build-gitea-frontend.sh`, which hard-exits because `external/gitea` no longer exists (see *Removed subsystems*). Do not run it, and do not document it as a prerequisite.
 
 ## Build & Test
 
@@ -25,6 +27,7 @@ Skipping `make init` leaves Gitea bindata/assets missing; tests and `ycode serve
 make build           # full gate: tidy → fmt → vet → compile → test → verify
 make compile         # quick compile only
 make test            # unit tests (-short -race)
+make install         # build + copy into $DHNT_BIN_DIR (shims deliberately NOT installed)
 make ci              # full GitHub Actions matrix in Docker (slow, definitive)
 ```
 
@@ -43,22 +46,26 @@ PACKAGES=$(go list ./... | grep -v '/priorart/')
 ```
 
 **Specialized test targets** (read Makefile comments for prerequisites):
-- `make test-gitserver` — embedded Gitea, ~4 min
+- `make test-integration` — `-tags integration`, requires a running server
 - `make test-tui` / `make test-tui-e2e` — TUI lifecycle; e2e needs compiled binary + PTY
 - `make test-ui` — Playwright (`cd e2e && npx playwright test`) against running server
-- `make eval-{contract,smoke,behavioral,e2e}` — eval tiers; smoke/behavioral/e2e need live LLM provider
+- `make eval-{contract,smoke,behavioral,e2e,init}` — eval tiers; smoke/behavioral/e2e need a live LLM provider (`eval-contract` and `eval-init` are offline)
+- `make bench-memory[-quality|-competitive|-latency|-all]` — memory-retrieval benchmarks (no LLM)
+- `make verify-features` — runs `./internal/features/...`, asserting every path in `internal/features/registry.yaml` still exists. Part of `make build`, and the usual failure after moving or deleting a package.
+
+**Stale targets:** `make test-gitserver` points at `./internal/gitserver/...`, which no longer exists — it fails, and so does `make test-all`, which depends on it.
 
 ## Critical Conventions
 
 **Directory boundaries:**
 - `priorart/` — **NEVER modify.** Read-only reference implementations.
-- `external/` — vendored submodules. Do not modify directly; bump submodule SHA instead.
+- `external/` — vendored submodules (`jaeger`, `perses`, `victorialogs`). Not imported by the main module today; bump the submodule SHA rather than editing in place.
 - `peers/` — peer Go modules with own `go.mod`. Run `go mod tidy` inside peer directories, not at root.
 
 **Code standards:**
 - No package-level `var` for mutable state — use `RuntimeContext` (see `internal/runtime/conversation/runtime.go`)
 - No `log.Printf` or `fmt.Println` — use structured logger from `RuntimeContext`
-- Stage files by name (never `git add -A` or `git add .`)
+- Stage files by name (never `git add -A` or `git add .`) — the umbrella tree carries loose artifacts and unrelated submodule pointers; `make compile` alone dirties `go.work.sum`
 - **Always run `make build` before committing**
 
 **Layered build system:**
@@ -69,6 +76,8 @@ PACKAGES=$(go list ./... | grep -v '/priorart/')
 ## `yc <verb>` Quick Reference
 
 Reach for these before `grep`/`find`/`git`. When you don't, the agent-mode hint engine surfaces the better tool on stderr.
+
+**They are reachable ONLY through the shell** — there is no `ycode yc` subcommand (the binary answers `unknown command "yc"`). From a script it is `ycode shell -c "yc symbols …"`.
 
 | Verb | Use when | Why instead of |
 |------|----------|----------------|
@@ -91,44 +100,46 @@ Reach for these before `grep`/`find`/`git`. When you don't, the agent-mode hint 
 ## Architecture
 
 Key components:
-- **Provider layer** (`internal/api/`) — Anthropic native + OpenAI-compatible
-- **Tool registry** (`internal/tools/registry.go`) — always-available vs deferred (discovered via `ToolSearch`)
+- **Conversation runtime** (`internal/runtime/conversation/`) — the event loop; assembles the prompt, dispatches tool calls, manages tool activation TTLs (`preactivate.go`)
+- **Provider layer** (`internal/api/`) — Anthropic native + OpenAI-compatible; `fallback.go` (failover), `key_rotation.go` (key pool), `cache_warmer.go`
+- **Tool registry** (`internal/tools/registry.go`, `specs.go`) — always-available vs deferred (discovered via `ToolSearch`)
 - **Config** (`internal/runtime/config/config.go`) — 4-tier merge: user → project → workspace → local
-- **Permission modes** — ReadOnly → WorkspaceWrite → DangerFullAccess (declared in `ToolSpec.RequiredMode`)
-- **Memex** (`pkg/memex/`) — five-layer memory system (KV, SQL, vector, graph, memo)
+- **Permission modes** (`internal/runtime/permission/`) — ReadOnly → WorkspaceWrite → DangerFullAccess (declared in `ToolSpec.RequiredMode`)
+- **VFS** (`internal/runtime/vfs/`) — boundary-enforced filesystem; file tools go through this, not `os` directly
+- **Memex** (`pkg/memex/`) — five-layer memory system (KV, SQL, vector, graph, memo) behind one facade; don't reach into a single backend
+- **Feature registry** (`internal/features/registry.yaml`) — source of truth for feature tiers *and* their file paths; surfaced by `ycode features list|readme|verify`
+- **Telemetry** (`internal/telemetry/`, `cmd/ycode/otel.go`, `internal/observe/`) — client-side OTEL export only, with **no loopback default** in collector resolution (`OTEL_EXPORTER_OTLP_ENDPOINT` > `serve` override > config > discovery file). `ycode serve` is deliberately lean (HTTP/WS API, optional embedded NATS, manifest, pprof); dashboards and storage come from an external collector such as `bashy otel`
 - **Agent-mode hints** (`internal/shell/agentmode/`) — regex-driven nudges fired on stderr when bash commands would be better served by `yc <verb>`
 
-## Foreman / Worker Model — REMOVED
+Beyond the REPL and `prompt`, the command surface includes `serve` / `pulse` (background server), `shell`, `wrap` (launch a third-party agentic tool under ycode's shim PATH), `pair` (bearer token + config snippet for a foreign tool), `acp` (serve ycode as an ACP agent over stdio), `init`, `docs`, `heal`, `doctor`, `eval`. `ycode --help` is authoritative.
 
-**This model no longer exists in ycode.** There is no `ycode foreman` and no
-`ycode backlog` (the binary answers `unknown command`), no
-`internal/foreman` or `internal/backlog` package, and no `/foreman` skill
-path worth invoking. It went with the loom/MCP removal.
+## Removed subsystems — do not resurrect from stale docs
 
-What replaced it:
+Several large subsystems left this tree. Historical docs describing them survive; treat them as history, not instructions. If a doc tells you to run one of these, the doc is wrong.
 
-- **isolated parallel work** → `bashy weave` (see `bashy weave guide`)
-- **the goal-driven director above it** → the conductor playbook in
-  `bashy/skills/conductor`
-- **switching agents mid-session** → `/agent`, `/tool`, `/detach` (still here)
+| Gone from this tree | Where the job lives now |
+|---|---|
+| `ycode weave`, `pkg/loom`, `internal/gitserver`, `external/gitea` | `bashy weave` (`coreutils/pkg/weave`); playbooks are `bashy weave guide` + `coreutils/pkg/weave/{CONDUCTOR-PLAYBOOK,WEAVE-RUNBOOK}.md` |
+| `ycode foreman`, `ycode backlog`, `internal/foreman`, `internal/backlog`, `skills/ycode-foreman/` | `bashy weave` below, the conductor playbook in `bashy/skills/conductor` above |
+| MCP server/client (`docs/plan-remove-mcp.md`) | the `yc` shell verbs and the deferred tool registry |
+| `internal/container`, `pkg/oci`, podman + ollama embeds | `coreutils/external/podman/engine`, `coreutils/pkg/{oci,ollm}`; ycode drives the shared isolated **`bashy`** podman machine |
 
-`docs/backlog*` survives as history only. The deprecated
-`skills/ycode-foreman/` bundle has been removed; do not follow historical
-documents that describe those deleted commands.
+Switching agents mid-session (`/agent`, `/tool`, `/detach`) is still here — see below.
+
+Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, and the `test-gitserver` / `init` Makefile targets.
 
 ## Documentation
 
 - `docs/strategy.md` — wedge positioning, feature-tier policy, graduation criteria
 - `docs/usage.md` — CLI modes, configuration, tools, and workflows
 - `docs/architecture.md` — full architecture, design decisions
-- `docs/backlog.md` — Boss → Foreman → Worker protocol
 - `docs/instructions.md` — shared agent-agnostic conventions, skill system, build/test/commit rules
 - `docs/pipeline.md` — six-step development pipeline (research → plan → build/test → evaluate → commit → codify)
+- `docs/shell-agent.md` — agent-mode shell integration recipes and the hint engine
+- `docs/release.md` — release procedure and the per-platform asset matrix
 
 ## Sub-directory Instructions
 
-- `external/gitea/AGENTS.md` — embedded git server guidance
-- `external/podman/AGENTS.md` — read-only historical container reference
 - `peers/` modules have their own `CLAUDE.md` files
 
 ## Switching agents — /agent, /tool, /detach
