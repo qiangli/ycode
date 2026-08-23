@@ -216,9 +216,11 @@ ${DOCKER:-podman} build -t ycode-builder .
 
 ### ci
 Run the containerized matrix locally. Slow, definitive. Needs a container
-engine; set YCODE_CI_HOST to run it on another machine instead.
+engine; set YCODE_CI_HOST to run it on another machine instead. Bind-mounts
+the worktree, its pinned sibling modules, and any external git-common-dir at
+their real host paths — see scripts/ci-run.sh for why.
 Requires: ci-image
 Effects: write net
 ```bash
-${DOCKER:-podman} run --rm -v "$PWD":/src -w /src ycode-builder ./scripts/gate.sh
+./scripts/ci-run.sh
 ```
