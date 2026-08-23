@@ -58,6 +58,37 @@ git diff | ycode --print "review these changes"
 
 The `--print` flag outputs plain text without markdown rendering, useful for scripting.
 
+### Headless convergence contract
+
+One-shot (`prompt` / `--print`) runs are bounded by two independent limits:
+
+- **Iteration backstop** (`maxToolIterations`, default 100): the absolute
+  ceiling on tool round-trips per run. Hitting it prints a `[TRUNCATED: …]`
+  notice and exits non-zero — a cut-off run never reads as a success.
+- **Convergence budget** (`convergenceBudget`, default 12): the number of
+  *consecutive* turns allowed with only read/search activity — file reads,
+  greps, globs, read-only shell pipelines — and no write, edit, or test/build
+  run. Varied exploration slips past the repeated-signature loop detectors;
+  this bounds it directly. When the budget runs dry the model gets **one
+  grace turn** with an explicit final-answer instruction. Answering in text
+  ends the run normally; calling tools again ends it non-zero with a
+  `[TRUNCATED: …]` notice.
+
+Turns that make measurable progress (a file write or edit, a mutating or
+test/build shell command) **reset** the convergence budget, so a long
+productive task keeps the full backstop. Set `convergenceBudget` to a negative
+value to disable the policy and keep only the backstop. Interactive sessions
+are unaffected — the policy applies to headless runs only.
+
+**Steering a headless run.** When the prompt is passed as an argument, lines
+written to the process's stdin while the run is in flight (for example by an
+orchestrator driving a pty) are treated as user steering. Steering is consumed
+at the **next turn boundary** — after the in-flight model turn and its tool
+calls complete; a running tool is never preempted. Each consumed line is
+acknowledged on the `--events` stream as a `steer.consumed` event carrying the
+text and the turn that will see it; if no such event appears, the steering did
+not land. To stop a run immediately, signal the process instead.
+
 ### Continuous loop
 
 ```bash
