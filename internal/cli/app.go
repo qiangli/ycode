@@ -153,6 +153,11 @@ type App struct {
 	eventsSink *wireevents.Writer
 	inTurn     bool // a user turn is in flight; an LLM round-trip is NOT a turn
 
+	// Injected steering for headless runs (weave say, pty stdin). Filled by
+	// StartSteerReader, drained by RunPrompt at turn boundaries. Nil unless a
+	// steer reader was started; interactive mode never uses it. See steer.go.
+	steerCh chan string
+
 	// Cleanup functions called on Close (OTEL shutdown, context cancel, etc.).
 	cleanupFuncs []func()
 
@@ -814,7 +819,19 @@ agentic:
 	// second detector watches the TOOL-CALL signature (name+input), the
 	// umbrella's canonical "total ÷ distinct" stuck signal, in-loop.
 	toolLoopDetector := conversation.NewLoopDetector()
+	// Both detectors above key on REPEATED signatures — a model that varies its
+	// reads and searches every turn walks straight past them, and maxIter is a
+	// runaway backstop sitting far too high to save such a run (one did exactly
+	// that: ~100 varied read/search turns, no write, no answer, killed from
+	// outside). The convergence policy bounds what the detectors cannot see:
+	// consecutive turns without measurable progress. Progress resets it, so
+	// productive long tasks keep their full backstop. Headless only — the TUI
+	// path never constructs one. See docs/usage.md "Headless convergence".
+	convergence := a.newConvergencePolicy()
 	for i := 0; i < maxIter; i++ {
+		// Injected steering (weave say, pty stdin) lands here — the turn
+		// boundary — never mid-tool. See steer.go.
+		a.consumeSteering(&messages)
 		a.turnIndex++
 		result, recovery, err := rt.InstrumentedTurnWithRecovery(ctx, messages, a.turnIndex)
 		if err != nil {
@@ -916,6 +933,36 @@ agentic:
 			return nil
 		}
 
+		// Convergence policy: this turn wants tools. If the grace turn was
+		// already spent, the contract is over — stop BEFORE executing anything,
+		// and stop non-zero: a run terminated mid-plan did not succeed. If this
+		// turn merely exhausts the exploration budget, let its (read-only)
+		// tools run, then inject the final-answer instruction below.
+		graceTurn := false
+		switch convergence.ObserveToolTurn(a.turnMadeProgress(result.ToolCalls)) {
+		case conversation.ConvergeStop:
+			msg := fmt.Sprintf("stopped by convergence policy: %d consecutive tool turns without "+
+				"measurable progress (no write, edit, or test/build run), and tool use continued "+
+				"after the final-answer grace turn", convergence.NoProgressTurns())
+			telemetry.BoundHit(ctx, "convergence", int64(convergence.Budget()),
+				int64(convergence.NoProgressTurns()), msg)
+			fmt.Fprintf(a.chromeWriter(), "\n✘ Convergence: tool use continued after the final-answer grace turn. Stopping.\n")
+			if a.printMode {
+				fmt.Fprintf(a.stdout, "\n\n[TRUNCATED: %s. This is NOT a complete answer, and the "+
+					"absence of a conclusion is NOT a conclusion. Re-run with a narrower scope, or "+
+					"raise convergenceBudget.]\n", msg)
+			} else {
+				fmt.Fprintln(a.stdout)
+			}
+			a.printSessionSummary()
+			// The defer above turns this into turn.end{status:"error"} on the event channel.
+			return fmt.Errorf("%s", msg)
+		case conversation.ConvergeGrace:
+			graceTurn = true
+			fmt.Fprintf(a.chromeWriter(), "\n⚠ Convergence: %d consecutive turns without measurable progress — asking for a final answer.\n",
+				convergence.NoProgressTurns())
+		}
+
 		// Build assistant message with tool_use blocks.
 		var assistantBlocks []api.ContentBlock
 		if result.ThinkingContent != "" {
@@ -987,6 +1034,19 @@ agentic:
 				}},
 			})
 			toolLoopDetector.Reset()
+		}
+
+		// The exploration budget ran out this turn: its tool results are in,
+		// and the next turn is the ONE grace turn — answer in text, or the
+		// ConvergeStop arm above ends the run.
+		if graceTurn {
+			messages = append(messages, api.Message{
+				Role: api.RoleUser,
+				Content: []api.ContentBlock{{
+					Type: api.ContentTypeText,
+					Text: convergence.GraceMessage(),
+				}},
+			})
 		}
 	}
 

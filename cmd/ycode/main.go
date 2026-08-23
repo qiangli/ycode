@@ -1094,6 +1094,10 @@ var rootCmd = &cobra.Command{
 				}
 				defer app.Close()
 				app.SetPrintMode(true)
+				// The prompt came from argv, so stdin is untouched — an
+				// orchestrator (weave say) can inject steering there; it is
+				// consumed at turn boundaries. See internal/cli/steer.go.
+				app.StartSteerReader(os.Stdin)
 				return app.RunPrompt(ctx, strings.Join(args, " "))
 			}
 
@@ -1249,6 +1253,10 @@ var promptCmd = &cobra.Command{
 				return fmt.Errorf("events file: %w", err)
 			}
 		}
+		// The prompt came from argv, so stdin is untouched — an orchestrator
+		// (weave say) can inject steering there; it is consumed at turn
+		// boundaries and acknowledged as steer.consumed on --events.
+		app.StartSteerReader(os.Stdin)
 		prompt := strings.Join(args, " ")
 		return app.RunPrompt(ctx, prompt)
 	},

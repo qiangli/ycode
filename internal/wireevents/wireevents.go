@@ -20,13 +20,14 @@
 // EventTurnComplete to please an external consumer would be the tail wagging the
 // dog.
 //
-// So the wire is its own thing, and it has exactly three words:
+// So the wire is its own thing, and it has a deliberately tiny vocabulary:
 //
 //	{"type":"turn.start","data":{"prompt":"..."}}
 //	{"type":"tool.call","data":{"name":"read_file","input":{...}}}
 //	{"type":"turn.end","data":{"status":"ok","text":"the answer"}}
+//	{"type":"steer.consumed","data":{"text":"...","turn":4}}
 //
-// This package OWNS those three words. Both paths go through it, so the vocabulary
+// This package OWNS those words. Both paths go through it, so the vocabulary
 // cannot drift apart again — which is exactly what happened when each path was
 // allowed to name things for itself.
 //
@@ -62,12 +63,20 @@ import (
 	"time"
 )
 
-// The three words. This is the whole vocabulary; resist adding a fourth without a
-// consumer that needs it.
+// The core words. Resist adding one without a consumer that needs it.
+//
+// steer.consumed earned its place through an incident: an orchestrator injected
+// steering into a headless run's stdin, the run kept executing its original plan,
+// and nothing on the wire said whether the steering had been seen or discarded.
+// The word is an ACKNOWLEDGEMENT fact: the injected text was appended to the
+// conversation at a turn boundary — after in-flight tool calls finished, never
+// preempting one — and the next model turn will see it. Absence of the word
+// after a turn boundary means the steering did NOT land.
 const (
-	TurnStart = "turn.start"
-	ToolCall  = "tool.call"
-	TurnEnd   = "turn.end"
+	TurnStart     = "turn.start"
+	ToolCall      = "tool.call"
+	TurnEnd       = "turn.end"
+	SteerConsumed = "steer.consumed"
 )
 
 // Event is one line of the wire.
@@ -135,4 +144,12 @@ type ToolCallData struct {
 type TurnEndData struct {
 	Status string `json:"status"`
 	Text   string `json:"text"`
+}
+
+// SteerConsumedData reports one line of injected steering being appended to the
+// conversation at a turn boundary. Turn is the 1-based index of the upcoming
+// model turn — the first turn that can act on the steering.
+type SteerConsumedData struct {
+	Text string `json:"text"`
+	Turn int    `json:"turn"`
 }

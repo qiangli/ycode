@@ -35,6 +35,20 @@ type Config struct {
 	// A bound you cannot see is not a bound, it is a trap.
 	MaxToolIterations int `json:"maxToolIterations,omitempty"`
 
+	// ConvergenceBudget bounds CONSECUTIVE exploration-only turns (reads and
+	// searches with no write, edit, or test/build run) in headless prompt/print
+	// runs. MaxToolIterations is a runaway backstop; this is the convergence
+	// policy underneath it — a model that varies its reads every turn walks
+	// straight past the loop detectors and the backstop is far too high to
+	// save the run. When the budget runs dry the model gets ONE grace turn to
+	// answer in text; continued tool use after that ends the run non-zero.
+	// Turns that make measurable progress reset the budget, so long productive
+	// tasks are unaffected — as is interactive use, which never applies this.
+	//
+	// Zero means the default (12). Negative disables the policy, leaving only
+	// MaxToolIterations.
+	ConvergenceBudget int `json:"convergenceBudget,omitempty"`
+
 	// ContextWindow overrides the model's advertised context window, in tokens.
 	//
 	// The window is a property of the MODEL, and ycode looks it up in a hardcoded
@@ -499,6 +513,9 @@ func mergeFromFile(cfg *Config, path string) error {
 	}
 	if overlay.MaxToolIterations != 0 {
 		cfg.MaxToolIterations = overlay.MaxToolIterations
+	}
+	if overlay.ConvergenceBudget != 0 {
+		cfg.ConvergenceBudget = overlay.ConvergenceBudget
 	}
 	if overlay.ContextWindow != 0 {
 		cfg.ContextWindow = overlay.ContextWindow
