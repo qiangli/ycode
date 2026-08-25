@@ -1,12 +1,26 @@
 package agentmode
 
 import (
+	"os"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/qiangli/ycode/internal/shell"
 )
+
+// TestMain clears ambient session identity before any test runs. The
+// file-backed hint dedup keys off $YCODE_SESSION_ID; when `go test` is
+// launched from inside a live ycode session (agents routinely run the
+// gate from the REPL), every rule that session already fired is
+// pre-deduped on first Suggest and tests see hints=[] — while markSeen
+// appends test-fired IDs back into the live session's dedup file.
+// Tests that exercise the dedup itself re-set the var with t.Setenv
+// (per-test, restored afterwards), so clearing here is safe.
+func TestMain(m *testing.M) {
+	os.Unsetenv("YCODE_SESSION_ID")
+	os.Exit(m.Run())
+}
 
 // fakeMetricsSink records every observation so the test can assert
 // counter increments without standing up real OTel infrastructure.
