@@ -60,6 +60,7 @@ var PricingTable = map[string]ModelPricing{
 	// z.ai GLM. List API prices; note that on the GLM Coding Plan the MARGINAL cost is
 	// zero (a prepaid seat), which is a property of the plan, not of the model — see the
 	// billing split in coreutils/pkg/fleet.
+	"glm-5.3": {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
 	"glm-5.2": {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
 	"glm-5.1": {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},
 	"glm-5":   {InputPerM: 0.60, OutputPerM: 2.20, CacheReadPerM: 0.11, Known: true},

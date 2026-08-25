@@ -368,7 +368,7 @@ type ParallelConfig struct {
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		Model:              "claude-sonnet-4-20250514",
+		Model:              "glm-5.3",
 		MaxTokens:          8192,
 		PermissionMode:     "ask",
 		AutoCompactEnabled: true,

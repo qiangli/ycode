@@ -144,9 +144,11 @@ var envKeyModels = []struct {
 	// z.ai (Zhipu) GLM. The CODING PLAN endpoint is /api/coding/paas/v4 — a different
 	// path from the general /api/paas/v4, and a coding key is rejected by the latter.
 	{"ZAI_API_KEY", "glm", []string{
+		"glm-5.3",
 		"glm-5.2",
 	}},
 	{"GLM_API_KEY", "glm", []string{
+		"glm-5.3",
 		"glm-5.2",
 	}},
 }

@@ -17,7 +17,7 @@ func TestTheFleetsModelsHaveRealPrices(t *testing.T) {
 	// Every model bashy can actually route to. A missing price here is not a gap in a
 	// table; it is a wrong number in a dashboard.
 	for _, model := range []string{
-		"glm-5.2", "glm-4.6",
+		"glm-5.3", "glm-5.2", "glm-4.6",
 		"kimi-k2.7-code", "moonshot-v1-128k",
 		"deepseek-v4-pro", "deepseek-chat",
 		"claude-opus-4-8", "claude-sonnet-4-6",

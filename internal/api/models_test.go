@@ -92,10 +92,15 @@ func TestDiscoverModels_NoDuplicates(t *testing.T) {
 
 func TestDiscoverModels_EnvDetection(t *testing.T) {
 	// Save and clear all relevant env vars to get a clean baseline.
+	// Every key envKeyModels can read must be here: a key left set leaks its
+	// flagship models into the "no env models" baseline. GLM/deepseek only
+	// survived that before because the builtin aliases happened to dedupe the
+	// same IDs — moving the glm alias to a new flagship un-masked it.
 	envVars := []string{
 		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
 		"GEMINI_API_KEY", "XAI_API_KEY", "DASHSCOPE_API_KEY",
-		"MOONSHOT_API_KEY", "KIMI_API_KEY",
+		"MOONSHOT_API_KEY", "KIMI_API_KEY", "DEEPSEEK_API_KEY",
+		"ZAI_API_KEY", "GLM_API_KEY",
 	}
 	saved := make(map[string]string)
 	for _, k := range envVars {

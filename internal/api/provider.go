@@ -21,7 +21,7 @@ var ModelAliases = map[string]string{
 	"deepseek-r1":    "deepseek-reasoner",
 	"deepseek-flash": "deepseek-v4-flash",
 	"deepseek-pro":   "deepseek-v4-pro",
-	"glm":            "glm-5.2",
+	"glm":            "glm-5.3",
 }
 
 // ProviderConfig holds provider-specific settings for client creation.
@@ -41,7 +41,7 @@ func DefaultModelForProvider(cfg ProviderConfig) string {
 	case "deepseek":
 		return "deepseek-chat"
 	case "zai":
-		return "glm-5.2"
+		return "glm-5.3"
 	case "gemini":
 		return "gemini-2.5-pro"
 	case "moonshot":
