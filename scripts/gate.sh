@@ -13,7 +13,20 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
-packages() { go list ./... | grep -v '/priorart/'; }
+packages() {
+	local pkgs
+	pkgs="$(go list ./... | grep -v '/priorart/')"
+	# `go vet $(packages)` with an EMPTY list runs bare in the module root,
+	# which has no Go files — "no Go files" then masks whatever emptied the
+	# list (this exact failure: VCS-stamp errors made `go list` print nothing,
+	# and the gate reported a package-listing bug as a missing-package bug).
+	# An empty enumeration is never valid here: fail naming the real symptom.
+	if [ -z "$pkgs" ]; then
+		echo "gate: go list ./... returned no packages — package enumeration is broken (scroll up for its error); refusing to run a bare go vet" >&2
+		return 1
+	fi
+	printf '%s\n' "$pkgs"
+}
 
 echo "==> fmtcheck"
 ./scripts/fmtcheck.sh

@@ -91,7 +91,7 @@ func createSiblingFixture(t *testing.T, parent string) []string {
 	paths := make([]string, 0, len(ciSiblings))
 	for _, name := range ciSiblings {
 		path := filepath.Join(parent, name)
-		if err := os.Mkdir(path, 0o755); err != nil {
+		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
 		pins = append(pins, name+"=fixture-sha")
@@ -162,10 +162,72 @@ func TestCIMountsUmbrellaSubmodule(t *testing.T) {
 	want := []string{
 		worktree + ":" + worktree,
 		gitCommonDir + ":" + gitCommonDir,
+		// go's VCS root walks up past the .git file to the umbrella's .git
+		// directory and stamps THAT repo — it must be mounted, or the gate
+		// dies in-container on "error obtaining VCS status".
+		umbrella + "/.git:" + umbrella + "/.git",
 	}
 	want = append(want, fixture[1:]...)
 	if strings.Join(mounts, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("umbrella submodule: got mounts %q, want %q", mounts, want)
+	}
+}
+
+// Sibling submodules: inside the umbrella the siblings have the same
+// file-pointer topology as ycode, and their gitdirs live in the UMBRELLA's
+// .git/modules/<name> — not under any mounted worktree. The plan must mount
+// each sibling's external git-common-dir too, or git-derived steps touching a
+// sibling (go's VCS stamping across the go.work workspace) fail inside the
+// container with "not a git repository" while passing outside it.
+func TestCIMountsSiblingSubmoduleGitdirs(t *testing.T) {
+	requireTools(t)
+	tmp := canonical(t, t.TempDir())
+
+	origin := filepath.Join(tmp, "origin")
+	if err := os.Mkdir(origin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hermeticGit(t, origin, "init", "-q")
+	hermeticGit(t, origin, "commit", "-q", "--allow-empty", "-m", "seed")
+
+	umbrella := filepath.Join(tmp, "umbrella")
+	if err := os.Mkdir(umbrella, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hermeticGit(t, umbrella, "init", "-q")
+	hermeticGit(t, umbrella, "-c", "protocol.file.allow=always",
+		"submodule", "add", "-q", origin, "ycode")
+	// Make the FIRST pinned sibling (sh) a real submodule; the rest stay
+	// plain directories, exercising both arms of the sibling-gitdir logic.
+	hermeticGit(t, umbrella, "-c", "protocol.file.allow=always",
+		"submodule", "add", "-q", origin, "sh")
+
+	worktree := filepath.Join(umbrella, "ycode")
+	ycodeCommon := filepath.Join(umbrella, ".git", "modules", "ycode")
+	shCommon := filepath.Join(umbrella, ".git", "modules", "sh")
+	fixture := createSiblingFixture(t, umbrella)
+	if err := os.WriteFile(filepath.Join(worktree, ".sibling-pins"), []byte(fixture[0]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(filepath.Join(umbrella, "sh", ".git")); err != nil || info.IsDir() {
+		t.Fatalf("fixture: expected sibling .git to be a gitdir pointer file, got err=%v isDir=%v", err, info != nil && info.IsDir())
+	}
+
+	mounts := printMounts(t, worktree)
+	shDir := filepath.Join(umbrella, "sh")
+	want := []string{
+		worktree + ":" + worktree,
+		ycodeCommon + ":" + ycodeCommon,
+		umbrella + "/.git:" + umbrella + "/.git", // go's VCS root for the submodule
+		shDir + ":" + shDir,
+		shCommon + ":" + shCommon,
+	}
+	// nadir and coreutils remain plain dirs: worktree mount only, no gitdir.
+	want = append(want,
+		filepath.Join(umbrella, "nadir")+":"+filepath.Join(umbrella, "nadir"),
+		filepath.Join(umbrella, "coreutils")+":"+filepath.Join(umbrella, "coreutils"))
+	if strings.Join(mounts, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("sibling submodules: got mounts %q, want %q", mounts, want)
 	}
 }
 

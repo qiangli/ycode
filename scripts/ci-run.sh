@@ -27,6 +27,16 @@
 # In both cases the ycode module's replace directives resolve to adjacent sh,
 # nadir, and coreutils checkouts. Mounting only ycode and its git-common-dir is
 # insufficient: Go then fails while opening ../<sibling>/go.mod.
+#
+# SIBLING GITDIRS. Inside the umbrella the siblings are submodules too, so
+# their .git files point at ../.git/modules/<name> — the umbrella's git dir,
+# not ycode's mounted git-common-dir. Mounting the sibling worktrees without
+# their gitdirs leaves every git-derived step that touches them (go's VCS
+# stamping spans the go.work workspace, so `go list`/`go vet` query each
+# module's repo) dying with
+#   fatal: not a git repository: <sibling>/../.git/modules/<name>
+# INSIDE the container while passing outside it. So each sibling gets the same
+# treatment as ycode: its external git-common-dir mounted at the same path.
 set -euo pipefail
 
 worktree="$(git rev-parse --path-format=absolute --show-toplevel)"
@@ -37,6 +47,28 @@ case "$gitcommondir" in
 "$worktree"/*) ;; # nested under the worktree — the mount above already covers it
 *) specs+=("$gitcommondir:$gitcommondir") ;;
 esac
+
+# go's VCS stamping does not resolve a submodule's .git FILE: it walks UP from
+# the module for the first .git DIRECTORY, so from an umbrella submodule it
+# stamps the UMBRELLA's repo — `cd <umbrella>; git status --porcelain` (see
+# cmd/go/internal/vcs rootName{".git", isDir: true}). That works on the host,
+# where the umbrella is a real repo, and dies in the container with
+#   fatal: not a git repository (or any of the parent directories): .git
+#   → error obtaining VCS status: exit status 128
+# because the ancestor .git was never mounted. Mount it too (standalone
+# clones find .git in the worktree itself — already covered — so this adds
+# nothing there).
+vcswalk="$worktree"
+while [ "$vcswalk" != "/" ]; do
+	if [ -d "$vcswalk/.git" ]; then
+		case "$vcswalk/.git" in
+		"$worktree"/*) ;; # inside the mounted worktree — covered
+		*) specs+=("$vcswalk/.git:$vcswalk/.git") ;;
+		esac
+		break
+	fi
+	vcswalk="$(dirname "$vcswalk")"
+done
 
 pins="$worktree/.sibling-pins"
 if [ ! -f "$pins" ]; then
@@ -58,6 +90,24 @@ while IFS='=' read -r name _sha; do
 	fi
 	sibling="$(cd "$sibling" && pwd -P)"
 	specs+=("$sibling:$sibling")
+	# A sibling that is itself an umbrella submodule keeps its gitdir outside
+	# its worktree — mount that too (same reasoning as ycode's above). Only a
+	# real checkout (.git present) counts: a plain directory under the
+	# umbrella would resolve git-common-dir to the UMBRELLA's .git by
+	# walk-up, mounting the superproject's repo when the sibling needs
+	# nothing of the sort. Unset GIT_DIR/GIT_WORK_TREE first: when this
+	# script runs from a git hook those are exported, and `git -C <sibling>`
+	# would then resolve the CALLER's repo instead of the sibling's (every
+	# sibling would report one SHA).
+	if [ -e "$sibling/.git" ]; then
+		sibling_common="$(unset GIT_DIR GIT_WORK_TREE
+			git -C "$sibling" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+		case "$sibling_common" in
+		"$sibling"/*) ;; # nested under the sibling worktree — already mounted
+		"") ;;           # git present but unresolvable — leave as-is
+		*) specs+=("$sibling_common:$sibling_common") ;;
+		esac
+	fi
 done < "$pins"
 
 # --print-mounts: emit the computed "src:dst" bind-mount specs, one per line,
