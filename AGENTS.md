@@ -2,6 +2,8 @@
 
 Guidance for AI coding assistants working in this repository.
 
+`CLAUDE.md` (Claude Code) and `GEMINI.md` (Gemini CLI) are the tool-specific counterparts. The three **duplicate** most of their content rather than layering, so a change to build commands, directory boundaries, code standards, the architecture list, the removed-subsystems table or the docs map must be made in all three — they have silently drifted before.
+
 ## Project Overview
 
 ycode — pure Go CLI agent harness. Single static binary, Go 1.26+, permissive-license dependencies only.
@@ -28,13 +30,14 @@ bashy dag test        # unit tests (-short -race), priorart/ excluded
 bashy dag install     # build + copy into $DHNT_BIN_DIR (shims deliberately NOT installed)
 bashy dag ci          # containerized matrix (slow, definitive)
 bashy dag --list      # every target
+bashy dag install-hooks  # one-time: pre-push hook runs `bashy dag ci`
 ```
 
 `export ANTHROPIC_API_KEY=…` (or `OPENAI_API_KEY` + optional `OPENAI_BASE_URL`) before running the binary.
 
 **There is no Makefile.** It was retired in favour of `DAG.md` + `bashy dag`; `scripts/gate.sh` is the same gate as one command, for contexts without bashy (the builder image, `dag ci`). Keep the three in step.
 
-**There are no build tags.** One binary, no variants. The old `TAG_LIST` carried `sqlite`, `sqlite_unlock_notify` and `bindata`, all three of which gate **zero files** in this tree — they were Gitea's, and Gitea left with `internal/gitserver`. `embed_spawn` selected a variant (embedded shim vs. the symlink fallback `spawn_embed.Available()` implements) and is not used by the release. So a bare `go build ./cmd/ycode/` now works and is what the pipeline runs.
+**The product binary has no build tags.** One binary, no variants. The old `TAG_LIST` carried `sqlite`, `sqlite_unlock_notify` and `bindata`, all three of which gate **zero files** in this tree — they were Gitea's, and Gitea left with `internal/gitserver`. `embed_spawn` selected a variant (embedded shim vs. the symlink fallback `spawn_embed.Available()` implements) and is not used by the release. So a bare `go build ./cmd/ycode/` now works and is what the pipeline runs. The tags you *will* meet are test-and-eval-only: `integration` (15 files across `internal/integration/` and `internal/cli/`), `e2e`, and `eval` / `eval_e2e` / `eval_behavioral` under `internal/eval/` — which is why `dag eval-init` passes `-tags eval` — plus the ordinary platform tags. And ignore the header comment in `internal/features/registry.yaml` promising `-tags experimental` / `-tags wip`: those gate zero files, so every tier compiles into the one binary and `tier:` is metadata for `ycode features`, not a compile switch.
 
 **Releases are `bashy release`**, driven by `.goreleaser.yaml`: cross-compilation, `ycode-<os>-<arch>.tar.gz`, `SHA256SUMS` and a `bashy-release-v1` ledger. `bashy dag release-check` / `release-plan` / `release-snapshot`. **The asset names are load-bearing** — the umbrella's fleet-upgrade path resolves artifacts by name, so renaming one strands hosts.
 
@@ -99,6 +102,9 @@ Key components:
 - **Permission modes** (`internal/runtime/permission/`) — ReadOnly → WorkspaceWrite → DangerFullAccess (declared in `ToolSpec.RequiredMode`)
 - **VFS** (`internal/runtime/vfs/`) — boundary-enforced filesystem; file tools go through this, not `os` directly
 - **Memex** (`pkg/memex/`) — five-layer memory system (KV, SQL, vector, graph, memo) behind one facade; don't reach into a single backend
+- **Session / context window** (`internal/runtime/session/`) — the biggest subsystem in the tree (~30 files): token budgeting (`budget.go`, `context_window.go`), the compaction ladder (`microcompact.go` → `compact.go` → `compaction_retry.go` → `llm_summary.go`), pruning, transcript repair, `stuck_detector.go`, and the memory extract/prefetch bridge to `pkg/memex`. "The model lost context" / "the transcript is malformed" lives here, not in `conversation/`
+- **Tool execution** (`internal/runtime/toolexec/`) — the layer under the registry that actually runs a tool call, choosing between a native-Go implementation and a subprocess. Native git lives in `coreutils/git` and is reached through `nativeGitFunc(...)` adapters, so a git bug is usually a coreutils bug; `stall_watchdog.go` kills a hung call
+- **In-process subagents** (`internal/runtime/{swarm,team,agentpool,lanes,taskqueue,worker,cascade}`) — parallel sub-agents with a capacity governor and liveness classification (`agentpool/`), lane/queue scheduling, and `cascade/`, which climbs a model ladder when the current model has demonstrably stopped making progress. Distinct from `bashy weave`: that is cross-repo out-of-process orchestration, this is one ycode process fanning out
 - **Feature registry** (`internal/features/registry.yaml`) — source of truth for feature tiers *and* their file paths; surfaced by `ycode features list|readme|verify`
 - **Telemetry** (`internal/telemetry/`, `cmd/ycode/otel.go`, `internal/observe/`) — client-side OTEL export only, with **no loopback default** in collector resolution (`OTEL_EXPORTER_OTLP_ENDPOINT` > `serve` override > config > discovery file). `ycode serve` is deliberately lean (HTTP/WS API, optional embedded NATS, manifest, pprof); dashboards and storage come from an external collector such as `bashy otel`
 - **Agent-mode hints** (`internal/shell/agentmode/`) — regex-driven nudges fired on stderr when bash commands would be better served by `yc <verb>`
@@ -118,7 +124,7 @@ Several large subsystems left this tree. Historical docs describing them survive
 
 Switching agents mid-session (`/agent`, `/tool`, `/detach`) is still here — see below.
 
-Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, and the retired `test-gitserver` / `init` targets.
+Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, and the retired `test-gitserver` / `init` targets. Note the table covers the *out-of-process* orchestration that left for `bashy weave` — the **in-process subagent** orchestration stayed and is listed under Architecture.
 
 ## Documentation
 

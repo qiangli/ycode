@@ -2,6 +2,8 @@
 
 This file provides context and instructions for AI agents working on the `ycode` project.
 
+`AGENTS.md` (shared baseline) and `CLAUDE.md` (Claude Code) are the counterparts. The three **duplicate** most of their content rather than layering, so a change to build commands, directory boundaries, coding standards, the architecture list, the removed-subsystems table or the docs map must be made in all three — they have silently drifted before.
+
 ## Project Overview
 
 **ycode** is a pure Go CLI agent harness designed for autonomous software development. It aims to be a single static binary with only permissive-license dependencies (MIT, Apache-2.0, BSD).
@@ -18,12 +20,15 @@ This file provides context and instructions for AI agents working on the `ycode`
 - **Main App Loop:** `internal/cli/app.go` (REPL) and `internal/runtime/conversation/runtime.go`.
 - **Registry:** Features are defined in `internal/features/registry.yaml` — the source of truth for feature tiers *and* their file paths. `bashy dag build` fails if a listed path disappears.
 - **Sibling modules:** `go.mod` replaces resolve `../sh`, `../nadir`, and `../coreutils` as flat siblings (real submodules inside the `dhnt/` umbrella). `../coreutils` is the shared AgentOS hub and owns the code-intel engines that `internal/runtime/{treesitter,repomap,codegraph}` re-export via thin alias shims.
+- **Session / Context Window:** `internal/runtime/session/` — the biggest subsystem here (~30 files). Token budgeting (`budget.go`, `context_window.go`), the compaction ladder (`microcompact.go` → `compact.go` → `compaction_retry.go` → `llm_summary.go`), pruning, transcript repair, `stuck_detector.go`, and the memory extract/prefetch bridge to `pkg/memex`. Context-loss and malformed-transcript problems live here, not in `conversation/`.
+- **Tool Execution:** `internal/runtime/toolexec/` — runs a tool call, choosing a native-Go implementation or a subprocess. Native git lives in `coreutils/git`, reached via `nativeGitFunc(...)` adapters, so a git bug is usually a coreutils bug. `stall_watchdog.go` kills hung calls.
+- **In-process Subagents:** `internal/runtime/{swarm,team,agentpool,lanes,taskqueue,worker,cascade}` — parallel sub-agents with a capacity governor and liveness classification (`agentpool/`), lane/queue scheduling, and `cascade/`, which climbs a model ladder when the current model has stopped making progress. Distinct from `bashy weave` (cross-repo, out-of-process); this is one ycode process fanning out.
 - **Vendorized Deps:** Submodules under `external/` (`jaeger`, `perses`, `victorialogs` — not imported by the main module today) and read-only reference code under `priorart/`.
 
 ## Building and Running
 
 **There is no Makefile** — it was retired in favour of `DAG.md` + `bashy dag`.
-There is also **no required setup step** and **no build tags**: one binary, no variants.
+There is also **no required setup step**, and **the product binary has no build tags**: one binary, no variants, so a bare `go build ./cmd/ycode/` works. The tags you *will* meet are test-and-eval-only — `integration` (`internal/integration/`, `internal/cli/`), `e2e`, and `eval` / `eval_e2e` / `eval_behavioral` under `internal/eval/`, which is why `dag eval-init` passes `-tags eval` — plus the ordinary platform tags. Ignore the header in `internal/features/registry.yaml` promising `-tags experimental` / `-tags wip`: those gate zero files, so every tier compiles into the one binary and `tier:` is metadata for `ycode features`, not a compile switch.
 
 ```bash
 bashy dag compile          # quick compile; binary at bin/ycode
@@ -32,6 +37,7 @@ bashy dag test             # unit tests (-short -race)
 bashy dag install          # copy into $DHNT_BIN_DIR (shims deliberately NOT installed)
 bashy dag ci               # containerized matrix
 bashy dag --list           # every target
+bashy dag install-hooks    # one-time: pre-push hook runs `bashy dag ci`
 ```
 
 `scripts/gate.sh` is the same gate as one command, for contexts without bashy
@@ -80,7 +86,7 @@ Several large subsystems left this tree. Historical docs describing them survive
 | MCP server/client (`docs/plan-remove-mcp.md`) | the `yc` shell verbs and the deferred tool registry |
 | `internal/container`, `pkg/oci`, podman + ollama embeds | `coreutils/external/podman/engine`, `coreutils/pkg/{oci,ollm}` |
 
-Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, `docs/embedding-{gitea,podman}.md`, and the retired `test-gitserver` / `init` targets.
+Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, `docs/embedding-{gitea,podman}.md`, and the retired `test-gitserver` / `init` targets. Note the table covers the *out-of-process* orchestration that left for `bashy weave` — the **in-process subagent** orchestration stayed and is listed under Architecture.
 
 ## Agent-Specific Tools (`yc <verb>`)
 These are in-process shell built-ins, **reachable ONLY through `ycode shell`** — there is no `ycode yc` subcommand (the binary answers `unknown command "yc"`). From a script it is `ycode shell -c "yc symbols …"`. Use these over standard Unix tools when possible:

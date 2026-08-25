@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-`AGENTS.md` is the agent-agnostic counterpart — same project, slightly broader audience (Codex, OpenCode, Cursor); `GEMINI.md` is the Gemini CLI flavor. When they diverge, treat this file as the Claude-Code-specific overlay and `AGENTS.md` as the shared baseline.
+`AGENTS.md` is the agent-agnostic counterpart — same project, slightly broader audience (Codex, OpenCode, Cursor); `GEMINI.md` is the Gemini CLI flavor. When they diverge, treat this file as the Claude-Code-specific overlay and `AGENTS.md` as the shared baseline. In practice the three **duplicate** most of their content rather than layering, so a change to build commands, directory boundaries, code standards, the removed-subsystems table or the docs map must be made in all three — they have silently drifted before.
 
 ## Project shape
 
@@ -23,13 +23,14 @@ bashy dag test        # unit tests (-short -race), priorart/ excluded
 bashy dag install     # build + copy into $DHNT_BIN_DIR (shims deliberately NOT installed)
 bashy dag ci          # containerized matrix (slow, definitive)
 bashy dag --list      # every target
+bashy dag install-hooks  # one-time: pre-push hook runs `bashy dag ci`
 ```
 
 `export ANTHROPIC_API_KEY=…` (or `OPENAI_API_KEY` + optional `OPENAI_BASE_URL`) before running the binary.
 
 **There is no Makefile.** It was retired in favour of `DAG.md` + `bashy dag`; `scripts/gate.sh` is the same gate as one command, for contexts without bashy (the builder image, `dag ci`). Keep the three in step.
 
-**There are no build tags.** One binary, no variants. The old `TAG_LIST` carried `sqlite`, `sqlite_unlock_notify` and `bindata`, all three of which gate **zero files** in this tree — they were Gitea's, and Gitea left with `internal/gitserver`. `embed_spawn` selected a variant (embedded shim vs. the symlink fallback `spawn_embed.Available()` implements) and is not used by the release. So a bare `go build ./cmd/ycode/` now works and is what the pipeline runs.
+**The product binary has no build tags.** One binary, no variants. The old `TAG_LIST` carried `sqlite`, `sqlite_unlock_notify` and `bindata`, all three of which gate **zero files** in this tree — they were Gitea's, and Gitea left with `internal/gitserver`. `embed_spawn` selected a variant (embedded shim vs. the symlink fallback `spawn_embed.Available()` implements) and is not used by the release. So a bare `go build ./cmd/ycode/` now works and is what the pipeline runs. The tags you *will* meet are test-and-eval-only: `integration` (15 files across `internal/integration/` and `internal/cli/`), `e2e`, and `eval` / `eval_e2e` / `eval_behavioral` under `internal/eval/` — which is why `dag eval-init` passes `-tags eval` — plus the ordinary platform tags. And ignore the header comment in `internal/features/registry.yaml` promising `-tags experimental` / `-tags wip`: those gate zero files, so every tier compiles into the one binary and `tier:` is metadata for `ycode features`, not a compile switch.
 
 **Releases are `bashy release`**, driven by `.goreleaser.yaml`: cross-compilation, `ycode-<os>-<arch>.tar.gz`, `SHA256SUMS` and a `bashy-release-v1` ledger. `bashy dag release-check` / `release-plan` / `release-snapshot`. **The asset names are load-bearing** — the umbrella's fleet-upgrade path resolves artifacts by name, so renaming one strands hosts.
 
@@ -72,6 +73,10 @@ Read these before non-trivial changes:
 - **Conversation runtime** (`internal/runtime/conversation/`) — the event loop; assembles the prompt, dispatches tool calls, manages tool activation TTLs (`preactivate.go`).
 - **Tool registry** (`internal/tools/registry.go`, `specs.go`) — `ToolSpec` declares `RequiredMode` (ReadOnly / WorkspaceWrite / DangerFullAccess). Tools are either always-available or **deferred** — discovered at runtime via `ToolSearch` and loaded only when needed (`deferred.go`, `availability.go`).
 - **Memory** (`pkg/memex/`) — five-layer system (KV / SQL / vector / graph / memo) behind a single `Memex` facade. Don't reach into a single backend directly.
+- **Session / context window** (`internal/runtime/session/`) — the biggest subsystem in the tree (~30 files) and the one most changes eventually touch: token budgeting (`budget.go`, `context_window.go`), the compaction ladder (`microcompact.go` → `compact.go` → `compaction_retry.go` → `llm_summary.go`), pruning, transcript repair, `stuck_detector.go`, and the memory extract/prefetch hooks that bridge to `pkg/memex`. Anything about "the model lost context" or "the transcript is malformed" is here, not in `conversation/`.
+- **Tool execution** (`internal/runtime/toolexec/`) — the layer under the registry that actually runs a tool call, choosing between a native-Go implementation and a subprocess. Git is the case worth knowing: the native tier lives in `coreutils/git` and is reached through `nativeGitFunc(...)` adapters, so a git bug is usually a coreutils bug. `stall_watchdog.go` is what kills a hung tool call.
+- **In-process subagents** (`internal/runtime/{swarm,team,agentpool,lanes,taskqueue,worker,cascade}`) — parallel sub-agents with a capacity governor and liveness classification (`agentpool/`), lane/queue scheduling, and `cascade/`, which climbs a model ladder when the current model has demonstrably stopped making progress. Distinct from `bashy weave`: that is cross-repo out-of-process orchestration, this is one ycode process fanning out.
+
 - **Feature registry** (`internal/features/registry.yaml`) — the source of truth for feature tiers (stable / experimental / wip) *and* their file paths; surfaced by `ycode features list|readme|verify`. Adding or moving a feature means editing this file, or `bashy dag build` fails.
 
 Supporting layers:
@@ -127,7 +132,7 @@ Several large subsystems left this tree. Historical docs describing them survive
 | MCP server/client (`docs/plan-remove-mcp.md`) | the `yc` shell verbs and the deferred tool registry |
 | `internal/container`, `pkg/oci`, podman + ollama embeds | `coreutils/external/podman/engine`, `coreutils/pkg/{oci,ollm}`; ycode drives the shared isolated **`bashy`** podman machine |
 
-Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, the retired `test-gitserver` / `init` targets, and `AGENTS.md`'s "Sub-directory Instructions" pointing at `external/{gitea,podman}/AGENTS.md`.
+Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, and the retired `test-gitserver` / `init` targets. Note the table above covers the *out-of-process* orchestration that left for `bashy weave` — the **in-process subagent** orchestration stayed and is listed under Architecture pillars.
 
 ## Skills
 
