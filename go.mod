@@ -229,7 +229,7 @@ require (
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/image v0.39.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260618152121-87f3d3e198d3 // indirect
@@ -242,6 +242,10 @@ require (
 )
 
 replace github.com/qiangli/coreutils => ../coreutils
+
+// coreutils' own goawk replace does not propagate across modules, and
+// upstream goawk v1.31.0 has no `regex` package — cmds/awk needs the fork.
+replace github.com/benhoyt/goawk => github.com/qiangli/goawk v1.31.1-0.20260811024949-9948781e3cd4
 
 exclude (
 	google.golang.org/genproto v0.0.0-20200804131852-c06518451d9c
