@@ -245,7 +245,7 @@ replace github.com/qiangli/coreutils => ../coreutils
 
 // coreutils' own goawk replace does not propagate across modules, and
 // upstream goawk v1.31.0 has no `regex` package — cmds/awk needs the fork.
-replace github.com/benhoyt/goawk => github.com/qiangli/goawk v1.31.1-0.20260811024949-9948781e3cd4
+replace github.com/benhoyt/goawk => ../coreutils/third_party/goawk
 
 exclude (
 	google.golang.org/genproto v0.0.0-20200804131852-c06518451d9c
