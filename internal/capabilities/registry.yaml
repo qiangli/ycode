@@ -76,6 +76,13 @@
 schemaVersion: 1
 
 capabilities:
+  - id: yaml_harness
+    summary: strict agent.yaml compilation and schema discovery
+    audience: [agent, human, ci, runtime]
+    cli: [validate, schema]
+    http: []
+    config: []
+
   - id: docs
     summary: agent-facing capability prompts (this registry's twin)
     audience: [agent]

@@ -1,0 +1,149 @@
+apiVersion: ycode.dev/v1alpha1
+kind: Harness
+
+metadata:
+  name: ycode
+  version: 1
+
+harness:
+  defaultAgent: coder
+  pipeline: turn
+  workspace: .
+  readableRoots: [.]
+
+providers:
+  openai:
+    type: openai-compatible
+    baseURL: "${OPENAI_BASE_URL:-https://api.openai.com/v1}"
+    apiKey: "${OPENAI_API_KEY}"
+
+models:
+  default:
+    provider: openai
+    name: gpt-5.6
+    maxOutputTokens: 16384
+    temperature: 0
+
+context:
+  project:
+    sources:
+      - file: AGENTS.md
+        required: false
+    maxBytes: 65536
+
+input:
+  sources: [argv, stdin, repl, http, websocket, nats, acp, embed]
+  queue: fifo
+
+memory:
+  main:
+    provider: memex
+    recall:
+      maxItems: 8
+      maxTokens: 3000
+    write:
+      enabled: true
+    compaction:
+      triggerTokens: 90000
+      preserveRecentTokens: 24000
+
+bashy:
+  toolName: bashy
+  description: Execute a non-interactive Bashy script in the configured workspace.
+  timeoutMs: 60000
+  maxOutputChars: 32768
+  maxParallel: 1
+  permission: workspace-write
+  preflight: required
+
+hitl:
+  onUnavailable: deny
+  decisions: [approve, edit, reject]
+  rules:
+    - effect: [destructive, privilege, external-write]
+      action: ask
+    - effect: [workspace-read, workspace-write, process]
+      action: allow
+    - effect: "*"
+      action: deny
+
+sessions:
+  store: jsonl
+  directory: "${YCODE_SESSION_DIR:-.ycode/sessions}"
+  checkpointBeforeInterrupt: true
+
+pipelines:
+  turn:
+    inputs: []
+    outputs: [output]
+    concurrency: 4
+    failFast: true
+    nodes:
+    - id: input
+      use: input.read
+    - id: project-context
+      needs: [input]
+      use: context.load
+      with: {context: project}
+    - id: recall
+      needs: [input]
+      use: memory.recall
+      with: {memory: main}
+    - id: prompt
+      needs: [project-context, recall]
+      use: prompt.assemble
+    - id: agent-loop
+      needs: [prompt]
+      repeat:
+        max: 25
+        until: llm.finished
+        stages:
+          - id: request
+            use: llm.call
+          - id: record-assistant
+            use: session.append
+            with: {value: llm.output}
+          - when: llm.hasToolCalls
+            stages:
+              - id: preflight
+                use: bashy.preflight
+              - id: review
+                use: hitl.review
+              - id: execute
+                use: bashy.execute
+              - id: record-results
+                use: session.append
+                with: {value: bashy.results}
+    - id: remember
+      needs: [agent-loop]
+      use: memory.write
+      with: {memory: main}
+    - id: output
+      needs: [agent-loop]
+      use: output.emit
+
+agents:
+  coder:
+    model: default
+    pipeline: turn
+    memory: main
+    system:
+      - text: You are a software-engineering agent. Use Bashy for every action.
+      - file: AGENTS.md
+        required: false
+
+frontends:
+  oneShot: {enabled: true}
+  repl: {enabled: true}
+  tui: {enabled: true}
+  http: {enabled: true, address: "127.0.0.1:31415"}
+  websocket: {enabled: true}
+  nats: {enabled: true}
+  acp: {enabled: true}
+  embed: {enabled: true}
+
+observability:
+  enabled: true
+  exporter: otlp
+  endpoint: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
+  recordContent: false
