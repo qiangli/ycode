@@ -1,15 +1,18 @@
 # Pinned commit SHAs for sibling-path replace targets in go.mod
-# (../sh, ../nadir, ../coreutils). script/bootstrap-siblings.sh reads this file
+# script/bootstrap-siblings.sh reads this file
 # and clones each missing sibling at the listed SHA, so standalone
 # clones of ycode build without external setup.
 #
 # Inside the dhnt umbrella the siblings already exist as submodules
-# (dhnt/sh, dhnt/nadir, dhnt/coreutils) — the bootstrap script detects them and
+# as sibling submodules — the bootstrap script detects them and
 # leaves them alone, so there is still exactly one copy of each.
 #
 # Format: <name>=<sha>. When bumping a sibling in the umbrella's
 # script/sync.sh, the SHA here must be bumped to match — sync.sh
 # automates this.
-sh=8daca0ddb0d2be52f8d6d7ab96537e9cdd69f7ac
+sh=72b355d38ebca840a1a3a28cba2625591408b304
 nadir=71aefd3db5f8faa50431ade2421dabddfde53c8f
-coreutils=366dd72990649c150e51353910fd1ce791c3c3a8
+coreutils=ece1a70d3b45c8a227a2673acdfe76878ffff3de
+bashy=22936b1f47d767c6d926eb662d5b3e42bce30595
+filebrowser=cde1146904add2d78d9846c71597520d34b17f7d
+readline=b958823bd7075ed8b9a3aedd351422356a95fe79

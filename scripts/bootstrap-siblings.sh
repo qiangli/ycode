@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Ensure the sibling-path replace targets in go.mod (../sh, ../nadir,
-# ../coreutils)
+# Ensure the sibling-path replace targets in go.mod
 # exist on disk, by cloning the pinned commit from each upstream repo
 # if the sibling is missing. Cloned siblings also have their own submodules
 # initialized because ycode's replace directives point into coreutils'
@@ -33,6 +32,9 @@ repo_url() {
         sh) echo "https://github.com/qiangli/sh.git" ;;
         nadir) echo "https://github.com/qiangli/nadir.git" ;;
         coreutils) echo "https://github.com/qiangli/coreutils.git" ;;
+        bashy) echo "https://github.com/qiangli/bashy.git" ;;
+        filebrowser) echo "https://github.com/qiangli/filebrowser.git" ;;
+        readline) echo "https://github.com/qiangli/readline.git" ;;
         *) echo "bootstrap-siblings: no repo URL for '$1'" >&2; return 1 ;;
     esac
 }

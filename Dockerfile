@@ -26,7 +26,7 @@ WORKDIR /src
 # died with `COPY pkg/oci/go.mod: no such file or directory` — which in
 # turn failed the pre-push hook and blocked pushing ycode ANYWHERE.
 # Removing a module means removing what copies it.
-# go.mod replaces ../sh, ../nadir and ../coreutils with sibling paths that
+# go.mod replaces several modules with sibling paths that
 # live OUTSIDE this build context, so `go mod download` cannot see them and
 # fails with "reading /coreutils/go.mod: no such file or directory".
 #
@@ -37,7 +37,7 @@ WORKDIR /src
 # happens to be on this disk.
 #
 # The script cds to its own parent and clones to $root/../<name>, so from
-# WORKDIR /src the siblings land at /sh, /nadir and /coreutils — exactly
+# WORKDIR /src the siblings land alongside /src — exactly
 # where the replace directives point.
 COPY go.mod go.sum .sibling-pins ./
 COPY scripts/bootstrap-siblings.sh scripts/
