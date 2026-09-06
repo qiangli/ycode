@@ -10,7 +10,7 @@
 # Format: <name>=<sha>. When bumping a sibling in the umbrella's
 # script/sync.sh, the SHA here must be bumped to match — sync.sh
 # automates this.
-sh=72b355d38ebca840a1a3a28cba2625591408b304
+sh=fcd92e58b5697c238b9172f0a0357af923b85dbb
 nadir=71aefd3db5f8faa50431ade2421dabddfde53c8f
 coreutils=23c2abda8585dd57b6f5a17ac717d8c7c8ea86b7
 bashy=509a92c7a528e01d0c598b91708a8b8887378b5e
