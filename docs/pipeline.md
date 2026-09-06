@@ -1,170 +1,153 @@
-# Development Pipeline
+# Development pipeline
 
-The canonical process for any non-trivial fix or feature in this repository.
-It exists so changes ship with verifiable evidence — tests, telemetry, and
-docs — instead of "works on my machine" hand-offs. It's also the manual
-mirror of the autonomous loop in
-[`autonomous-loop.md`](./autonomous-loop.md): RESEARCH → PLAN → BUILD →
-EVALUATE → LEARN. The human pipeline is what we run today; the autonomous
-loop is what graduates feature-by-feature as each gate becomes
-machine-checkable.
+This is the contributor workflow for the YAML-native harness. Evidence comes
+from the strict compiler, typed pipeline tests, replayable events, conformance
+suite, and release gates—not from an alternate legacy runtime.
 
-## The six steps
+## 1. Locate the contract
 
-### 1. Research
+Before editing behavior, identify the controlling `agent.yaml` resource and
+the mechanism that interprets it. Start with:
 
-Map the change before designing it. Use Explore subagents in parallel for
-breadth (≤3) when the scope is uncertain or spans multiple components;
-read directly when the target is known. Inspect prior art under
-`priorart/` and `reference/` for solved-this-before patterns. Web search
-only after local sources are exhausted.
+- `examples/agent.yaml` for the executable complete contract;
+- `internal/harness/spec` for parsing and cross-resource validation;
+- `internal/harness/pipeline` for typed state and DAG execution;
+- `internal/harness/turn` for stage registration;
+- the relevant mechanism package under `internal/harness/`.
 
-**Output:** a punch list of file:line drop-points and existing utilities
-to reuse.
+Behavioral knobs belong in YAML and the compiler. Do not add a CLI setting,
+package global, transport-specific default, second tool registry, or hidden
+retry/loop/fallback path.
 
-### 2. Plan
+## 2. Plan typed changes
 
-Write the plan to the per-user plan directory (created by Plan Mode).
-Plans are working docs — they may reference real local paths and env vars
-freely. Plans **do not** ship to the public repo.
+For a new stage or resource, record:
 
-A plan must include:
+- input/output port types and state writer rules;
+- explicit `needs` ordering and any repeat/stop expression;
+- the compiled resource references it consumes;
+- canonical success/failure events and payload references;
+- checkpoint and replay requirements;
+- policy, platform, cancellation, and resource-limit behavior;
+- frontend/public API projections that must remain equivalent.
 
-- **Context** — the problem, what triggered it, the intended outcome.
-- **Root causes** — file:line citations, not hand-waves.
-- **Scope** — what lands now (v1) and what's deferred (v2). Resolve open
-  questions via `AskUserQuestion` before approval.
-- **Verification gates** — concrete pass/fail conditions per step.
-- **Critical files** — the read/edit set.
-- **Codification** — what gets written to `docs/` after gates pass.
+A stage must be mechanical. Scheduling, policy, fallback, prompt ordering, and
+failure routing come from the compiled graph.
 
-End with `ExitPlanMode` to request approval. Don't ask "is this plan ok?"
-in any other form.
+## 3. Implement at the narrow seam
 
-### 3. Build / Test
+Keep responsibilities separated:
 
-Implement against the root causes. Tests at three levels:
+| Concern | Package |
+|---|---|
+| YAML contract | `internal/harness/spec` |
+| DAG/state execution | `internal/harness/pipeline` |
+| canonical messages/providers | `internal/harness/message`, `provider` |
+| shell preflight/execution | `internal/harness/bashy` |
+| input/context/output | `internal/harness/stages/ioctx` |
+| memory/compaction | `internal/harness/stages/memory` |
+| policy/HITL | `internal/harness/stages/hitl` |
+| durable record | `internal/harness/event` |
+| complete turn | `internal/harness/turn` |
+| frontends | `internal/harness/frontend`, `cmd/ycode` |
+| embedding API | `pkg/ycode` |
 
-- **Unit** — `go test -short -race ./pkg/...`. Add a test that pins each
-  bug fixed; if a future refactor reintroduces the bug, this test fails.
-- **Integration** — `go test -tags integration ./internal/integration/...`.
-  Real services (ycode server, Gitea, and configured external endpoints).
-- **End-to-end** — TUI via `teatest` and PTY (`make test-tui`,
-  `make test-tui-e2e`); web via Playwright (`make test-ui`).
+The provider may expose only the `bashy` function tool. Bashy execution must
+use the same digest-bound script, cwd, environment, limits, and metadata as
+preflight. An ask checkpoints before waiting; edit requires re-preflight;
+duplicate/stale decisions fail closed.
 
-Internal services first only where ycode still owns them, such as Gitea.
-Model serving, Podman, SearXNG, and OTEL collection are external host-layer
-concerns; use bashy or configured endpoints for those workflows.
+## 4. Test the evidence chain
 
-Telemetry at the same level as the test pyramid:
-
-- Add slog records at every silent drop site.
-- Add counters/histograms to `internal/telemetry/otel/instruments.go`
-  (canonical place; consumers obtain handles via the `Instruments` struct
-  whose pointer must be mutated in place on collector connect — see
-  `internal/telemetry/otel/provider.go` and the provider-swap test).
-- When adding metrics, verify local JSONL persistence and optional OTLP
-  export through `observability.collectorAddr`.
-
-### 4. Evaluate
-
-Run aperio-replayed evals and manual smoke checks. The eval is the gate,
-not just unit tests:
-
-- `make eval-init` — aperio replay of `/init` against a recorded cassette.
-- `make test-tui-e2e` — TUI scaffold streams in a PTY.
-- `make test-ui` — Playwright spec against a real running server.
-
-Telemetry sanity after exercising the changed path:
-
-| Pillar  | Where                                | What to verify                                       |
-| ------- | ------------------------------------ | ---------------------------------------------------- |
-| Metrics | local OTEL JSONL or external collector | The new counters appear with non-zero values |
-| Traces  | local OTEL JSONL or external collector | `ycode` service registered, spans exist for the run |
-| Logs    | local OTEL JSONL or external collector | structured log records for the change land |
-
-If telemetry is absent, check provider setup, instrument creation paths,
-collector connectivity, and the chat-runtime entry points
-(`InstrumentedTurnWithRecovery` is the live chat path; it must record the
-same counters as `InstrumentedTurn`).
-
-### 5. Commit
-
-Modular commits with conventional prefixes (`fix:`, `feat:`, `test:`,
-`docs:`, `chore:`, `ci:`). One concern per commit. Stage files by name.
-Run the public-artifact security check (below) on staged diffs **and**
-on the proposed commit message before each `git commit`.
-
-Don't push. Push happens only on explicit user approval.
-
-### 6. Codify
-
-After every verification gate is green, document what worked. Update:
-
-- `docs/pipeline.md` (this file) — refine if a step changed.
-- `docs/instructions.md` — add convention notes that future contributors
-  should see on first read.
-- `docs/autonomous-loop.md` — keep the human pipeline ↔ autonomous loop
-  mapping accurate.
-
-Codification is not optional — the pipeline graduates only when the
-result is reproducible from the docs.
-
-## Public-artifact security
-
-Hard rule for everything that leaves the local machine: files under
-version control, **git commit messages and tag bodies**, PR/issue titles
-and bodies, release notes, and any external-facing log echoed by an
-automation script.
-
-Never include:
-
-- Project-internal env-var names. Use the conventional public name
-  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) or a placeholder
-  (`<PROVIDER_API_KEY>`).
-- Absolute paths revealing a username (`/Users/<name>/…`,
-  `/home/<name>/…`). Use `~/` or a relative path.
-- User identifiers (login names, internal email addresses, machine
-  hostnames) beyond the canonical `git config user.email`.
-- Internal IPs, hostnames, ports beyond the documented public defaults
-  (`127.0.0.1:31415` is fine).
-- Copy-pasted error logs containing user paths.
-- API keys, OAuth tokens, signed URLs, JWTs — even expired/rotated.
-
-Exempt (local-only, never pushed):
-
-- Plan files under the per-user agent state directory.
-- Auto-memory under the per-user memory directory.
-- Untracked working files outside the repo tree.
-- Gitignored `.env*` files.
-
-Pre-commit and pre-PR sanitization grep:
+Add focused tests at the changed seam, including failure cases and race/restart
+coverage where state is durable. Then run the complete harness conformance
+gate:
 
 ```bash
-git diff --cached | grep -nE '(/Users/|/home/[^/]+/|sk-[A-Za-z0-9_-]{20,}|gh[ps]_[A-Za-z0-9]{30,}|[A-Z][A-Z0-9_]+_API_KEY|[A-Z][A-Z0-9_]+_TOKEN)' \
-  && { echo "FOUND — sanitize before committing"; exit 1; } || true
+./scripts/harness-conformance.sh
 ```
 
-If a leak ships: rotate the credential, then treat history rewrite as a
-separate explicitly-approved action — never silently force-push public
-history.
+That gate covers compiler rejection, typed DAG execution, reconstructed
+harness profiles, provider normalization, Bashy outcomes, event integrity,
+payloads/checkpoints, HITL, memory, agent turns, observability, frontend parity,
+public embedding, ACP lifecycle, and native PTY support where declared.
 
-## Where artifacts live
+Run the repository gate:
 
-| Artifact                       | Path                                      |
-| ------------------------------ | ----------------------------------------- |
-| Plan files (working, local)    | per-user agent state directory            |
-| Auto-memory (per-user)         | per-user memory directory                  |
-| Eval cassettes                 | `internal/eval/<name>/testdata/`           |
-| OTel instruments registry      | `internal/telemetry/otel/instruments.go`   |
-| TUI integration tests          | `internal/cli/*_test.go` (build tag `integration`) |
-| TUI e2e (PTY)                  | `internal/cli/e2e_test.go` (build tag `e2e`) |
-| Web e2e (Playwright)           | `e2e/tests/*.spec.ts`                      |
-| Server integration tests       | `internal/integration/`                    |
+```bash
+bashy dag build
+```
 
-## Worked example
+Useful focused targets are:
 
-The first instantiation of this pipeline was the
-`/init`-streaming-and-telemetry fix series (see `git log --grep
-'pipeline'`). The pattern emerged from that work and is now the
-template; further iterations refine it.
+```bash
+bashy dag fmtcheck
+bashy dag vet
+bashy dag verify-features
+bashy dag compile
+bashy dag test
+```
+
+Never weaken a schema, event, checkpoint, or conformance assertion merely to
+make a new implementation pass. Update the contract and all consumers together
+when the intended behavior genuinely changes.
+
+## 5. Inspect replay and presentation parity
+
+For runtime changes, verify:
+
+- the event sequence is monotonic and its digest chain validates;
+- event `config_digest` matches the compiled document;
+- large/model-visible content is retrievable from its payload reference;
+- cancellation, nonzero exit, signal, denial, and delivery failure remain
+  distinct outcomes;
+- local, network, ACP, and Go embedding surfaces see the same canonical
+  transitions;
+- resume continues a live checkpoint rather than rerunning entry stages;
+- fork writes lineage/checkpoint state without starting a provider loop.
+
+Optional OpenTelemetry spans may mirror execution, but events/checkpoints are
+the replay source of truth.
+
+## 6. Validate release impact
+
+Changes that affect compilation, startup, shell execution, platform support,
+or public APIs must pass the release-contract checks:
+
+```bash
+bashy dag release-check
+bashy dag release-plan
+bashy dag release-snapshot
+```
+
+The plan/snapshot must retain the five documented archive names and
+`SHA256SUMS`. A published `vX.Y.Z-dev` candidate is tested on native Linux,
+macOS, and Windows with:
+
+```bash
+YCODE_TEST_VERSION=vX.Y.Z-dev bashy dag qa
+```
+
+Only the already-tested bytes are promoted to bare `vX.Y.Z`. Do not create a
+tag to test a fix and do not rebuild during promotion.
+
+## 7. Review public artifacts
+
+Before handing off, scan tracked documentation, examples, workflow output, and
+proposed release notes for:
+
+- absolute user paths or private hostnames;
+- credentials, tokens, signed URLs, or secret environment values;
+- stale commands, files, API names, or unsupported platform claims;
+- links to missing repository paths;
+- claims not demonstrated by an executable test or compiled contract.
+
+Use conventional placeholder names such as `<PROVIDER_API_KEY>` in public
+examples. Preserve unrelated work in the shared tree and report any gate
+blocked by another in-progress lane separately.
+
+## 8. Codify and hand off
+
+Update the contract documentation in the same change as behavior. Report exact
+files, tests, generated artifacts, and known boundaries. Do not commit or push
+unless explicitly authorized.

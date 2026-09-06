@@ -27,12 +27,6 @@ type schemaBuilder struct {
 }
 
 func (b *schemaBuilder) schema(t reflect.Type) any {
-	if t == reflect.TypeOf(StringList{}) {
-		return map[string]any{"oneOf": []any{
-			map[string]any{"type": "string"},
-			map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-		}}
-	}
 	if t.Kind() == reflect.Pointer {
 		return b.schema(t.Elem())
 	}

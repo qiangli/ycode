@@ -4,189 +4,165 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"strings"
 	"sync"
 	"testing"
 
 	"github.com/qiangli/ycode/internal/harness/spec"
 )
 
-func TestRunnerExecutesDeclaredOrder(t *testing.T) {
-	registry := NewRegistry()
+func lit(v any) spec.Operand         { return spec.Operand{Literal: v} }
+func fld(v string) spec.Operand      { return spec.Operand{Field: v} }
+func slotOf(t string) spec.StateSlot { return spec.StateSlot{Type: t, Writer: "single"} }
+
+func TestStateTypedVersionAndCAS(t *testing.T) {
+	s := NewState()
+	if err := s.SetTyped("job", "job/v1", map[string]any{"n": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompareAndSwap("job", 0, nil); err == nil {
+		t.Fatal("stale CAS succeeded")
+	}
+	if err := s.CompareAndSwap("job", 1, map[string]any{"n": 2}); err != nil {
+		t.Fatal(err)
+	}
+	got, typ, version, ok := s.Read("job.n")
+	if !ok || got != 2 || typ != "job/v1" || version != 2 {
+		t.Fatalf("read=(%v,%s,%d,%v)", got, typ, version, ok)
+	}
+}
+
+func TestClosedRegistryExplicitBindingsAndDAG(t *testing.T) {
+	reg := NewRegistry()
+	var mu sync.Mutex
 	var order []string
-	for _, name := range []string{"input.read", "llm.call", "output.emit"} {
-		name := name
-		if err := registry.RegisterStage(name, func(context.Context, *State, map[string]any) error {
-			order = append(order, name)
-			return nil
-		}); err != nil {
-			t.Fatal(err)
+	err := reg.Register(Definition{Name: "copy", Handler: func(_ context.Context, in Invocation) Outcome {
+		if _, ok := in.Inputs["hidden"]; ok {
+			t.Fatal("implicit state exposed")
 		}
-	}
-	stages := []spec.Stage{{ID: "in", Use: "input.read"}, {ID: "model", Use: "llm.call"}, {ID: "out", Use: "output.emit"}}
-	if err := NewRunner(registry).Run(context.Background(), stages, NewState()); err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"input.read", "llm.call", "output.emit"}; !reflect.DeepEqual(order, want) {
-		t.Fatalf("order = %v, want %v", order, want)
-	}
-}
-
-func TestRunnerRepeatAndConditional(t *testing.T) {
-	registry := NewRegistry()
-	if err := registry.RegisterStage("llm.call", func(_ context.Context, state *State, _ map[string]any) error {
-		value, _ := state.Get("calls")
-		calls, _ := value.(int)
-		state.Set("calls", calls+1)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := registry.RegisterStage("bashy.execute", func(_ context.Context, state *State, _ map[string]any) error {
-		state.Set("executed", true)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := registry.RegisterPredicate("llm.finished", func(state *State) bool {
-		value, _ := state.Get("calls")
-		calls, _ := value.(int)
-		return calls == 2
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := registry.RegisterPredicate("llm.hasToolCalls", func(state *State) bool {
-		value, _ := state.Get("calls")
-		calls, _ := value.(int)
-		return calls == 1
-	}); err != nil {
-		t.Fatal(err)
-	}
-	stages := []spec.Stage{{ID: "loop", Repeat: &spec.Repeat{
-		Max:   3,
-		Until: "llm.finished",
-		Stages: []spec.Stage{
-			{ID: "model", Use: "llm.call"},
-			{When: "llm.hasToolCalls", Stages: []spec.Stage{{ID: "tool", Use: "bashy.execute"}}},
-		},
-	}}}
-	state := NewState()
-	if err := NewRunner(registry).Run(context.Background(), stages, state); err != nil {
-		t.Fatal(err)
-	}
-	if value, _ := state.Get("executed"); value != true {
-		t.Fatalf("executed = %#v", value)
-	}
-}
-
-func TestRunnerReportsRepeatLimit(t *testing.T) {
-	registry := NewRegistry()
-	_ = registry.RegisterStage("llm.call", func(context.Context, *State, map[string]any) error { return nil })
-	_ = registry.RegisterPredicate("llm.finished", func(*State) bool { return false })
-	err := NewRunner(registry).Run(context.Background(), []spec.Stage{{ID: "loop", Repeat: &spec.Repeat{
-		Max: 2, Until: "llm.finished", Stages: []spec.Stage{{Use: "llm.call"}},
-	}}}, NewState())
-	if err == nil || !strings.Contains(err.Error(), "repeat limit 2 reached") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestRunnerFallbackStopsAfterSuccess(t *testing.T) {
-	registry := NewRegistry()
-	_ = registry.RegisterStage("memory.recall", func(context.Context, *State, map[string]any) error { return errors.New("offline") })
-	_ = registry.RegisterStage("context.load", func(context.Context, *State, map[string]any) error { return nil })
-	err := NewRunner(registry).Run(context.Background(), []spec.Stage{{ID: "fallback", Fallback: []spec.Stage{
-		{Use: "memory.recall"}, {Use: "context.load"},
-	}}}, NewState())
+		mu.Lock()
+		order = append(order, in.StageID)
+		mu.Unlock()
+		return Success(map[string]any{"value": in.Inputs["value"]})
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := reg.Register(Definition{Name: "copy", Handler: func(context.Context, Invocation) Outcome { return Success(nil) }}); err == nil {
+		t.Fatal("duplicate accepted")
+	}
+	p := spec.Pipeline{Inputs: map[string]string{"input": "x"}, State: map[string]spec.StateSlot{"left": slotOf("x"), "right": slotOf("x"), "out": slotOf("x")}, Concurrency: 2, Nodes: []spec.Stage{
+		{ID: "left", Run: spec.Run{Stage: "copy", In: map[string]string{"value": "input"}, Out: map[string]string{"value": "left"}}},
+		{ID: "right", Run: spec.Run{Stage: "copy", In: map[string]string{"value": "input"}, Out: map[string]string{"value": "right"}}},
+		{ID: "join", Needs: []string{"left", "right"}, Run: spec.Run{Stage: "copy", In: map[string]string{"value": "left"}, Out: map[string]string{"value": "out"}}},
+	}}
+	s := NewState()
+	_ = s.SetTyped("input", "x", 7)
+	_ = s.SetTyped("hidden", "x", "secret")
+	if err := NewRunner(reg).WithPipelines(map[string]spec.Pipeline{"p": p}).RunPipeline(context.Background(), "p", s); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _, _ := s.Read("out"); got != 7 {
+		t.Fatalf("out=%v", got)
+	}
+	if order[len(order)-1] != "join" {
+		t.Fatalf("order=%v", order)
+	}
+	p.Nodes = []spec.Stage{{ID: "bad", Run: spec.Run{Stage: "undeclared"}}}
+	if err := NewRunner(reg).WithPipelines(map[string]spec.Pipeline{"p": p}).RunPipeline(context.Background(), "p", NewState()); err == nil {
+		t.Fatal("unregistered stage executed")
+	}
 }
 
-func TestRunnerCallRetryAndSwitch(t *testing.T) {
-	registry := NewRegistry()
+func TestOutcomeRoutingRunsExplicitCleanup(t *testing.T) {
+	reg := NewRegistry()
+	cleaned := false
+	_ = reg.Register(Definition{Name: "fail", Handler: func(context.Context, Invocation) Outcome {
+		return Failure("denied", false, errors.New("denied"))
+	}})
+	_ = reg.Register(Definition{Name: "cleanup", Handler: func(context.Context, Invocation) Outcome {
+		cleaned = true
+		return Success(nil)
+	}})
+	p := spec.Pipeline{Concurrency: 1, Nodes: []spec.Stage{
+		{ID: "work", Run: spec.Run{Stage: "fail"}},
+		{ID: "cleanup", Needs: []string{"work"}, RunOn: []string{OutcomeFailed}, Run: spec.Run{Stage: "cleanup"}},
+	}}
+	err := NewRunner(reg).WithPipelines(map[string]spec.Pipeline{"p": p}).RunPipeline(context.Background(), "p", NewState())
+	if err == nil || !cleaned {
+		t.Fatalf("err=%v cleaned=%v", err, cleaned)
+	}
+}
+
+func TestFailFastSkipsNewWorkButRunsExplicitCleanup(t *testing.T) {
+	reg := NewRegistry()
+	var work, cleanup int
+	_ = reg.Register(Definition{Name: "fail", Handler: func(context.Context, Invocation) Outcome { return Failure("failed", false, errors.New("failed")) }})
+	_ = reg.Register(Definition{Name: "work", Handler: func(context.Context, Invocation) Outcome { work++; return Success(nil) }})
+	_ = reg.Register(Definition{Name: "cleanup", Handler: func(context.Context, Invocation) Outcome { cleanup++; return Success(nil) }})
+	p := spec.Pipeline{Concurrency: 1, FailFast: true, Nodes: []spec.Stage{
+		{ID: "fail", Run: spec.Run{Stage: "fail"}},
+		{ID: "later", Needs: []string{"fail"}, RunOn: []string{OutcomeFailed}, Run: spec.Run{Stage: "cleanup"}},
+		{ID: "ordinary", Needs: []string{"fail"}, Run: spec.Run{Stage: "work"}},
+	}}
+	out := NewRunner(reg).WithPipelines(map[string]spec.Pipeline{"p": p}).RunPipelineOutcome(context.Background(), "p", NewState())
+	if out.Class != OutcomeFailed || work != 0 || cleanup != 1 {
+		t.Fatalf("out=%#v work=%d cleanup=%d", out, work, cleanup)
+	}
+}
+
+func TestStructuredControlForms(t *testing.T) {
+	reg := NewRegistry()
 	attempts := 0
-	_ = registry.RegisterStage("llm.call", func(context.Context, *State, map[string]any) error {
+	_ = reg.Register(Definition{Name: "flaky", Handler: func(context.Context, Invocation) Outcome {
 		attempts++
 		if attempts == 1 {
-			return errors.New("temporary")
+			return Failure("temporary", true, errors.New("retry"))
 		}
-		return nil
-	})
-	_ = registry.RegisterStage("output.emit", func(_ context.Context, state *State, _ map[string]any) error {
-		state.Set("branch", "done")
-		return nil
-	})
-	_ = registry.RegisterPredicate("llm.finished", func(*State) bool { return true })
-	pipelines := map[string]spec.Pipeline{
-		"model": {Concurrency: 1, Nodes: []spec.Stage{{Retry: &spec.Retry{Max: 2, Stages: []spec.Stage{{Use: "llm.call"}}}}}},
+		return Success(map[string]any{"value": 1})
+	}})
+	_ = reg.Register(Definition{Name: "inc", Handler: func(_ context.Context, in Invocation) Outcome {
+		return Success(map[string]any{"value": in.Inputs["value"].(int) + 1})
+	}})
+	_ = reg.Register(Definition{Name: "double", Handler: func(_ context.Context, in Invocation) Outcome {
+		return Success(map[string]any{"value": in.Inputs["value"].(int) * 2})
+	}})
+	_ = reg.Register(Definition{Name: "fail", Handler: func(context.Context, Invocation) Outcome { return Failure("offline", false, errors.New("offline")) }})
+	unit := func(stage string) spec.Pipeline {
+		return spec.Pipeline{Inputs: map[string]string{"value": "n"}, Outputs: map[string]string{"value": "n"}, Concurrency: 1, Nodes: []spec.Stage{{ID: "one", Run: spec.Run{Stage: stage, In: map[string]string{"value": "value"}, Out: map[string]string{"value": "value"}}}}}
 	}
-	stages := []spec.Stage{
-		{ID: "model-call", Call: "model"},
-		{ID: "route", Switch: &spec.Switch{Cases: []spec.Case{{When: "llm.finished", Stages: []spec.Stage{{Use: "output.emit"}}}}}},
-	}
-	state := NewState()
-	if err := NewRunner(registry).WithPipelines(pipelines).Run(context.Background(), stages, state); err != nil {
-		t.Fatal(err)
-	}
-	if attempts != 2 {
-		t.Fatalf("attempts = %d", attempts)
-	}
-	if branch, _ := state.Get("branch"); branch != "done" {
-		t.Fatalf("branch = %#v", branch)
-	}
-}
-
-func TestRunnerPipelineUsesDAGFanOutAndFanIn(t *testing.T) {
-	registry := NewRegistry()
-	var mu sync.Mutex
-	var order []string
-	_ = registry.RegisterStage("input.read", func(_ context.Context, _ *State, with map[string]any) error {
-		mu.Lock()
-		defer mu.Unlock()
-		order = append(order, with["name"].(string))
-		return nil
-	})
-	p := spec.Pipeline{Concurrency: 2, FailFast: true, Nodes: []spec.Stage{
-		{ID: "root", Use: "input.read", With: map[string]any{"name": "root"}},
-		{ID: "left", Needs: []string{"root"}, Use: "input.read", With: map[string]any{"name": "left"}},
-		{ID: "right", Needs: []string{"root"}, Use: "input.read", With: map[string]any{"name": "right"}},
-		{ID: "join", Needs: []string{"left", "right"}, Use: "input.read", With: map[string]any{"name": "join"}},
+	fail := spec.Pipeline{Inputs: map[string]string{"value": "n"}, Outputs: map[string]string{"value": "n"}, Concurrency: 1, Nodes: []spec.Stage{{ID: "fail", Run: spec.Run{Stage: "fail"}}}}
+	main := spec.Pipeline{Inputs: map[string]string{"items": "list"}, State: map[string]spec.StateSlot{"n": {Type: "n", Writer: "loop-carried"}, "choice": slotOf("n"), "results": {Type: "list", Writer: "single", Merge: "input-order"}, "fallback": slotOf("n")}, Concurrency: 1, Nodes: []spec.Stage{
+		{ID: "retry", RetryV1: &spec.RetryPolicy{MaxAttempts: 2, When: spec.Expression{Eq: []spec.Operand{fld("outcome.retryable"), lit(true)}}}, Run: spec.Run{Stage: "flaky", Out: map[string]string{"value": "n"}}},
+		{ID: "repeat", Needs: []string{"retry"}, Run: spec.Run{Repeat: &spec.RepeatRun{PipelineRef: "inc", MaxIterations: 3, Carry: map[string]string{"value": "n"}, Until: spec.Expression{GTE: []spec.Operand{fld("n"), lit(3)}}, Out: map[string]string{"value": "n"}}}},
+		{ID: "switch", Needs: []string{"repeat"}, Run: spec.Run{Switch: &spec.SwitchRun{Cases: []spec.SwitchRunCase{{When: spec.Expression{Eq: []spec.Operand{fld("n"), lit(3)}}, PipelineRef: "double", In: map[string]string{"value": "n"}}}, NoMatch: "fail", Out: map[string]string{"value": "choice"}}}},
+		{ID: "each", Needs: []string{"switch"}, Run: spec.Run{ForEach: &spec.ForEachRun{Items: spec.FieldOperand{Field: "items"}, As: "item", MaxItems: 4, MaxParallel: 2, Ordered: true, PipelineRef: "double", In: map[string]string{"value": "item"}, Collect: map[string]string{"value": "results"}}}},
+		{ID: "fallback", Needs: []string{"each"}, Run: spec.Run{Fallback: &spec.FallbackRun{MaxAttempts: 2, Attempts: []spec.FallbackAttempt{{PipelineRef: "fail", On: []string{"failed"}, In: map[string]string{"value": "n"}}, {PipelineRef: "double", On: []string{"failed"}, In: map[string]string{"value": "n"}}}, NoMatch: "fail", Out: map[string]string{"value": "fallback"}}}},
 	}}
-	if err := NewRunner(registry).WithPipelines(map[string]spec.Pipeline{"turn": p}).RunPipeline(context.Background(), "turn", NewState()); err != nil {
+	r := NewRunner(reg).WithPipelines(map[string]spec.Pipeline{"main": main, "inc": unit("inc"), "double": unit("double"), "fail": fail})
+	s := NewState()
+	_ = s.SetTyped("items", "list", []any{3, 1, 2})
+	if err := r.RunPipeline(context.Background(), "main", s); err != nil {
 		t.Fatal(err)
 	}
-	position := func(name string) int {
-		for i, value := range order {
-			if value == name {
-				return i
-			}
-		}
-		return -1
-	}
-	if position("root") != 0 || position("join") != 3 {
-		t.Fatalf("dependency order = %v", order)
+	choice, _, _, _ := s.Read("choice")
+	results, _, _, _ := s.Read("results")
+	fallback, _, _, _ := s.Read("fallback")
+	if choice != 6 || fallback != 6 || !reflect.DeepEqual(results, []any{6, 2, 4}) {
+		t.Fatalf("choice=%v results=%v fallback=%v", choice, results, fallback)
 	}
 }
 
-func TestRunnerForEachCollectsInInputOrder(t *testing.T) {
-	registry := NewRegistry()
-	_ = registry.RegisterStage("bashy.execute", func(_ context.Context, state *State, _ map[string]any) error {
-		item, _ := state.Get("call")
-		state.Set("results", item.(int)*2)
-		return nil
-	})
-	state := NewState()
-	state.Set("calls", []int{3, 1, 2})
-	stages := []spec.Stage{{ID: "tools", ForEach: &spec.ForEach{
-		Items: "calls", As: "call", Collect: "results", MaxParallel: 2, Ordered: true,
-		Stages: []spec.Stage{{Use: "bashy.execute"}},
-	}}}
-	if err := NewRunner(registry).Run(context.Background(), stages, state); err != nil {
-		t.Fatal(err)
-	}
-	got, _ := state.Get("results")
-	if want := []any{6, 2, 4}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("results = %#v, want %#v", got, want)
+func TestHookInvocationLimitsAndFailureMode(t *testing.T) {
+	reg := NewRegistry()
+	_ = reg.Register(Definition{Name: "fail", Handler: func(context.Context, Invocation) Outcome { return Failure("hook-failed", false, errors.New("boom")) }})
+	hookPipeline := spec.Pipeline{Concurrency: 1, Nodes: []spec.Stage{{ID: "body", Run: spec.Run{Stage: "fail"}}}}
+	main := spec.Pipeline{Concurrency: 1, Nodes: []spec.Stage{
+		{ID: "first", Run: spec.Run{HookInvoke: "audit"}},
+		{ID: "second", Needs: []string{"first"}, RunOn: []string{OutcomeObserved}, Run: spec.Run{HookInvoke: "audit"}},
+	}}
+	runner := NewRunner(reg).WithPipelines(map[string]spec.Pipeline{"main": main, "hook": hookPipeline}).WithHooks(map[string]spec.Hook{"audit": {PipelineRef: "hook", MaxInvocations: 1, Failure: "continue"}})
+	out := runner.RunPipelineOutcome(context.Background(), "main", NewState())
+	if out.Class != OutcomeFailed || out.Code != "hook-limit" {
+		t.Fatalf("outcome = %#v", out)
 	}
 }

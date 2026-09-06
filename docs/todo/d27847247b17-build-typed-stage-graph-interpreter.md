@@ -3,7 +3,7 @@ id: d27847247b17
 kind: task
 title: Build typed stage graph interpreter
 seq: 5
-status: doing
+status: done
 priority: p0
 created: 2026-09-02T20:26:06.219979Z
 sprint: 106

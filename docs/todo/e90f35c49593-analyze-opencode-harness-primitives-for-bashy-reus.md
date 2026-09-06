@@ -3,8 +3,8 @@ id: e90f35c49593
 kind: task
 title: Analyze OpenCode harness primitives for Bashy reuse
 seq: 25
-status: todo
-priority: p1
+status: done
+priority: p0
 created: 2026-09-02T20:52:27.345179Z
 sprint: 106
 ---

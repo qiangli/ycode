@@ -3,7 +3,7 @@ id: 3a5d19e21d35
 kind: task
 title: Implement durable HITL interrupt and resume
 seq: 11
-status: todo
+status: done
 priority: p0
 created: 2026-09-02T20:26:06.327647Z
 sprint: 106

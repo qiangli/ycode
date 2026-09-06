@@ -15,23 +15,41 @@ memory policy or approval policy.
 
 ## Configuration contract
 
+The detailed schema design of record is
+[`docs/harness-schema-design.md`](harness-schema-design.md), with the complete
+self-hosting executable fixture at `examples/agent.yaml`. It incorporates
+the useful resource-declaration lessons from the predecessor resource corpus
+while rejecting its implicit inheritance,
+wildcard tool grants, scalar secrets and prompt-encoded orchestration policy.
+The strict compiler and typed interpreter implement this contract. The
+executable ownership ledger in
+[`docs/harness-capability-map.yaml`](harness-capability-map.yaml) keeps the
+fixture, closed stage catalog, run forms, frontends, Bashy/sh seams and legacy
+deletion surfaces synchronized.
+The reprioritized dependency graph and delivery gates are machine-readable in
+[`docs/sprint-106-execution.yaml`](sprint-106-execution.yaml); its phase order,
+not the historical story `seq`, governs execution.
+
 `apiVersion: ycode.dev/v1alpha1` and `kind: Harness` identify the first format.
-The top-level sections are `metadata`, `harness`, `providers`, `models`,
-`context`, `input`, `memory`, `bashy`, `hitl`, `sessions`, `pipelines`, `agents`,
-`frontends` and `observability`.
+The only top-level sections are `apiVersion`, `kind`, `metadata` and `spec`.
+`spec` is a closed resource graph containing runtime, content sources,
+providers, concrete models, model routes, the sole Bashy tool, contexts,
+memory, queues, sessions, policies, placements, locks, hooks, skills, presets,
+pipelines, agents, frontends, triggers, sinks and observability.
 
 The loader rejects unknown and duplicate keys, missing references, invalid
-stage ordering, unbounded loops and cycles outside `repeat`. It supports only
-`${ENV}` / `${ENV:-default}` scalar substitution and `file:` content sources.
-Content files cannot add configuration. Relative files resolve from the YAML
-directory and remain inside declared readable roots. Resolved secrets never
-appear in dumps, events, errors or telemetry.
+stage ordering, unbounded loops and illegal cycles. Environment and secret
+access uses structured `valueFrom` and `secretRef` objects; scalar
+interpolation is rejected. Content uses mutually exclusive `text` or `file`
+objects and cannot add configuration. Relative files resolve from the YAML
+directory and remain inside declared readable roots after symlink evaluation.
+Resolved secrets never appear in compiled documents, dumps, events,
+checkpoints, errors or telemetry.
 
-There are no runtime behavior defaults. The shipped example is complete and is
-the source of recommended policy. `examples/agent.yaml` is not a toy: it is the
-canonical self-hosting definition of ycode itself. The binary's ordinary
-one-shot, interactive and service entrypoints must load that document and may
-not assemble an equivalent pipeline in Go.
+There are no runtime behavior defaults. `examples/agent.yaml` is the canonical
+compiled and executable contract fixture. The
+binary's ordinary one-shot, interactive and service entrypoints must load that
+document and may not assemble an equivalent pipeline in Go.
 
 ## Prior-art reconstruction audit
 
@@ -93,11 +111,11 @@ kernel reuses the proven `coreutils/pkg/dag` graph/scheduler seam with a harness
 stage executor; it does not reuse DAG.md parsing, shell task bodies, caching or
 build-specific policy.
 
-The stage catalog begins with `input.read`, `context.load`, `memory.recall`,
-`prompt.assemble`, `session.append`, `llm.call`, `bashy.preflight`,
-`hitl.review`, `bashy.execute`, `memory.write`, `checkpoint.save`,
-`agent.invoke`, `output.emit`, plus dependency edges, `when`, `switch`, `repeat`,
-`retry`, `forEach`, named pipeline calls and `fallback`.
+The closed stage catalog and its YAML policy owner are frozen in
+`docs/harness-capability-map.yaml`. Control is limited to dependency edges,
+structured `when`, `switch`, bounded `repeat`, bounded `retry`, bounded
+`forEach`, named pipeline calls, bounded `fallback`, and explicit
+`hook.invoke`.
 Stages read and write named fields in typed run state. A compiled pipeline is
 invalid when a stage can read a value that no predecessor produced.
 
@@ -111,10 +129,13 @@ messages, Bashy calls/results, approvals, compaction and agent handoffs.
 
 ## Bashy and HITL
 
-The portable `bashy` tool accepts `script`, `timeout_ms` and
-`max_output_chars`. Its result records stdout, stderr, exit or timeout outcome,
-signal, truncation and an optional spill reference. Non-zero exits and partial
-timeout output are observations, not transport failures.
+The portable `bashy` tool accepts the seven operations `preflight`, `execute`,
+`start`, `poll`, `stdin`, `signal`, and `cancel`. Launch requests bind the
+script, timeout, output limits, and execution context; durable controls bind an
+opaque job identity, generation, and binary output cursors. Results preserve
+stdout/stderr bytes or spill references, exit or timeout outcome, signal, and
+duration. Non-zero exits and partial timeout output are observations, not
+transport failures.
 
 The Bashy story exports a stable Go runner from the sibling repository. Ycode
 embeds it so the release remains one static binary. Preflight and execution use
@@ -135,9 +156,10 @@ top-level resources and select pipelines by reference. Subagents use
 `agent.invoke`; switching agents changes the selected roster entry rather than
 changing runtime code.
 
-The new embedding API is `Load`, `Validate`, `Run`, `Resume` and streamed
-`Event`. Compatibility with the old config, wire format and Go API is not a
-goal. Existing mature provider, session and memex implementations may be
+The embedding API is `Validate`, `Load`, `Harness.Run`, `Harness.Resume`,
+`Harness.Fork`, `Harness.Payload`, `Harness.Close`, and streamed `Event`.
+Compatibility with the old config, wire format and Go API is not a goal.
+Existing mature provider and memex implementations may be
 adapted behind stages, but their orchestration policy must not leak through.
 
 ## Delivery waves
@@ -178,8 +200,8 @@ inside a wave may proceed in parallel only when file ownership is disjoint.
 - Replay reconstructs exact model input after tool use, compaction, subagent
   invocation and interruption.
 - One-shot, TUI, server, ACP and embedding pass the same lifecycle suite.
-- macOS, Linux and Windows gates pass or reject unsupported effects during
-  validation.
+- The five release targets pass their Linux, macOS, or Windows native gate;
+  unsupported effects are rejected during validation.
 - `bashy dag build` passes in ycode and the relevant Bashy gate passes in the
   sibling repository.
 - The live tree contains no settings merge, policy-heavy conversation loop or

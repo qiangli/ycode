@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -10,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/qiangli/ycode/internal/capabilities"
-	"github.com/qiangli/ycode/internal/runtime/config"
 )
 
 // TestCapabilityRegistry is the cross-cutting consistency gate. For
@@ -18,10 +16,7 @@ import (
 // lint asserts:
 //
 //   - cli verbs resolve to real subcommands under rootCmd
-//   - config paths reflect-resolve on *config.Config
-//
-// HTTP routes are NOT validated — they're wired programmatically in
-// serve.go and parsing the AST is brittle. See registry.yaml rule #6.
+//   - the legacy config registry is empty; runtime policy lives in agent.yaml
 //
 // When this test fails: the right fix is almost never "loosen the
 // lint". Either restore the missing surface, or update the registry
@@ -34,7 +29,6 @@ func TestCapabilityRegistry(t *testing.T) {
 	}
 
 	cobraVerbs := collectTopLevelVerbs(rootCmd)
-	cfgPaths := collectConfigPaths(reflect.TypeOf(config.Config{}), "")
 
 	var violations []string
 
@@ -54,11 +48,7 @@ func TestCapabilityRegistry(t *testing.T) {
 		}
 
 		for _, path := range c.Config {
-			if !configPathExists(reflect.TypeOf(config.Config{}), path) {
-				violations = append(violations,
-					fmt.Sprintf("[%s] config: path %q does not resolve on config.Config (known paths: %d)",
-						c.ID, path, len(cfgPaths)))
-			}
+			violations = append(violations, fmt.Sprintf("[%s] legacy config path %q is forbidden; declare it in agent.yaml", c.ID, path))
 		}
 	}
 
@@ -120,58 +110,6 @@ func collectTopLevelVerbs(root *cobra.Command) map[string]bool {
 	out := map[string]bool{}
 	for _, c := range root.Commands() {
 		out[c.Name()] = true
-	}
-	return out
-}
-
-// configPathExists walks a dotted struct path on the Config root and
-// returns true if every segment resolves to a field. Pointer indirection
-// is automatic. The check matches Go field names (case-sensitive), NOT
-// json tags — see registry.yaml rule 5.
-func configPathExists(root reflect.Type, path string) bool {
-	cur := root
-	for _, seg := range strings.Split(path, ".") {
-		for cur.Kind() == reflect.Ptr {
-			cur = cur.Elem()
-		}
-		if cur.Kind() != reflect.Struct {
-			return false
-		}
-		f, ok := cur.FieldByName(seg)
-		if !ok {
-			return false
-		}
-		cur = f.Type
-	}
-	return true
-}
-
-// collectConfigPaths flattens the Config struct to a set of dotted
-// paths for the diagnostic message in TestCapabilityRegistry. Capped at
-// one level of nesting to avoid explosion; the lint resolves arbitrary
-// depth via configPathExists.
-func collectConfigPaths(t reflect.Type, prefix string) []string {
-	for t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-	if t.Kind() != reflect.Struct {
-		return nil
-	}
-	var out []string
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if !f.IsExported() {
-			continue
-		}
-		path := f.Name
-		if prefix != "" {
-			path = prefix + "." + f.Name
-		}
-		out = append(out, path)
-		// One level deep only.
-		if prefix == "" {
-			out = append(out, collectConfigPaths(f.Type, path)...)
-		}
 	}
 	return out
 }

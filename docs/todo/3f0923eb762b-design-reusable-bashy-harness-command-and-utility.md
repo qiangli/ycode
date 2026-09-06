@@ -3,7 +3,7 @@ id: 3f0923eb762b
 kind: task
 title: Design reusable Bashy harness command and utility kit
 seq: 28
-status: todo
+status: done
 priority: p0
 created: 2026-09-02T20:52:27.503815Z
 sprint: 106

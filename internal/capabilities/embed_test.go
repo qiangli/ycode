@@ -1,6 +1,7 @@
 package capabilities
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -43,6 +44,30 @@ func TestRegistryParses(t *testing.T) {
 				t.Errorf("capability %q: unknown audience %q (allowed: agent, human, ci, runtime)",
 					c.ID, aud)
 			}
+		}
+	}
+}
+
+func TestYAMLHarnessCapabilityIsCanonical(t *testing.T) {
+	registry, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness := registry.ByID("yaml_harness")
+	if harness == nil || !strings.Contains(harness.Summary, "agent.yaml") {
+		t.Fatalf("yaml_harness capability does not describe the canonical lifecycle: %#v", harness)
+	}
+	if len(harness.Config) != 0 {
+		t.Fatalf("yaml_harness must not expose legacy host config: %v", harness.Config)
+	}
+	for _, id := range []string{"lifecycle", "bashy", "resources", "operability"} {
+		capability := registry.ByID(id)
+		if capability == nil {
+			t.Errorf("missing YAML harness capability family %q", id)
+			continue
+		}
+		if strings.Contains(strings.ToLower(capability.Summary), "autopilot") || strings.Contains(strings.ToLower(capability.Summary), "native tool") {
+			t.Errorf("capability %q still advertises legacy harness policy: %q", id, capability.Summary)
 		}
 	}
 }

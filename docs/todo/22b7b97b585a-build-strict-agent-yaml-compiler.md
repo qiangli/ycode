@@ -3,7 +3,7 @@ id: 22b7b97b585a
 kind: task
 title: Build strict agent.yaml compiler
 seq: 4
-status: doing
+status: done
 priority: p0
 created: 2026-09-02T20:26:06.20253Z
 sprint: 106

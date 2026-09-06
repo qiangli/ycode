@@ -91,3 +91,48 @@ func TestCheckpointAndEventDataAreRedacted(t *testing.T) {
 		}
 	}
 }
+
+func TestReplayRejectsTamperedPayloadAndChain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Append(Draft{SessionID: "s", RunID: "r", Type: "one", Data: "original"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), "original", "tampered", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Replay(path); err == nil || !strings.Contains(err.Error(), "payload digest mismatch") {
+		t.Fatalf("replay error = %v", err)
+	}
+}
+
+func TestPayloadStoreRoundTripAndIntegrity(t *testing.T) {
+	store, err := OpenPayloadStore(filepath.Join(t.TempDir(), "payloads"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := store.Put([]byte("model-visible bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(digest)
+	if err != nil || string(got) != "model-visible bytes" {
+		t.Fatalf("get = %q, %v", got, err)
+	}
+	if again, err := store.Put(got); err != nil || again != digest {
+		t.Fatalf("idempotent put = %q, %v", again, err)
+	}
+	if err := os.WriteFile(store.path(digest), []byte("corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(digest); err == nil {
+		t.Fatal("expected corruption error")
+	}
+}

@@ -3,6 +3,7 @@ package event
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,33 +20,47 @@ const SchemaVersion = 1
 // Event is one durable state transition. Data is intentionally opaque to the
 // store; stage implementations own their versioned payloads.
 type Event struct {
-	SchemaVersion int             `json:"schema_version"`
-	Sequence      uint64          `json:"sequence"`
-	Time          time.Time       `json:"time"`
-	SessionID     string          `json:"session_id"`
-	RunID         string          `json:"run_id"`
-	StageID       string          `json:"stage_id,omitempty"`
-	Type          string          `json:"type"`
-	CallID        string          `json:"call_id,omitempty"`
-	Data          json.RawMessage `json:"data,omitempty"`
+	SchemaVersion  int             `json:"schema_version"`
+	Sequence       uint64          `json:"sequence"`
+	Time           time.Time       `json:"time"`
+	SessionID      string          `json:"session_id"`
+	RunID          string          `json:"run_id"`
+	StageID        string          `json:"stage_id,omitempty"`
+	Type           string          `json:"type"`
+	CallID         string          `json:"call_id,omitempty"`
+	CausationID    string          `json:"causation_id,omitempty"`
+	CorrelationID  string          `json:"correlation_id,omitempty"`
+	ConfigDigest   string          `json:"config_digest,omitempty"`
+	StateBefore    uint64          `json:"state_before,omitempty"`
+	StateAfter     uint64          `json:"state_after,omitempty"`
+	PayloadDigest  string          `json:"payload_digest,omitempty"`
+	PreviousDigest string          `json:"previous_digest,omitempty"`
+	Digest         string          `json:"digest"`
+	Data           json.RawMessage `json:"data,omitempty"`
 }
 
 // Draft is an event before the store assigns durable ordering metadata.
 type Draft struct {
-	SessionID string
-	RunID     string
-	StageID   string
-	Type      string
-	CallID    string
-	Data      any
+	SessionID     string
+	RunID         string
+	StageID       string
+	Type          string
+	CallID        string
+	CausationID   string
+	CorrelationID string
+	ConfigDigest  string
+	StateBefore   uint64
+	StateAfter    uint64
+	Data          any
 }
 
 // Store appends newline-delimited JSON events and synchronizes each append.
 type Store struct {
-	mu   sync.Mutex
-	path string
-	next uint64
-	now  func() time.Time
+	mu             sync.Mutex
+	path           string
+	next           uint64
+	previousDigest string
+	now            func() time.Time
 }
 
 // Checkpoint is an atomic snapshot tied to an exact event-log position.
@@ -72,7 +87,11 @@ func Open(path string) (*Store, error) {
 	if len(events) > 0 {
 		next = events[len(events)-1].Sequence + 1
 	}
-	return &Store{path: abs, next: next, now: time.Now}, nil
+	previousDigest := ""
+	if len(events) > 0 {
+		previousDigest = events[len(events)-1].Digest
+	}
+	return &Store{path: abs, next: next, previousDigest: previousDigest, now: time.Now}, nil
 }
 
 // Append writes and fsyncs one event before returning it to the caller.
@@ -86,7 +105,11 @@ func (s *Store) Append(d Draft) (Event, error) {
 	if err != nil {
 		return Event{}, fmt.Errorf("marshal event data: %w", err)
 	}
-	e := Event{SchemaVersion: SchemaVersion, Sequence: s.next, Time: s.now().UTC(), SessionID: d.SessionID, RunID: d.RunID, StageID: d.StageID, Type: d.Type, CallID: d.CallID, Data: data}
+	e := Event{SchemaVersion: SchemaVersion, Sequence: s.next, Time: s.now().UTC(), SessionID: d.SessionID, RunID: d.RunID, StageID: d.StageID, Type: d.Type, CallID: d.CallID, CausationID: d.CausationID, CorrelationID: d.CorrelationID, ConfigDigest: d.ConfigDigest, StateBefore: d.StateBefore, StateAfter: d.StateAfter, PayloadDigest: digestBytes(data), PreviousDigest: s.previousDigest, Data: data}
+	e.Digest, err = eventDigest(e)
+	if err != nil {
+		return Event{}, fmt.Errorf("digest event: %w", err)
+	}
 	line, err := json.Marshal(e)
 	if err != nil {
 		return Event{}, fmt.Errorf("marshal event: %w", err)
@@ -109,7 +132,22 @@ func (s *Store) Append(d Draft) (Event, error) {
 		return Event{}, fmt.Errorf("close event log: %w", closeErr)
 	}
 	s.next++
+	s.previousDigest = e.Digest
 	return e, nil
+}
+
+func digestBytes(value []byte) string {
+	sum := sha256.Sum256(value)
+	return fmt.Sprintf("sha256:%x", sum[:])
+}
+
+func eventDigest(e Event) (string, error) {
+	e.Digest = ""
+	raw, err := json.Marshal(e)
+	if err != nil {
+		return "", err
+	}
+	return digestBytes(raw), nil
 }
 
 // SaveCheckpoint atomically persists state after all events through the
@@ -208,6 +246,7 @@ func Decode(r io.Reader) ([]Event, error) {
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	var events []Event
 	openCalls := make(map[string]struct{})
+	previousDigest := ""
 	for line := 1; scanner.Scan(); line++ {
 		var e Event
 		if err := json.Unmarshal(scanner.Bytes(), &e); err != nil {
@@ -222,6 +261,16 @@ func Decode(r io.Reader) ([]Event, error) {
 		}
 		if e.SessionID == "" || e.RunID == "" || e.Type == "" || e.Time.IsZero() {
 			return nil, fmt.Errorf("event line %d: missing required metadata", line)
+		}
+		if e.PreviousDigest != previousDigest {
+			return nil, fmt.Errorf("event line %d: previous digest %q, expected %q", line, e.PreviousDigest, previousDigest)
+		}
+		if got := digestBytes(e.Data); e.PayloadDigest != got {
+			return nil, fmt.Errorf("event line %d: payload digest mismatch", line)
+		}
+		wantDigest, err := eventDigest(e)
+		if err != nil || e.Digest != wantDigest {
+			return nil, fmt.Errorf("event line %d: event digest mismatch", line)
 		}
 		switch e.Type {
 		case "bashy.requested":
@@ -239,6 +288,7 @@ func Decode(r io.Reader) ([]Event, error) {
 			delete(openCalls, e.CallID)
 		}
 		events = append(events, e)
+		previousDigest = e.Digest
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read event log: %w", err)

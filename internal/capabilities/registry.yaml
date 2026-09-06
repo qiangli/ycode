@@ -1,214 +1,43 @@
-# ycode capability registry — the single declared mapping of capability
-# families to their surfaces (config / CLI / HTTP).
-#
-# THIS FILE IS THE SOURCE OF TRUTH for which capabilities ycode claims
-# to expose where. It is consumed by:
-#
-#   - internal/capabilities/embed.go    — embeds + parses this YAML at
-#                                          build time.
-#   - cmd/ycode/capabilities_test.go    — CI gate. Reflect-resolves
-#                                          every declared CLI verb
-#                                          and config field
-#                                          and fails the build on any
-#                                          dangling reference.
-#   - cmd/ycode/docs.go (future)        — `ycode docs <id>` augments
-#                                          the prose doc with a
-#                                          machine-readable surface map
-#                                          generated from this file.
-#
-# ============================================================================
-# CURATION RULES — read before editing
-# ============================================================================
-#
-#  1. ONE ENTRY PER CAPABILITY FAMILY. A "capability" is a coherent
-#     bundle of verbs/knobs (e.g., "delegated sandbox", "memex memory",
-#     "browser automation"). Splitting too fine creates noise; lumping
-#     too coarse hides drift. When unsure, prefer matching the package
-#     name in internal/ that hosts the implementation.
-#
-#  2. DECLARE EVERY SURFACE THE CAPABILITY ACTUALLY USES. Missing rows
-#     are how drift hides. If a capability has no config knob, write
-#     `config: []` explicitly rather than omitting the key — the schema
-#     requires the key to be present so reviewers see the empty list.
-#
-#  3. CLI VERBS = top-level cobra command names (the first positional
-#     after `ycode`). Sub-subcommands (e.g., `model list`) are NOT
-#     listed here — the lint walks the top-level tree only. If a
-#     sub-subcommand has independent semantics (e.g., `memory import`
-#     vs `memory list`), promote both as separate capabilities, or add
-#     them with the qualified-name convention `memory/import` (the
-#     lint accepts the slash form and walks one level deeper).
-#
-#  4. NO MCP SURFACE. ycode retired MCP entirely
-#     (docs/plan-remove-mcp.md): no `ycode mcp` command, no /mcp/ route,
-#     no tool handlers. Entries carried an `mcp:` key listing tool names
-#     that no longer resolve to anything; the key is gone. Do not
-#     re-add one — a declared surface the binary does not serve is what
-#     made foreign CLIs fail at startup.
-#
-#  5. CONFIG FIELDS = dotted struct paths starting at the Config root,
-#     case-matching the Go field name (NOT the json tag). Examples:
-#     `Container.Enabled`, `Observability.SampleRate`. Nested pointers
-#     auto-deref. The lint reflect-resolves each path and fails on
-#     unknown segments.
-#
-#  6. HTTP ROUTES are INFORMATIONAL only — the lint does NOT validate
-#     them today because routes are wired programmatically in serve.go
-#     and parsing the AST is brittle. Keep this list in sync manually;
-#     a missed route here is a doc bug, not a build break. If route
-#     validation becomes important, lift the route table out of serve.go
-#     into a slice the lint can introspect.
-#
-#  7. AUDIENCE is one or more of: `agent` (foreign LLMs and agentic
-#     CLIs, reaching ycode through the shell built-ins or HTTP API),
-#     `human` (operators using CLI / TUI / web), `ci` (scripts and
-#     CI/CD pipelines), `runtime` (internal ycode subsystems, not a
-#     user-facing surface). Captures who the family is FOR — drives
-#     parity decisions in future audits.
-#
-#  8. INTENTIONAL GAPS are documented in the `gaps` field. Use this
-#     for a surface that is deliberately empty rather than
-#     missing-and-broken. The lint
-#     treats `gaps` entries as suppressed warnings.
-#
-# ============================================================================
+# Declared operator surfaces after the YAML-native harness cutover.
+# Execution capabilities are compiled from agent.yaml; this registry documents
+# CLI families only and is never an authorization or tool registry.
 
 schemaVersion: 1
 
 capabilities:
   - id: yaml_harness
-    summary: strict agent.yaml compilation and schema discovery
+    summary: strict agent.yaml validation, schema discovery, and compiled inspection
     audience: [agent, human, ci, runtime]
-    cli: [validate, schema]
+    cli: [validate, schema, config]
     http: []
     config: []
 
-  - id: docs
-    summary: agent-facing capability prompts (this registry's twin)
-    audience: [agent]
-    cli: [docs]
+  - id: lifecycle
+    summary: one-shot, stdin, REPL, TUI, ACP, and configured network projections of one Harness lifecycle
+    audience: [agent, human, runtime]
+    cli: [prompt, repl, acp, serve]
     http: []
     config: []
-
-  - id: pairing
-    summary: client pairing (bearer token) + serve manifest discovery
-    audience: [agent, human]
-    cli: [pair]
-    http: ["/manifest", "/.well-known/ycode-manifest.json"]
-    config: []
-
-  - id: cobra_runner
-    summary: invoke ycode CLI verbs over the HTTP API
-    audience: [agent]
-    cli: []
-    http: ["/ycode/api/commands"]
-    config: []
-
-  - id: treesitter
-    summary: polyglot AST search across Go/Python/JS/TS/Rust/Java/C/Ruby
-    audience: [agent, human]
-    cli: []
-    http: []
-    config: []
-
-  - id: shell
-    summary: agent-callable bash with parse/validate/sandbox hooks
-    audience: [agent]
-    cli: [shell, wrap]
-    http: []
-    config: []
-
-  - id: acp_agent
-    summary: ACP agent endpoint for external orchestrators over stdio
-    audience: [agent]
-    cli: [acp]
-    http: []
-    config: []
-
-  - id: skills
-    summary: ycode's universal skills (foreman et al.)
-    audience: [agent, human]
-    cli: [skill]
-    http: []
-    config: []
-
-  - id: container
-    summary: sandbox compatibility shim; execution is delegated outside ycode, for example to bashy
-    audience: [agent]
-    cli: []
-    http: []
-    config: []
-
-  - id: inference
-    summary: multi-provider routing and model selection
-    audience: [human]
-    cli: [model]
-    http: ["/ycode/api/embed", "/ycode/api/embed/batch", "/ycode/api/embed/dimensions"]
-    config: []
-
-  - id: pulse
-    summary: OTEL client telemetry export and local JSONL persistence
-    audience: [agent, human]
-    cli: [pulse]
-    http: []
-    config: [Observability.CollectorAddr, Observability.SampleRate, Observability.DataDir]
     gaps:
-      - "requires a running `ycode serve` — no offline path"
+      - network addresses, authentication, routing, triggers, and sinks are declared by agent.yaml
 
-  - id: memex
-    summary: persistent agent memory (semantic + structured)
+  - id: bashy
+    summary: sole model tool and operator shell execution through compiled preflight, policy, authorization, and fencing
     audience: [agent, human]
-    cli: [memory]
-    http: ["/memos/", "/graph/"]
-    config: []
-
-  - id: repomap
-    summary: token-budgeted file→symbol overview
-    audience: [agent]
-    cli: []
+    cli: [shell, tools]
     http: []
     config: []
 
-  - id: codegraph
-    summary: gfy-backed code knowledge graph (DQL-queryable)
-    audience: [agent, human]
-    cli: []
-    http: ["/graph/"]
-    config: []
-
-  - id: github
-    summary: GitHub PR / issue / check-run access
-    audience: [agent]
-    cli: []
-    http: []
-    config: []
-
-  - id: orchestration
-    summary: multi-agent task queue + autopilot loops
-    audience: [human, agent]
-    cli: [serve, prompt]
-    http: ["/ycode/api/sessions", "/ycode/api/groups", "/ycode/api/commands", "/chat/"]
-    config: [Tasks.CICommand, Tasks.AutoMerge, Chat.Enabled]
-    gaps:
-      - "in-process orchestration primitives (Agent, Worker, Team, Handoff) intentionally have no remote surface — would let foreign agents fork ycode's runtime"
-
-  - id: bootstrap
-    summary: repo + foreign-tool initialization
+  - id: resources
+    summary: read-only inspection of models, skills, and memory resources compiled from agent.yaml
     audience: [human]
-    cli: [init, pair, wrap]
+    cli: [model, skill, memory]
     http: []
     config: []
 
-  - id: extract
-    summary: one-shot document text + LLM JSON extraction
-    audience: [agent]
-    cli: []
-    http: ["/ycode/api/extract"]
+  - id: operability
+    summary: offline documentation, compiled-harness health, feature metadata, and build identity
+    audience: [agent, human, ci]
+    cli: [docs, doctor, features, version]
+    http: []
     config: []
-
-  - id: dev_lifecycle
-    summary: operator commands (health, login, training, eval, healing)
-    audience: [human]
-    cli: [doctor, login, logout, heal, eval, features, version, config, tools]
-    http: ["/ycode/api/health", "/ycode/api/status", "/debug/pprof/"]
-    config: [SelfHeal.SinkPath]

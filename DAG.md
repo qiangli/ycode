@@ -6,26 +6,15 @@ default: help
 
 # ycode — DAG task file
 
-The task runner for this repo, run with `bashy dag <target>`. It replaces the
-Makefile, which is gone.
-
-Two things changed with the migration, both simplifications rather than
-translations:
-
-- **One binary, no build tags.** The Makefile's `TAG_LIST` carried `sqlite`,
-  `sqlite_unlock_notify` and `bindata`, and all three gate **zero files** in this
-  tree today — they were Gitea's, and Gitea left with `internal/gitserver`. The
-  fourth, `embed_spawn`, selected a *variant* (embedded shim vs. the symlink
-  fallback `spawn_embed.Available()` already implements). Dropping the tag set
-  also dissolves the Makefile's sub-make trick, which existed only because
-  `$(wildcard)` expands once per invocation.
-- **Releases are `bashy release`.** Cross-compilation, archives and checksums are
-  a config (`.goreleaser.yaml`) rather than a matrix of `dist/%` rules.
+The task runner for this repo is `bashy dag <target>`. Builds produce one
+YAML-native `ycode` binary with no build-tag variants. Release planning,
+cross-compilation, archives and checksums are declared in `.goreleaser.yaml`
+and executed locally through `bashy release`.
 
 Targets carry `Requires:` (dependency edges) and `Effects:` (declared caps).
 
 ```bash
-bashy dag --list        # what `make help` showed
+bashy dag --list        # list available targets
 bashy dag build         # full gate
 bashy dag test          # unit tests
 ```
@@ -54,10 +43,11 @@ Effects: read
 ```
 
 ### vet
-Static analysis over every package except priorart/.
+Static analysis over every package in this module. Nested prior-art modules are
+excluded by Go's module boundary.
 Effects: read
 ```bash
-go vet $(go list ./... | grep -v '/priorart/')
+go vet ./...
 ```
 
 ### verify-features
@@ -80,10 +70,11 @@ echo "Built bin/ycode"
 ```
 
 ### test
-Unit tests with the race detector, excluding priorart/.
+Unit tests with the race detector. Nested prior-art modules are excluded by
+Go's module boundary.
 Effects: read
 ```bash
-go test -short -race -count=1 $(go list ./... | grep -v '/priorart/')
+go test -short -race -count=1 ./...
 ```
 
 ### build
@@ -95,8 +86,7 @@ echo "build: gate passed"
 ```
 
 ### install
-Install bin/ycode into $DHNT_BIN_DIR. Shims are deliberately NOT installed —
-routing podman/docker/bash through ycode hijacks any tool that polls them.
+Install bin/ycode into $DHNT_BIN_DIR. Compatibility shims are not installed.
 Requires: build
 Effects: write
 ```bash
@@ -143,11 +133,56 @@ bashy release plan
 ```
 
 ### release-snapshot
-Build, archive and checksum every platform without a tag. Produces
-dist/ycode-<os>-<arch>.tar.gz, SHA256SUMS and release-ledger.json.
+Build, archive and checksum all five release targets without a tag. Produces
+`dist/ycode-<os>-<arch>.tar.gz`, `SHA256SUMS` and `release-ledger.json`.
 Effects: write
 ```bash
 bashy release --snapshot
+```
+
+### qa
+Run the native, LLM-free release gate against exact bytes published under
+`$YCODE_TEST_VERSION` (for example `v0.4.0-dev`). The gate downloads this
+host's archive and the shared `SHA256SUMS`, verifies before extraction, then
+checks the version, help and in-process shell surfaces. All work stays in
+`.qa/`. `YCODE_REPO` defaults to `qiangli/ycode`.
+Effects: write, net
+```bash
+set -e
+BASHY_EXE="${BASHY:-bashy}"
+VER="${YCODE_TEST_VERSION:?set YCODE_TEST_VERSION to a published tag such as v0.4.0-dev}"
+REPO="${YCODE_REPO:-qiangli/ycode}"
+BASEV="${VER%%-*}"
+repo_root="$PWD"
+fixture="$repo_root/examples/agent.yaml"
+[ -f "$fixture" ] || { echo "qa: canonical fixture missing: $fixture" >&2; exit 1; }
+# Strict compilation resolves this declaration; the smoke makes no model call.
+export OPENAI_API_KEY=ycode-release-qa-no-network
+uname_s=$("$BASHY_EXE" uname -s)
+case "$uname_s" in *[Dd]arwin*) os=darwin;; *[Ll]inux*) os=linux;; *[Ww]indows*|*[Mm][Ii][Nn][Gg]*|*[Mm][Ss][Yy][Ss]*) os=windows;; *) echo "qa: unsupported OS $uname_s" >&2; exit 1;; esac
+arch=$("$BASHY_EXE" uname -m)
+case "$arch" in arm64|aarch64) arch=arm64;; x86_64|amd64) arch=amd64;; *) echo "qa: unsupported architecture $arch" >&2; exit 1;; esac
+[ "$os/$arch" != windows/arm64 ] || { echo "qa: windows/arm64 is not a release target" >&2; exit 1; }
+asset="ycode-${os}-${arch}.tar.gz"
+url="https://github.com/${REPO}/releases/download/${VER}"
+d="$repo_root/.qa"
+trap 'cd "$repo_root"; "$BASHY_EXE" rm -rf "$d"' EXIT
+"$BASHY_EXE" mkdir -p "$d"
+"$BASHY_EXE" curl -fsSL -o "$d/$asset" "$url/$asset"
+"$BASHY_EXE" curl -fsSL -o "$d/SHA256SUMS" "$url/SHA256SUMS"
+want=$(awk -v a="$asset" '$2==a || $2=="*"a {print $1}' "$d/SHA256SUMS")
+[ -n "$want" ] || { echo "qa: $asset is absent from SHA256SUMS" >&2; exit 1; }
+got=$("$BASHY_EXE" sha256sum "$d/$asset" | awk '{print $1}')
+[ "$want" = "$got" ] || { echo "qa: sha256 mismatch for $asset" >&2; exit 1; }
+cd "$d"; "$BASHY_EXE" tar -xzf "$asset"
+bin="$PWD/ycode"; [ "$os" = windows ] && bin="$PWD/ycode.exe"
+[ -f "$bin" ] || { echo "qa: archive has no ycode binary" >&2; exit 1; }
+chmod +x "$bin" 2>/dev/null || true
+vout=$("$bin" --file "$fixture" version 2>&1)
+case "$vout" in *"$BASEV"*) ;; *) echo "qa: expected $BASEV, got $vout" >&2; exit 1;; esac
+"$bin" --file "$fixture" --help >/dev/null
+[ "$("$bin" shell --file "$fixture" -c pwd)" = "$repo_root/examples" ] || { echo "qa: shell workspace smoke failed" >&2; exit 1; }
+echo "Results: PASS $VER $os/$arch ($asset, sha256 verified)"
 ```
 
 **Tests beyond the unit suite.** Each needs setup — read the note before running.
@@ -160,18 +195,17 @@ go test -tags integration -v -count=1 ./internal/integration/...
 ```
 
 ### test-tui
-TUI integration tests (direct Update + teatest lifecycle).
+Local frontend parity and interactive approval lifecycle tests.
 Effects: read
 ```bash
-go test -tags integration -count=1 -timeout 60s ./internal/cli/...
+go test -race -count=1 ./internal/harness/frontend -run 'Test(OneShotStdinREPLAndTUIHaveCanonicalParity|InteractiveApprovalResumeUsesSameEventStream)'
 ```
 
 ### test-tui-e2e
-TUI end-to-end in a PTY. Needs a compiled binary and a real terminal.
-Requires: compile
+Interactive frontend projection in a pseudo-terminal.
 Effects: read
 ```bash
-go test -tags e2e -count=1 -timeout 120s ./internal/cli/...
+go test -race -count=1 -timeout 60s ./internal/harness/frontend -run '^TestPTYREPLProjectsCanonicalEvents$'
 ```
 
 ### test-ui
@@ -203,24 +237,4 @@ Memory retrieval quality benchmarks. No LLM.
 Effects: read
 ```bash
 go test -run XXX -bench . -benchtime 1x ./pkg/memex/...
-```
-
-**CI.**
-
-### ci-image
-Build the ycode-builder image used by the containerized matrix.
-Effects: write net
-```bash
-${DOCKER:-podman} build -t ycode-builder .
-```
-
-### ci
-Run the containerized matrix locally. Slow, definitive. Needs a container
-engine; set YCODE_CI_HOST to run it on another machine instead. Bind-mounts
-the worktree, its pinned sibling modules, and any external git-common-dir at
-their real host paths — see scripts/ci-run.sh for why.
-Requires: ci-image
-Effects: write net
-```bash
-./scripts/ci-run.sh
 ```

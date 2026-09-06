@@ -1,0 +1,261 @@
+apiVersion: ycode.dev/v1alpha1
+kind: SprintExecution
+metadata:
+  sprint: 106
+  name: yaml-native-bashy-harness
+  status: done
+spec:
+  terminalGate: release
+  rules:
+    maxStoryPoints: 3
+    soleModelTool: bashy
+    hiddenGoPolicy: forbidden
+    legacyDeletionRequires: lifecycle-conformance
+    submoduleOrder: [bashy, ycode, umbrella-pins]
+
+  phases:
+    - id: discovery
+      gate: audited-contract-inputs
+      parallel:
+        - [1d83569387a0, 1ba0a93865e5, e90f35c49593, fce9f612a984, bdc739ead925]
+      serial: [3f0923eb762b]
+    - id: contract
+      needs: [discovery]
+      gate: frozen-contract
+      serial: [ddbcf0c069ed]
+    - id: kernel
+      needs: [contract]
+      gate: contract-fixtures
+      parallel:
+        - [22b7b97b585a, feb4810da359, d27847247b17, 59ff6c4fc5c1]
+      serial: [0e6063e03ae7]
+    - id: bashy-kit
+      needs: [contract]
+      gate: stable-bashy-utilities
+      serial: [cae1f3feef40]
+    - id: core-turn
+      needs: [kernel]
+      gate: restart-safe-turn
+      parallel:
+        - [fbb1a9535d2f, c9f5a1c0ef44, 10e72779f8cd]
+      serial: [3a5d19e21d35, 1b2d4164770e]
+    - id: integration
+      needs: [kernel, bashy-kit]
+      gate: sole-tool-integration
+      serial: [80fd0024965a]
+    - id: genericity
+      needs: [core-turn, integration]
+      gate: differential-impersonation
+      serial: [edfd8def2b5c, d57c126b24d8]
+    - id: surfaces
+      needs: [core-turn]
+      gate: frontend-parity
+      parallel:
+        - [8f301e837398, 46d26643030a, 10b93a78d320]
+      serial: [30f4f0fb1182, 7335acc69953]
+    - id: release
+      needs: [genericity, surfaces]
+      gate: sprint-complete
+      serial: [6c9a39e6a335, ce115e211851, 795d36982fd7, c99d404d919c]
+
+  stories:
+    1d83569387a0:
+      repo: bashy
+      title: Export embeddable Bashy runner API
+      priority: critical
+      state: done
+      evidence: Request-local Preflight and Run return bashy-run-v1 outcomes with exact exit, signal, duration, and bounded streams; focused Bashy and sh signal gates pass.
+    1ba0a93865e5:
+      repo: ycode
+      title: Analyze Codex harness primitives for Bashy reuse
+      priority: critical
+      state: done
+    e90f35c49593:
+      repo: ycode
+      title: Analyze OpenCode harness primitives for Bashy reuse
+      priority: critical
+      state: done
+    fce9f612a984:
+      repo: ycode
+      title: Analyze OpenClaw harness primitives for Bashy reuse
+      priority: critical
+      state: done
+    bdc739ead925:
+      repo: ycode
+      title: Analyze Hermes Agent harness primitives for Bashy reuse
+      priority: critical
+      state: done
+    3f0923eb762b:
+      repo: ycode
+      title: Design reusable Bashy harness command and utility kit
+      priority: critical
+      state: done
+      needs: [1ba0a93865e5, e90f35c49593, fce9f612a984, bdc739ead925]
+    ddbcf0c069ed:
+      repo: ycode
+      title: Freeze YAML harness contract and capability map
+      priority: critical
+      state: done
+      evidence: Frozen v1alpha1 design and canonical fixture are bound to an executable ownership ledger covering the closed stage catalog, run forms, frontends, live ycode/Bashy/sh seams, legacy deletion surfaces, the sole Bashy model tool, and forbidden host-policy references; the canonical fixture compiles and repeated focused race gates pass.
+      needs: [3f0923eb762b]
+    22b7b97b585a:
+      repo: ycode
+      title: Build strict agent.yaml compiler
+      priority: critical
+      state: done
+      evidence: Strict spec compiler, structured values/secrets, immutable imports, typed refs/dataflow/expressions, reachability, authority/root/platform/merge gates, canonical dump and source-located errors pass repeated race tests.
+      needs: [ddbcf0c069ed]
+    feb4810da359:
+      repo: ycode
+      title: Create canonical append-only event store
+      priority: critical
+      state: done
+      evidence: Versioned monotonic JSONL events, hash-chain and payload digests, replay validation, atomic checkpoints, call/result pairing, redaction, and content-addressed replay payload storage pass focused race tests.
+      needs: [ddbcf0c069ed]
+    d27847247b17:
+      repo: ycode
+      title: Build typed stage graph interpreter
+      priority: critical
+      state: done
+      evidence: Typed/versioned state, atomic writes and CAS, closed stage registry, DAG fan-out/fan-in, expressions, skips, outcomes, cleanup, retry/backoff, bounded repeat/forEach/fallback, switch, and hooks pass race tests.
+      needs: [ddbcf0c069ed]
+    59ff6c4fc5c1:
+      repo: ycode
+      title: Normalize provider adapters around Bashy tool
+      priority: critical
+      state: done
+      evidence: Canonical mock, Anthropic, OpenAI-compatible, and Gemini stream adapter injects sole Bashy tool, preserves streaming/usage/call IDs, and emits typed terminal outcomes; focused race gate passes.
+      needs: [ddbcf0c069ed]
+    0e6063e03ae7:
+      repo: ycode
+      title: Prove harness language with prior-art reconstruction fixtures
+      priority: critical
+      state: done
+      evidence: Five complete self-hosted, Codex-like, OpenCode-like, OpenClaw-like, and Hermes-like YAML documents compile and execute through one neutral typed runner and deterministic mock adapter; checked-in JSONL golden traces match, every provider request exposes only Bashy, and the runtime source scan rejects product-specific branches under repeated race gates.
+      needs: [22b7b97b585a, feb4810da359, d27847247b17, 59ff6c4fc5c1]
+    cae1f3feef40:
+      repo: bashy
+      title: Implement extracted Bashy harness command and utility kit
+      priority: critical
+      state: done
+      evidence: Bashy pkg/harnessrunner implements the seven strict versioned operations, fail-closed intent/effect compilation, digest-bound authorization, durable jobs, sequenced stdin, typed restart ambiguity, and bounded binary spools; repeated race, vet, and three-platform compile gates pass.
+      needs: [3f0923eb762b]
+    80fd0024965a:
+      repo: ycode
+      title: Integrate extracted Bashy harness utilities
+      priority: critical
+      state: done
+      evidence: ycode now adapts Bashy pkg/harnessrunner directly through one Meta-bound boundary; preflight exposes typed Atlas effects to HITL, execution authorization binds config/run/node/state/lifecycle/attempt/idempotency/placement/policy revisions, and sync plus durable binary-cursor operations emit replayable events. Focused race tests and the full non-priorart short suite pass; Bashy's full short suite also passes after cancel became a lifecycle barrier.
+      needs: [cae1f3feef40, 0e6063e03ae7]
+    fbb1a9535d2f:
+      repo: ycode
+      title: Integrate embedded Bashy execution stages
+      priority: critical
+      state: done
+      evidence: Digest-bound preflight and execute share script, cwd, env and limits; structured exit/signal/timeout, cancellation, spill, and focused race gates pass.
+      needs: [1d83569387a0, d27847247b17]
+    c9f5a1c0ef44:
+      repo: ycode
+      title: Implement input context prompt and output stages
+      priority: critical
+      state: done
+      evidence: Canonical bounded input, immutable context snapshots, explicit prompt ordering, typed ports, ordered sinks, retry/dead-letter and replay payload events pass focused race tests.
+      needs: [d27847247b17, feb4810da359]
+    10e72779f8cd:
+      repo: ycode
+      title: Adapt memex and compaction into configured stages
+      priority: critical
+      state: done
+      evidence: Memex-backed recall/write and explicit compaction stages enforce YAML scopes, ranking, item/token/byte budgets, route selection, preservation, and configured failure behavior; focused race tests pass with replay payload references.
+      needs: [d27847247b17, feb4810da359]
+    3a5d19e21d35:
+      repo: ycode
+      title: Implement durable HITL interrupt and resume
+      priority: critical
+      state: done
+      evidence: Ordered policy evaluation and checkpointed HITL implement fail-closed ask/deny behavior, crash-safe one-use resume, digest/CAS binding, edit limits, re-preflight, and concurrent duplicate rejection; focused race tests pass.
+      needs: [fbb1a9535d2f, feb4810da359]
+    1b2d4164770e:
+      repo: ycode
+      title: Express and run the agentic loop from YAML
+      priority: critical
+      state: done
+      evidence: The compiled starter agent graph now runs through the neutral typed runner with registered provider, IO/context, memory, Bashy, policy/HITL, checkpoint, and output stages; deterministic mock-provider restart coverage verifies persisted checkpoints and hash-chain continuation, and focused race gates pass.
+      needs: [59ff6c4fc5c1, fbb1a9535d2f, c9f5a1c0ef44, 10e72779f8cd, 3a5d19e21d35]
+    edfd8def2b5c:
+      repo: ycode
+      title: Implement configured agent roster and subagents
+      priority: release-blocker
+      state: done
+      evidence: Compiled roster resolution invokes root and delegated agents through the same typed pipeline runner, enforces depth/concurrency/timeout and authority attenuation, and records lifecycle/handoff events; focused race tests pass.
+      needs: [1b2d4164770e]
+    d57c126b24d8:
+      repo: ycode
+      title: Implement behavioral harness impersonation profiles
+      priority: critical
+      state: done
+      evidence: Complete YAML-only Codex/OpenCode/OpenClaw/Hermes behavioral profiles compile and execute through the neutral typed DAG with deterministic provider injection and Bashy as the sole model-visible tool; differential goldens cover context/cache, memory/compaction, steering, provider/tool/HITL, retry, delegation, lifecycle, output, and digest-chained restart/resume, while a source gate excludes product-specific harness branches and unsupported wire/UI compatibility is explicit.
+      needs: [80fd0024965a, 1b2d4164770e, edfd8def2b5c]
+    8f301e837398:
+      repo: ycode
+      title: Migrate one-shot REPL and TUI frontends
+      priority: release-blocker
+      state: done
+      evidence: Typed one-shot, bounded stdin, line-oriented REPL, and presentation-only TUI adapters preserve canonical request metadata and render one controller event stream; context cancellation and REPL/TUI approval resume have parity across five repeated race gates with no frontend orchestration policy.
+      needs: [1b2d4164770e, 3a5d19e21d35]
+    46d26643030a:
+      repo: ycode
+      title: Migrate HTTP WebSocket and NATS frontends
+      priority: release-blocker
+      state: done
+      evidence: HTTP, WebSocket, and an injected nats.go subscription adapter share canonical controller input/events; compiled auth, listen address, endpoint, subject, limits and workspace confinement are enforced, streaming cancellation unsubscribes cleanly, and parity/auth/cancellation gates pass five repeated race runs.
+      needs: [1b2d4164770e, feb4810da359]
+    10b93a78d320:
+      repo: ycode
+      title: Replace the public Go embedding API
+      priority: release-blocker
+      state: done
+      evidence: Public Go embedding now strictly loads and validates agent.yaml, runs and resumes the neutral typed turn, streams canonical durable events with payload lookup, wires compiled OTel policy, and preserves legacy source compatibility through explicit deprecations; focused public and harness race gates pass.
+      needs: [22b7b97b585a, 1b2d4164770e]
+    30f4f0fb1182:
+      repo: ycode
+      title: Migrate ACP session resume and fork
+      priority: release-blocker
+      state: done
+      evidence: ACP delegates turns to the public YAML-native Harness, projects canonical output payloads, persists restart-safe sessions and hash-chained fork lineage, and routes fork through public Harness.Fork at a validated completed checkpoint without starting another loop. Optional coreutils ACP lifecycle capabilities preserve legacy runners; focused ycode and coreutils race/conformance gates pass.
+      needs: [edfd8def2b5c, feb4810da359, 1b2d4164770e]
+    7335acc69953:
+      repo: ycode
+      title: Reconcile utility commands with agent.yaml and Bashy
+      priority: release-blocker
+      state: done
+      evidence: doctor/config/model/tools/skill/memory now inspect the strict compiled agent.yaml graph; config set/unset, model use/p2p, wildcard legacy tool inventory, memory mutation and undeclared skill registries are absent. Legacy wrap remains only as an explicit disabled compatibility verb, interactive legacy shell is rejected, and shell -c runs through Bashy preflight, YAML policy evaluation and digest-bound execution with private control state. Focused cmd race tests, cmd vet, and the full non-priorart short suite pass.
+      needs: [8f301e837398, 46d26643030a, 10b93a78d320, 30f4f0fb1182]
+    6c9a39e6a335:
+      repo: ycode
+      title: Instrument stages with OTel GenAI conventions
+      priority: release-blocker
+      state: done
+      evidence: Optional compiled-config OTel observer traces every pipeline and stage, classifies model/Bashy/HITL/memory/agent/frontend operations with GenAI attributes, records outcomes/errors, and suppresses content unless recordContent is enabled; integration race tests pass.
+      needs: [feb4810da359, 7335acc69953]
+    ce115e211851:
+      repo: ycode
+      title: Build full lifecycle conformance and eval suite
+      priority: critical
+      state: done
+      evidence: A single machine-runnable harness-conformance target owns and repeatedly race-tests the frozen contract, five profile goldens, providers, synchronous/durable Bashy, replay, restart/live HITL, compaction, subagents, telemetry, local/network/NATS surfaces, public embedding, utility YAML boundaries, canonical ACP restart/fork and a real pseudo-terminal neutral REPL; platform disposition is explicit, and the complete count=3 gate passes on darwin-arm64.
+      needs: [d57c126b24d8, 7335acc69953, 6c9a39e6a335]
+    795d36982fd7:
+      repo: ycode
+      title: Cut over and delete the legacy harness
+      priority: critical
+      state: done
+      evidence: Every supported CLI, network, ACP, eval and public embedding entrypoint now loads the canonical agent.yaml through one neutral Harness composition root; the settings merger, policy-heavy conversation/session runtime, specialized model tool registry, native shell/toolexec and direct Git host fallback plus reverse-only adapters are physically removed. Whole-tree AST and production-closure gates enforce the boundary, and full short, full race and lifecycle conformance gates pass after cutover.
+      needs: [ce115e211851]
+    c99d404d919c:
+      repo: ycode
+      title: Align documentation and release contracts
+      priority: critical
+      state: done
+      evidence: Canonical README, architecture, usage, pipeline, schema, sprint, release, per-OS QA, task DAG and synchronized contributor briefs now describe only the executable agent.yaml, sole Bashy model tool, neutral Harness lifecycle and five-target byte-promotion contract. The truthful feature registry, YAML and Markdown link scans, CLI validation/help smokes, focused feature tests, and Bashy release check/plan all pass.
+      needs: [795d36982fd7]

@@ -1,482 +1,213 @@
-# ycode Usage
+# Using ycode
 
-This guide covers the `ycode` CLI binary. If you are new, start with `ycode doctor` to verify your setup.
+ycode executes the harness compiled from `agent.yaml`. CLI flags choose a file
+or a declared frontend; they do not override models, tools, retries, policy, or
+loop behavior.
 
-## Quick-start health check
-
-```bash
-go build -o bin/ycode ./cmd/ycode/
-./bin/ycode doctor
-```
-
-## Authentication
-
-### Anthropic API key
+## Prepare and validate a harness
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
+cp examples/agent.yaml agent.yaml
+export OPENAI_API_KEY='<provider key>'
+
+ycode schema > agent.schema.json
+ycode validate --file agent.yaml
+ycode config --file agent.yaml show
+ycode doctor --file agent.yaml
 ```
 
-### OpenAI-compatible providers
+`validate` rejects unknown keys and invalid cross-references, pipeline types,
+cycles, lifecycle transitions, platform declarations, policies, or limits.
+`config` is read-only inspection: `show`, `get <dot.path>`, and `path` are
+available; `set` and `unset` are not.
+
+The canonical file uses an OpenAI-compatible provider. The compiler/runtime
+also has normalized Anthropic and Gemini adapters. Provider endpoints and
+credential environment references are declared under `spec.providers`; they
+are not global ycode settings.
+
+## Run configured local frontends
+
+Submit one prompt:
 
 ```bash
-# OpenAI
-export OPENAI_API_KEY="sk-..."
-
-# Custom endpoint (Ollama, LM Studio, etc.)
-export OPENAI_API_KEY="local-dev-token"
-export OPENAI_BASE_URL="http://localhost:11434/v1"
-
-# OpenRouter
-export OPENAI_API_KEY="sk-or-v1-..."
-export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
+ycode --file agent.yaml prompt 'review the current changes'
+# Equivalent root one-shot form:
+ycode --file agent.yaml 'review the current changes'
 ```
 
-## CLI modes
-
-### Interactive REPL
+Pipe stdin or start a configured interactive frontend:
 
 ```bash
-ycode
+printf '%s\n' 'summarize this repository' | ycode --file agent.yaml
+ycode --file agent.yaml repl
+ycode --file agent.yaml
 ```
 
-Starts an interactive session. Type `/help` for available commands, `/quit` to exit.
+The selected frontend reference must exist in YAML and permit that mode. Input
+size, schema, identity, idempotency, agent route, HITL capability, and output
+sinks are compiled controls.
 
-### One-shot prompt
+Run a single Bashy program without a model call:
 
 ```bash
-ycode prompt "summarize this repository"
+ycode shell --file agent.yaml -c 'pwd'
 ```
 
-### Piped input
+For `shell`, put its local `--file` after the subcommand as shown. The command
+is preflighted, evaluated by the default agent's policy, and executed only on
+an allow decision with the same digest-bound cwd/environment/limits. There is
+no interactive legacy shell and no permission bypass flag.
+
+## Inspect compiled resources
+
+These commands report YAML resources and do not mutate a settings database:
 
 ```bash
-echo "explain this code" | ycode
-cat prompt.txt | ycode
-git diff | ycode --print "review these changes"
+ycode model --file agent.yaml list
+ycode tools --file agent.yaml list
+ycode memory --file agent.yaml list
+ycode skill --file agent.yaml list
+ycode config --file agent.yaml get spec.runtime.defaultAgentRef
+ycode version
 ```
 
-The `--print` flag outputs plain text without markdown rendering, useful for scripting.
+Use each command's `--help` for its exact read-only projections.
 
-### Headless convergence contract
+## Network frontends and ACP
 
-One-shot (`prompt` / `--print`) runs are bounded by two independent limits:
-
-- **Iteration backstop** (`maxToolIterations`, default 100): the absolute
-  ceiling on tool round-trips per run. Hitting it prints a `[TRUNCATED: …]`
-  notice and exits non-zero — a cut-off run never reads as a success.
-- **Convergence budget** (`convergenceBudget`, default 12): the number of
-  *consecutive* turns allowed with only read/search activity — file reads,
-  greps, globs, read-only shell pipelines — and no write, edit, or test/build
-  run. Varied exploration slips past the repeated-signature loop detectors;
-  this bounds it directly. When the budget runs dry the model gets **one
-  grace turn** with an explicit final-answer instruction. Answering in text
-  ends the run normally; calling tools again ends it non-zero with a
-  `[TRUNCATED: …]` notice.
-
-Turns that make measurable progress (a file write or edit, a mutating or
-test/build shell command) **reset** the convergence budget, so a long
-productive task keeps the full backstop. Set `convergenceBudget` to a negative
-value to disable the policy and keep only the backstop. Interactive sessions
-are unaffected — the policy applies to headless runs only.
-
-**Steering a headless run.** When the prompt is passed as an argument, lines
-written to the process's stdin while the run is in flight (for example by an
-orchestrator driving a pty) are treated as user steering. Steering is consumed
-at the **next turn boundary** — after the in-flight model turn and its tool
-calls complete; a running tool is never preempted. Each consumed line is
-acknowledged on the `--events` stream as a `steer.consumed` event carrying the
-text and the turn that will see it; if no such event appears, the steering did
-not land. To stop a run immediately, signal the process instead.
-
-### Continuous loop
+Start all declared HTTP, WebSocket, and NATS frontends:
 
 ```bash
-# CLI subcommand
-ycode loop --interval 5m --prompt review-prompt.md
-
-# Or via slash command in REPL
-/loop 5m /review
-/loop stop
+ycode --file agent.yaml serve
 ```
 
-Reads the prompt file each iteration, so edits take effect on the next run. Press Ctrl+C to stop.
+Listener addresses, endpoints, authentication, request limits, routes, resume
+support, and output delivery are taken from YAML. If no network frontend is
+declared, `serve` fails rather than inventing one.
 
-## Slash commands
+Serve Agent Client Protocol over stdio:
 
-<!-- BEGIN SLASH COMMANDS -->
-<!-- generated by `ycode features commands --write`; do not edit by hand -->
-
-### Automation
-
-| Command | Description |
-|---------|-------------|
-| `/advisor [topic]` | Get architectural advice or codebase insights |
-| `/commit [hint]` | Commit changes with AI-generated message |
-| `/review [commit\|staged\|branch]` | Review code changes (staged or recent commits) |
-| `/security-review [path\|staged]` | Run security analysis on code changes |
-
-### Discovery
-
-| Command | Description |
-|---------|-------------|
-| `/context` | Show context usage and instruction files |
-| `/tasks` | List running tasks |
-
-### Mode
-
-| Command | Description |
-|---------|-------------|
-| `/plan [query]` | Toggle plan mode or enter with a query |
-
-### Session
-
-| Command | Description |
-|---------|-------------|
-| `/agent [name\|nick\|L3] [--fresh] [--takeover]` | Switch to another agent, carrying this conversation |
-| `/cost` | Show token usage and cost |
-| `/detach` | Return to ycode from an attached agent |
-| `/help` | Show available commands |
-| `/model [name\|alias]` | Show or switch the current model |
-| `/rename <title>` | Rename the current session |
-| `/retry [new prompt]` | Remove last turn and re-send the last user message |
-| `/revert` | Revert file changes from the last agent turn |
-| `/search <query>` | Search across session history |
-| `/status` | Show session status |
-| `/tool [name] [--fresh] [--takeover]` | Switch to another agentic tool with its own settings |
-| `/version` | Show version |
-
-### Workspace
-
-| Command | Description |
-|---------|-------------|
-| `/config [model\|permissions\|memory\|session]` | Inspect config files and merged settings |
-| `/export [file]` | Export the current conversation to a file |
-| `/init [focus]` | Initialize workspace and generate context-aware AGENTS.md |
-| `/memory` | Inspect loaded instruction and memory files |
-
-### Built-in
-
-| Command | Description |
-|---------|-------------|
-| `/quit`, `/exit` | Exit ycode |
-| `/btw <query>` | Ask a side question without disturbing the current turn |
-| `/pause`, `/resume` | Pause or resume the running turn |
-| `!cmd`, `!!cmd` | Run a shell command; `!!` gives it the terminal |
-
-<!-- END SLASH COMMANDS -->
-
-## Configuration
-
-Config is loaded from up to four tiers (later overrides earlier):
-
-1. `~/.config/ycode/settings.json` (user-global, all projects)
-2. `~/.agents/ycode/projects/<id>/settings.json` (user-global, this project across checkouts) — `<id>` is the logical project id (see `internal/runtime/projectid`)
-3. `<cwd>/.agents/ycode/settings.json` (team-shared via git)
-4. `<cwd>/.agents/ycode/settings.local.json` (per-checkout, git-ignored)
-
-`Instructions` and `AllowedDirectories` append across tiers; other
-fields override. Tier 2 lets two checkouts of the same repo share
-settings without committing them through git.
-
-### Backups
-
-ycode keeps per-user-per-project state (settings and active runtime state)
-under `~/.agents/ycode/`. Back this directory up alongside your
-repos — losing it loses your task queue. The repo itself contains
-only the protocol doc (`docs/backlog.md`) and team-shared bits
-(`AGENTS.md`, `<cwd>/.agents/ycode/settings.json`).
-
-### Settings
-
-```json
-{
-  "model": "claude-sonnet-4-20250514",
-  "maxTokens": 8192,
-  "permissionMode": "ask",
-  "autoMemoryEnabled": true,
-  "autoCompactEnabled": true,
-  "autoDreamEnabled": false,
-  "fileCheckpointingEnabled": false
-}
+```bash
+ycode acp --config agent.yaml
 ```
 
-### Permission modes
+ACP negotiates the supported protocol strictly. New/load/resume/list/close and
+fork delegate to durable harness session state. Reusing a session or restarting
+the ACP process continues from the stored completed turn boundary; it does not
+start a parallel conversation loop. Fork records lineage and derives a child
+boundary without running a turn. Live approval continuation is exposed through
+the Harness/controller resume path described below.
 
-| Mode | Description |
-|------|-------------|
-| `ask` | Ask before running tools that modify files or execute commands |
-| `read-only` | Only allow read operations |
-| `workspace-write` | Allow file modifications within the workspace |
-| `danger-full-access` | Allow all operations without prompting |
+## Events and outputs
 
-## Tools
+All surfaces observe the same canonical events. Useful event classes include
+input admission, prompt assembly, provider streaming, Bashy request/result,
+policy/HITL transitions, memory actions, output delivery, turn failure, and
+session fork. Events are ordered and hash-chained and carry the compiled config
+digest.
 
-ycode provides 50+ tools organized by category:
+Output content may be referenced rather than inlined. Go embedders resolve a
+payload reference with `Harness.Payload`. Transport adapters must project the
+same referenced output and must not treat arbitrary log or display text as the
+result.
 
-### Core file operations
-`bash`, `read_file`, `write_file`, `edit_file`, `glob_search`, `grep_search`
+## Go embedding
 
-### Web
-`WebFetch`, `WebSearch`
-
-### Interaction
-`AskUserQuestion`, `SendUserMessage`, `TodoWrite`, `Skill`
-
-### Agent & task management
-`Agent`, `TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `TaskStop`, `TaskOutput`
-
-### Worker management
-`WorkerCreate`, `WorkerGet`, `WorkerObserve`, `WorkerResolveTrust`, `WorkerAwaitReady`, `WorkerSendPrompt`, `WorkerRestart`, `WorkerTerminate`, `WorkerObserveCompletion`
-
-### Team & scheduling
-`TeamCreate`, `TeamDelete`, `CronCreate`, `CronDelete`, `CronList`
-
-### Code intelligence
-`LSP`, `NotebookEdit`
-
-### External integration
-`RemoteTrigger`
-
-ycode does not speak MCP in either direction — it neither exposes an
-MCP server nor connects to one. Foreign capabilities reach ycode through
-`bash` / the `yc <verb>` built-ins, and ycode reaches foreign tools by
-invoking their CLIs.
-
-### Configuration & mode
-`Config`, `EnterPlanMode`, `ExitPlanMode`
-
-### Utility
-`Sleep`, `REPL`, `PowerShell`, `StructuredOutput`, `ToolSearch`
-
-Tools are split into **always-available** (bash, read_file, write_file, edit_file, glob_search, grep_search) and **deferred** (discovered via ToolSearch on demand).
-
-## Memory system
-
-ycode has a multi-layered memory system:
-
-- **Working memory**: current conversation context window
-- **Short-term memory**: JSONL session files, rotate at 256KB
-- **Long-term memory**: auto-compaction at 100K tokens with semantic summary
-- **Contextual memory**: CLAUDE.md instruction files discovered from CWD to root
-- **Persistent memory**: file-based memories in `~/.ycode/projects/{hash}/memory/` with MEMORY.md index
-
-Memory types: `user`, `feedback`, `project`, `reference`
-
-Auto-dream mode (`autoDreamEnabled`) consolidates memories in the background, removing stale entries and merging similar project memories.
-
-## Session management
-
-Sessions are persisted as JSONL files. Auto-compaction produces semantic summaries preserving:
-- Message scope (user/assistant/tool counts)
-- Tools mentioned
-- Recent user requests (last 3)
-- Pending work items
-- Key files referenced (up to 8)
-- Current work status
-
-## Skills
-
-Skills are discovered from a hierarchy of directories:
-
-1. `.agents/ycode/skills/` in project ancestors (CWD to root)
-2. `~/.ycode/skills/` (home)
-3. `$YCODE_SKILLS_DIR` (environment variable)
-
-Each skill is a directory containing:
-- `SKILL.md` -- instructions with YAML frontmatter
-- `scripts/` -- optional executable scripts
-- `resources/` -- data files, templates, examples
-
-Bundled skills: `remember`, `loop`, `simplify`, `review`, `commit`, `pr`
-
-Install bundled skills via `/skills install-bundled`.
-
-## Agent types
-
-When spawning sub-agents, each type gets a tailored tool allowlist:
-
-| Type | Tools |
-|------|-------|
-| `Explore` | read-only (read_file, glob, grep, WebFetch, WebSearch, ToolSearch, Skill) |
-| `Plan` | Explore + TodoWrite, SendUserMessage |
-| `Verification` | Plan + bash, write_file, edit_file, REPL, PowerShell |
-| `general-purpose` | All common tools |
-| `claw-guide` | Read-only + messaging |
-| `statusline-setup` | read_file, edit_file, Config |
-
-Agents can recursively spawn child agents up to a configurable depth (default: 3).
-
-## Embedding
-
-ycode can be embedded as a library:
+Validate and load:
 
 ```go
-import "github.com/qiangli/ycode/pkg/ycode"
-
-agent, err := ycode.NewAgent(
-    ycode.WithModel("claude-sonnet-4-20250514"),
-    ycode.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")),
-)
-if err != nil {
-    log.Fatal(err)
+if err := ycode.Validate("agent.yaml"); err != nil {
+    return err
 }
-result, err := agent.Run(ctx, "summarize this file")
+h, err := ycode.Load("agent.yaml")
+if err != nil {
+    return err
+}
+defer h.Close()
 ```
 
-## Cross-compilation
+Run and consume the durable stream:
 
-```bash
-make cross
+```go
+stream, err := h.Run(ctx, ycode.RunRequest{
+    SessionID:      "session-1",
+    RunID:          "turn-1",
+    TriggerRef:     "interactive-input",
+    FrontendRef:    "embed",
+    Principal:      "local-user",
+    IdempotencyKey: "request-1",
+    HumanAvailable: true,
+    Body:           []byte(`{"request":"inspect the repository"}`),
+})
+if err != nil {
+    return err
+}
+for item := range stream {
+    // Decode item.Data for the versioned event type. For output.emitted,
+    // pass the delivery payload_ref to h.Payload.
+}
 ```
 
-Produces binaries in `dist/`:
-- `ycode-linux-amd64`
-- `ycode-linux-arm64`
-- `ycode-darwin-amd64`
-- `ycode-darwin-arm64`
-- `ycode-windows-amd64.exe`
+`AgentRef` is optional when the trigger route supplies it. The other identity
+and routing fields above are required.
 
-Version and commit are injected via `-ldflags`:
+When the stream emits `hitl.waiting`, pass its decision/version/digests back to
+the live run:
 
-```bash
-go build -ldflags "-X main.version=v1.0.0 -X main.commit=$(git rev-parse --short HEAD)" ./cmd/ycode/
+```go
+continued, err := h.Resume(ctx, ycode.ResumeRequest{
+    SessionID: "session-1", RunID: "turn-1",
+    DecisionID: decisionID, ExpectedVersion: version,
+    ReviewDigest: reviewDigest, ReportDigest: reportDigest,
+    Action: "approve", Actor: "reviewer",
+})
 ```
 
-## Development Workflow: Build → Deploy → Validate
+Allowed actions come from the selected YAML policy. An edited action also
+supplies `EditedCall` and triggers a fresh Bashy preflight. `Resume` requires a
+live continuation; it rejects a process-restored pending stack rather than
+rerunning the pipeline from its entry.
 
-Three Makefile targets and matching skill definitions (`skills/{build,deploy,validate}/skill.md`) form the standard development cycle. Each step depends on the previous one succeeding. Any AI agent or human developer should follow this same workflow.
+Fork at a completed event boundary:
 
-### Build
-
-**Target**: `make build`
-
-Runs the full quality gate: `go mod tidy` → `go fmt` → `go vet` → `go test -race` → `go build` → `bin/ycode version`.
-
-**On failure**: Diagnose the error, fix the source, and re-run `make build` from the top. The entire pipeline must pass end-to-end — do not skip steps. Allow up to 3 fix-and-retry cycles before escalating.
-
-**On success**: If any files changed (fixes, formatting, go.sum updates), stage and commit them with a descriptive message. If the tree is clean, skip the commit.
-
-Quick compile without checks: `make compile`
-
-### Deploy
-
-**Target**: `make deploy` (localhost:31415 by default)
-
-**Pre-requisite**: `make build` must have succeeded. Do not deploy a broken build.
-
-Kills any existing instance on the target port, starts `ycode serve --detach`, and verifies the health endpoint.
-
-```bash
-# Localhost (default)
-make deploy
-
-# Custom port
-make deploy PORT=9090
-
-# Remote host
-make deploy HOST=myserver PORT=31415
+```go
+forked, err := h.Fork(ctx, ycode.ForkRequest{
+    ParentSessionID: "session-1",
+    SessionID:       "session-2",
+    RunID:           "fork-session-2",
+    AtSequence:      completedSequence,
+})
 ```
 
-For remote hosts, passwordless SSH must be configured. If `ssh -o BatchMode=yes <host> "echo ok"` fails, set it up:
+The returned stream contains the canonical `session.forked` event. Fork checks
+the parent event and turn checkpoint, then persists the child checkpoint. It
+does not call the provider.
 
-```bash
-ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""   # if no key exists
-ssh-copy-id <host>                                    # one-time password prompt
-ssh -o BatchMode=yes <host> "echo ok"                 # verify
-```
+Embedding tests can override a declared provider transport with
+`WithHarnessProvider(ref, provider)`. `WithHarnessTracer(tracer)` supplies the
+tracer used only when the compiled observability resource enables spans.
 
-Remote deploy auto-detects architecture and cross-compiles if the remote platform differs from the local one.
+## State and failure behavior
 
-### Validate
+Private runtime state is rooted below the platform user-config directory and
+the `spec.runtime.controlRoot.platformDataDir` value. It includes events,
+content-addressed payloads, checkpoints, memory, Bashy authorization state,
+and ACP lineage. Do not edit these files by hand.
 
-**Target**: `make validate` (localhost:31415 by default)
-
-**Pre-requisites**: `/build` then `/deploy` must have succeeded.
-
-Runs four test suites against a running ycode instance:
-
-1. **Smoke tests** — healthz, version, server status
-2. **Integration tests** — OTEL client export/file persistence, trace/metric/log ingestion, API routing
-3. **Acceptance tests** — one-shot prompt, serve subcommands, doctor
-4. **Performance tests** — healthz latency (p50/p95/p99), trace ingestion throughput, binary startup time
-
-```bash
-# Localhost (default)
-make validate
-
-# Remote
-make validate HOST=myserver PORT=31415
-```
-
-**On failure**: Diagnose which suite/test failed. Fix the root cause in source, then repeat the full cycle: build → deploy → validate. Allow up to 3 fix-and-retry cycles before escalating.
-
-**On success**: Reports a summary with pass/fail/skip counts and performance baselines.
-
-### Full cycle example
-
-```bash
-make build              # quality gate + commit fixes
-make deploy             # start server
-make validate           # run test suites
-
-# Or remote
-make build
-make deploy HOST=staging PORT=31415
-make validate HOST=staging PORT=31415
-```
-
-## Architecture
-
-The codebase follows a standard Go layout with `cmd/` for binaries, `internal/` for private packages, and `pkg/` for public API.
-
-### Key runtime flow
-
-1. **Entry**: `cmd/ycode/main.go` → cobra CLI → either interactive REPL (`internal/cli/app.go`) or one-shot mode
-2. **Conversation loop**: `internal/runtime/conversation/runtime.go` assembles API requests, sends to provider, dispatches tool calls via `ToolExecutor`
-3. **System prompt**: `internal/runtime/prompt/builder.go` assembles sections with a static/dynamic boundary for cache optimization
-4. **Tool dispatch**: `internal/tools/registry.go` maps tool names to handlers (always-available or deferred via ToolSearch)
-5. **Session**: `internal/runtime/session/` persists conversations as JSONL, with auto-compaction at 100K tokens
-
-### Provider layer (`internal/api/`)
-
-- `client.go` — `Provider` interface (Send, Kind)
-- `anthropic.go` — Anthropic API with SSE streaming
-- `openai_compat.go` — OpenAI-compatible providers (OpenAI, xAI, Ollama, etc.)
-- `prompt_cache.go` — prompt fingerprinting for cache hit detection
-
-### Memory system (`pkg/memex/memory/`)
-
-Five layers: working (context window) → short-term (session JSONL) → long-term (compaction summaries) → contextual (CLAUDE.md ancestry) → persistent (file-based `~/.ycode/projects/`). Types: user, feedback, project, reference.
-
-### Config (`internal/runtime/config/`)
-
-Three-tier merge: user (`~/.config/ycode/settings.json`) > project (`.agents/ycode/settings.json`) > local (`.agents/ycode/settings.local.json`).
-
-### Permission (`internal/runtime/permission/`)
-
-Modes: ReadOnly, WorkspaceWrite, DangerFullAccess. Each tool declares its required level.
-
-## Dependencies
-
-Only permissive licenses (MIT, Apache-2.0, BSD). Key deps: cobra (CLI), bubbletea (TUI), glamour (markdown), chroma (syntax highlighting), uuid. Go stdlib for everything else (Go 1.26+).
-
-## Key Design Decisions
-
-- Map-based ToolRegistry with runtime registration (deferred tools load on demand, without recompilation)
-- `RuntimeContext` struct holds all registries — no global state
-- `context.Context` propagation everywhere for cancellation/timeout
-- JSONL sessions for interop with priorart/clawcode format
-- Section-based prompt assembly with dynamic boundary marker for cache optimization
-- Per-tool middleware for permission, logging, timing as composable wrappers
-- Recursive agent delegation up to configurable depth (default: 3)
+Cancellation closes the stream and propagates the context outcome. Nonzero and
+signaled Bashy processes remain structured results. Admission, provider,
+policy, checkpoint, delivery, or pipeline failures emit/return typed failures;
+they are never rewritten as successful assistant output.
 
 ## Verification
 
 ```bash
-go build ./cmd/ycode/      # compiles
-go test -race ./...         # all tests pass
-go vet ./...                # no issues
-ycode doctor                # health checks pass
-ycode prompt "hello"        # one-shot works
+./scripts/harness-conformance.sh
+bashy dag build
 ```
+
+The conformance script repeats strict compiler, pipeline, provider, Bashy,
+event, HITL, memory, frontend, public API, and ACP tests under the race
+detector. Release checks and native exact-byte QA are documented in
+[release.md](release.md) and [per-os-release-gate.md](per-os-release-gate.md).

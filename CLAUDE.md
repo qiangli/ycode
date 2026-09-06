@@ -1,155 +1,173 @@
-# CLAUDE.md
+# ycode contributor contract
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file, `CLAUDE.md`, and `GEMINI.md` intentionally carry the same contract.
+Update all three in one change and keep them semantically identical.
 
-`AGENTS.md` is the agent-agnostic counterpart — same project, slightly broader audience (Codex, OpenCode, Cursor); `GEMINI.md` is the Gemini CLI flavor. When they diverge, treat this file as the Claude-Code-specific overlay and `AGENTS.md` as the shared baseline. In practice the three **duplicate** most of their content rather than layering, so a change to build commands, directory boundaries, code standards, the removed-subsystems table or the docs map must be made in all three — they have silently drifted before.
+## Product and authority
 
-## Project shape
+ycode is a pure-Go, YAML-native agent harness. `agent.yaml` is the only
+authored runtime configuration and policy source. The canonical, self-hosting
+example is `examples/agent.yaml`; it must compile without defaults supplied by
+another settings system.
 
-ycode — pure Go CLI agent harness. Single static binary, Go 1.26+, permissive-license deps only (MIT/Apache-2.0/BSD).
+The ownership boundary is strict:
 
-- Entry: `cmd/ycode/main.go` → cobra CLI → REPL (`internal/cli/app.go`) or one-shot (`ycode prompt`).
-- Core loop: `internal/runtime/conversation/runtime.go` — assemble request → provider → dispatch tool calls → repeat.
-- This checkout usually lives inside the **`dhnt/` umbrella** as a git submodule. `go.mod` sibling-path replaces resolve `../sh`, `../nadir`, and `../coreutils` to flat siblings — inside the umbrella those are real submodules; for standalone clones, `scripts/bootstrap-siblings.sh` reads `.sibling-pins` and clones them at the pinned SHAs.
-- `../coreutils` is the shared **AgentOS hub**: it owns the code-intel engines (`pkg/{treesitter,repomap,codegraph}`, which `internal/runtime/{treesitter,repomap,codegraph}` re-export via thin alias shims), the pure-Go git, the podman/OCI engine, and `pkg/ollm` (ollama). When a code-intel or container behavior looks wrong, the implementation is usually in coreutils, not here.
-- Root `go.work` is minimal — just `use .`, no workspace-level replaces. To iterate on a `qiangli/*` dep alongside ycode, clone it under `peers/<name>` (gitignored, absent by default) and add `./peers/<name>` to `go.work`'s `use`.
+- **YAML owns policy:** agents, models and routes, graph topology, typed state,
+  retry, budgets, queues, locks, hooks, triggers, sinks, placement, lifecycle,
+  compaction, permissions and approval decisions.
+- **Go owns neutral mechanisms:** strict compilation, graph interpretation,
+  append-only events, checkpoints, provider protocol normalization, frontend
+  transport, memory adapters, observability and lifecycle APIs.
+- **Bashy owns execution:** `spec.bashy` is the sole model-visible tool. Every
+  command follows preflight -> YAML policy evaluation -> digest-bound
+  authorization -> execution. Sync and durable jobs use the same contract;
+  host/native fallback and a second tool registry are forbidden.
 
-## Build & test
+Do not add product-, provider-, frontend- or agent-specific branches to the Go
+kernel. Express behavioral variation in YAML and add a generic mechanism only
+when the schema cannot represent it.
 
-```bash
-bashy dag compile     # quick compile only (~4s warm); binary at bin/ycode
-bashy dag build       # full gate: fmtcheck → vet → verify-features → compile → test
-bashy dag test        # unit tests (-short -race), priorart/ excluded
-bashy dag install     # build + copy into $DHNT_BIN_DIR (shims deliberately NOT installed)
-bashy dag ci          # containerized matrix (slow, definitive)
-bashy dag --list      # every target
-bashy dag install-hooks  # one-time: pre-push hook runs `bashy dag ci`
-```
+## Runtime flow and layout
 
-`export ANTHROPIC_API_KEY=…` (or `OPENAI_API_KEY` + optional `OPENAI_BASE_URL`) before running the binary.
+`cmd/ycode/main.go` opens the single composition root in
+`cmd/ycode/harness_application.go`. Argument, stdin, REPL/TUI, ACP, HTTP,
+WebSocket and NATS inputs are projections onto the same compiled graph and
+canonical event stream.
 
-**There is no Makefile.** It was retired in favour of `DAG.md` + `bashy dag`; `scripts/gate.sh` is the same gate as one command, for contexts without bashy (the builder image, `dag ci`). Keep the three in step.
+Key paths:
 
-**The product binary has no build tags.** One binary, no variants. The old `TAG_LIST` carried `sqlite`, `sqlite_unlock_notify` and `bindata`, all three of which gate **zero files** in this tree — they were Gitea's, and Gitea left with `internal/gitserver`. `embed_spawn` selected a variant (embedded shim vs. the symlink fallback `spawn_embed.Available()` implements) and is not used by the release. So a bare `go build ./cmd/ycode/` now works and is what the pipeline runs. The tags you *will* meet are test-and-eval-only: `integration` (15 files across `internal/integration/` and `internal/cli/`), `e2e`, and `eval` / `eval_e2e` / `eval_behavioral` under `internal/eval/` — which is why `dag eval-init` passes `-tags eval` — plus the ordinary platform tags. And ignore the header comment in `internal/features/registry.yaml` promising `-tags experimental` / `-tags wip`: those gate zero files, so every tier compiles into the one binary and `tier:` is metadata for `ycode features`, not a compile switch.
+- `internal/harness/spec/` — strict schema/compiler, imports, references,
+  reachability, security checks and capability freeze.
+- `internal/harness/pipeline/` — typed state, expressions, registry and neutral
+  graph runner.
+- `internal/harness/turn/` — stage registration and the configured agent loop.
+- `internal/harness/message/` — provider-independent message representation.
+- `internal/harness/provider/` — provider adapters constrained to the one
+  Bashy tool.
+- `internal/harness/bashy/` — adapter to Bashy's seven-operation, digest-bound
+  execution contract.
+- `internal/harness/event/` — fsynced hash-chained events, content-addressed
+  payloads and atomic checkpoints.
+- `internal/harness/stages/` — input/context, HITL and memory mechanisms.
+- `internal/harness/agent/` — configured roster and bounded delegation.
+- `internal/harness/frontend/` — local, PTY, HTTP, WebSocket and NATS
+  projections; adapters do not choose routing or policy.
+- `internal/harness/observe/` — lifecycle instrumentation controlled by YAML.
+- `internal/harness/acp/` — durable ACP session/fork metadata.
+- `pkg/ycode/harness.go` — public `Validate`, `Load`, `Run`, `Resume`, `Fork`,
+  `Payload` and `Close` API.
 
-**Releases are `bashy release`**, driven by `.goreleaser.yaml`: cross-compilation, `ycode-<os>-<arch>.tar.gz`, `SHA256SUMS` and a `bashy-release-v1` ledger. `bashy dag release-check` / `release-plan` / `release-snapshot`. **The asset names are load-bearing** — the umbrella's fleet-upgrade path resolves artifacts by name, so renaming one strands hosts.
-
-**Single test / package** — never run bare `./...`; always exclude `priorart/`:
-
-```bash
-go test -short -race -run TestName ./internal/path/to/package/
-PACKAGES=$(go list ./... | grep -v '/priorart/')
-```
-
-Targets that need setup (read the note in `DAG.md` first): `test-integration`, `test-tui`, `test-tui-e2e`, `test-ui`, `eval-contract`, `eval-init`, `bench-memory`. `verify-features` asserts every path in `internal/features/registry.yaml` still exists — it runs inside `build` and is the usual failure after moving or deleting a package.
-
-## Critical conventions
-
-**Directory boundaries:**
-- `priorart/` — **read-only.** Reference implementations of other harnesses (Aider, Cline, Codex, …). Never modify; never include in build/test globs.
-- `external/` — vendored submodules (`jaeger`, `perses`, `victorialogs`). Not imported by the main module today; bump the submodule SHA rather than editing in place.
-- `peers/` — peer Go modules with their own `go.mod`. Run `go mod tidy` inside the peer directory, not at root.
-
-**Code standards:**
-- No package-level `var` for mutable state — thread `RuntimeContext` from `internal/runtime/conversation/runtime.go`.
-- No `log.Printf` / `fmt.Println` — use the structured logger on `RuntimeContext`.
-- Stage files by name (`git add path/to/file`). Never `git add -A` / `git add .` — the umbrella tree carries loose artifacts and unrelated submodule pointers that must not get swept up. (`bashy dag compile` alone dirties `go.work.sum`.)
-- Run `bashy dag build` before committing anything non-trivial.
-
-## Layered build system
-
-The `DAG.md` / scripts / Go split is enforced:
-
-1. **`DAG.md`** — dependency graph only. Targets declare deps and delegate.
-2. **scripts/** — bash orchestration only. Sequencing, env, process management. No assertions or computation.
-3. **Go** — all logic, including test assertions and integration checks.
-
-Don't push test logic into bash, and don't grow shell blocks inside `DAG.md`.
-
-## Architecture pillars
-
-Read these before non-trivial changes:
-
-- **Conversation runtime** (`internal/runtime/conversation/`) — the event loop; assembles the prompt, dispatches tool calls, manages tool activation TTLs (`preactivate.go`).
-- **Tool registry** (`internal/tools/registry.go`, `specs.go`) — `ToolSpec` declares `RequiredMode` (ReadOnly / WorkspaceWrite / DangerFullAccess). Tools are either always-available or **deferred** — discovered at runtime via `ToolSearch` and loaded only when needed (`deferred.go`, `availability.go`).
-- **Memory** (`pkg/memex/`) — five-layer system (KV / SQL / vector / graph / memo) behind a single `Memex` facade. Don't reach into a single backend directly.
-- **Session / context window** (`internal/runtime/session/`) — the biggest subsystem in the tree (~30 files) and the one most changes eventually touch: token budgeting (`budget.go`, `context_window.go`), the compaction ladder (`microcompact.go` → `compact.go` → `compaction_retry.go` → `llm_summary.go`), pruning, transcript repair, `stuck_detector.go`, and the memory extract/prefetch hooks that bridge to `pkg/memex`. Anything about "the model lost context" or "the transcript is malformed" is here, not in `conversation/`.
-- **Tool execution** (`internal/runtime/toolexec/`) — the layer under the registry that actually runs a tool call, choosing between a native-Go implementation and a subprocess. Git is the case worth knowing: the native tier lives in `coreutils/git` and is reached through `nativeGitFunc(...)` adapters, so a git bug is usually a coreutils bug. `stall_watchdog.go` is what kills a hung tool call.
-- **In-process subagents** (`internal/runtime/{swarm,team,agentpool,lanes,taskqueue,worker,cascade}`) — parallel sub-agents with a capacity governor and liveness classification (`agentpool/`), lane/queue scheduling, and `cascade/`, which climbs a model ladder when the current model has demonstrably stopped making progress. Distinct from `bashy weave`: that is cross-repo out-of-process orchestration, this is one ycode process fanning out.
-
-- **Feature registry** (`internal/features/registry.yaml`) — the source of truth for feature tiers (stable / experimental / wip) *and* their file paths; surfaced by `ycode features list|readme|verify`. Adding or moving a feature means editing this file, or `bashy dag build` fails.
-
-Supporting layers:
-
-- **Provider layer** (`internal/api/`) — Anthropic native + OpenAI-compatible. `fallback.go` handles failover; `key_rotation.go` pools keys; `cache_warmer.go` keeps prompt caches hot.
-- **Config** (`internal/runtime/config/`) — 4-tier merge: user → project → workspace → local. Later layers override earlier.
-- **Permission modes** (`internal/runtime/permission/`) — enforced from `ToolSpec.RequiredMode`. Never bypass; if a tool needs more privilege, raise the mode explicitly.
-- **VFS** (`internal/runtime/vfs/`) — boundary-enforced filesystem. File-tool implementations go through this, not `os` directly.
-- **Telemetry** (`internal/telemetry/`, `cmd/ycode/otel.go`, `internal/observe/`) — client-side OTEL export only. Collector address resolution is `OTEL_EXPORTER_OTLP_ENDPOINT` env > `serve`-injected override > config > discovery file, with **no loopback default** on purpose. `ycode serve` is deliberately lean (HTTP/WS API, optional embedded NATS, manifest, pprof); dashboards and storage come from an external collector such as `bashy otel`. The `query_traces` / `query_logs` / `query_metrics` tools (`internal/tools/otelstore*.go`) read that plane back.
-
-Full deep dive: `docs/architecture.md`. Strategy and feature-tier policy: `docs/strategy.md`.
+Durability is part of the behavior, not optional logging. State transitions are
+events; large/binary bodies are payload references; resume and fork bind exact
+configuration digests, event sequences and checkpoints. Never create an
+in-memory-only alternate path for a frontend.
 
 ## Command surface
 
-`ycode --help` is authoritative. Beyond the REPL and `prompt`, the surfaces worth knowing: `serve` / `pulse` (background server), `shell` (agentic bash — see below), `wrap` (launch a third-party agentic tool under ycode's shim PATH), `pair` (bearer token + config snippet for a foreign tool), `acp` (serve ycode as an ACP agent over stdio), `init` (establish ycode in a git repo, including foreign-tool configs), `docs` (embedded agent-facing capability prompts), `heal`, `doctor`, `eval`.
+All ordinary commands accept `--file/-f` and default to `agent.yaml`:
 
-## `yc <verb>` quick reference
-
-When your bash backend routes through `ycode shell -c`, the `yc <verb>` built-ins are in-process and unshadowable. **They are reachable ONLY through the shell — there is no `ycode yc` subcommand** (the binary answers `unknown command "yc"`). An E2E suite assumed otherwise and failed for months; to drive a verb from a script it is `ycode shell -c "yc symbols …"`. The canonical, ROI-ordered table with per-verb "why not grep/find/git" rationale lives in `AGENTS.md` — read it before reaching for `grep -rn`, `find . -name`, or `git log` on a code question. Highlights:
-
-- **Code exploration**: `yc symbols` (declarations) → `yc repomap` (orientation) → `yc search-symbols` (AST-aware substring) → `yc refs` (callers).
-- **Structured output**: `yc test --json`, `yc lsp <action> --json`, `yc run --json -- <cmd>` emit typed envelopes instead of per-tool text.
-- **Memory bridge**: `yc remember` writes through to `~/.claude/projects/<project-id>/memory/` when `$CLAUDE_PROJECT_DIR` is set, so a fact saved in either tool surfaces in both. `yc recall` searches both corpora.
-- **Hints**: `internal/shell/agentmode/` fires on stderr (and into `hints[]` in `--json` mode) when a bash command would be better served by a `yc` verb. Each hint carries a `Why:` line. `ycode shell --suggest "<cmd>"` previews without executing; `ycode shell --manifest` is the full JSON catalog.
-
-## Switching agents — /agent, /tool, /detach
-
-ycode is the bridge BETWEEN agentic tools, not just one of them. From a session you can hand the work to any agent in the fleet and the conversation goes with it:
-
-```
-/agent                            list the fleet, grouped by capability band
-/agent codex-gpt-5.5              attach — stay in ycode, its replies land here
-/agent L4 --fresh                 strongest non-ycode agent, no context carried
-/agent claude-opus4.8 --takeover  hand the terminal to its own full-screen UI
-/tool codex                       switch by tool, using its configured model
-/detach                           end the attached session, come back
+```bash
+ycode validate --file examples/agent.yaml
+ycode config --file agent.yaml show
+ycode model --file agent.yaml list
+ycode tools --file agent.yaml list       # exactly one model tool: bashy
+ycode prompt --file agent.yaml "request"
+printf '%s\n' 'request' | ycode --file agent.yaml
+ycode repl --file agent.yaml
+ycode --file agent.yaml                  # configured terminal/TUI frontend
+ycode serve --file agent.yaml            # configured HTTP/WS/NATS only
+ycode acp --config agent.yaml
+ycode shell --file agent.yaml -c 'pwd'   # governed Bashy boundary
 ```
 
-The roster is the SAME embedded fleet catalog `bashy agents list` reads — ycode has no second list to drift from. `/agent` runs `bashy chat` underneath, so bashy keeps ownership of agent resolution, the credential firewall and sandboxing.
+`config`, `model`, `tools`, `memory` and `skill` are read-only views of the
+compiled document. There is no `config set/unset`, `model use`, wildcard tool
+selection, mutable settings merge, `yc` built-in registry, or permission-bypass
+flag. `ycode --help` is authoritative.
 
-**Attach is the default and carries the conversation**; `--fresh` opts out. That carried context is the point — `bashy chat --agent codex` from a terminal is one line, and going through ycode is only worth it because the work travels. Every switch asks the target to leave a handoff note before exiting; when one is missing, the transcript says so and labels what it does have (a terminal scrape) as a reconstruction rather than a verbatim record.
+## Build and verification
 
-Full detail: `ycode docs agent-switching` (implementation: `internal/agentswitch/`).
+Go 1.26+ is required. Inside the umbrella, sibling modules already exist.
+Standalone clones must run `scripts/bootstrap-siblings.sh`; `.sibling-pins`
+pins `sh`, `nadir`, `coreutils`, `bashy`, `filebrowser` and `readline`.
 
-## Removed subsystems — do not resurrect from stale docs
+```bash
+bashy dag compile          # build bin/ycode, one binary and no product variants
+bashy dag test             # short race suite, priorart excluded
+bashy dag build            # fmtcheck + vet + feature paths + compile + tests
 
-Several large subsystems left this tree. Historical docs describing them survive; treat them as history, not instructions. If a doc tells you to run one of these, the doc is wrong.
+# Frozen YAML harness lifecycle; defaults to count=3.
+./scripts/harness-conformance.sh
+YCODE_HARNESS_CONFORMANCE_COUNT=10 ./scripts/harness-conformance.sh
 
-| Gone from this tree | Where the job lives now |
-|---|---|
-| `ycode weave`, `pkg/loom`, `internal/gitserver`, `external/gitea` | `bashy weave` (`coreutils/pkg/weave`); playbooks are `bashy weave guide` + `coreutils/pkg/weave/{CONDUCTOR-PLAYBOOK,WEAVE-RUNBOOK}.md` |
-| `ycode foreman`, `ycode backlog`, `internal/foreman`, `internal/backlog`, `skills/ycode-foreman/` | `bashy weave` below, the conductor playbook in `bashy/skills/conductor` above |
-| MCP server/client (`docs/plan-remove-mcp.md`) | the `yc` shell verbs and the deferred tool registry |
-| `internal/container`, `pkg/oci`, podman + ollama embeds | `coreutils/external/podman/engine`, `coreutils/pkg/{oci,ollm}`; ycode drives the shared isolated **`bashy`** podman machine |
+# Focused packages while iterating.
+go test -short -race ./internal/harness/...
+go test -short -race ./pkg/ycode ./cmd/ycode
+```
 
-Stale references still in the tree: `docs/backlog*`, `docs/loom-v2-*.md`, and the retired `test-gitserver` / `init` targets. Note the table above covers the *out-of-process* orchestration that left for `bashy weave` — the **in-process subagent** orchestration stayed and is listed under Architecture pillars.
+Never run a repository-wide test glob that descends into `priorart/`. For a
+manual full package list use `go list ./... | grep -v '/priorart/'`. Run the
+focused race tests first, then `bashy dag build` before handoff.
 
-## Skills
+## Release contract
 
-Bundled skills live at top-level `skills/` (`ycode-autopilot`, `ycode-claude`, `ycode-learn`, `ycode-oci`), are embedded in the binary via `skills/embed.go`, and install user-globally. Edit them there — not in `.agents/ycode/skills/`, which is the installed copy.
+Releases are described by `.goreleaser.yaml` and built by Bashy. Asset names
+`ycode-<os>-<arch>.tar.gz` and `SHA256SUMS` are load-bearing fleet contracts.
+The matrix is linux amd64/arm64, darwin amd64/arm64 and windows amd64.
 
-## Umbrella interaction
+```bash
+bashy release check
+bashy release plan
+bashy release --snapshot
+gh workflow run release.yml --ref main
+```
 
-When this checkout is inside `dhnt/`, the parent `dhnt/CLAUDE.md` governs cross-cutting concerns (wire protocols, `MATRIX_*` envs, bearer-scope vocabulary, fleet upgrade). The submodule footgun: editing files inside `ycode/` and committing from the umbrella root commits the (unchanged) submodule pointer, not your edits. Always commit + push inside `ycode/` first, then bump the pin from the umbrella.
+Production uses two stages: push `vX.Y.Z-dev` to publish a prerelease, run
+`YCODE_TEST_VERSION=vX.Y.Z-dev bashy dag qa` on Linux, Darwin and Windows so
+the `refs/qa/vX.Y.Z/<os>` gates exist, then push bare `vX.Y.Z`.
+`promote.yml` copies the tested bytes to the final release without rebuilding.
+Never create a tag merely to test a release fix.
 
-When `../sh`, `../coreutils`, or `../nadir` move, bump `.sibling-pins` (`scripts/update-sibling-pins.sh`) — an in-umbrella build resolves the siblings by path and silently masks the drift that breaks standalone clones.
+## Engineering and security rules
 
-## Docs map
+- `priorart/` is read-only. Never edit it or include it in build/test globs.
+- Preserve the sole-source boundary: no settings file, hidden Go default,
+  duplicate roster, second permission layer or specialized model tool.
+- Reject unknown YAML fields, unresolved references, unreachable resources,
+  unsupported effects/platforms, incomplete preflight and stale approval
+  bindings. Fail closed.
+- Thread dependencies and request metadata explicitly. Package-level mutable
+  state and ambient authority are forbidden.
+- Use structured logging; never emit prompts, credentials, approval material or
+  control-root paths without the compiled redaction policy.
+- Keep filesystem access inside compiled readable/writable roots. Control state
+  belongs under the trusted `controlRoot` with restrictive permissions.
+- Use `apply_patch` for edits, preserve unrelated work, stage named files only,
+  and do not push without explicit approval.
+- This repository is an umbrella submodule. Commit from inside `ycode/`, then
+  update the umbrella pin separately; never commit ycode content from the
+  umbrella root.
 
-- `docs/strategy.md` — wedge positioning, feature-tier policy, graduation criteria (read for any planning or feature discussion)
-- `docs/usage.md` — CLI modes, configuration, tools, workflows
-- `docs/architecture.md` — full architecture deep dive
-- `docs/instructions.md` — shared agent-agnostic conventions, skill system, build/test/commit rules
-- `docs/pipeline.md` — six-step pipeline for non-trivial work (research → plan → build/test → evaluate → commit → codify)
-- `docs/shell-agent.md` — agent-mode shell integration recipes and the hint engine
-- `docs/release.md` — release procedure and the per-platform asset matrix
+## Removed systems — do not resurrect
+
+The former `internal/runtime/conversation`, `internal/runtime/session`,
+`internal/runtime/config`, `internal/runtime/builtin`, `internal/runtime/toolexec`,
+`internal/tools`, `internal/cli`, `internal/server`, `internal/service`, plugin
+registry, specialized tools, settings merge, legacy `Agent` embedding API,
+autoserver, wrap/pair/init mutation paths and model-selection flags are gone.
+Historical plans may mention them; they are evidence, not implementation
+instructions.
+
+Cross-repository orchestration and foreign-agent launching belong to Bashy.
+Inference/container engines live in shared dependencies and are reachable only
+through declared Bashy operations, never as hidden ycode model tools.
+
+## Design references
+
+- `docs/harness-schema-design.md` — normative schema and ownership rules.
+- `docs/harness-capability-map.yaml` — frozen capability/ownership inventory.
+- `docs/bashy-harness-command-kit-design.md` — execution envelopes and effects.
+- `docs/harness-impersonation-profiles.md` — prior-art behavior profiles.
+- `docs/sprint-yaml-native-harness.md` — Sprint 106 acceptance contract.
+- `docs/architecture.md`, `docs/usage.md`, `docs/pipeline.md`, `docs/release.md`
+  — maintained user and operator documentation.

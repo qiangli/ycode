@@ -3,7 +3,7 @@ id: 59ff6c4fc5c1
 kind: task
 title: Normalize provider adapters around Bashy tool
 seq: 7
-status: todo
+status: done
 priority: p0
 created: 2026-09-02T20:26:06.255276Z
 sprint: 106

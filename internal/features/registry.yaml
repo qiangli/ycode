@@ -1,12 +1,11 @@
-# Feature registry — single source of truth for which capabilities ship in
-# default builds vs. behind experimental/wip build tags. See
-# docs/strategy.md#feature-tiers for policy and graduation criteria.
+# Feature registry — user-facing inventory of capabilities reachable through
+# the YAML-native harness. The binary has no behavioral build-tag variants.
+# Tiers describe maturity only; they do not enable code or runtime policy.
 #
 # Tiers:
-#   stable        — always compiled. Integration-tested + dogfooded ≥2 weeks +
-#                   failure mode documented. In README/benchmarks.
-#   experimental  — opt-in via `-tags experimental`. New/rough; not in README.
-#   wip           — opt-in via `-tags wip`. Active development; not user-facing.
+#   stable        — part of the supported compiled harness contract.
+#   experimental  — compiled mechanism with an explicitly declared YAML use.
+#   wip           — development inventory; not a supported product surface.
 #
 # Graduation: a feature moves wip → experimental → stable via PR. CI fails if
 # tier=stable without graduation criteria satisfied.
@@ -15,113 +14,39 @@
 # — keep `description` short and user-facing.
 
 features:
-  # ─── core agent loop ──────────────────────────────────────────────────────
-  - name: bash-tool
+  - name: yaml-harness
     tier: stable
-    description: "in-process bash via mvdan/sh — no host shell exec, with security middleware (Setpgid, pre-exec validation)"
-    files: [internal/runtime/bash]
-    graduation:
-      integration_test: true
-      dogfood_weeks: 8
-      failure_mode_doc: false
-
-  - name: file-ops
-    tier: stable
-    description: "read, write, edit, glob — file operations bounded by the per-session VFS"
-    files: [internal/tools]
-    graduation:
-      integration_test: true
-      dogfood_weeks: 8
-      failure_mode_doc: false
-
-  - name: search-tools
-    tier: stable
-    description: "Grep, Glob, semantic search, symbol search, AST search across the project"
-    files: [internal/tools, internal/runtime/treesitter]
-    graduation:
-      integration_test: true
-      dogfood_weeks: 8
-      failure_mode_doc: false
-
-  - name: web-tools
-    tier: stable
-    description: "WebFetch, WebSearch — auto-routes between configured web providers and DuckDuckGo"
-    files: [internal/tools]
-    graduation:
-      integration_test: true
-      dogfood_weeks: 4
-      failure_mode_doc: false
-
-  # ─── code intelligence ────────────────────────────────────────────────────
-  - name: repomap
-    tier: stable
-    description: "token-budgeted file→symbol overview for LLM context (PageRank-scored)"
-    files: [internal/runtime/repomap]
-    graduation:
-      integration_test: true
-      dogfood_weeks: 4
-      failure_mode_doc: false
-
-  - name: ast-search
-    tier: stable
-    description: "pure-Go tree-sitter for Go, Python, JS/TS, Rust, Java, C, Ruby — structural code search and impact analysis"
-    files: [internal/runtime/treesitter]
-    graduation:
-      integration_test: true
-      dogfood_weeks: 4
-      failure_mode_doc: false
-
-  - name: lsp
-    tier: stable
-    description: "auto-detected LSP servers per language — hover, definition, references, symbol search"
-    files: [internal/runtime/lsp]
-    graduation:
-      integration_test: true
-      dogfood_weeks: 4
-      failure_mode_doc: false
-
-  - name: bonsai-graph
-    tier: stable
-    description: "embeddable Dgraph (bonsai) for memory relations + code-knowledge mirror; DQL-queryable; Explorer UI mounted at /graph/ in `ycode serve`"
-    files: [pkg/memex/graph]
+    description: "strict agent.yaml compiler and neutral typed lifecycle kernel with Bashy as the sole model-visible tool"
+    files: [internal/harness/spec, internal/harness/pipeline, internal/harness/turn]
     graduation:
       integration_test: true
       dogfood_weeks: 0
-      failure_mode_doc: false
+      failure_mode_doc: true
 
-  # ─── git & integrations ───────────────────────────────────────────────────
-  - name: git-tools
+  # ─── core agent loop ──────────────────────────────────────────────────────
+  - name: bash-tool
     tier: stable
-    description: "31 native go-git operations (branch, worktree, push, stash, log, …) — no shell-out required"
-    files: [internal/runtime/toolexec]
+    description: "compiled Bashy preflight and execution boundary with embedded-only command resolution and durable outcomes"
+    files: [internal/harness/bashy]
     graduation:
       integration_test: true
       dogfood_weeks: 8
-      failure_mode_doc: false
-
-  - name: github-tools
-    tier: stable
-    description: "PR / issue / review / CI-checks via GitHub API — no `gh` binary, auth via GITHUB_TOKEN or ~/.config/gh"
-    files: [internal/runtime/github]
-    graduation:
-      integration_test: true
-      dogfood_weeks: 4
       failure_mode_doc: false
 
   # ─── execution & runtime ──────────────────────────────────────────────────
   - name: multi-provider
     tier: stable
     description: "Anthropic native + OpenAI-compatible covers OpenAI, xAI/Grok, DashScope/Qwen, OpenRouter, and custom HTTP providers"
-    files: [internal/api]
+    files: [internal/harness/provider, internal/api]
     graduation:
       integration_test: true
       dogfood_weeks: 8
       failure_mode_doc: false
 
-  - name: serve-mode
+  - name: frontend-projections
     tier: stable
-    description: "`ycode serve` exposes lightweight HTTP/WebSocket, MCP, and optional NATS endpoints"
-    files: [cmd/ycode/serve.go, internal/server]
+    description: "compiled HTTP, WebSocket, and NATS adapters project canonical harness input and events"
+    files: [internal/harness/frontend]
     graduation:
       integration_test: true
       dogfood_weeks: 4
@@ -130,7 +55,7 @@ features:
   - name: observability
     tier: stable
     description: "OTEL client traces, metrics, and logs with local JSONL persistence and optional OTLP export"
-    files: [internal/telemetry]
+    files: [internal/harness/observe]
     graduation:
       integration_test: true
       dogfood_weeks: 4
@@ -139,8 +64,8 @@ features:
   # ─── orchestration ────────────────────────────────────────────────────────
   - name: agent-delegation
     tier: stable
-    description: "recursive child agent spawning with depth limits; team, parallel, handoff, cron primitives"
-    files: [internal/tools, internal/runtime/team]
+    description: "agent.yaml roster delegation through the same typed pipeline with bounded attenuated authority"
+    files: [internal/harness/agent]
     graduation:
       integration_test: true
       dogfood_weeks: 4
@@ -148,17 +73,17 @@ features:
 
   - name: skills-system
     tier: stable
-    description: "lifecycle-organised skill catalog: external (github.com/dhnt/dhnt/catalog) + internal (.agents/ycode/skills/) lanes; loader honours frontmatter executor (markdown / builtin / cnl)"
-    files: [.agents/ycode/skills, internal/tools/skill.go]
+    description: "operator skill catalog and compiled skill execution mechanism; no specialized model-visible skill tool"
+    files: [.agents/ycode/skills, internal/runtime/skillengine]
     graduation:
       integration_test: true
       dogfood_weeks: 4
       failure_mode_doc: false
 
-  - name: plugin-system
+  - name: yaml-hooks
     tier: stable
-    description: "manifest-based plugins with hook lifecycle (PreToolUse, PostToolUse)"
-    files: [internal/plugins]
+    description: "bounded ordered hooks declared by agent.yaml and executed as typed pipelines"
+    files: [internal/harness/spec, internal/harness/pipeline]
     graduation:
       integration_test: true
       dogfood_weeks: 4
@@ -167,45 +92,36 @@ features:
   # ─── memory & persistence ─────────────────────────────────────────────────
   - name: memory-system
     tier: stable
-    description: "five-layer memory (working, episodic, compaction, procedural, persistent) with RRF-fused vector + Bleve + keyword + entity retrieval"
-    files: [pkg/memex/memory]
+    description: "explicit agent.yaml recall, write, measurement, and compaction stages backed by memex"
+    files: [internal/harness/stages/memory, pkg/memex/memory]
     graduation:
       integration_test: true
       dogfood_weeks: 4
       failure_mode_doc: false
 
-  - name: session-management
+  - name: durable-sessions
     tier: stable
-    description: "JSONL persistence, auto-compaction at 100K tokens, semantic summaries"
-    files: [internal/runtime/session]
+    description: "append-only canonical events, payloads, checkpoints, and explicit compaction with no hidden session loop"
+    files: [internal/harness/event, internal/harness/stages/memory]
     graduation:
       integration_test: true
       dogfood_weeks: 8
       failure_mode_doc: false
 
   # ─── safety & operability ─────────────────────────────────────────────────
-  - name: permission-tiers
+  - name: hitl-policy
     tier: stable
-    description: "three modes (ReadOnly, WorkspaceWrite, DangerFullAccess) with VFS-bounded path resolution and per-tool policy rules"
-    files: [internal/runtime/permission]
+    description: "monotonic agent.yaml authority attenuation, fail-closed policy, and Bashy execution fencing"
+    files: [internal/harness/spec, internal/harness/stages/hitl, internal/harness/bashy]
     graduation:
       integration_test: true
       dogfood_weeks: 8
       failure_mode_doc: false
 
-  - name: self-healing
+  - name: typed-failure-routing
     tier: stable
-    description: "automatic error recovery with classification and retry — no panic kills the loop"
-    files: [internal/selfheal]
-    graduation:
-      integration_test: true
-      dogfood_weeks: 4
-      failure_mode_doc: false
-
-  - name: oauth-login
-    tier: stable
-    description: "PKCE OAuth flow for Claude authentication (`ycode login`)"
-    files: [internal/runtime/oauth]
+    description: "bounded retry, fallback, and outcome routing declared explicitly by typed YAML pipeline nodes"
+    files: [internal/harness/pipeline]
     graduation:
       integration_test: true
       dogfood_weeks: 4
@@ -223,30 +139,9 @@ features:
 
   - name: cross-platform
     tier: stable
-    description: "single static Go binary; v0.1.0 ships linux/amd64 and darwin/arm64 (other platforms require code work — see release.yml matrix)"
-    files: [.github/workflows/release.yml]
+    description: "one static binary for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, and windows/amd64"
+    files: [.goreleaser.yaml, .github/workflows/release.yml, .github/workflows/promote.yml]
     graduation:
       integration_test: true
       dogfood_weeks: 4
       failure_mode_doc: false
-
-  # ─── experimental (compiles + tests, but rough or unproven) ───────────────
-  - name: chat-adapter-slack
-    tier: experimental
-    description: "Slack channel adapter (Send returns ErrNotImplemented; gated behind -tags experimental)"
-    files: [internal/chat]
-    notes: "adapter scaffold present; not wired end-to-end"
-    blocked_by: [chat-hub-routing]
-
-  - name: chat-adapter-matrix
-    tier: experimental
-    description: "Matrix channel adapter (Send returns ErrNotImplemented; gated behind -tags experimental)"
-    files: [internal/chat]
-    notes: "adapter scaffold present; not wired end-to-end"
-
-  - name: chat-adapter-email
-    tier: experimental
-    description: "IMAP/SMTP channel adapter (Send returns ErrNotImplemented; gated behind -tags experimental)"
-    files: [internal/chat]
-    notes: "adapter scaffold present; not wired end-to-end"
-

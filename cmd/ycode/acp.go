@@ -1,134 +1,199 @@
 package main
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
 
 	coreacp "github.com/qiangli/coreutils/pkg/acp"
-
-	"github.com/qiangli/ycode/internal/runtime/origin"
+	harnessacp "github.com/qiangli/ycode/internal/harness/acp"
+	public "github.com/qiangli/ycode/pkg/ycode"
 )
 
-// promptApp is the existing ycode turn surface used by the ACP adapter.
-// Keeping the interface this narrow makes it explicit that ACP does not own a
-// second agent loop: every prompt goes through cli.App.RunPrompt.
-type promptApp interface {
-	SetPrintMode(bool)
-	SetOutput(io.Writer, io.Writer)
-	RunPrompt(context.Context, string) error
+type harnessApp interface {
+	Run(context.Context, public.RunRequest) (<-chan public.Event, error)
+	Fork(context.Context, public.ForkRequest) (<-chan public.Event, error)
+	Payload(string) ([]byte, error)
 	Close() error
 }
 
-type acpAppFactory func(cwd string) (promptApp, error)
+type acpAppFactory func(cwd string) (harnessApp, error)
 
 type acpRunner struct {
 	newApp acpAppFactory
+	store  *harnessacp.Store
 	stderr io.Writer
-
-	mu       sync.Mutex
-	sessions map[string]*acpSession
-}
-
-type acpSession struct {
 	mu     sync.Mutex
-	cwd    string
-	app    promptApp
-	output bytes.Buffer
+	apps   map[string]harnessApp
 }
 
-func newACPRunner(factory acpAppFactory, stderr io.Writer) *acpRunner {
-	return &acpRunner{
-		newApp:   factory,
-		stderr:   stderr,
-		sessions: make(map[string]*acpSession),
+func newACPRunner(factory acpAppFactory, stderr io.Writer, stores ...*harnessacp.Store) *acpRunner {
+	store := harnessacp.NewMemory()
+	if len(stores) != 0 && stores[0] != nil {
+		store = stores[0]
 	}
+	return &acpRunner{newApp: factory, store: store, stderr: stderr, apps: make(map[string]harnessApp)}
 }
 
 func (r *acpRunner) Run(ctx context.Context, req coreacp.TurnRequest) (coreacp.TurnResponse, error) {
-	state, err := r.session(req.SessionID, req.Cwd)
+	prompt := joinACPPrompt(req.Prompt)
+	if strings.TrimSpace(prompt) == "" {
+		return coreacp.TurnResponse{}, errors.New("ACP prompt contains no text")
+	}
+	session, err := r.store.Resume(req.SessionID, req.Cwd)
 	if err != nil {
 		return coreacp.TurnResponse{}, err
 	}
-
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	if state.cwd != req.Cwd {
-		return coreacp.TurnResponse{}, fmt.Errorf(
-			"ACP session %q changed working directory from %q to %q",
-			req.SessionID, state.cwd, req.Cwd,
-		)
-	}
-	if state.app == nil {
-		state.app, err = r.newApp(req.Cwd)
-		if err != nil {
-			return coreacp.TurnResponse{}, fmt.Errorf("create ycode app: %w", err)
-		}
-		state.app.SetPrintMode(true)
-		state.app.SetOutput(&state.output, r.stderr)
-	}
-
-	state.output.Reset()
-	prompt := joinACPPrompt(req.Prompt)
-	if strings.TrimSpace(prompt) == "" {
-		return coreacp.TurnResponse{}, fmt.Errorf("ACP prompt contains no text")
-	}
-	if err := state.app.RunPrompt(ctx, prompt); err != nil {
+	app, err := r.app(session.Cwd)
+	if err != nil {
 		return coreacp.TurnResponse{}, err
 	}
-	return coreacp.TurnResponse{
-		Text:       state.output.String(),
-		StopReason: coreacp.StopReasonEndTurn,
-	}, nil
+	runID, err := r.store.NextTurn(session.ID)
+	if err != nil {
+		return coreacp.TurnResponse{}, err
+	}
+	body, err := json.Marshal(map[string]string{"request": prompt})
+	if err != nil {
+		return coreacp.TurnResponse{}, err
+	}
+	stream, err := app.Run(ctx, public.RunRequest{SessionID: session.ID, RunID: runID, TriggerRef: "interactive-input", FrontendRef: "acp", Principal: "acp-client", IdempotencyKey: runID, HumanAvailable: true, Body: body})
+	if err != nil {
+		return coreacp.TurnResponse{}, err
+	}
+	response := coreacp.TurnResponse{StopReason: coreacp.StopReasonEndTurn}
+	var head uint64
+	for item := range stream {
+		head = item.Sequence
+		if item.Type == "output.emitted" {
+			ref, err := outputPayload(item)
+			if err != nil {
+				return coreacp.TurnResponse{}, err
+			}
+			content, err := app.Payload(ref)
+			if err != nil {
+				return coreacp.TurnResponse{}, err
+			}
+			response.Text = string(content)
+		}
+		if item.Type == "turn.failed" {
+			return coreacp.TurnResponse{}, errors.New("ACP harness turn failed")
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return coreacp.TurnResponse{StopReason: coreacp.StopReasonCancelled}, err
+	}
+	if response.Text == "" {
+		return coreacp.TurnResponse{}, errors.New("ACP harness produced no canonical output")
+	}
+	if err := r.store.Advance(session.ID, head); err != nil {
+		return coreacp.TurnResponse{}, err
+	}
+	return response, nil
 }
 
-func (r *acpRunner) session(id, cwd string) (*acpSession, error) {
-	if id == "" {
-		return nil, fmt.Errorf("ACP session ID is empty")
+func (r *acpRunner) NewSession(_ context.Context, cwd string) (coreacp.Session, error) {
+	value, err := r.store.Create(cwd)
+	return toCoreSession(value), err
+}
+func (r *acpRunner) ResumeSession(_ context.Context, id, cwd string) (coreacp.Session, error) {
+	value, err := r.store.Resume(id, cwd)
+	return toCoreSession(value), err
+}
+func (r *acpRunner) ListSessions(_ context.Context, cwd string) ([]coreacp.Session, error) {
+	values := r.store.List(cwd)
+	out := make([]coreacp.Session, len(values))
+	for i := range values {
+		out[i] = toCoreSession(values[i])
 	}
-	if cwd == "" {
-		return nil, fmt.Errorf("ACP session %q has an empty working directory", id)
+	return out, nil
+}
+func (r *acpRunner) CloseSession(_ context.Context, id string) error { return r.store.Close(id) }
+func (r *acpRunner) ForkSession(ctx context.Context, id, cwd string) (coreacp.Session, error) {
+	parent, err := r.store.Resume(id, cwd)
+	if err != nil {
+		return coreacp.Session{}, err
 	}
+	if parent.HeadSequence == 0 {
+		return coreacp.Session{}, errors.New("ACP fork requires a completed turn boundary")
+	}
+	value, err := r.store.Fork(id, cwd, parent.HeadSequence)
+	if err != nil {
+		return coreacp.Session{}, err
+	}
+	app, err := r.app(parent.Cwd)
+	if err != nil {
+		return coreacp.Session{}, err
+	}
+	stream, err := app.Fork(ctx, public.ForkRequest{ParentSessionID: parent.ID, SessionID: value.ID, RunID: "fork-" + value.ID, AtSequence: parent.HeadSequence})
+	if err != nil {
+		return coreacp.Session{}, err
+	}
+	head := parent.HeadSequence
+	for item := range stream {
+		head = item.Sequence
+	}
+	if err := ctx.Err(); err != nil {
+		return coreacp.Session{}, err
+	}
+	if err := r.store.Advance(value.ID, head); err != nil {
+		return coreacp.Session{}, err
+	}
+	return toCoreSession(value), nil
+}
 
+func toCoreSession(value harnessacp.Session) coreacp.Session {
+	return coreacp.Session{ID: value.ID, Cwd: value.Cwd, UpdatedAt: value.UpdatedAt}
+}
+
+func (r *acpRunner) app(cwd string) (harnessApp, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	state := r.sessions[id]
-	if state == nil {
-		state = &acpSession{cwd: cwd}
-		r.sessions[id] = state
+	if app := r.apps[cwd]; app != nil {
+		return app, nil
 	}
-	return state, nil
+	app, err := r.newApp(cwd)
+	if err != nil {
+		return nil, fmt.Errorf("load agent.yaml: %w", err)
+	}
+	r.apps[cwd] = app
+	return app, nil
 }
-
 func (r *acpRunner) Close() error {
 	r.mu.Lock()
-	sessions := make([]*acpSession, 0, len(r.sessions))
-	for _, state := range r.sessions {
-		sessions = append(sessions, state)
-	}
-	r.sessions = make(map[string]*acpSession)
+	apps := r.apps
+	r.apps = make(map[string]harnessApp)
 	r.mu.Unlock()
-
-	var firstErr error
-	for _, state := range sessions {
-		state.mu.Lock()
-		if state.app != nil {
-			if err := state.app.Close(); err != nil && firstErr == nil {
-				firstErr = err
-			}
+	var first error
+	for _, app := range apps {
+		if err := app.Close(); err != nil && first == nil {
+			first = err
 		}
-		state.mu.Unlock()
 	}
-	return firstErr
+	return first
 }
 
+func outputPayload(item public.Event) (string, error) {
+	var body struct {
+		Deliveries []struct {
+			PayloadRef string `json:"payload_ref"`
+		} `json:"deliveries"`
+	}
+	if err := json.Unmarshal(item.Data, &body); err != nil {
+		return "", err
+	}
+	if len(body.Deliveries) != 1 || body.Deliveries[0].PayloadRef == "" {
+		return "", errors.New("ACP output requires exactly one canonical delivery")
+	}
+	return body.Deliveries[0].PayloadRef, nil
+}
 func joinACPPrompt(blocks []coreacp.ContentBlock) string {
 	var prompt strings.Builder
 	for _, block := range blocks {
@@ -137,29 +202,35 @@ func joinACPPrompt(blocks []coreacp.ContentBlock) string {
 	return prompt.String()
 }
 
-func serveACP(input io.Reader, output, stderr io.Writer, factory acpAppFactory) error {
-	runner := newACPRunner(factory, stderr)
+func serveACP(input io.Reader, output, stderr io.Writer, factory acpAppFactory, stores ...*harnessacp.Store) error {
+	runner := newACPRunner(factory, stderr, stores...)
 	defer runner.Close()
-
-	// NewAgent owns JSON-RPC framing and strict ACP v1 negotiation. Its
-	// Initialize implementation rejects any protocol version other than
-	// coreacp.ProtocolVersionNumber before a session can be created.
 	agent := coreacp.NewAgent(runner, coreacp.AgentOptions{}, input, output)
 	<-agent.Done()
 	return nil
 }
 
 func newACPCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:          "acp",
-		Short:        "Serve ycode as an ACP agent over stdio",
-		Args:         cobra.NoArgs,
-		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			origin.SetAgentTool("acp")
-			return serveACP(os.Stdin, os.Stdout, os.Stderr, func(cwd string) (promptApp, error) {
-				return newApp(cwd)
-			})
-		},
-	}
+	var configPath string
+	cmd := &cobra.Command{Use: "acp", Short: "Serve ycode as an ACP agent over stdio", Args: cobra.NoArgs, SilenceUsage: true, RunE: func(_ *cobra.Command, _ []string) error {
+		base, err := os.UserConfigDir()
+		if err != nil {
+			return err
+		}
+		store, err := harnessacp.Open(filepath.Join(base, "ycode", "harness", "acp-sessions.json"))
+		if err != nil {
+			return err
+		}
+		return serveACP(os.Stdin, os.Stdout, os.Stderr, func(cwd string) (harnessApp, error) {
+			path := configPath
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(cwd, path)
+			}
+			return public.Load(path)
+		}, store)
+	}}
+	cmd.Flags().StringVar(&configPath, "config", "agent.yaml", "compiled agent.yaml path (relative to ACP session cwd)")
+	return cmd
 }
+
+var _ coreacp.SessionLifecycle = (*acpRunner)(nil)

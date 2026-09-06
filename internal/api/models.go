@@ -155,7 +155,7 @@ var envKeyModels = []struct {
 
 // DiscoverModels aggregates all available models from four sources:
 //  1. Built-in aliases (hardcoded defaults)
-//  2. Config file aliases (user-defined in settings.json)
+//  2. Explicit caller-supplied aliases
 //  3. Env-detected models (API keys present in environment)
 //  4. Cloudbox-pooled models (dynamically queried via cloudboxLister callback)
 //

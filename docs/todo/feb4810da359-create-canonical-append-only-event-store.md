@@ -3,7 +3,7 @@ id: feb4810da359
 kind: task
 title: Create canonical append-only event store
 seq: 6
-status: doing
+status: done
 priority: p0
 created: 2026-09-02T20:26:06.238034Z
 sprint: 106

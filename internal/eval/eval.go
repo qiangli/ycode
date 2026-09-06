@@ -249,9 +249,10 @@ type ScenarioMetrics struct {
 
 // RunConfig configures an eval run.
 type RunConfig struct {
-	Provider string // "ollama", "anthropic", "openai"
-	Model    string // model identifier
-	Version  string // git SHA or version string
+	Provider    string // "ollama", "anthropic", "openai"
+	Model       string // model identifier
+	Version     string // git SHA or version string
+	HarnessFile string // strict agent.yaml used by the evaluated runtime
 }
 
 // EvalRun aggregates results across all scenarios in a single run.

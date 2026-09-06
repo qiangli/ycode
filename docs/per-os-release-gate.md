@@ -1,55 +1,63 @@
 # Per-OS release gate
 
-ycode follows the umbrella per-OS release gate (see the umbrella
-`docs/per-os-release-gate.md`): `vX.Y.Z-dev` builds a GitHub pre-release,
-standing OS pollers run `YCODE_TEST_VERSION=vX.Y.Z-dev bashy dag qa` against the
-published assets, and the bare `vX.Y.Z` release byte-promotes those tested
-assets after the required `refs/qa/<ver>/<os>` refs exist.
+The per-OS gate proves the published `vX.Y.Z-dev` candidate on native Linux,
+macOS, and Windows before the bare `vX.Y.Z` release is allowed. Promotion
+copies candidate assets byte-for-byte and never rebuilds them.
 
-## Why a runtime gate
+## Candidate matrix
 
-ycode is platform-dependent — in-process shell runner (mvdan/sh), PTY/TUI,
-MCP, filesystem, and go-git all behave differently per OS. A release must be
-RUN + smoke-tested on the real OS before the tag, not merely cross-compiled.
-This mirrors the proven two-stage flow bashy shipped in v0.19.0.
+| OS gate | Published targets |
+|---|---|
+| Linux | `linux-amd64`, `linux-arm64` |
+| macOS | `darwin-amd64`, `darwin-arm64` |
+| Windows | `windows-amd64` |
 
-## Pieces
+Every target is a `ycode-<os>-<arch>.tar.gz` archive listed in the release's
+single `SHA256SUMS`. Windows uses `tar.gz` deliberately because Bashy supplies
+the extractor on every QA host.
 
-### 1. `qa` smoke target (`dag.md → ### qa`)
+## Executable QA target
 
-Portable, **LLM-free** (no model call, no API spend — it runs every release on
-every OS), cwd-local (`.qa/`, no `/tmp`). Reads `$YCODE_TEST_VERSION`; downloads
-the host-matching `ycode-<os>-<arch>.tar.gz` from that tag, verifies it against
-the published `SHA256SUMS`, extracts it, then runs three hard checks:
+`DAG.md` defines the `qa` task run by the standing OS pollers:
 
-1. `ycode version` output contains the base version (any `-dev`/`-rc` suffix
-   stripped).
-2. `ycode docs` succeeds — the offline capability-prompt surface, no model call.
-3. `ycode shell -c 'echo runtime-ok'` prints `runtime-ok` — the in-process
-   shell-runner surface.
+```bash
+YCODE_TEST_VERSION=vX.Y.Z-dev bashy dag qa
+```
 
-Prints `Results: PASS <ver> <os>/<arch>`. Uses `bashy`'s portable userland
-(`bashy curl`, `bashy sha256sum`, `bashy tar`, `bashy uname`, …) so it runs
-identically on linux/darwin/windows. Windows `.zip` extraction is handled by an
-inline safe-zip reader (path-traversal guarded) since `bashy unzip` does not
-exist.
+It uses a temporary cwd-local `.qa/` directory, removes it on exit, is
+LLM-free, and uses the Bashy userland to:
 
-Repo override: `YCODE_REPO` (default `qiangli/ycode`).
+1. identify the native OS and architecture;
+2. download that exact archive and `SHA256SUMS` from the candidate release;
+3. require a matching checksum entry and verify it before extraction;
+4. require the expected `ycode`/`ycode.exe` archive member;
+5. strictly compile the absolute canonical `examples/agent.yaml` with one
+   dummy, never-used provider credential;
+6. verify the binary reports the base `vX.Y.Z` version;
+7. verify `--help`; and
+8. verify `ycode shell --file <fixture> -c pwd` executes in the workspace
+   compiled from that fixture.
 
-### 2. Two-stage release flow
+Success prints `Results: PASS <candidate> <os>/<arch>` and permits the poller
+to create `refs/qa/vX.Y.Z/<os>`. `YCODE_REPO` overrides the default
+`qiangli/ycode` repository for forks.
 
-- **`release.yml`** triggers on `v*-dev` (was `v*`). It builds the per-platform
-  matrix, stamps the binary with the **base** version (the `-dev` suffix is
-  stripped via a Normalize step → `VERSION="${tag%%-*}"`), and publishes a
-  GitHub **pre-release** (the `*-*` → `--prerelease` marking). `workflow_dispatch`
-  and PR-on-this-file remain as dryrun build paths (no publish). A bare `vX.Y.Z`
-  tag must NOT reach this workflow — promote.yml owns it.
-- **`promote.yml`** triggers on a bare `vX.Y.Z` (`v*` + `!v*-*`), gates on
-  `refs/qa/<ver>/<os>` for `required_os` (default `windows`), verifies the
-  `-dev` pre-release exists and is marked prerelease, then **byte-promotes** its
-  assets (exact bytes copied, NO rebuild) to the official `--latest` release.
+The poller wiring and credentials are steward-owned. This repository owns the
+download, checksum, extraction, and smoke contract it invokes.
 
-### 3. Poller wiring (steward)
+## Promotion gate
 
-The standing OS pollers that create `refs/qa/<ver>/<os>` are wired by the
-steward — not in this change.
+`.github/workflows/promote.yml` fixes the required OS set to:
+
+```text
+linux darwin windows
+```
+
+The workflow refuses promotion when any required QA ref is absent. It also
+refuses a missing/non-prerelease candidate, an existing official release, an
+invalid checksum, or an incomplete artifact matrix. Only after those checks
+does it create the official release from the downloaded candidate files.
+
+This closes the former inconsistency where Windows evidence was mandatory even
+though no Windows artifact was built, and where documentation named a `qa`
+target that was absent from the task DAG.

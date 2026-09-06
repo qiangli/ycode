@@ -3,283 +3,114 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	harnessspec "github.com/qiangli/ycode/internal/harness/spec"
 )
 
-// newConfigCmd builds `ycode config ...` for reading and writing
-// ~/.config/ycode/settings.json without hand-editing JSON.
+// newConfigCmd is deliberately read-only. agent.yaml is the sole authored
+// configuration; the CLI only displays the strict compiled representation.
 func newConfigCmd() *cobra.Command {
+	var file string
 	cmd := &cobra.Command{
 		Use:   "config",
-		Short: "Read and write ~/.config/ycode/settings.json",
-		Long: `Manage ycode's user-global settings.json without hand-editing.
-
-Examples:
-  ycode config show                          # print the whole file
-  ycode config path                          # print the file path
-  ycode config get model                     # print one field
-  ycode config set model claude-sonnet-4-6   # set one field
-  ycode config set inference.enabled true    # set a nested field
-  ycode config unset model                   # remove a field`,
+		Short: "Inspect the compiled agent.yaml harness",
+		Long: `Inspect ycode's strict compiled harness. agent.yaml is the single
+source of truth; imperative set/unset commands are intentionally unavailable.`,
 	}
-	cmd.AddCommand(newConfigShowCmd())
-	cmd.AddCommand(newConfigPathCmd())
-	cmd.AddCommand(newConfigGetCmd())
-	cmd.AddCommand(newConfigSetCmd())
-	cmd.AddCommand(newConfigUnsetCmd())
+	cmd.PersistentFlags().StringVarP(&file, "file", "f", "agent.yaml", "harness configuration file")
+	cmd.AddCommand(newConfigShowCmd(&file), newConfigPathCmd(&file), newConfigGetCmd(&file))
 	return cmd
 }
 
-// userConfigPath returns ~/.config/ycode/settings.json.
-func userConfigPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".config", "ycode", "settings.json"), nil
+func loadHarness(file string) (*harnessspec.Document, error) {
+	return harnessspec.Load(file)
 }
 
-// loadConfig reads settings.json into a generic map. Missing file
-// returns an empty map (so set/unset work in a fresh install).
-func loadConfig(path string) (map[string]any, error) {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return map[string]any{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if len(data) == 0 {
-		return map[string]any{}, nil
-	}
-	var out map[string]any
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	if out == nil {
-		out = map[string]any{}
-	}
-	return out, nil
-}
-
-// saveConfig atomically writes the map back as pretty JSON.
-func saveConfig(path string, m map[string]any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-func newConfigShowCmd() *cobra.Command {
+func newConfigShowCmd(file *string) *cobra.Command {
 	return &cobra.Command{
-		Use:   "show",
-		Short: "Print the full settings.json",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := userConfigPath()
+		Use: "show", Short: "Print the strict compiled harness as JSON", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			doc, err := loadHarness(*file)
 			if err != nil {
 				return err
 			}
-			m, err := loadConfig(path)
+			data, err := json.MarshalIndent(doc, "", "  ")
 			if err != nil {
 				return err
 			}
-			data, err := json.MarshalIndent(m, "", "  ")
-			if err != nil {
-				return err
-			}
-			fmt.Println(string(data))
-			return nil
+			_, err = cmd.OutOrStdout().Write(append(data, '\n'))
+			return err
 		},
 	}
 }
 
-func newConfigPathCmd() *cobra.Command {
+func newConfigPathCmd(file *string) *cobra.Command {
 	return &cobra.Command{
-		Use:   "path",
-		Short: "Print the path to settings.json",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := userConfigPath()
+		Use: "path", Short: "Print the agent.yaml path after successful compilation", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			doc, err := loadHarness(*file)
 			if err != nil {
 				return err
 			}
-			fmt.Println(path)
-			return nil
+			path, err := filepath.Abs(doc.Source)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), path)
+			return err
 		},
 	}
 }
 
-func newConfigGetCmd() *cobra.Command {
+func newConfigGetCmd(file *string) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get <key>",
-		Short: "Print one field (dot-separated for nested keys)",
-		Args:  cobra.ExactArgs(1),
+		Use: "get <key>", Short: "Print one compiled field (dot-separated)", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := userConfigPath()
+			doc, err := loadHarness(*file)
 			if err != nil {
 				return err
 			}
-			m, err := loadConfig(path)
+			data, err := json.Marshal(doc)
 			if err != nil {
 				return err
 			}
-			v, ok := getDotted(m, args[0])
+			var values map[string]any
+			if err := json.Unmarshal(data, &values); err != nil {
+				return err
+			}
+			value, ok := getDotted(values, args[0])
 			if !ok {
-				return fmt.Errorf("key not set: %s", args[0])
+				return fmt.Errorf("compiled harness key not found: %s", args[0])
 			}
-			switch x := v.(type) {
-			case string:
-				fmt.Println(x)
-			default:
-				data, _ := json.Marshal(v)
-				fmt.Println(string(data))
+			if text, ok := value.(string); ok {
+				_, err = fmt.Fprintln(cmd.OutOrStdout(), text)
+				return err
 			}
-			return nil
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
+			return err
 		},
 	}
 }
 
-func newConfigSetCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "set <key> <value>",
-		Short: "Set one field (dot-separated for nested keys; values auto-typed)",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := userConfigPath()
-			if err != nil {
-				return err
-			}
-			m, err := loadConfig(path)
-			if err != nil {
-				return err
-			}
-			setDotted(m, args[0], parseValue(args[1]))
-			if err := saveConfig(path, m); err != nil {
-				return err
-			}
-			fmt.Printf("set %s = %s in %s\n", args[0], args[1], path)
-			return nil
-		},
-	}
-}
-
-func newConfigUnsetCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "unset <key>",
-		Short: "Remove one field (dot-separated for nested keys)",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := userConfigPath()
-			if err != nil {
-				return err
-			}
-			m, err := loadConfig(path)
-			if err != nil {
-				return err
-			}
-			if !unsetDotted(m, args[0]) {
-				return fmt.Errorf("key not set: %s", args[0])
-			}
-			if err := saveConfig(path, m); err != nil {
-				return err
-			}
-			fmt.Printf("unset %s in %s\n", args[0], path)
-			return nil
-		},
-	}
-}
-
-// parseValue auto-types the string into bool/int/float/JSON if it
-// looks like one; otherwise returns the string as-is.
-func parseValue(s string) any {
-	switch strings.ToLower(s) {
-	case "true":
-		return true
-	case "false":
-		return false
-	case "null":
-		return nil
-	}
-	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
-		return i
-	}
-	if f, err := strconv.ParseFloat(s, 64); err == nil {
-		return f
-	}
-	// Try JSON (objects, arrays); accept on success, else treat as string.
-	if strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[") {
-		var v any
-		if err := json.Unmarshal([]byte(s), &v); err == nil {
-			return v
-		}
-	}
-	return s
-}
-
-// getDotted walks "a.b.c" through nested maps.
-func getDotted(m map[string]any, key string) (any, bool) {
-	parts := strings.Split(key, ".")
-	var cur any = m
-	for _, p := range parts {
-		mm, ok := cur.(map[string]any)
+func getDotted(values map[string]any, key string) (any, bool) {
+	var current any = values
+	for _, part := range strings.Split(key, ".") {
+		object, ok := current.(map[string]any)
 		if !ok {
 			return nil, false
 		}
-		cur, ok = mm[p]
+		current, ok = object[part]
 		if !ok {
 			return nil, false
 		}
 	}
-	return cur, true
-}
-
-// setDotted sets m[a][b][c] = value, creating intermediate maps.
-func setDotted(m map[string]any, key string, value any) {
-	parts := strings.Split(key, ".")
-	cur := m
-	for i, p := range parts {
-		if i == len(parts)-1 {
-			cur[p] = value
-			return
-		}
-		next, ok := cur[p].(map[string]any)
-		if !ok {
-			next = map[string]any{}
-			cur[p] = next
-		}
-		cur = next
-	}
-}
-
-// unsetDotted removes m[a][b][c]. Returns true if it existed.
-func unsetDotted(m map[string]any, key string) bool {
-	parts := strings.Split(key, ".")
-	cur := m
-	for i, p := range parts {
-		if i == len(parts)-1 {
-			if _, ok := cur[p]; !ok {
-				return false
-			}
-			delete(cur, p)
-			return true
-		}
-		next, ok := cur[p].(map[string]any)
-		if !ok {
-			return false
-		}
-		cur = next
-	}
-	return false
+	return current, true
 }

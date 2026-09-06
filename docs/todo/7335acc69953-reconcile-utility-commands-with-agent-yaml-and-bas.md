@@ -3,7 +3,7 @@ id: 7335acc69953
 kind: task
 title: Reconcile utility commands with agent.yaml and Bashy
 seq: 18
-status: todo
+status: done
 priority: p1
 created: 2026-09-02T20:26:06.457285Z
 sprint: 106

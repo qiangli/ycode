@@ -168,7 +168,7 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 	// creds".
 	if modelMatched && cfg == nil {
 		if envKey := providerEnvKey(DetectProviderFromModel(resolved)); envKey != "" {
-			return nil, fmt.Errorf("model %q requires %s; set it (or `ycode login`), or pick a model your configured provider serves", model, envKey)
+			return nil, fmt.Errorf("model %q requires %s; set it or pick a model your configured provider serves", model, envKey)
 		}
 		return nil, fmt.Errorf("model %q requires provider credentials; set the matching provider API key, or pick a different model", model)
 	}
@@ -289,7 +289,7 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 		}, nil
 	}
 
-	return nil, fmt.Errorf("no API key found; set one of: DHNT_BASE_URL (+ DHNT_API_KEY), ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, DEEPSEEK_API_KEY, ZAI_API_KEY\nor run: ycode login")
+	return nil, fmt.Errorf("no API key found; set one of: DHNT_BASE_URL (+ DHNT_API_KEY), ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, DEEPSEEK_API_KEY, ZAI_API_KEY")
 }
 
 // NewProvider creates a Provider from a ProviderConfig.
@@ -455,11 +455,11 @@ func resolveOAuthToken() (string, error) {
 	}
 	// Token expired - try to refresh.
 	if token.RefreshToken == "" {
-		return "", fmt.Errorf("oauth token expired and no refresh token available; run: ycode login")
+		return "", fmt.Errorf("oauth token expired and no refresh token available; set ANTHROPIC_API_KEY or replace the saved credential")
 	}
 	refreshed, err := oauth.RefreshToken(context.Background(), oauth.DefaultTokenURL, oauth.DefaultClientID, token.RefreshToken)
 	if err != nil {
-		return "", fmt.Errorf("oauth token refresh failed: %w; run: ycode login", err)
+		return "", fmt.Errorf("oauth token refresh failed: %w; set ANTHROPIC_API_KEY or replace the saved credential", err)
 	}
 	// Save the refreshed token.
 	if err := oauth.SaveCredentials(refreshed); err != nil {

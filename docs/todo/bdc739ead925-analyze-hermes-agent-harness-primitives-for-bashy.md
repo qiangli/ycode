@@ -3,8 +3,8 @@ id: bdc739ead925
 kind: task
 title: Analyze Hermes Agent harness primitives for Bashy reuse
 seq: 27
-status: todo
-priority: p1
+status: done
+priority: p0
 created: 2026-09-02T20:52:27.45048Z
 sprint: 106
 ---

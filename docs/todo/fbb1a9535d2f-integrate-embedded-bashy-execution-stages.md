@@ -3,7 +3,7 @@ id: fbb1a9535d2f
 kind: task
 title: Integrate embedded Bashy execution stages
 seq: 8
-status: doing
+status: done
 priority: p0
 created: 2026-09-02T20:26:06.272868Z
 sprint: 106

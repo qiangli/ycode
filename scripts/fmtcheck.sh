@@ -34,7 +34,12 @@ set -eu
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 cd "$root"
 
-files="$(git ls-files '*.go')"
+# git ls-files reports paths deleted from the worktree until their deletion is
+# staged. A read-only gate must work before staging too, so format only tracked
+# files that still exist.
+files="$(git ls-files '*.go' | while IFS= read -r file; do
+	[ -f "$file" ] && printf '%s\n' "$file"
+done)"
 if [ -z "$files" ]; then
 	echo "fmtcheck: no tracked Go files"
 	exit 0

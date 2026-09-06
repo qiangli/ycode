@@ -10,7 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/qiangli/ycode/internal/commands"
 	"github.com/qiangli/ycode/internal/features"
 )
 
@@ -51,11 +50,10 @@ func inYcodeSourceTree() (string, bool) {
 func newFeaturesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "features",
-		Short: "List and verify the feature registry (build tiers)",
-		Long: "Manages the feature registry that gates which capabilities ship in default\n" +
-			"builds vs. behind experimental/wip Go build tags. The registry is the single\n" +
-			"source of truth for \"what is ready to ship.\"\n\n" +
-			"See docs/strategy.md#feature-tiers for policy and graduation criteria.",
+		Short: "List and verify the shipped-capability registry",
+		Long: "Inspects the user-facing inventory of capabilities reachable through the\n" +
+			"YAML-native harness. Tiers describe maturity; they do not select Go build\n" +
+			"variants or enable runtime policy.",
 	}
 
 	cmd.AddCommand(&cobra.Command{
@@ -117,33 +115,6 @@ func newFeaturesCmd() *cobra.Command {
 	}
 	readmeCmd.Flags().StringVar(&readmeWrite, "write", "", "Path to a file containing BEGIN/END FEATURES markers; replaces the section in-place")
 	cmd.AddCommand(readmeCmd)
-
-	var commandsWrite string
-	commandsCmd := &cobra.Command{
-		Use:   "commands",
-		Short: "Render the VISIBLE slash commands as markdown (hidden ones are never advertised)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			reg := commands.NewRegistry()
-			commands.RegisterBuiltins(reg, &commands.RuntimeDeps{Version: version})
-			rendered := commands.RenderMarkdown(reg)
-			if commandsWrite == "" {
-				fmt.Fprint(cmd.OutOrStdout(), rendered)
-				return nil
-			}
-			changed, err := commands.ReplaceDocSection(commandsWrite, rendered)
-			if err != nil {
-				return err
-			}
-			if changed {
-				fmt.Fprintf(cmd.OutOrStdout(), "updated %s\n", commandsWrite)
-			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s already up to date\n", commandsWrite)
-			}
-			return nil
-		},
-	}
-	commandsCmd.Flags().StringVar(&commandsWrite, "write", "", "rewrite the generated section of this file in place")
-	cmd.AddCommand(commandsCmd)
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "verify",

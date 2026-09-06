@@ -45,7 +45,3 @@ func newHarnessSchemaCmd() *cobra.Command {
 		},
 	}
 }
-
-func init() {
-	rootCmd.AddCommand(newHarnessValidateCmd(), newHarnessSchemaCmd())
-}

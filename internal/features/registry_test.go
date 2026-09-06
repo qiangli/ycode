@@ -13,12 +13,10 @@ func TestEmbeddedRegistryLoads(t *testing.T) {
 	if len(reg.Features) == 0 {
 		t.Fatal("registry is empty")
 	}
-	// Sanity: at least one stable and one experimental at the audit baseline.
+	// A release must advertise at least one supported capability. Experimental
+	// and wip tiers are optional maturity labels, not build variants.
 	if len(reg.ByTier(TierStable)) == 0 {
 		t.Error("expected at least one stable feature in the embedded registry")
-	}
-	if len(reg.ByTier(TierExperimental)) == 0 {
-		t.Error("expected at least one experimental feature in the embedded registry")
 	}
 }
 

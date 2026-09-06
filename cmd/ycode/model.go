@@ -1,187 +1,120 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"os"
-	"strings"
-	"time"
+	"sort"
 
 	"github.com/spf13/cobra"
 
-	"github.com/qiangli/ycode/internal/api"
+	harnessspec "github.com/qiangli/ycode/internal/harness/spec"
 )
 
 func newModelCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "model",
-		Short: "Inspect or set model configuration",
-	}
-	cmd.AddCommand(
-		newModelCurrentCmd(),
-		newModelUseCmd(),
-		newModelP2PCmd(),
-	)
+	var file string
+	cmd := &cobra.Command{Use: "model", Short: "Inspect models compiled from agent.yaml"}
+	cmd.PersistentFlags().StringVarP(&file, "file", "f", "agent.yaml", "harness configuration file")
+	cmd.AddCommand(newModelCurrentCmd(&file), newModelListCmd(&file))
 	return cmd
 }
 
-// newModelP2PCmd resolves the model your p2p mesh recommends for a capability
-// (chat/vision) via cloudbox's serving-plane resolver and sets it as the
-// default. When you're on the same LAN as a serving host it also reports the
-// direct LAN endpoint (lower latency, bypasses the cloud relay).
-func newModelP2PCmd() *cobra.Command {
-	var capability string
+func newModelCurrentCmd(file *string) *cobra.Command {
+	return &cobra.Command{
+		Use: "current", Short: "Print the default agent's first configured model", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			doc, err := loadHarness(*file)
+			if err != nil {
+				return err
+			}
+			model, err := defaultHarnessModel(doc)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), model)
+			return err
+		},
+	}
+}
+
+func defaultHarnessModel(doc *harnessspec.Document) (string, error) {
+	_, model, err := defaultHarnessModelResource(doc)
+	if err != nil {
+		return "", err
+	}
+	return model.ID, nil
+}
+
+func defaultHarnessModelResource(doc *harnessspec.Document) (string, harnessspec.Model, error) {
+	agentRef := doc.Spec.Runtime.DefaultAgentRef
+	agent, ok := doc.Spec.Agents[agentRef]
+	if !ok {
+		return "", harnessspec.Model{}, fmt.Errorf("compiled harness has no default agent %q", agentRef)
+	}
+	route, ok := doc.Spec.Routes[agent.ModelRouteRef]
+	if !ok || len(route.Attempts) == 0 {
+		return "", harnessspec.Model{}, fmt.Errorf("default agent %q has no model route attempts", agentRef)
+	}
+	modelRef := route.Attempts[0].ModelRef
+	model, ok := doc.Spec.Models[modelRef]
+	if !ok {
+		return "", harnessspec.Model{}, fmt.Errorf("route references unknown model %q", modelRef)
+	}
+	return modelRef, model, nil
+}
+
+func harnessCredentialStatus(doc *harnessspec.Document) (string, bool) {
+	_, model, err := defaultHarnessModelResource(doc)
+	if err != nil {
+		return err.Error(), false
+	}
+	provider, ok := doc.Spec.Providers[model.ProviderRef]
+	if !ok {
+		return "configured provider is missing", false
+	}
+	secret := provider.Credentials.APIKey.SecretRef
+	if secret.Provider != "env" {
+		return fmt.Sprintf("credential configured as %s/%s", secret.Provider, secret.Name), true
+	}
+	if value, ok := os.LookupEnv(secret.Name); ok && value != "" {
+		return fmt.Sprintf("credential found in %s", secret.Name), true
+	}
+	return fmt.Sprintf("credential environment variable %s is not set", secret.Name), false
+}
+
+func newModelListCmd(file *string) *cobra.Command {
+	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "p2p",
-		Short: "Set the model your p2p mesh recommends (via cloudbox's serving-plane resolver)",
-		Long: `Queries cloudbox's p2p serving-plane resolver (GET /api/v1/p2p/model?cap=)
-for the recommended warm model of a capability, sets it as the default in
-settings.json, and reports the endpoint to use — the direct LAN URL when you are
-co-located with a serving host, else the cloud gateway.
-
-Uses DHNT_BASE_URL + DHNT_API_KEY (the cloudbox gateway + token; source
-~/.config/ycode/cloudbox-env.sh).
-
-Examples:
-  ycode model p2p                 # best warm chat model
-  ycode model p2p --cap vision    # best warm vision model`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return resolveP2PModel(cmd.Context(), capability)
+		Use: "list", Short: "List configured model resources", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			doc, err := loadHarness(*file)
+			if err != nil {
+				return err
+			}
+			names := make([]string, 0, len(doc.Spec.Models))
+			for name := range doc.Spec.Models {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			if jsonOutput {
+				rows := make(map[string]any, len(names))
+				for _, name := range names {
+					rows[name] = doc.Spec.Models[name]
+				}
+				data, err := json.MarshalIndent(rows, "", "  ")
+				if err != nil {
+					return err
+				}
+				_, err = cmd.OutOrStdout().Write(append(data, '\n'))
+				return err
+			}
+			for _, name := range names {
+				model := doc.Spec.Models[name]
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", name, model.ID, model.ProviderRef)
+			}
+			return nil
 		},
 	}
-	cmd.Flags().StringVar(&capability, "cap", "chat", "capability: chat | vision")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Machine-readable JSON")
 	return cmd
-}
-
-func resolveP2PModel(ctx context.Context, capability string) error {
-	base := strings.TrimSpace(os.Getenv("DHNT_BASE_URL"))
-	if base == "" {
-		return fmt.Errorf("DHNT_BASE_URL not set — source ~/.config/ycode/cloudbox-env.sh")
-	}
-	key := strings.TrimSpace(os.Getenv("DHNT_API_KEY"))
-	// DHNT_BASE_URL is the OpenAI base (e.g. https://host/v1); the resolver lives
-	// at <origin>/api/v1/p2p/model. Strip a trailing /v1 to get the origin.
-	origin := strings.TrimSuffix(strings.TrimRight(base, "/"), "/v1")
-	u := origin + "/api/v1/p2p/model?cap=" + url.QueryEscape(capability)
-
-	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(cctx, http.MethodGet, u, nil)
-	if err != nil {
-		return err
-	}
-	if key != "" {
-		req.Header.Set("Authorization", "Bearer "+key)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("p2p resolver %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-	var out struct {
-		Model    string `json:"model"`
-		Endpoint string `json:"endpoint"`
-		Scope    string `json:"scope"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return fmt.Errorf("decode resolver response: %w", err)
-	}
-	if out.Model == "" {
-		return fmt.Errorf("resolver returned no model for cap=%s", capability)
-	}
-
-	path, err := userConfigPath()
-	if err != nil {
-		return err
-	}
-	m, err := loadConfig(path)
-	if err != nil {
-		return err
-	}
-	m["model"] = out.Model
-	if err := saveConfig(path, m); err != nil {
-		return err
-	}
-	fmt.Printf("default model set to %q (p2p %s) in %s\n", out.Model, capability, path)
-	if out.Endpoint != "" {
-		fmt.Printf("endpoint: %s (%s)\n", out.Endpoint, out.Scope)
-		if out.Scope == "lan" {
-			fmt.Printf("  same-LAN direct path — for lowest latency:  export DHNT_BASE_URL=%s\n", out.Endpoint)
-		}
-	}
-	return nil
-}
-
-// newModelCurrentCmd prints the configured default model from
-// ~/.config/ycode/settings.json. Convenience for `ycode config get model`.
-func newModelCurrentCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "current",
-		Short: "Print the configured default model (settings.json `model` field)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := userConfigPath()
-			if err != nil {
-				return err
-			}
-			m, err := loadConfig(path)
-			if err != nil {
-				return err
-			}
-			if v, ok := m["model"].(string); ok && v != "" {
-				fmt.Println(v)
-				return nil
-			}
-			fmt.Fprintln(os.Stderr, "no default model set; use `ycode model use <name>`")
-			return nil
-		},
-	}
-}
-
-// newModelUseCmd sets ~/.config/ycode/settings.json `model` to <name>.
-// Equivalent to `ycode config set model <name>`.
-func newModelUseCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "use <model>",
-		Short: "Set the default model in settings.json",
-		Long: `Sets the ` + "`model`" + ` field in ~/.config/ycode/settings.json.
-Provider selection remains the normal runtime provider resolution path.
-
-Examples:
-  ycode model use claude-sonnet-4-6
-  ycode model use gpt-4o-mini
-  ycode model use kimi-k2.5
-  ycode model use deepseek-chat`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := userConfigPath()
-			if err != nil {
-				return err
-			}
-			m, err := loadConfig(path)
-			if err != nil {
-				return err
-			}
-			sel := args[0]
-			// Accept a fleet selector (nickname / agent name / band like L3) and
-			// store the resolved concrete model id; a literal id passes through.
-			if fm, note := api.ResolveFleetModel(sel); fm != sel {
-				fmt.Printf("fleet: %s\n", note)
-				sel = fm
-			}
-			m["model"] = sel
-			if err := saveConfig(path, m); err != nil {
-				return err
-			}
-			fmt.Printf("default model set to %q in %s\n", sel, path)
-			return nil
-		},
-	}
 }

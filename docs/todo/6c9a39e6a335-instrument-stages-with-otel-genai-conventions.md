@@ -3,7 +3,7 @@ id: 6c9a39e6a335
 kind: task
 title: Instrument stages with OTel GenAI conventions
 seq: 19
-status: todo
+status: done
 priority: p1
 created: 2026-09-02T20:26:06.475424Z
 sprint: 106

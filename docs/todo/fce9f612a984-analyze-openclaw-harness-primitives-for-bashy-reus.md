@@ -3,8 +3,8 @@ id: fce9f612a984
 kind: task
 title: Analyze OpenClaw harness primitives for Bashy reuse
 seq: 26
-status: todo
-priority: p1
+status: done
+priority: p0
 created: 2026-09-02T20:52:27.39806Z
 sprint: 106
 ---

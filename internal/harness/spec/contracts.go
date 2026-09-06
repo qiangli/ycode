@@ -1,223 +1,554 @@
 package spec
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
 
-type stageContract struct {
-	requires []string
-	provides []string
+var knownStageCatalog = map[string]struct{}{
+	"agent.invoke": {}, "bashy.deny": {}, "bashy.execute": {}, "bashy.preflight": {},
+	"bashy.reject": {}, "checkpoint.save": {}, "command.apply-edit": {},
+	"command.finish": {}, "command.initialize": {}, "context.load": {},
+	"context.measure": {}, "event.annotate": {}, "hitl.review": {},
+	"input.normalize": {}, "lifecycle.transition": {}, "llm.call": {},
+	"lock.acquire": {}, "lock.release": {}, "loop.finish": {}, "memory.compact": {},
+	"memory.recall": {}, "memory.write": {}, "messages.append-assistant": {},
+	"messages.append-source": {}, "messages.append-tool-results": {},
+	"messages.apply-input": {}, "messages.normalize-provider-response": {},
+	"outcome.fail": {}, "output.emit": {}, "policy.bind-approval": {},
+	"policy.evaluate": {}, "prompt.assemble": {}, "queue.drain": {},
+	"state.forward": {}, "state.project": {},
 }
 
-var stageContracts = map[string]stageContract{
-	"input.read":      {provides: []string{"input"}},
-	"context.load":    {provides: []string{"context"}},
-	"memory.recall":   {provides: []string{"memory"}},
-	"prompt.assemble": {requires: []string{"input", "context"}, provides: []string{"messages"}},
-	"session.append":  {},
-	"llm.call":        {requires: []string{"messages"}, provides: []string{"llm.output", "llm.toolCalls", "llm.finished", "llm.hasToolCalls"}},
-	"bashy.preflight": {requires: []string{"llm.toolCalls"}, provides: []string{"bashy.preflight"}},
-	"hitl.review":     {requires: []string{"bashy.preflight"}, provides: []string{"bashy.approved"}},
-	"bashy.execute":   {requires: []string{"bashy.approved"}, provides: []string{"bashy.results", "messages"}},
-	"memory.write":    {requires: []string{"llm.output"}},
-	"checkpoint.save": {},
-	"agent.invoke":    {requires: []string{"input"}, provides: []string{"agent.output"}},
-	"output.emit":     {requires: []string{"llm.output"}, provides: []string{"output"}},
+func isKnownStage(name string) bool { _, ok := knownStageCatalog[name]; return ok }
+
+func stagePorts(name string) (string, string) {
+	switch name {
+	case "event.annotate", "state.forward", "state.project":
+		return "value", "value"
+	case "checkpoint.save":
+		return "state", "checkpoint"
+	case "memory.compact":
+		return "state,checkpoint", "state"
+	case "loop.finish", "policy.bind-approval", "command.finish":
+		return "state", "state"
+	case "command.apply-edit":
+		return "state,editedIntent", "state"
+	case "outcome.fail":
+		return "state", "state"
+	case "lock.acquire":
+		return "", "lease"
+	case "lock.release":
+		return "lease", ""
+	case "bashy.execute":
+		return "intent,authorization,fencingToken", "result"
+	case "bashy.deny":
+		return "intent,decision", "result,terminal"
+	case "bashy.reject":
+		return "intent,resolution", "result,terminal"
+	case "hitl.review":
+		return "checkpoint,intent,preflight,decision", "resolution"
+	case "bashy.preflight":
+		return "intent", "report"
+	case "policy.evaluate":
+		return "intent,preflight", "decision,authorization"
+	case "command.initialize":
+		return "call", "state"
+	case "messages.append-tool-results":
+		return "state,results", "state"
+	case "queue.drain":
+		return "", "items"
+	case "messages.apply-input":
+		return "state,items", "state"
+	case "context.measure":
+		return "messages", "tokens"
+	case "messages.append-source":
+		return "state", "state"
+	case "llm.call":
+		return "messages,providerSession", "response,providerSession"
+	case "messages.normalize-provider-response", "messages.append-assistant":
+		return "state,response", "state"
+	case "input.normalize":
+		return "request", "input"
+	case "context.load":
+		return "", "context"
+	case "memory.recall":
+		return "query", "items"
+	case "prompt.assemble":
+		return "input,context,memory", "state"
+	case "memory.write":
+		return "messages", ""
+	case "output.emit":
+		return "messages", "output"
+	case "lifecycle.transition":
+		return "", ""
+	case "agent.invoke":
+		return "input", "output"
+	default:
+		return "", ""
+	}
 }
 
-var predicateSlots = map[string]string{
-	"llm.finished":     "llm.finished",
-	"llm.hasToolCalls": "llm.hasToolCalls",
-	"input.pending":    "input.pending",
-	"output.valid":     "output.valid",
-	"error.retryable":  "error.retryable",
+type typedSlots map[string]string
+
+func validatePipelineContracts(pipelines map[string]Pipeline) error {
+	names := make([]string, 0, len(pipelines))
+	for name := range pipelines {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		pipeline := pipelines[name]
+		if err := validateOnePipeline(name, pipeline, pipelines); err != nil {
+			return fmt.Errorf("harness: pipeline %q: %w", name, err)
+		}
+	}
+	return nil
 }
 
-func validateStageContracts(stages []Stage) error {
-	_, err := compileStageContracts(stages, make(map[string]struct{}))
-	return err
-}
-
-func validatePipelineStageContracts(name string, pipeline Pipeline, catalog map[string]Pipeline) error {
+func validateOnePipeline(name string, pipeline Pipeline, catalog map[string]Pipeline) error {
+	if err := validateStateAndMerges(pipeline); err != nil {
+		return err
+	}
 	nodes := make(map[string]Stage, len(pipeline.Nodes))
 	for _, node := range pipeline.Nodes {
 		nodes[node.ID] = node
 	}
-	results := make(map[string]map[string]struct{}, len(nodes))
-	var compileNode func(string) (map[string]struct{}, error)
-	compileNode = func(id string) (map[string]struct{}, error) {
-		if result, ok := results[id]; ok {
-			return result, nil
+	stateTypes := make(typedSlots, len(pipeline.State))
+	for slot, declaration := range pipeline.State {
+		stateTypes[slot] = declaration.Type
+	}
+	results, visiting := make(map[string]typedSlots), make(map[string]bool)
+	var compileNode func(string) (typedSlots, error)
+	compileNode = func(id string) (typedSlots, error) {
+		if got, ok := results[id]; ok {
+			return got, nil
 		}
-		available := make(map[string]struct{}, len(pipeline.Inputs))
-		for _, input := range pipeline.Inputs {
-			available[input] = struct{}{}
+		if visiting[id] {
+			return nil, fmt.Errorf("dependency cycle at node %q", id)
+		}
+		visiting[id] = true
+		available := cloneTyped(pipeline.Inputs)
+		for _, dependency := range nodes[id].Needs {
+			got, err := compileNode(dependency)
+			if err != nil {
+				return nil, err
+			}
+			mergeTyped(available, got)
 		}
 		node := nodes[id]
-		for _, dependency := range node.Needs {
-			dependencyResult, err := compileNode(dependency)
-			if err != nil {
-				return nil, err
-			}
-			for slot := range dependencyResult {
-				available[slot] = struct{}{}
+		if node.WhenExpr != nil {
+			if err := validateExpression(*node.WhenExpr, available); err != nil {
+				return nil, fmt.Errorf("node %q when: %w", id, err)
 			}
 		}
-		var result map[string]struct{}
-		if node.Call != "" {
-			called := catalog[node.Call]
-			for _, input := range called.Inputs {
-				if _, ok := available[input]; !ok {
-					return nil, fmt.Errorf("node %q call to %q requires unavailable state %q", id, node.Call, input)
-				}
-			}
-			result = cloneSlots(available)
-			for _, output := range called.Outputs {
-				result[output] = struct{}{}
-			}
-		} else {
-			var err error
-			result, err = compileStageContracts([]Stage{node}, available)
-			if err != nil {
-				return nil, err
+		if node.RetryV1 != nil {
+			if err := validateExpression(node.RetryV1.When, outcomeSlots(available)); err != nil {
+				return nil, fmt.Errorf("node %q retry.when: %w", id, err)
 			}
 		}
-		results[id] = result
-		return result, nil
+		out, err := validateRun(id, node.Run, available, stateTypes, catalog)
+		if err != nil {
+			return nil, err
+		}
+		delete(visiting, id)
+		results[id] = out
+		return out, nil
 	}
-	all := make(map[string]struct{})
+	all := cloneTyped(pipeline.Inputs)
 	for _, node := range pipeline.Nodes {
-		result, err := compileNode(node.ID)
+		got, err := compileNode(node.ID)
 		if err != nil {
 			return err
 		}
-		for slot := range result {
-			all[slot] = struct{}{}
-		}
+		mergeTyped(all, got)
 	}
-	for _, output := range pipeline.Outputs {
-		if _, ok := all[output]; !ok {
+	for output, want := range pipeline.Outputs {
+		got, ok := all[output]
+		if !ok {
 			return fmt.Errorf("declared output %q is not produced", output)
+		}
+		if got != "" && got != want {
+			return fmt.Errorf("declared output %q has type %q, produced %q", output, want, got)
 		}
 	}
 	_ = name
 	return nil
 }
 
-func compileStageContracts(stages []Stage, available map[string]struct{}) (map[string]struct{}, error) {
-	current := cloneSlots(available)
-	for _, stage := range stages {
-		switch {
-		case stage.Use != "":
-			contract := stageContracts[stage.Use]
-			for _, required := range contract.requires {
-				if _, ok := current[required]; !ok {
-					return nil, fmt.Errorf("stage %q (%s) requires unavailable state %q", stage.ID, stage.Use, required)
-				}
-			}
-			if stage.Use == "session.append" {
-				value, ok := stage.With["value"].(string)
-				if !ok || value == "" {
-					return nil, fmt.Errorf("stage %q (session.append) requires with.value", stage.ID)
-				}
-				if _, ok := current[value]; !ok {
-					return nil, fmt.Errorf("stage %q references unavailable state %q", stage.ID, value)
-				}
-			}
-			for _, provided := range contract.provides {
-				current[provided] = struct{}{}
-			}
-		case stage.When != "":
-			if err := requirePredicate(stage.ID, stage.When, current); err != nil {
-				return nil, err
-			}
-			if _, err := compileStageContracts(stage.Stages, current); err != nil {
-				return nil, err
-			}
-		case stage.Repeat != nil:
-			body, err := compileStageContracts(stage.Repeat.Stages, current)
-			if err != nil {
-				return nil, err
-			}
-			if err := requirePredicate(stage.ID, stage.Repeat.Until, body); err != nil {
-				return nil, err
-			}
-			current = body
-		case stage.Retry != nil:
-			body, err := compileStageContracts(stage.Retry.Stages, current)
-			if err != nil {
-				return nil, err
-			}
-			current = body
-		case stage.Switch != nil:
-			branches := make([]map[string]struct{}, 0, len(stage.Switch.Cases)+1)
-			for _, item := range stage.Switch.Cases {
-				if err := requirePredicate(stage.ID, item.When, current); err != nil {
-					return nil, err
-				}
-				branch, err := compileStageContracts(item.Stages, current)
-				if err != nil {
-					return nil, err
-				}
-				branches = append(branches, branch)
-			}
-			if len(stage.Switch.Default) > 0 {
-				branch, err := compileStageContracts(stage.Switch.Default, current)
-				if err != nil {
-					return nil, err
-				}
-				branches = append(branches, branch)
-			} else {
-				branches = append(branches, current)
-			}
-			current = intersectSlots(branches)
-		case stage.ForEach != nil:
-			if _, ok := current[stage.ForEach.Items]; !ok {
-				return nil, fmt.Errorf("stage %q forEach requires unavailable state %q", stage.ID, stage.ForEach.Items)
-			}
-			child := cloneSlots(current)
-			child[stage.ForEach.As] = struct{}{}
-			if _, err := compileStageContracts(stage.ForEach.Stages, child); err != nil {
-				return nil, err
-			}
-			current[stage.ForEach.Collect] = struct{}{}
-		case len(stage.Fallback) > 0:
-			var branches []map[string]struct{}
-			for _, alternative := range stage.Fallback {
-				result, err := compileStageContracts([]Stage{alternative}, current)
-				if err != nil {
-					return nil, err
-				}
-				branches = append(branches, result)
-			}
-			current = intersectSlots(branches)
+func validateStateAndMerges(pipeline Pipeline) error {
+	for name, slot := range pipeline.State {
+		if slot.Type == "" {
+			return fmt.Errorf("state slot %q has no type", name)
+		}
+		if slot.Writer != "immutable" && slot.Writer != "single" && slot.Writer != "loop-carried" {
+			return fmt.Errorf("state slot %q has invalid writer %q", name, slot.Writer)
+		}
+		if slot.Merge != "" && slot.Merge != "input-order" {
+			return fmt.Errorf("state slot %q has invalid merge %q", name, slot.Merge)
 		}
 	}
-	return current, nil
-}
-
-func intersectSlots(branches []map[string]struct{}) map[string]struct{} {
-	intersection := cloneSlots(branches[0])
-	for _, branch := range branches[1:] {
-		for slot := range intersection {
-			if _, ok := branch[slot]; !ok {
-				delete(intersection, slot)
+	nodes := make(map[string]Stage)
+	for _, node := range pipeline.Nodes {
+		nodes[node.ID] = node
+		if node.Run.ForEach != nil && node.Run.ForEach.MaxParallel > 1 {
+			for _, target := range node.Run.ForEach.Collect {
+				root := strings.SplitN(target, ".", 2)[0]
+				if slot, ok := pipeline.State[root]; !ok || slot.Merge == "" {
+					return fmt.Errorf("parallel forEach node %q writes %q without a deterministic state merge", node.ID, root)
+				}
 			}
 		}
 	}
-	return intersection
-}
-
-func requirePredicate(stageID, predicate string, available map[string]struct{}) error {
-	slot := predicateSlots[predicate]
-	if _, ok := available[slot]; !ok {
-		return fmt.Errorf("stage %q predicate %q requires unavailable state %q", stageID, predicate, slot)
+	ancestor := func(candidate, node string) bool {
+		seen := make(map[string]bool)
+		var visit func(string) bool
+		visit = func(current string) bool {
+			if seen[current] {
+				return false
+			}
+			seen[current] = true
+			for _, need := range nodes[current].Needs {
+				if need == candidate || visit(need) {
+					return true
+				}
+			}
+			return false
+		}
+		return visit(node)
+	}
+	for _, node := range pipeline.Nodes {
+		for i, left := range node.Needs {
+			for _, right := range node.Needs[i+1:] {
+				if ancestor(left, right) || ancestor(right, left) {
+					continue
+				}
+				leftWrites, rightWrites := directWrites(nodes[left]), directWrites(nodes[right])
+				for slot := range leftWrites {
+					if rightWrites[slot] {
+						declaration, ok := pipeline.State[slot]
+						if !ok || declaration.Merge == "" {
+							return fmt.Errorf("node %q joins concurrent writes to %q without a deterministic merge", node.ID, slot)
+						}
+					}
+				}
+			}
+		}
 	}
 	return nil
 }
 
-func cloneSlots(source map[string]struct{}) map[string]struct{} {
-	clone := make(map[string]struct{}, len(source))
-	for key := range source {
-		clone[key] = struct{}{}
+func directWrites(node Stage) map[string]bool {
+	out := make(map[string]bool)
+	add := func(values map[string]string) {
+		for _, target := range values {
+			out[strings.SplitN(target, ".", 2)[0]] = true
+		}
 	}
-	return clone
+	add(node.Run.Out)
+	if node.Run.Repeat != nil {
+		add(node.Run.Repeat.Out)
+	}
+	if node.Run.ForEach != nil {
+		add(node.Run.ForEach.Collect)
+	}
+	if node.Run.Switch != nil {
+		add(node.Run.Switch.Out)
+	}
+	if node.Run.Fallback != nil {
+		add(node.Run.Fallback.Out)
+	}
+	return out
+}
+
+func validateRun(id string, run Run, available, state typedSlots, catalog map[string]Pipeline) (typedSlots, error) {
+	current := cloneTyped(available)
+	if err := validateBindings(id, "in", run.In, available); err != nil {
+		return nil, err
+	}
+	switch {
+	case run.Stage != "":
+		if !isKnownStage(run.Stage) {
+			return nil, fmt.Errorf("node %q uses unknown stage %q", id, run.Stage)
+		}
+		inputs, outputs := stagePorts(run.Stage)
+		if err := validatePortNames(id, run.Stage, "input", run.In, inputs); err != nil {
+			return nil, err
+		}
+		if err := validatePortNames(id, run.Stage, "output", run.Out, outputs); err != nil {
+			return nil, err
+		}
+		writeBindings(current, state, run.Out)
+	case run.PipelineRef != "":
+		called := catalog[run.PipelineRef]
+		if err := validateCallBindings(id, run.PipelineRef, run.In, called, available); err != nil {
+			return nil, err
+		}
+		writeCallOutputs(current, state, run.Out, called)
+	case run.Repeat != nil:
+		repeat := run.Repeat
+		called := catalog[repeat.PipelineRef]
+		if err := validateBindings(id, "repeat.carry", repeat.Carry, available); err != nil {
+			return nil, err
+		}
+		bindings := cloneBindings(repeat.In)
+		for key, value := range repeat.Carry {
+			bindings[key] = value
+		}
+		if err := validateCallBindings(id, repeat.PipelineRef, bindings, called, available); err != nil {
+			return nil, err
+		}
+		loopAvailable := cloneTyped(available)
+		writeCallOutputs(loopAvailable, state, repeat.Out, called)
+		if err := validateExpression(repeat.Until, loopAvailable); err != nil {
+			return nil, fmt.Errorf("node %q repeat.until: %w", id, err)
+		}
+		writeCallOutputs(current, state, repeat.Out, called)
+	case run.ForEach != nil:
+		fan := run.ForEach
+		if fan.MaxItems <= 0 {
+			return nil, fmt.Errorf("node %q forEach maxItems must be positive", id)
+		}
+		if err := requireField(id, fan.Items.Field, available); err != nil {
+			return nil, err
+		}
+		childAvailable := cloneTyped(available)
+		childAvailable[fan.As] = ""
+		if err := validateCallBindings(id, fan.PipelineRef, fan.In, catalog[fan.PipelineRef], childAvailable); err != nil {
+			return nil, err
+		}
+		writeBindings(current, state, fan.Collect)
+	case run.Switch != nil:
+		sw := run.Switch
+		if len(sw.Cases) == 0 {
+			return nil, fmt.Errorf("node %q switch has no cases", id)
+		}
+		if sw.NoMatch == "" && sw.DefaultPipelineRef == "" {
+			return nil, fmt.Errorf("node %q switch has no noMatch or defaultPipelineRef", id)
+		}
+		for _, item := range sw.Cases {
+			if err := validateExpression(item.When, available); err != nil {
+				return nil, fmt.Errorf("node %q switch.when: %w", id, err)
+			}
+			bindings := cloneBindings(sw.In)
+			for key, value := range item.In {
+				bindings[key] = value
+			}
+			if err := validateCallBindings(id, item.PipelineRef, bindings, catalog[item.PipelineRef], available); err != nil {
+				return nil, err
+			}
+		}
+		if sw.DefaultPipelineRef != "" {
+			if err := validateCallBindings(id, sw.DefaultPipelineRef, sw.In, catalog[sw.DefaultPipelineRef], available); err != nil {
+				return nil, err
+			}
+		}
+		writeBindings(current, state, sw.Out)
+	case run.Fallback != nil:
+		fallback := run.Fallback
+		for _, attempt := range fallback.Attempts {
+			if len(attempt.On) == 0 {
+				return nil, fmt.Errorf("node %q fallback attempt %q has no outcome classes", id, attempt.PipelineRef)
+			}
+			bindings := cloneBindings(fallback.In)
+			for key, value := range attempt.In {
+				bindings[key] = value
+			}
+			if err := validateCallBindings(id, attempt.PipelineRef, bindings, catalog[attempt.PipelineRef], available); err != nil {
+				return nil, err
+			}
+		}
+		if fallback.NoMatch == "" {
+			return nil, fmt.Errorf("node %q fallback requires noMatch behavior", id)
+		}
+		writeBindings(current, state, fallback.Out)
+	case run.HookInvoke != "":
+		writeBindings(current, state, run.Out)
+	}
+	return current, nil
+}
+
+func validatePortNames(id, stage, direction string, bindings map[string]string, allowedCSV string) error {
+	allowed := make(map[string]struct{})
+	for _, name := range strings.Split(allowedCSV, ",") {
+		if name != "" {
+			allowed[name] = struct{}{}
+		}
+	}
+	for name := range bindings {
+		if _, ok := allowed[name]; !ok {
+			return fmt.Errorf("node %q stage %q binds unknown %s port %q", id, stage, direction, name)
+		}
+	}
+	for name := range allowed {
+		if _, ok := bindings[name]; !ok {
+			return fmt.Errorf("node %q stage %q is missing required %s port %q", id, stage, direction, name)
+		}
+	}
+	return nil
+}
+
+func validateCallBindings(id, ref string, bindings map[string]string, called Pipeline, available typedSlots) error {
+	for input, want := range called.Inputs {
+		source, ok := bindings[input]
+		if !ok {
+			return fmt.Errorf("node %q call to %q has no binding for input %q", id, ref, input)
+		}
+		if err := requireField(id, source, available); err != nil {
+			return err
+		}
+		if got, exact := available[source]; exact && got != "" && got != want {
+			return fmt.Errorf("node %q binds %q (%s) to %q input %q (%s)", id, source, got, ref, input, want)
+		}
+	}
+	for input := range bindings {
+		if _, ok := called.Inputs[input]; !ok {
+			return fmt.Errorf("node %q call to %q binds unknown input %q", id, ref, input)
+		}
+	}
+	return nil
+}
+
+func validateBindings(id, label string, bindings map[string]string, available typedSlots) error {
+	for _, source := range bindings {
+		if err := requireField(id, source, available); err != nil {
+			return fmt.Errorf("%s: %w", label, err)
+		}
+	}
+	return nil
+}
+
+func requireField(id, path string, available typedSlots) error {
+	root := strings.SplitN(path, ".", 2)[0]
+	if root == "" {
+		return fmt.Errorf("node %q reads an empty state path", id)
+	}
+	if _, ok := available[root]; !ok {
+		return fmt.Errorf("node %q reads %q before it is produced by a dependency", id, path)
+	}
+	return nil
+}
+
+func validateExpression(expr Expression, available typedSlots) error {
+	type operator struct {
+		name        string
+		operands    []Operand
+		expressions []Expression
+		arity       int
+		variadic    bool
+	}
+	ops := []operator{{"eq", expr.Eq, nil, 2, false}, {"ne", expr.Ne, nil, 2, false}, {"lt", expr.LT, nil, 2, false}, {"lte", expr.LTE, nil, 2, false}, {"gt", expr.GT, nil, 2, false}, {"gte", expr.GTE, nil, 2, false}, {"exists", expr.Exists, nil, 1, false}, {"in", expr.In, nil, 2, false}, {"all", nil, expr.All, 1, true}, {"any", nil, expr.Any, 1, true}, {"not", nil, expr.Not, 1, false}}
+	selected := 0
+	for _, op := range ops {
+		count := len(op.operands)
+		if op.expressions != nil {
+			count = len(op.expressions)
+		}
+		if count == 0 {
+			continue
+		}
+		selected++
+		if (!op.variadic && count != op.arity) || (op.variadic && count < op.arity) {
+			return fmt.Errorf("operator %s requires %s%d operand(s), got %d", op.name, map[bool]string{true: "at least ", false: ""}[op.variadic], op.arity, count)
+		}
+		for _, operand := range op.operands {
+			if operand.Field != "" {
+				if err := requireField("expression", operand.Field, available); err != nil {
+					return err
+				}
+			} else if !operand.literalSet {
+				return fmt.Errorf("operator %s has an empty operand", op.name)
+			}
+		}
+		if op.name == "exists" && op.operands[0].Field == "" {
+			return fmt.Errorf("operator exists requires a field operand")
+		}
+		if op.name == "in" && !isCollectionLiteral(op.operands[1]) {
+			return fmt.Errorf("operator in requires a collection literal as its second operand")
+		}
+		if op.name == "lt" || op.name == "lte" || op.name == "gt" || op.name == "gte" {
+			for _, operand := range op.operands {
+				if operand.literalSet && !isOrderedLiteral(operand.Literal) {
+					return fmt.Errorf("operator %s requires numeric or string literals", op.name)
+				}
+			}
+		}
+		for _, child := range op.expressions {
+			if err := validateExpression(child, available); err != nil {
+				return err
+			}
+		}
+	}
+	if selected != 1 {
+		return fmt.Errorf("expression must select exactly one operator, got %d", selected)
+	}
+	return nil
+}
+
+func isCollectionLiteral(operand Operand) bool {
+	if !operand.literalSet {
+		return false
+	}
+	switch operand.Literal.(type) {
+	case []any, []string, []int, []float64:
+		return true
+	default:
+		return false
+	}
+}
+func isOrderedLiteral(value any) bool {
+	switch value.(type) {
+	case string, int, int64, uint64, float32, float64:
+		return true
+	default:
+		return false
+	}
+}
+
+func writeBindings(current, state typedSlots, outputs map[string]string) {
+	for _, target := range outputs {
+		root := strings.SplitN(target, ".", 2)[0]
+		if declared, ok := state[root]; ok {
+			current[root] = declared
+			continue
+		}
+		if _, ok := current[root]; !ok {
+			current[root] = ""
+		}
+	}
+}
+func writeCallOutputs(current, state typedSlots, outputs map[string]string, called Pipeline) {
+	for port, target := range outputs {
+		root := strings.SplitN(target, ".", 2)[0]
+		current[root] = state[root]
+		if target == root {
+			current[root] = called.Outputs[port]
+		}
+	}
+}
+func cloneBindings(source map[string]string) map[string]string {
+	out := make(map[string]string, len(source))
+	for k, v := range source {
+		out[k] = v
+	}
+	return out
+}
+func cloneTyped(source map[string]string) typedSlots {
+	out := make(typedSlots, len(source))
+	for k, v := range source {
+		out[k] = v
+	}
+	return out
+}
+func mergeTyped(dst, src typedSlots) {
+	for k, v := range src {
+		dst[k] = v
+	}
+}
+func outcomeSlots(source typedSlots) typedSlots {
+	out := cloneTyped(source)
+	out["error"] = "node.outcome/v1"
+	out["outcome"] = "node.outcome/v1"
+	return out
 }

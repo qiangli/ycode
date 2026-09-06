@@ -1,0 +1,117 @@
+apiVersion: ycode.dev/v1alpha1
+kind: HarnessCapabilityMap
+metadata:
+  contract: ycode.dev/v1alpha1
+  canonicalFixture: examples/agent.yaml
+  soleModelTool: bashy
+
+# This is an ownership ledger, not runtime configuration. "resource" means
+# YAML selects policy; "mechanism" means Go implements a policy-free operation;
+# "invariant" means Go may only reject an unsafe request; "deletion" names a
+# live legacy surface that must not enter the YAML-native runtime.
+capabilities:
+  - id: strict-document-compilation
+    owner: invariant:spec.compiler
+    entrypoints: ["internal/harness/spec/load.go#func Compile", "internal/harness/spec/load.go#func Load"]
+  - id: canonical-schema-and-dump
+    owner: invariant:spec.compiler
+    entrypoints: ["internal/harness/spec/schema.go#func JSONSchema", "internal/harness/spec/imports.go#func (d *Document) CanonicalJSON"]
+  - id: typed-stage-graph
+    owner: resource:spec.pipelines
+    entrypoints: ["internal/harness/pipeline/runner.go#func (r *Runner) RunPipeline"]
+  - id: durable-events-checkpoints-payloads
+    owner: resource:spec.sessions
+    entrypoints: ["internal/harness/event/store.go#func Open", "internal/harness/event/payload.go#func OpenPayloadStore"]
+  - id: provider-normalization
+    owner: resource:spec.providers-models-routes
+    entrypoints: ["internal/harness/provider/provider.go#func New("]
+  - id: sole-model-visible-tool
+    owner: resource:spec.bashy
+    modelVisible: true
+    entrypoints: ["internal/harness/provider/provider.go#func BashyTool"]
+  - id: bashy-preflight-and-execution
+    owner: mechanism:stages.bashy
+    entrypoints: ["internal/harness/bashy/executor.go#func (e *Executor) Preflight", "internal/harness/bashy/executor.go#func (e *Executor) Execute"]
+  - id: embedded-shell-runner
+    owner: sibling-api:bashy.pkg.runner
+    entrypoints: ["../bashy/pkg/runner/runner.go#func Preflight", "../bashy/pkg/runner/runner.go#func Run"]
+  - id: durable-shell-jobs
+    owner: sibling-api:bashy.pkg.harnessrunner
+    entrypoints: ["../bashy/pkg/harnessrunner/manager.go#func (m *Manager) Start", "../bashy/pkg/harnessrunner/manager.go#func (m *Manager) Poll", "../bashy/pkg/harnessrunner/manager.go#func (m *Manager) Signal", "../bashy/pkg/harnessrunner/manager.go#func (m *Manager) Cancel"]
+  - id: shell-language-and-process-runtime
+    owner: sibling-api:sh.interp.Runner
+    entrypoints: ["../sh/interp/api.go#type Runner struct"]
+  - id: canonical-input-context-prompt-output
+    owner: resource:spec.sources-contexts-sinks
+    entrypoints: ["internal/harness/stages/ioctx/ioctx.go#type Engine struct"]
+  - id: memory-recall-write-compaction
+    owner: resource:spec.memories
+    entrypoints: ["internal/harness/stages/memory/memory.go#type Engine struct"]
+  - id: approval-and-resume
+    owner: resource:spec.policies-sessions
+    entrypoints: ["internal/harness/stages/hitl/hitl.go#type Controller struct"]
+  - id: harness-validation-cli
+    owner: frontend:operator-cli
+    entrypoints: ["cmd/ycode/harness_config.go#func newHarnessValidateCmd", "cmd/ycode/harness_config.go#func newHarnessSchemaCmd"]
+stageCatalog:
+  agent.invoke: spec.agents.delegations
+  bashy.deny: spec.policies
+  bashy.execute: spec.bashy
+  bashy.preflight: spec.bashy
+  bashy.reject: spec.policies
+  checkpoint.save: spec.sessions
+  command.apply-edit: spec.policies
+  command.finish: spec.pipelines
+  command.initialize: spec.pipelines
+  context.load: spec.contexts
+  context.measure: spec.contexts
+  event.annotate: spec.observability
+  hitl.review: spec.policies
+  input.normalize: spec.frontends
+  lifecycle.transition: spec.lifecycles
+  llm.call: spec.routes
+  lock.acquire: spec.locks
+  lock.release: spec.locks
+  loop.finish: spec.pipelines
+  memory.compact: spec.memories
+  memory.recall: spec.memories
+  memory.write: spec.memories
+  messages.append-assistant: spec.pipelines
+  messages.append-source: spec.sources
+  messages.append-tool-results: spec.pipelines
+  messages.apply-input: spec.queues
+  messages.normalize-provider-response: spec.providers
+  outcome.fail: spec.pipelines
+  output.emit: spec.sinks
+  policy.bind-approval: spec.policies
+  policy.evaluate: spec.policies
+  prompt.assemble: spec.contexts
+  queue.drain: spec.queues
+  state.forward: spec.pipelines
+  state.project: spec.pipelines
+
+runForms:
+  stage: resource:spec.pipelines
+  pipelineRef: resource:spec.pipelines
+  repeat: resource:spec.pipelines
+  forEach: resource:spec.pipelines
+  switch: resource:spec.pipelines
+  fallback: resource:spec.pipelines
+  hook.invoke: resource:spec.hooks
+
+frontends:
+  one-shot: spec.frontends
+  repl: spec.frontends
+  tui: spec.frontends
+  http: spec.frontends
+  websocket: spec.frontends
+  nats: spec.frontends
+  acp: spec.frontends
+  go-embed: spec.frontends
+
+forbiddenKernelReferences:
+  - internal/tools
+  - RegisterBuiltins(
+  - exec.Command(
+  - exec.LookPath(
+  - hostFallback

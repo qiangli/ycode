@@ -19,10 +19,6 @@ on:
       version:
         description: 'Base version to promote, e.g. v0.3.0 (its v0.3.0-dev pre-release must exist)'
         required: true
-      required_os:
-        description: 'Space-separated OS gate that must all be green in refs/qa/<version>/<os>'
-        required: false
-        default: 'windows'
 
 permissions:
   contents: write
@@ -40,10 +36,10 @@ jobs:
           IN: ${{ github.event.inputs.version || github.ref_name }}
         run: |
           v="${IN#v}"
-          case "$v" in
-            [0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "::error::version must look like v1.2.3 (got '${IN}')"; exit 1 ;;
-          esac
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::version must be an exact stable semver vX.Y.Z (got '${IN}')"
+            exit 1
+          }
           echo "ver=v${v}" >> "$GITHUB_OUTPUT"
           echo "dev=v${v}-dev" >> "$GITHUB_OUTPUT"
 
@@ -52,7 +48,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           VER: ${{ steps.v.outputs.ver }}
-          REQUIRED: ${{ github.event.inputs.required_os || 'windows' }}
+          REQUIRED: 'linux darwin windows'
         run: |
           missing=""
           for os in $REQUIRED; do
@@ -91,13 +87,33 @@ jobs:
           echo "downloaded the exact bytes QA tested:"
           ls -la dist/
 
+      - name: Verify immutable asset set
+        run: |
+          set -euo pipefail
+          cd dist
+          test -f SHA256SUMS
+          sha256sum -c SHA256SUMS
+          expected=$(printf '%s\n' \
+            SHA256SUMS \
+            ycode-linux-amd64.tar.gz \
+            ycode-linux-arm64.tar.gz \
+            ycode-darwin-amd64.tar.gz \
+            ycode-darwin-arm64.tar.gz \
+            ycode-windows-amd64.tar.gz | sort)
+          actual=$(find . -maxdepth 1 -type f -printf '%f\n' | sort)
+          [ "$actual" = "$expected" ] || {
+            echo "::error::candidate release asset set is not the exact five-target contract"
+            diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") || true
+            exit 1
+          }
+
       - name: Create official release
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           VER: ${{ steps.v.outputs.ver }}
           DEV: ${{ steps.v.outputs.dev }}
-          REQUIRED: ${{ github.event.inputs.required_os || 'windows' }}
+          REQUIRED: 'linux darwin windows'
         run: |
           printf '%s\n' \
             "Promoted from ${DEV} after per-OS QA (${REQUIRED})." \

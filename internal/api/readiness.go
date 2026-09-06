@@ -64,16 +64,13 @@ func CheckCredentials(model string) CredentialCheck {
 	case len(c.Vars) > 0:
 		c.Message = fmt.Sprintf("No API key for %s: set %s (checked %s — none set)",
 			c.Model, providerEnvKey(provider), strings.Join(c.Vars, ", "))
-		if provider == "anthropic" {
-			c.Message += ", or run: ycode login"
-		}
 	default:
 		c.Vars = genericCredentialEnvVars()
 		subject := "this session"
 		if c.Model != "" {
 			subject = fmt.Sprintf("model %q", c.Model)
 		}
-		c.Message = fmt.Sprintf("No API key for %s: it matches no known provider; checked %s — none set. Run `ycode login`, or set a provider key and pick a model it serves",
+		c.Message = fmt.Sprintf("No API key for %s: it matches no known provider; checked %s — none set. Set a provider key and pick a model it serves",
 			subject, strings.Join(c.Vars, ", "))
 	}
 	return c

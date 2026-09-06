@@ -3,179 +3,118 @@ package eval
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"sync"
+	"path/filepath"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/qiangli/ycode/internal/api"
-	"github.com/qiangli/ycode/internal/tools"
+	"github.com/qiangli/ycode/internal/harness/spec"
 	"github.com/qiangli/ycode/pkg/ycode"
 )
 
-// AgentRunner creates a Runner that executes scenarios using the ycode Agent API.
-// It wraps tool handlers with trajectory-capturing middleware to record all
-// tool calls for assertion and scoring.
+// AgentRunner evaluates the same compiled harness used by production
+// entrypoints. The provider argument replaces only the configured transport;
+// model selection, tools, policy and graph behavior remain YAML-owned.
 func AgentRunner(cfg RunConfig, provider api.Provider) *Runner {
-	return NewRunner(cfg, func(ctx context.Context, s *Scenario) (*RunResult, error) {
-		return executeWithAgent(ctx, s, cfg, provider)
+	return NewRunner(cfg, func(ctx context.Context, scenario *Scenario) (*RunResult, error) {
+		return executeWithHarness(ctx, scenario, cfg, provider)
 	})
 }
 
-func executeWithAgent(ctx context.Context, s *Scenario, cfg RunConfig, provider api.Provider) (*RunResult, error) {
-	// Create temp workspace.
-	workDir, err := os.MkdirTemp("", "ycode-eval-*")
+func executeWithHarness(ctx context.Context, scenario *Scenario, cfg RunConfig, backend api.Provider) (*RunResult, error) {
+	workspace, err := os.MkdirTemp("", "ycode-eval-*")
 	if err != nil {
-		return &RunResult{Duration: 0}, fmt.Errorf("create workspace: %w", err)
+		return &RunResult{}, err
 	}
-
-	// Run scenario setup if provided.
+	defer os.RemoveAll(workspace)
 	var cleanup func()
-	if s.Setup != nil {
-		cleanup, err = s.Setup(workDir)
+	if scenario.Setup != nil {
+		cleanup, err = scenario.Setup(workspace)
 		if err != nil {
-			os.RemoveAll(workDir)
-			return &RunResult{Duration: 0}, fmt.Errorf("setup: %w", err)
+			return &RunResult{WorkDir: workspace}, err
 		}
 	}
-	defer func() {
-		if cleanup != nil {
-			cleanup()
-		}
-		os.RemoveAll(workDir)
-	}()
-
-	// Create agent.
-	opts := []ycode.Option{
-		ycode.WithProvider(provider),
-	}
-	if cfg.Model != "" {
-		opts = append(opts, ycode.WithModel(cfg.Model))
+	if cleanup != nil {
+		defer cleanup()
 	}
 
-	agent, err := ycode.NewAgent(opts...)
+	source := cfg.HarnessFile
+	if source == "" {
+		source = os.Getenv("YCODE_AGENT_FILE")
+	}
+	if source == "" {
+		return &RunResult{WorkDir: workspace}, errors.New("eval requires RunConfig.HarnessFile or YCODE_AGENT_FILE")
+	}
+	raw, err := os.ReadFile(source)
 	if err != nil {
-		return &RunResult{WorkDir: workDir, Duration: 0}, fmt.Errorf("create agent: %w", err)
+		return &RunResult{WorkDir: workspace}, err
 	}
-
-	// Apply trajectory-capturing middleware to all registered tools.
-	recorder := &trajectoryRecorder{}
-	registry := agent.Registry()
-	for _, name := range registry.Names() {
-		toolName := name // capture loop var
-		_ = registry.ApplyMiddleware(toolName, recorder.middleware(toolName))
+	path := filepath.Join(workspace, "agent.yaml")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		return &RunResult{WorkDir: workspace}, err
 	}
-
-	// Execute.
-	start := time.Now()
-	runErr := agent.Run(ctx, s.Prompt)
-	duration := time.Since(start)
-
-	result := &RunResult{
-		ToolCalls: recorder.calls(),
-		Turns:     recorder.turnCount(),
-		Duration:  duration,
-		Error:     runErr,
-		WorkDir:   workDir,
+	doc, err := spec.Load(path)
+	if err != nil {
+		return &RunResult{WorkDir: workspace}, err
 	}
-
+	providerRef, err := defaultProviderRef(doc)
+	if err != nil {
+		return &RunResult{WorkDir: workspace}, err
+	}
+	harness, err := ycode.Load(path, ycode.WithHarnessProvider(providerRef, backend))
+	if err != nil {
+		return &RunResult{WorkDir: workspace}, err
+	}
+	defer harness.Close()
+	body, _ := json.Marshal(map[string]string{"request": scenario.Prompt})
+	runID := uuid.NewString()
+	started := time.Now()
+	stream, err := harness.Run(ctx, ycode.RunRequest{SessionID: uuid.NewString(), RunID: runID, TriggerRef: "interactive-input", FrontendRef: "embed", Principal: "eval", IdempotencyKey: runID, Body: body})
+	if err != nil {
+		return &RunResult{WorkDir: workspace, Duration: time.Since(started)}, err
+	}
+	result := &RunResult{WorkDir: workspace}
+	for item := range stream {
+		switch item.Type {
+		case "llm.requested":
+			result.Turns++
+		case "bashy.intent.compiled":
+			result.ToolCalls = append(result.ToolCalls, ToolCall{Name: "bashy", Input: append(json.RawMessage(nil), item.Data...)})
+		case "output.emitted":
+			var data struct {
+				Deliveries []struct {
+					PayloadRef string `json:"payload_ref"`
+				} `json:"deliveries"`
+			}
+			if json.Unmarshal(item.Data, &data) == nil && len(data.Deliveries) == 1 {
+				payload, payloadErr := harness.Payload(data.Deliveries[0].PayloadRef)
+				if payloadErr != nil {
+					result.Error = payloadErr
+				} else {
+					result.Response = string(payload)
+				}
+			}
+		case "turn.failed":
+			result.Error = errors.New("harness turn failed")
+		}
+	}
+	result.Duration = time.Since(started)
 	return result, nil
 }
 
-// trajectoryRecorder captures tool calls in order via middleware.
-type trajectoryRecorder struct {
-	mu       sync.Mutex
-	recorded []ToolCall
-}
-
-func (r *trajectoryRecorder) middleware(toolName string) tools.Middleware {
-	return func(next tools.ToolFunc) tools.ToolFunc {
-		return func(ctx context.Context, input json.RawMessage) (string, error) {
-			start := time.Now()
-			output, err := next(ctx, input)
-			dur := time.Since(start)
-
-			tc := ToolCall{
-				Name:     toolName,
-				Input:    input,
-				Output:   output,
-				Duration: dur,
-			}
-			if err != nil {
-				tc.Error = err.Error()
-			}
-
-			r.mu.Lock()
-			r.recorded = append(r.recorded, tc)
-			r.mu.Unlock()
-
-			return output, err
-		}
+func defaultProviderRef(doc *spec.Document) (string, error) {
+	agent := doc.Spec.Agents[doc.Spec.Runtime.DefaultAgentRef]
+	route := doc.Spec.Routes[agent.ModelRouteRef]
+	if len(route.Attempts) == 0 {
+		return "", errors.New("default agent route has no attempts")
 	}
-}
-
-func (r *trajectoryRecorder) calls() []ToolCall {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	out := make([]ToolCall, len(r.recorded))
-	copy(out, r.recorded)
-	return out
-}
-
-// turnCount estimates conversation turns from tool calls.
-// Each unique sequence of tool calls between pauses is roughly one turn.
-func (r *trajectoryRecorder) turnCount() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.recorded) == 0 {
-		return 1 // at minimum one turn (the prompt)
+	model, ok := doc.Spec.Models[route.Attempts[0].ModelRef]
+	if !ok || model.ProviderRef == "" {
+		return "", fmt.Errorf("default route model %q has no provider", route.Attempts[0].ModelRef)
 	}
-	// Approximate: number of tool calls / average tools per turn, min 1.
-	return max(1, len(r.recorded)/3+1)
-}
-
-// ProviderFromEnv creates an API provider from environment variables.
-// Supports EVAL_PROVIDER (anthropic, openai) and EVAL_MODEL.
-func ProviderFromEnv() (api.Provider, string, error) {
-	providerName := os.Getenv("EVAL_PROVIDER")
-	if providerName == "" {
-		providerName = "anthropic" // default
-	}
-
-	model := os.Getenv("EVAL_MODEL")
-
-	switch providerName {
-	case "anthropic":
-		key := os.Getenv("ANTHROPIC_API_KEY")
-		if key == "" {
-			return nil, "", fmt.Errorf("ANTHROPIC_API_KEY required for anthropic provider")
-		}
-		p := api.NewAnthropicClient(key)
-		if model == "" {
-			model = "claude-sonnet-4-6-20250514"
-		}
-		return p, model, nil
-
-	case "openai":
-		key := os.Getenv("OPENAI_API_KEY")
-		if key == "" {
-			return nil, "", fmt.Errorf("OPENAI_API_KEY required for openai provider")
-		}
-		baseURL := os.Getenv("OPENAI_BASE_URL")
-		if baseURL == "" {
-			baseURL = "https://api.openai.com/v1"
-		}
-		p := api.NewProvider(&api.ProviderConfig{
-			Kind:    api.ProviderOpenAI,
-			APIKey:  key,
-			BaseURL: baseURL,
-		})
-		if model == "" {
-			model = "gpt-4o"
-		}
-		return p, model, nil
-
-	default:
-		return nil, "", fmt.Errorf("unknown provider %q (use anthropic or openai)", providerName)
-	}
+	return model.ProviderRef, nil
 }

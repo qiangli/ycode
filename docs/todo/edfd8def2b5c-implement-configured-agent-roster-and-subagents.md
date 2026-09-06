@@ -3,7 +3,7 @@ id: edfd8def2b5c
 kind: task
 title: Implement configured agent roster and subagents
 seq: 13
-status: todo
+status: done
 priority: p1
 created: 2026-09-02T20:26:06.364614Z
 sprint: 106

@@ -28,7 +28,7 @@ name: release
 on:
   push:
     tags:
-      # Build + publish a PRE-RELEASE only for -dev tags. Bare vX.Y.Z tags are
+      # Build + publish a PRE-RELEASE only for exact vX.Y.Z-dev tags. Bare vX.Y.Z tags are
       # byte-promotions of QA-tested assets; see promote.yml.
       - 'v*-dev'
   workflow_dispatch:
@@ -58,23 +58,21 @@ jobs:
             goos: linux
             goarch: arm64
             ext: ""
+          - target: darwin-amd64
+            runs-on: macos-15-intel
+            goos: darwin
+            goarch: amd64
+            ext: ""
           - target: darwin-arm64
             runs-on: macos-latest
             goos: darwin
             goarch: arm64
             ext: ""
-          # Still excluded — each requires code work, not just CI fix:
-          #   darwin-amd64: pkg/oci/machine → podman libkrun has
-          #     //go:build darwin && arm64 — internal/container/machine.go
-          #     imports it unconditionally, so darwin-amd64 fails to compile.
-          #   windows-amd64: external/podman/pkg/util/rlimit.go uses
-          #     unix.Rlimit/Getrlimit — Unix-only.
-          # Tracked as follow-up; both need podman/buildah integration
-          # to become build-tag-conditional. Don't add a target back to
-          # this matrix until a successful native build has been
-          # confirmed. The outpost ycode supervisor surfaces "ycode is
-          # not available for this platform" via the admin UI for the
-          # two excluded targets.
+          - target: windows-amd64
+            runs-on: windows-latest
+            goos: windows
+            goarch: amd64
+            ext: ".exe"
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v5
@@ -82,7 +80,7 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Bootstrap sibling deps (../sh, ../nadir, ../coreutils)
+      - name: Bootstrap pinned sibling dependencies
         run: ./scripts/bootstrap-siblings.sh
 
       - uses: actions/setup-go@v6
@@ -90,39 +88,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # System CGO deps required by the vendored podman/buildah:
-      #   - libgpgme-dev: signature verification in image/v5/signature
-      #   - libbtrfs-dev: storage/drivers/btrfs (Linux only)
-      #   - libsqlite3-dev: matches the Dockerfile's compile env
-      # Same packages installed in the Dockerfile builder image; the release
-      # workflow runs natively (not in the container) so we install here too.
-      - name: Install build dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libbtrfs-dev libgpgme-dev libsqlite3-dev cmake ccache
-
-      - name: Install build dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install gpgme ccache
-
-      # ccache + sccache speed up llama.cpp's repeated CMake rebuilds
-      # (the embedded ollama runner). First clean run ~3-5 min; warm
-      # ccache hit ~30s. Cache key includes the external/ollama
-      # submodule SHA so we invalidate on upstream bumps.
-      - name: Restore ccache (for llama.cpp)
-        uses: actions/cache@v5
-        with:
-          path: ~/.ccache
-          key: ccache-${{ matrix.target }}-${{ hashFiles('external/ollama/**/CMakeLists.txt', 'external/ollama/.git/HEAD') }}
-          restore-keys: |
-            ccache-${{ matrix.target }}-
-
       - name: Verify feature registry
         run: go test -count=1 ./internal/features/...
 
-      # Strip the -dev (or -rc.N) suffix so the binary is stamped with the BASE
+      # Strip the -dev suffix so the binary is stamped with the BASE
       # version the bare tag will carry. `ycode version` on a v0.1.0-dev build
       # must report v0.1.0 — the per-OS qa target asserts this, and promote.yml
       # byte-promotes these bytes to the bare tag.
@@ -131,7 +100,15 @@ jobs:
         shell: bash
         run: |
           tag="${GITHUB_REF_NAME}"
-          base="${tag%%-*}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-dev$ ]] || {
+              echo "::error::candidate tag must be exact semver vX.Y.Z-dev (got $tag)"
+              exit 1
+            }
+            base="${tag%-dev}"
+          else
+            base="v0.0.0"
+          fi
           echo "base=${base}" >> "$GITHUB_OUTPUT"
 
       - name: Build binary
@@ -139,6 +116,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
           # The base version (stripped of -dev/-rc) for tag builds; the branch
           # name for dispatch/PR dryruns. The build step below appends -dryrun
           # to non-tag builds so the resulting binary's `ycode version` makes
@@ -173,40 +151,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      # Per-embed .gz uploads — published as standalone release assets
-      # so devs can grab them via scripts/embed-fetch.sh and skip the
-      # multi-minute source build. Naming convention matches
-      # embed-fetch.sh: <embed>-<platform>.gz. Missing files are
-      # silently skipped (e.g., vfkit/gvproxy on linux don't exist).
-      - name: Stage embed blobs for upload
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p embed-dist
-          # Each line is "<source-relative-path> <renamed-dest>".
-          # Renaming embeds the platform suffix so a single release can
-          # carry all 4 platforms' embeds side-by-side.
-          stage_if_present() {
-            local src="$1" dest="$2"
-            [ -f "$src" ] || { echo "  (skip $src — not present on ${{ matrix.target }})"; return 0; }
-            cp "$src" "embed-dist/$dest"
-            ls -lh "embed-dist/$dest"
-          }
-          stage_if_present internal/container/podman_embed/podman.gz \
-                           podman-${{ matrix.target }}.gz
-          stage_if_present internal/container/vfkit_embed/vfkit.gz \
-                           vfkit-${{ matrix.target }}.gz
-          stage_if_present internal/container/gvproxy_embed/gvproxy.gz \
-                           gvproxy-${{ matrix.target }}.gz
-
-      - name: Upload embed blobs artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: embeds-${{ matrix.target }}
-          path: embed-dist/
-          if-no-files-found: warn
-          retention-days: 1
-
   # Packages artifacts on every successful build (tag, dispatch, or PR) so
   # the workflow's packaging logic itself is exercised on dryruns. The
   # publish step below is gated to tag pushes only.
@@ -230,34 +174,32 @@ jobs:
             echo "is_release=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Package archives + embed blobs + checksums
+      - name: Package archives + checksums
         run: |
           set -euo pipefail
           mkdir -p release-assets
 
-          # Per-platform ycode binary tarballs (existing behavior).
+          # Per-platform archives. Existing Unix asset names are load-bearing;
+          # Windows intentionally uses the same tar.gz convention so QA needs
+          # no host unzip dependency.
           for dir in artifacts/ycode-*; do
             target=$(basename "$dir" | sed 's/^ycode-//')
             cd "$dir"
-            cp "ycode-${target}" ycode
-            chmod +x ycode
-            tar -czf "../../release-assets/ycode-${target}.tar.gz" ycode
-            rm ycode
+            if [[ "$target" == windows-* ]]; then
+              cp "ycode-${target}.exe" ycode.exe
+              tar -czf "../../release-assets/ycode-${target}.tar.gz" ycode.exe
+              rm ycode.exe
+            else
+              cp "ycode-${target}" ycode
+              chmod +x ycode
+              tar -czf "../../release-assets/ycode-${target}.tar.gz" ycode
+              rm ycode
+            fi
             cd ../..
           done
 
-          # Per-platform embed blobs (standalone .gz, consumed by
-          # scripts/embed-fetch.sh). Each embeds-<target>/ dir holds 1-4
-          # files depending on platform applicability — copy them all.
-          for dir in artifacts/embeds-*; do
-            [ -d "$dir" ] || continue
-            cp -v "$dir"/*.gz release-assets/ 2>/dev/null || true
-          done
-
           cd release-assets
-          # Single checksum file covers both binary tarballs and embed
-          # .gz blobs so `embed-fetch.sh` can validate downloads.
-          sha256sum *.tar.gz *.gz > SHA256SUMS 2>/dev/null || sha256sum *.tar.gz > SHA256SUMS
+          sha256sum *.tar.gz > SHA256SUMS
           ls -la
 
       - name: Upload packaged assets (dryrun visibility)
@@ -284,16 +226,9 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          # -dev (and any -rc.N) tags carry a hyphen → pre-release. promote.yml
-          # REFUSES to byte-promote a non-prerelease, so this marking is the
-          # contract that gates promotion.
-          PRERELEASE_FLAG=""
-          case "$TAG" in
-            *-*) PRERELEASE_FLAG="--prerelease" ;;
-          esac
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            $PRERELEASE_FLAG \
+            --prerelease \
             --title "$TAG" \
             --generate-notes \
             release-assets/*

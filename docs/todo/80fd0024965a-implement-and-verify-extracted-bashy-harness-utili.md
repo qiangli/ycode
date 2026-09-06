@@ -3,7 +3,7 @@ id: 80fd0024965a
 kind: task
 title: Integrate and verify extracted Bashy harness utilities in ycode
 seq: 29
-status: todo
+status: done
 priority: p0
 created: 2026-09-02T20:52:27.5575Z
 sprint: 106

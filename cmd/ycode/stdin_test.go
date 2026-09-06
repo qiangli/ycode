@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/qiangli/ycode/internal/selfheal"
 )
 
 // pipeWith returns a read end carrying body; closed reports whether the write
@@ -181,18 +179,6 @@ func TestStdinWaitOverride(t *testing.T) {
 		if got := stdinWait(); got != tc.want {
 			t.Errorf("YCODE_STDIN_WAIT=%q -> %v, want %v", tc.env, got, tc.want)
 		}
-	}
-}
-
-// TestNoInputErrorIsNotSelfHealable pins the WORDING against selfheal's
-// substring classifier (healer.go ClassifyError). "no prompt on stdin" is a
-// usage situation, not a fault to diagnose — a word like "config", "tool" or
-// "connection" slipping into this message would spend an LLM call trying to
-// heal a user telling ycode nothing.
-func TestNoInputErrorIsNotSelfHealable(t *testing.T) {
-	if got := selfheal.ClassifyError(errNoInput); got != selfheal.FailureTypeUnknown {
-		t.Errorf("ClassifyError(errNoInput) = %q, want %q — reword the error",
-			got, selfheal.FailureTypeUnknown)
 	}
 }
 
