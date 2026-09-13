@@ -3,9 +3,11 @@ id: ddfffb0ca0bc
 kind: task
 title: 'Y5 docs: memory.md rewrite to the stage model; nine gap-analysis files -> one prior-art note; architecture/usage/capability map; remove stale yc lines from selfinit'
 seq: 41
-status: todo
+status: assigned
 priority: p2
 created: 2026-09-13T01:31:42.277282Z
+weave: 5
+assignee: qiangli
 sprint: 163
 ---
 
