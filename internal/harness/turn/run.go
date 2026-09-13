@@ -20,7 +20,7 @@ import (
 // the stage handler executes only compiled, ceiling-checked contracts. A node
 // effect outside spec.bashy.execution.effectsCeiling fails construction.
 func compileBashyRunIndex(doc *spec.Document) (map[string]spec.BashyRunNode, error) {
-	nodes, err := spec.BashyRunNodes(doc.Spec.Pipelines)
+	nodes, err := spec.BashyRunNodes(doc.Spec.Pipelines, doc.Spec.Memories)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +56,11 @@ func (r *Runtime) bashyRun(ctx context.Context, in pipeline.Invocation) pipeline
 	if err != nil {
 		return fail(err)
 	}
-	script, err := composeBashyRunScript(node.Script, in.Inputs)
+	resolved, err := resolveBashyRunScript(node.Script, run.sessionID, in.Inputs)
+	if err != nil {
+		return fail(err)
+	}
+	script, err := composeBashyRunScript(resolved, in.Inputs)
 	if err != nil {
 		return fail(fmt.Errorf("bashy.run: encode typed inputs: %w", err))
 	}

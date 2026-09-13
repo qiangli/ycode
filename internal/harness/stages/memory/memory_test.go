@@ -12,41 +12,11 @@ import (
 	"github.com/qiangli/ycode/internal/harness/event"
 	"github.com/qiangli/ycode/internal/harness/message"
 	"github.com/qiangli/ycode/internal/harness/spec"
-	memexmemory "github.com/qiangli/ycode/pkg/memex/memory"
 )
 
-func TestRecallWriteMeasureAndReplayPayloads(t *testing.T) {
-	facade := &fakeFacade{hits: []RecallHit{
-		{Memory: &memexmemory.Memory{Name: "first", Content: "two words", Scope: memexmemory.ScopeProject}, Score: .9, Source: "vector"},
-		{Memory: &memexmemory.Memory{Name: "second", Content: "also two", Scope: memexmemory.ScopeProject}, Score: .8, Source: "keyword"},
-	}}
-	engine, logPath, payloads := testEngine(t, "preserve-original", facade, &fakeSummarizer{summary: "compact summary"})
+func TestMeasureAndReplayPayloads(t *testing.T) {
+	engine, logPath, payloads := testEngine(t, "preserve-original", &fakeSummarizer{summary: "compact summary"})
 	meta := testMeta()
-
-	recalled, err := engine.Recall(context.Background(), meta, "main", "where bug", "coder")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(recalled.Items) != 1 || recalled.Items[0].Name != "first" || recalled.Tokens != 2 {
-		t.Fatalf("recall = %#v", recalled)
-	}
-	if facade.lastQuery.Ranking != "hybrid" || !reflect.DeepEqual(facade.lastQuery.Scopes, []string{"workspace", "agent"}) || facade.lastQuery.MaxResults != 3 {
-		t.Fatalf("facade query = %#v", facade.lastQuery)
-	}
-	if _, err := payloads.Get(recalled.QueryRef); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := payloads.Get(recalled.Items[0].PayloadRef); err != nil {
-		t.Fatal(err)
-	}
-
-	written, err := engine.Write(context.Background(), meta, "main", []*memexmemory.Memory{{Name: "decision", Content: "use yaml", Scope: memexmemory.ScopeProject}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(written.PayloadRefs) != 1 || len(facade.writes) != 1 {
-		t.Fatalf("write = %#v, facade writes=%d", written, len(facade.writes))
-	}
 
 	measurement, err := engine.Measure(context.Background(), meta, MeasureRequest{MemoryRef: "main", RouteRef: "main-route", SafetyMargin: 1, Messages: testMessages(2)})
 	if err != nil || measurement.Tokens != 4 {
@@ -60,12 +30,12 @@ func TestRecallWriteMeasureAndReplayPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"memory.recalled", "memory.write.requested", "memory.write.completed", "context.measured"}
+	want := []string{"context.measured"}
 	var got []string
 	for _, item := range events {
 		got = append(got, item.Type)
-		if strings.Contains(string(item.Data), "two words") || strings.Contains(string(item.Data), "use yaml") {
-			t.Fatalf("event embeds memory bytes: %s", item.Data)
+		if strings.Contains(string(item.Data), "two words") {
+			t.Fatalf("event embeds message bytes: %s", item.Data)
 		}
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -76,7 +46,7 @@ func TestRecallWriteMeasureAndReplayPayloads(t *testing.T) {
 func TestCompactionUsesCompiledTriggerRoutePreservationAndFailure(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		summarizer := &fakeSummarizer{summary: "summary"}
-		engine, logPath, payloads := testEngine(t, "preserve-original", &fakeFacade{}, summarizer)
+		engine, logPath, payloads := testEngine(t, "preserve-original", summarizer)
 		messages := testMessages(5)
 		result, err := engine.Compact(context.Background(), testMeta(), CompactionRequest{MemoryRef: "main", Messages: messages})
 		if err != nil {
@@ -103,7 +73,7 @@ func TestCompactionUsesCompiledTriggerRoutePreservationAndFailure(t *testing.T) 
 	})
 
 	t.Run("configured preserve original", func(t *testing.T) {
-		engine, _, _ := testEngine(t, "preserve-original", &fakeFacade{}, &fakeSummarizer{err: errors.New("route down")})
+		engine, _, _ := testEngine(t, "preserve-original", &fakeSummarizer{err: errors.New("route down")})
 		result, err := engine.Compact(context.Background(), testMeta(), CompactionRequest{MemoryRef: "main", Messages: testMessages(5)})
 		if err != nil || result.Outcome != "preserved-original" || len(result.Messages) != 5 {
 			t.Fatalf("result = %#v, %v", result, err)
@@ -111,7 +81,7 @@ func TestCompactionUsesCompiledTriggerRoutePreservationAndFailure(t *testing.T) 
 	})
 
 	t.Run("configured fail", func(t *testing.T) {
-		engine, _, _ := testEngine(t, "fail", &fakeFacade{}, &fakeSummarizer{err: errors.New("route down")})
+		engine, _, _ := testEngine(t, "fail", &fakeSummarizer{err: errors.New("route down")})
 		result, err := engine.Compact(context.Background(), testMeta(), CompactionRequest{MemoryRef: "main", Messages: testMessages(5)})
 		if err == nil || result.Outcome != "failed" {
 			t.Fatalf("result = %#v, %v", result, err)
@@ -120,7 +90,7 @@ func TestCompactionUsesCompiledTriggerRoutePreservationAndFailure(t *testing.T) 
 
 	t.Run("previous summary uses update prompt", func(t *testing.T) {
 		summarizer := &fakeSummarizer{summary: "merged"}
-		engine, _, _ := testEngine(t, "preserve-original", &fakeFacade{}, summarizer)
+		engine, _, _ := testEngine(t, "preserve-original", summarizer)
 		_, err := engine.Compact(context.Background(), testMeta(), CompactionRequest{MemoryRef: "main", Messages: testMessages(5), PreviousSummary: "old summary"})
 		if err != nil {
 			t.Fatal(err)
@@ -132,7 +102,7 @@ func TestCompactionUsesCompiledTriggerRoutePreservationAndFailure(t *testing.T) 
 
 	t.Run("fallback deterministic does not call route", func(t *testing.T) {
 		summarizer := &fakeSummarizer{err: errors.New("route down")}
-		engine, _, _ := testEngine(t, "fallback-deterministic", &fakeFacade{}, summarizer)
+		engine, _, _ := testEngine(t, "fallback-deterministic", summarizer)
 		result, err := engine.Compact(context.Background(), testMeta(), CompactionRequest{MemoryRef: "main", Messages: testMessages(5)})
 		if err != nil || result.Outcome != "fallback-deterministic" || !strings.Contains(result.Messages[0].Content[0].Text, "Deterministic excerpt summary") {
 			t.Fatalf("result = %#v, %v", result, err)
@@ -144,7 +114,7 @@ func TestCompactionUsesCompiledTriggerRoutePreservationAndFailure(t *testing.T) 
 }
 
 func TestMeasureUsesProviderUsageAndComputedBudget(t *testing.T) {
-	engine, _, _ := testEngine(t, "preserve-original", &fakeFacade{}, &fakeSummarizer{summary: "x"})
+	engine, _, _ := testEngine(t, "preserve-original", &fakeSummarizer{summary: "x"})
 	messages := testMessages(1)
 	messages = append(messages, message.Message{Role: message.RoleAssistant, Usage: &message.TokenUsage{InputTokens: 10, CacheReadInput: 2, CacheCreationInput: 3, OutputTokens: 5}, Content: []message.ContentBlock{{Type: message.ContentTypeText, Text: "ok"}}})
 	messages = append(messages, testMessages(1)...)
@@ -158,7 +128,7 @@ func TestMeasureUsesProviderUsageAndComputedBudget(t *testing.T) {
 }
 
 func TestPreserveBoundaryKeepsToolPairsTogether(t *testing.T) {
-	engine, _, _ := testEngine(t, "preserve-original", &fakeFacade{}, &fakeSummarizer{summary: "summary"})
+	engine, _, _ := testEngine(t, "preserve-original", &fakeSummarizer{summary: "summary"})
 	messages := []message.Message{
 		{Role: message.RoleUser, Content: []message.ContentBlock{{Type: message.ContentTypeText, Text: "older turn"}}},
 		{Role: message.RoleAssistant, Content: []message.ContentBlock{{Type: message.ContentTypeToolUse, ID: "call", Name: "bashy"}}},
@@ -178,26 +148,25 @@ func TestCompactionMissingPromptSourceFailsClosed(t *testing.T) {
 	mem := doc.Spec.Memories["main"]
 	mem.Compaction.PromptSourceRef = ""
 	doc.Spec.Memories["main"] = mem
-	engine, _, _ := testEngineWithDocument(t, doc, &fakeFacade{}, &fakeSummarizer{summary: "x"})
+	engine, _, _ := testEngineWithDocument(t, doc, &fakeSummarizer{summary: "x"})
 	if _, err := engine.Compact(context.Background(), testMeta(), CompactionRequest{MemoryRef: "main", Messages: testMessages(5)}); err == nil {
 		t.Fatal("missing prompt source was accepted")
 	}
 }
 
-func TestStagesRejectImplicitConfiguration(t *testing.T) {
-	engine, _, _ := testEngine(t, "preserve-original", &fakeFacade{}, &fakeSummarizer{summary: "x"})
-	if _, err := engine.Recall(context.Background(), testMeta(), "main", "q", ""); err != nil {
-		t.Fatalf("declared recall unexpectedly failed: %v", err)
-	}
+func TestStagesRejectNonBashyKBProvider(t *testing.T) {
 	doc := testDocument("preserve-original")
 	memoryConfig := doc.Spec.Memories["main"]
-	memoryConfig.Recall.Ranking = "ambient-default"
+	memoryConfig.Provider = "memex"
 	doc.Spec.Memories["main"] = memoryConfig
-	bad, _, _ := testEngineWithDocument(t, doc, &fakeFacade{}, &fakeSummarizer{})
-	if _, err := bad.Recall(context.Background(), testMeta(), "main", "q", ""); err == nil {
-		t.Fatal("undeclared ranking fallback was accepted")
+	bad, _, _ := testEngineWithDocument(t, doc, &fakeSummarizer{})
+	if _, err := bad.Measure(context.Background(), testMeta(), MeasureRequest{MemoryRef: "main", RouteRef: "main-route", SafetyMargin: 1, Messages: testMessages(1)}); err == nil {
+		t.Fatal("removed memex provider was accepted")
 	}
-	// Compaction scheduling belongs to the compiled context.measure → switch
+	if _, err := bad.Compact(context.Background(), testMeta(), CompactionRequest{MemoryRef: "main", Messages: testMessages(1)}); err == nil {
+		t.Fatal("removed memex provider was accepted by compaction")
+	}
+	// Compaction scheduling belongs to the compiled context.measure -> switch
 	// graph, not to this mechanism.
 }
 
@@ -207,18 +176,18 @@ func testDocument(onFailure string) *spec.Document {
 			"compact": {Resolved: "[compaction-summary] Handoff summary:"},
 			"update":  {Resolved: "[compaction-summary] Updated handoff summary:"},
 		},
-		Memories: map[string]spec.Memory{"main": {Provider: "memex", Recall: spec.RecallPolicy{Scopes: []string{"workspace", "agent"}, Ranking: "hybrid", MaxItems: 3, MaxTokens: 3}, Write: spec.WritePolicy{MaxItems: 2, MaxBytes: 4096}, Compaction: spec.CompactionPolicy{PreserveRecentTokens: 4, PreserveUserMessagesTokens: 0, ReserveTokens: 8, RouteRef: "main-route", PromptSourceRef: "compact", UpdatePromptSourceRef: "update", OnFailure: onFailure}}},
+		Memories: map[string]spec.Memory{"main": {Provider: "bashy-kb", Recall: spec.RecallPolicy{Rings: []string{"agent", "repo"}, Forms: []string{"note", "page"}, MaxItems: 3, MaxTokens: 3}, Write: spec.WritePolicy{EveryTurns: 1}, Compaction: spec.CompactionPolicy{PreserveRecentTokens: 4, PreserveUserMessagesTokens: 0, ReserveTokens: 8, RouteRef: "main-route", PromptSourceRef: "compact", UpdatePromptSourceRef: "update", OnFailure: onFailure}}},
 		Routes:   map[string]spec.Route{"main-route": {Attempts: []spec.RouteAttempt{{ModelRef: "model", TimeoutMS: 100}}, Budget: spec.TokenBudget{MaxOutputTokens: 8}}},
 		Models:   map[string]spec.Model{"model": {Limits: spec.ModelLimits{ContextTokens: 100, MaxOutputTokens: 20}}},
 	}}
 }
 
-func testEngine(t *testing.T, onFailure string, facade *fakeFacade, summarizer *fakeSummarizer) (*Engine, string, *event.PayloadStore) {
+func testEngine(t *testing.T, onFailure string, summarizer *fakeSummarizer) (*Engine, string, *event.PayloadStore) {
 	t.Helper()
-	return testEngineWithDocument(t, testDocument(onFailure), facade, summarizer)
+	return testEngineWithDocument(t, testDocument(onFailure), summarizer)
 }
 
-func testEngineWithDocument(t *testing.T, doc *spec.Document, facade Facade, summarizer Summarizer) (*Engine, string, *event.PayloadStore) {
+func testEngineWithDocument(t *testing.T, doc *spec.Document, summarizer Summarizer) (*Engine, string, *event.PayloadStore) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("BASHY_KB_DIR", filepath.Join(dir, "kb"))
@@ -234,7 +203,7 @@ func testEngineWithDocument(t *testing.T, doc *spec.Document, facade Facade, sum
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine, err := New(Config{Document: doc, Events: events, Payloads: payloads, Facade: facade, Tokens: wordTokens{}, Summary: summarizer})
+	engine, err := New(Config{Document: doc, Events: events, Payloads: payloads, Tokens: wordTokens{}, Summary: summarizer})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,27 +232,6 @@ func (wordTokens) CountMessages(messages []message.Message) (int, error) {
 		}
 	}
 	return total, nil
-}
-
-type fakeFacade struct {
-	mu        sync.Mutex
-	hits      []RecallHit
-	lastQuery RecallQuery
-	writes    []*memexmemory.Memory
-}
-
-func (f *fakeFacade) Recall(_ context.Context, query RecallQuery) ([]RecallHit, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.lastQuery = query
-	return append([]RecallHit(nil), f.hits...), nil
-}
-
-func (f *fakeFacade) Write(_ context.Context, memory *memexmemory.Memory) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.writes = append(f.writes, cloneMemory(memory))
-	return nil
 }
 
 type fakeSummarizer struct {

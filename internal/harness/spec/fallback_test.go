@@ -32,7 +32,7 @@ func TestFallbackRunRequiresOutcomeClasses(t *testing.T) {
 	if err := validatePipelines(pipelines); err != nil {
 		t.Fatal(err)
 	}
-	err := validatePipelineContracts(pipelines)
+	err := validatePipelineContracts(pipelines, nil)
 	if err == nil || !strings.Contains(err.Error(), "has no outcome classes") {
 		t.Fatalf("error = %v", err)
 	}

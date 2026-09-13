@@ -18,7 +18,6 @@ import (
 	"github.com/qiangli/ycode/internal/harness/spec"
 	"github.com/qiangli/ycode/internal/harness/stages/ioctx"
 	memoryStage "github.com/qiangli/ycode/internal/harness/stages/memory"
-	memexmemory "github.com/qiangli/ycode/pkg/memex/memory"
 )
 
 func (r *Runtime) lifecycle(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
@@ -48,7 +47,10 @@ func (r *Runtime) input(_ context.Context, in pipeline.Invocation) pipeline.Outc
 	if !ok || value.SchemaVersion == "" {
 		return fail(fmt.Errorf("input.normalize: expected admitted canonical input, got %T", in.Inputs["request"]))
 	}
-	return pipeline.Success(map[string]any{"input": value})
+	// The optional text port projects the canonical request into one scalar so
+	// downstream nodes (a bashy.run script template, for example) can bind the
+	// request text without decoding the canonical JSON themselves.
+	return pipeline.Success(map[string]any{"input": value, "text": requestText(value)})
 }
 
 func (r *Runtime) context(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
@@ -63,46 +65,14 @@ func (r *Runtime) context(ctx context.Context, in pipeline.Invocation) pipeline.
 	return pipeline.Success(map[string]any{"context": result})
 }
 
-func (r *Runtime) recall(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
-	input, ok := in.Inputs["query"].(ioctx.CanonicalInput)
-	if !ok {
-		return fail(fmt.Errorf("memory.recall: expected canonical input, got %T", in.Inputs["query"]))
-	}
-	run, err := runFrom(ctx)
-	if err != nil {
-		return fail(err)
-	}
-	meta, err := r.meta(ctx, in.StageID)
-	if err != nil {
-		return fail(err)
-	}
-	result, err := r.memory.Recall(ctx, memoryMeta(meta), text(in.With["memoryRef"]), requestText(input), run.agentRef)
-	if err != nil {
-		return fail(err)
-	}
-	messages := make([]ioctx.PromptMessage, 0, len(result.Items))
-	for _, item := range result.Items {
-		raw, err := r.payloads.Get(item.PayloadRef)
-		if err != nil {
-			return fail(err)
-		}
-		var memory memexmemory.Memory
-		if err := json.Unmarshal(raw, &memory); err != nil {
-			return fail(err)
-		}
-		messages = append(messages, ioctx.PromptMessage{Role: "system", Content: memory.Content, PayloadRef: item.PayloadRef})
-	}
-	return pipeline.Success(map[string]any{"items": messages})
-}
-
 func (r *Runtime) assemble(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
 	contextValue, ok := in.Inputs["context"].(ioctx.ContextSnapshot)
 	if !ok {
 		return fail(fmt.Errorf("prompt.assemble: invalid context %T", in.Inputs["context"]))
 	}
-	memoryValue, ok := in.Inputs["memory"].([]ioctx.PromptMessage)
-	if !ok {
-		return fail(fmt.Errorf("prompt.assemble: invalid memory %T", in.Inputs["memory"]))
+	knowledgeValue, err := memoryStage.KnowledgeMessages(in.Inputs["knowledge"])
+	if err != nil {
+		return fail(fmt.Errorf("prompt.assemble: invalid knowledge port: %w", err))
 	}
 	inputValue, ok := in.Inputs["input"].(ioctx.CanonicalInput)
 	if !ok {
@@ -117,7 +87,7 @@ func (r *Runtime) assemble(ctx context.Context, in pipeline.Invocation) pipeline
 	if err != nil {
 		return fail(err)
 	}
-	prompt, err := r.io.Assemble(ctx, meta, ioctx.PromptRequest{Order: order, Context: contextValue, Memory: memoryValue, Input: inputValue})
+	prompt, err := r.io.Assemble(ctx, meta, ioctx.PromptRequest{Order: order, Context: contextValue, Knowledge: knowledgeValue, Input: inputValue})
 	if err != nil {
 		return fail(err)
 	}
@@ -301,32 +271,6 @@ func (r *Runtime) finish(_ context.Context, in pipeline.Invocation) pipeline.Out
 	}
 	state["finished"] = true
 	return pipeline.Success(map[string]any{"state": state})
-}
-
-func (r *Runtime) writeMemory(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
-	messages, err := messagesFrom(in.Inputs["messages"])
-	if err != nil {
-		return fail(err)
-	}
-	ref := text(in.With["memoryRef"])
-	items, err := r.materialize.Materialize(ctx, ref, messages)
-	if err != nil {
-		return fail(err)
-	}
-	if len(items) == 0 {
-		if err := r.append(ctx, in.StageID, "memory.write.skipped", map[string]any{"memory_ref": ref, "reason": "materializer-empty"}); err != nil {
-			return fail(err)
-		}
-		return pipeline.Success(nil)
-	}
-	meta, err := r.meta(ctx, in.StageID)
-	if err != nil {
-		return fail(err)
-	}
-	if _, err = r.memory.Write(ctx, memoryMeta(meta), ref, items); err != nil {
-		return fail(err)
-	}
-	return pipeline.Success(nil)
 }
 
 func (r *Runtime) compact(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {

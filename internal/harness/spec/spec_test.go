@@ -170,9 +170,9 @@ func TestCompileRejectsUnknownExpressionOperand(t *testing.T) {
 
 func TestCompileRejectsReadWithoutProducerDependency(t *testing.T) {
 	assertFixtureRejects(t,
-		"needs: [context, recall]\n          run:\n            stage: prompt.assemble",
+		"needs: [context, knowledge]\n          run:\n            stage: prompt.assemble",
 		"needs: [context]\n          run:\n            stage: prompt.assemble",
-		`reads "memory" before it is produced by a dependency`)
+		`reads "knowledge" before it is produced by a dependency`)
 }
 
 func TestCompileRejectsConditionReadBeforeProduction(t *testing.T) {

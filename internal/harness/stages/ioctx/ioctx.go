@@ -225,25 +225,32 @@ func (e *Engine) LoadContext(_ context.Context, meta Meta, contextRef string) (C
 type PortName string
 
 const (
-	PortContext PortName = "context"
-	PortMemory  PortName = "memory"
-	PortInput   PortName = "input"
+	PortContext   PortName = "context"
+	PortKnowledge PortName = "knowledge"
+	PortInput     PortName = "input"
 )
 
+// PromptMessage optionally carries kb provenance: Ring names the store a
+// knowledge block came from, Form its record shape, and Ref its stable
+// reference (kb:<slug> | graph:<id> | code:<id>). All three are empty for
+// context and input messages.
 type PromptMessage struct {
 	Port       PortName `json:"port"`
 	Role       string   `json:"role"`
 	Content    string   `json:"content"`
 	PayloadRef string   `json:"payload_ref"`
+	Ring       string   `json:"ring,omitempty"`
+	Form       string   `json:"form,omitempty"`
+	Ref        string   `json:"ref,omitempty"`
 }
 
 type PromptRequest struct {
 	// Order must come from the compiled stage configuration. No default order
 	// exists because changing it changes provider-visible semantics.
-	Order   []PortName
-	Context ContextSnapshot
-	Memory  []PromptMessage
-	Input   CanonicalInput
+	Order     []PortName
+	Context   ContextSnapshot
+	Knowledge []PromptMessage
+	Input     CanonicalInput
 }
 
 type Prompt struct {
@@ -253,9 +260,9 @@ type Prompt struct {
 }
 
 type PromptPorts struct {
-	Context ContextSnapshot
-	Memory  []PromptMessage
-	Input   CanonicalInput
+	Context   ContextSnapshot
+	Knowledge []PromptMessage
+	Input     CanonicalInput
 }
 
 // AssembleStage binds the mechanism to a compiled prompt.assemble node. The
@@ -264,7 +271,7 @@ func (e *Engine) AssembleStage(ctx context.Context, meta Meta, run spec.Run, por
 	if run.Stage != "prompt.assemble" {
 		return Prompt{}, fmt.Errorf("prompt assembly: got compiled stage %q", run.Stage)
 	}
-	for _, name := range []string{"context", "memory", "input"} {
+	for _, name := range []string{"context", "knowledge", "input"} {
 		if run.In[name] == "" {
 			return Prompt{}, fmt.Errorf("prompt assembly: missing typed input port %q", name)
 		}
@@ -273,7 +280,7 @@ func (e *Engine) AssembleStage(ctx context.Context, meta Meta, run spec.Run, por
 	if err != nil {
 		return Prompt{}, err
 	}
-	return e.Assemble(ctx, meta, PromptRequest{Order: order, Context: ports.Context, Memory: ports.Memory, Input: ports.Input})
+	return e.Assemble(ctx, meta, PromptRequest{Order: order, Context: ports.Context, Knowledge: ports.Knowledge, Input: ports.Input})
 }
 
 func (e *Engine) Assemble(_ context.Context, meta Meta, request PromptRequest) (Prompt, error) {
@@ -295,8 +302,8 @@ func (e *Engine) Assemble(_ context.Context, meta Meta, request PromptRequest) (
 			for _, fragment := range request.Context.Fragments {
 				result.Messages = append(result.Messages, PromptMessage{Port: port, Role: fragment.Role, Content: fragment.Content, PayloadRef: fragment.PayloadRef})
 			}
-		case PortMemory:
-			for _, message := range request.Memory {
+		case PortKnowledge:
+			for _, message := range request.Knowledge {
 				message.Port = port
 				result.Messages = append(result.Messages, message)
 			}
@@ -316,7 +323,11 @@ func (e *Engine) Assemble(_ context.Context, meta Meta, request PromptRequest) (
 	}
 	refs := make([]map[string]any, 0, len(result.Messages))
 	for position, message := range result.Messages {
-		refs = append(refs, map[string]any{"position": position, "port": message.Port, "role": message.Role, "payload_ref": message.PayloadRef})
+		ref := map[string]any{"position": position, "port": message.Port, "role": message.Role, "payload_ref": message.PayloadRef}
+		if message.Ring != "" || message.Form != "" || message.Ref != "" {
+			ref["ring"], ref["form"], ref["ref"] = message.Ring, message.Form, message.Ref
+		}
+		refs = append(refs, ref)
 	}
 	_, err = e.append(meta, "prompt.assembled", map[string]any{"schema_version": SchemaVersion, "payload_ref": result.PayloadRef, "messages": refs})
 	return result, err

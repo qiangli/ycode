@@ -23,8 +23,6 @@ import (
 	"github.com/qiangli/ycode/internal/harness/stages/ioctx"
 	memoryStage "github.com/qiangli/ycode/internal/harness/stages/memory"
 	"github.com/qiangli/ycode/internal/harness/turn"
-	memex "github.com/qiangli/ycode/pkg/memex"
-	memexmemory "github.com/qiangli/ycode/pkg/memex/memory"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -77,7 +75,6 @@ type Harness struct {
 	payloads  *event.PayloadStore
 	io        *ioctx.Engine
 	turn      *turn.Runtime
-	memex     *memex.Memex
 	eventPath string
 	control   string
 
@@ -164,18 +161,10 @@ func Load(path string, option ...LoadOption) (*Harness, error) {
 	if err != nil {
 		return nil, err
 	}
-	handle, err := memex.Open(filepath.Join(control, "memex"))
+	// Memory recall and persist are compiled bashy.run nodes over `bashy kb`;
+	// the harness opens no memory store of its own.
+	memoryEngine, err := memoryStage.New(memoryStage.Config{Document: doc, Events: events, Payloads: payloads, Tokens: harnessTokens{}})
 	if err != nil {
-		return nil, err
-	}
-	facade, err := memoryStage.NewMemexFacade(handle)
-	if err != nil {
-		_ = handle.Close()
-		return nil, err
-	}
-	memoryEngine, err := memoryStage.New(memoryStage.Config{Document: doc, Events: events, Payloads: payloads, Facade: facade, Tokens: harnessTokens{}})
-	if err != nil {
-		_ = handle.Close()
 		return nil, err
 	}
 	delivery := &embeddedDelivery{}
@@ -187,12 +176,10 @@ func Load(path string, option ...LoadOption) (*Harness, error) {
 	}
 	ioEngine, err := ioctx.New(ioctx.Config{Document: doc, Events: events, Payloads: payloads, TokenCounter: harnessTokens{}, Delivery: delivery, Redactor: embeddedRedactor{values: redactions}, DeadLetter: fileDeadLetter{root: control}})
 	if err != nil {
-		_ = handle.Close()
 		return nil, err
 	}
 	key, err := authorizationKey(filepath.Join(control, "authorization.key"))
 	if err != nil {
-		_ = handle.Close()
 		return nil, err
 	}
 	workspace := doc.Spec.Runtime.Workspace
@@ -205,26 +192,22 @@ func Load(path string, option ...LoadOption) (*Harness, error) {
 	bashyConfig.ToolName = provider.ToolName
 	bashyExecutor, err := harnessbashy.NewExecutor(bashyConfig, workspace, harnessbashy.RuntimeOptions{ControlRoot: filepath.Join(control, "bashy"), AuthorizationKey: key}, events)
 	if err != nil {
-		_ = handle.Close()
 		return nil, err
 	}
 	hitlController, err := hitl.New(hitl.Config{Document: doc, Events: events, Payloads: payloads, CheckpointPath: filepath.Join(control, "hitl.json"), Preflighter: bashyExecutor})
 	if err != nil {
-		_ = handle.Close()
 		return nil, err
 	}
 	providers, err := harnessProviders(doc, options.providers)
 	if err != nil {
-		_ = handle.Close()
 		return nil, err
 	}
-	runtime, err := turn.New(turn.Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashyExecutor, Providers: providers, Queue: emptyHarnessQueue{}, Materialize: emptyMaterializer{}, Observer: observe.New(doc.Spec.Observability, options.tracer)})
+	runtime, err := turn.New(turn.Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashyExecutor, Providers: providers, Queue: emptyHarnessQueue{}, Observer: observe.New(doc.Spec.Observability, options.tracer)})
 	if err != nil {
-		_ = handle.Close()
 		return nil, err
 	}
 	memoryEngine.BindSummary(routeSummarizerFor(runtime))
-	return &Harness{doc: doc, events: events, payloads: payloads, io: ioEngine, turn: runtime, memex: handle, eventPath: eventPath, control: control, active: make(map[string]*activeRun)}, nil
+	return &Harness{doc: doc, events: events, payloads: payloads, io: ioEngine, turn: runtime, eventPath: eventPath, control: control, active: make(map[string]*activeRun)}, nil
 }
 
 func (h *Harness) Validate() error {
@@ -366,12 +349,7 @@ func (h *Harness) Payload(ref string) ([]byte, error) {
 	return h.payloads.Get(ref)
 }
 
-func (h *Harness) Close() error {
-	if h == nil || h.memex == nil {
-		return nil
-	}
-	return h.memex.Close()
-}
+func (h *Harness) Close() error { return nil }
 
 func (h *Harness) stream(ctx context.Context, sessionID, runID string, next uint64, active *activeRun) <-chan Event {
 	out := make(chan Event, 32)
@@ -511,12 +489,6 @@ func (harnessTokens) CountMessages(value []message.Message) (int, error) {
 type emptyHarnessQueue struct{}
 
 func (emptyHarnessQueue) Drain(context.Context, string, []string) ([]turn.QueueItem, error) {
-	return nil, nil
-}
-
-type emptyMaterializer struct{}
-
-func (emptyMaterializer) Materialize(context.Context, string, []message.Message) ([]*memexmemory.Memory, error) {
 	return nil, nil
 }
 

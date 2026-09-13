@@ -47,14 +47,10 @@ func TestInputContextPromptOutputReplay(t *testing.T) {
 		t.Fatalf("source snapshot drifted: %q", contextValue.Fragments[0].Content)
 	}
 
-	memoryRef, err := payloads.Put([]byte("remember this"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	prompt, err := engine.AssembleStage(context.Background(), meta, spec.Run{
-		Stage: "prompt.assemble", In: map[string]string{"context": "context", "memory": "memory", "input": "input"},
-		With: map[string]any{"order": []any{"context", "memory", "input"}},
-	}, PromptPorts{Context: contextValue, Input: input, Memory: []PromptMessage{{Role: "user", Content: "remember this", PayloadRef: memoryRef}}})
+		Stage: "prompt.assemble", In: map[string]string{"context": "context", "knowledge": "knowledge", "input": "input"},
+		With: map[string]any{"order": []any{"context", "knowledge", "input"}},
+	}, PromptPorts{Context: contextValue, Input: input, Knowledge: []PromptMessage{{Role: "system", Content: "never pkill on an outpost host", Ring: "repo", Form: "page", Ref: "kb:never-pkill-on-an-outpost-host"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,8 +58,11 @@ func TestInputContextPromptOutputReplay(t *testing.T) {
 	for i := range prompt.Messages {
 		gotPorts[i] = prompt.Messages[i].Port
 	}
-	if want := []PortName{PortContext, PortContext, PortMemory, PortInput}; !reflect.DeepEqual(gotPorts, want) {
+	if want := []PortName{PortContext, PortContext, PortKnowledge, PortInput}; !reflect.DeepEqual(gotPorts, want) {
 		t.Fatalf("prompt port order = %v, want %v", gotPorts, want)
+	}
+	if got := prompt.Messages[2]; got.Ring != "repo" || got.Form != "page" || got.Ref != "kb:never-pkill-on-an-outpost-host" {
+		t.Fatalf("knowledge provenance = %#v", got)
 	}
 
 	output, err := engine.EmitStage(context.Background(), meta, spec.Run{Stage: "output.emit", In: map[string]string{"messages": "loop.messages"}, With: map[string]any{"sinkRefs": []any{"primary", "audit"}}}, "event-1", "repl", []byte("answer SECRET"))
@@ -86,6 +85,9 @@ func TestInputContextPromptOutputReplay(t *testing.T) {
 		types = append(types, item.Type)
 		if bytesContain(item.Data, "identity text") || bytesContain(item.Data, "answer [redacted]") {
 			t.Fatalf("event %q embeds replay payload: %s", item.Type, item.Data)
+		}
+		if item.Type == "prompt.assembled" && (!bytesContain(item.Data, `"ring":"repo"`) || !bytesContain(item.Data, `"form":"page"`) || !bytesContain(item.Data, `"ref":"kb:never-pkill-on-an-outpost-host"`)) {
+			t.Fatalf("prompt.assembled lost knowledge provenance: %s", item.Data)
 		}
 	}
 	wantTypes := []string{"input.admitted", "context.loaded", "prompt.assembled", "output.delivery.requested", "output.delivery.failed", "output.delivery.requested", "output.delivery.completed", "output.delivery.requested", "output.delivery.completed", "output.emitted"}

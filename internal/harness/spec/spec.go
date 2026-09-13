@@ -219,14 +219,13 @@ type Memory struct {
 	Compaction CompactionPolicy `yaml:"compaction" json:"compaction"`
 }
 type RecallPolicy struct {
-	Scopes    []string `yaml:"scopes" json:"scopes"`
-	Ranking   string   `yaml:"ranking" json:"ranking"`
+	Rings     []string `yaml:"rings" json:"rings"`
+	Forms     []string `yaml:"forms" json:"forms"`
 	MaxItems  int      `yaml:"maxItems" json:"maxItems"`
 	MaxTokens int      `yaml:"maxTokens" json:"maxTokens"`
 }
 type WritePolicy struct {
-	MaxItems int `yaml:"maxItems" json:"maxItems"`
-	MaxBytes int `yaml:"maxBytes" json:"maxBytes"`
+	EveryTurns int `yaml:"everyTurns" json:"everyTurns"`
 }
 type CompactionPolicy struct {
 	PreserveRecentTokens       int    `yaml:"preserveRecentTokens" json:"preserveRecentTokens"`

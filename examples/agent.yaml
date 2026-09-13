@@ -117,17 +117,20 @@ spec:
           cache: {scope: workspace, breakAfter: true}
       budget: {maxTokens: 16000, overflow: fail}
 
+  # Memory is pure policy over the bashy-kb front door: recall and persist
+  # run as harness-authored bashy.run nodes whose scripts are compiled from
+  # these values ({{memory.rings}}, {{memory.forms}}, {{memory.budget}},
+  # {{memory.k}}). The harness opens no memory store of its own.
   memories:
     main:
-      provider: memex
+      provider: bashy-kb
       recall:
-        scopes: [workspace, agent]
-        ranking: hybrid
+        rings: [agent, repo, host]
+        forms: [note, page, relation]
         maxItems: 8
         maxTokens: 3000
       write:
-        maxItems: 16
-        maxBytes: 65536
+        everyTurns: 1
       compaction:
         preserveRecentTokens: 24000
         preserveUserMessagesTokens: 4000
@@ -748,13 +751,99 @@ spec:
               in: {state: prepared}
               out: {state: state}
 
+    # Recall through the one knowledge front door: `bashy kb context --json`
+    # with the compiled memory policy as flags. {{task}} is substituted as a
+    # single-quoted literal at stage time (never a shell variable expansion:
+    # the intent analyzer proves only static arguments), so the digest-bound
+    # authorization covers the fully composed command.
+    load-knowledge:
+      inputs: {task: string}
+      state: {}
+      outputs: {knowledge: ycode.kb-context/v1}
+      concurrency: 1
+      failFast: true
+      nodes:
+        - id: kb-context
+          needs: []
+          run:
+            stage: bashy.run
+            with:
+              memoryRef: main
+              script: "bashy kb context --json --for {{task}} --rings {{memory.rings}} --forms {{memory.forms}} --budget {{memory.budget}} --k {{memory.k}}"
+              timeoutMs: 10000
+              effects: [read]
+            in: {task: task}
+            out: {knowledge: knowledge}
+
+    # Degraded assembly is a YAML decision: when the kb call is denied or
+    # fails, the turn proceeds with an honest abstained envelope instead of a
+    # fabricated one. The denial itself stays on the event log.
+    empty-knowledge:
+      inputs: {}
+      state: {}
+      outputs: {knowledge: ycode.kb-context/v1}
+      concurrency: 1
+      failFast: true
+      nodes:
+        - id: kb-context-empty
+          needs: []
+          run:
+            stage: bashy.run
+            with:
+              script: >-
+                printf '%s' '{"context_version":1,"for":"","budget":{"limit":0,"used":0},"abstained":true,"rings":[],"blocks":[]}'
+              timeoutMs: 5000
+              effects: [read]
+            out: {knowledge: knowledge}
+
+    # Persist once per turn (memories.main.write.everyTurns: 1): a candidate
+    # agent-ring note keyed to this session as the episode; the transcript
+    # arrives on the composed command's stdin as one JSON object.
+    persist-knowledge:
+      inputs: {transcript: ycode.messages/v1}
+      state: {}
+      outputs: {noted: string}
+      concurrency: 1
+      failFast: true
+      nodes:
+        - id: kb-note-add
+          needs: []
+          run:
+            stage: bashy.run
+            with:
+              memoryRef: main
+              script: "bashy kb note add --candidate --ring agent --episode {{session}} --json"
+              timeoutMs: 10000
+              effects: [read, write]
+            in: {transcript: transcript}
+            out: {noted: noted}
+
+    skip-persist:
+      inputs: {}
+      state: {}
+      outputs: {noted: string}
+      concurrency: 1
+      failFast: true
+      nodes:
+        - id: kb-note-skip
+          needs: []
+          run:
+            stage: bashy.run
+            with:
+              script: "printf 'kb-note-skipped'"
+              timeoutMs: 5000
+              effects: [read]
+            out: {noted: noted}
+
     turn:
       inputs: {request: ycode.input/v1}
       state:
         input: {type: ycode.input/v1, writer: single}
+        task: {type: string, writer: single}
         context: {type: ycode.context/v1, writer: single}
-        memory: {type: ycode.memory-items/v1, writer: single}
+        knowledge: {type: ycode.kb-context/v1, writer: single}
         probe: {type: string, writer: single}
+        noted: {type: string, writer: single}
         loop: {type: ycode.agent-loop/v1, writer: loop-carried}
       outputs: {output: ycode.output/v1}
       concurrency: 4
@@ -770,7 +859,7 @@ spec:
           run:
             stage: input.normalize
             in: {request: request}
-            out: {input: input}
+            out: {input: input, text: task}
         - id: context
           needs: [input]
           run:
@@ -790,19 +879,25 @@ spec:
               effects: [read]
             in: {request: input}
             out: {probe: probe}
-        - id: recall
+        - id: knowledge
           needs: [input]
           run:
-            stage: memory.recall
-            with: {memoryRef: main}
-            in: {query: input}
-            out: {items: memory}
+            fallback:
+              maxAttempts: 2
+              attempts:
+                - pipelineRef: load-knowledge
+                  on: [bashy.run-denied, bashy.run-failed]
+                  in: {task: task}
+                - pipelineRef: empty-knowledge
+                  on: [bashy.run-failed]
+              noMatch: fail
+              out: {knowledge: knowledge}
         - id: assemble
-          needs: [context, recall]
+          needs: [context, knowledge]
           run:
             stage: prompt.assemble
-            with: {order: [context, memory, input]}
-            in: {input: input, context: context, memory: memory}
+            with: {order: [context, knowledge, input]}
+            in: {input: input, context: context, knowledge: knowledge}
             out: {state: loop}
         - id: checkpoint
           needs: [assemble]
@@ -823,9 +918,16 @@ spec:
         - id: remember
           needs: [loop]
           run:
-            stage: memory.write
-            with: {memoryRef: main}
-            in: {messages: loop.messages}
+            fallback:
+              maxAttempts: 2
+              attempts:
+                - pipelineRef: persist-knowledge
+                  on: [bashy.run-denied, bashy.run-failed]
+                  in: {transcript: loop.messages}
+                - pipelineRef: skip-persist
+                  on: [bashy.run-failed]
+              noMatch: fail
+              out: {noted: noted}
         - id: output
           needs: [loop]
           run:

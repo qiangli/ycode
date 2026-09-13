@@ -13,8 +13,8 @@ var knownStageCatalog = map[string]struct{}{
 	"context.measure": {}, "event.annotate": {}, "hitl.review": {},
 	"input.normalize": {}, "lifecycle.transition": {}, "llm.call": {},
 	"lock.acquire": {}, "lock.release": {}, "loop.finish": {}, "memory.compact": {},
-	"memory.recall": {}, "memory.write": {}, "messages.append-assistant": {},
-	"messages.append-source": {}, "messages.append-tool-results": {}, "messages.clear-tool-results": {},
+	"messages.append-assistant": {},
+	"messages.append-source":    {}, "messages.append-tool-results": {}, "messages.clear-tool-results": {},
 	"messages.apply-input": {}, "messages.normalize-provider-response": {},
 	"outcome.fail": {}, "output.emit": {}, "policy.bind-approval": {},
 	"policy.evaluate": {}, "prompt.assemble": {}, "queue.drain": {},
@@ -72,15 +72,11 @@ func stagePorts(name string) (string, string) {
 	case "messages.normalize-provider-response", "messages.append-assistant":
 		return "state,response", "state"
 	case "input.normalize":
-		return "request", "input"
+		return "request", "input,text?"
 	case "context.load":
 		return "", "context"
-	case "memory.recall":
-		return "query", "items"
 	case "prompt.assemble":
-		return "input,context,memory", "state"
-	case "memory.write":
-		return "messages", ""
+		return "input,context,knowledge", "state"
 	case "output.emit":
 		return "messages", "output"
 	case "lifecycle.transition":
@@ -94,8 +90,8 @@ func stagePorts(name string) (string, string) {
 
 type typedSlots map[string]string
 
-func validatePipelineContracts(pipelines map[string]Pipeline) error {
-	if err := validateBashyRunNodes(pipelines); err != nil {
+func validatePipelineContracts(pipelines map[string]Pipeline, memories map[string]Memory) error {
+	if err := validateBashyRunNodes(pipelines, memories); err != nil {
 		return err
 	}
 	names := make([]string, 0, len(pipelines))

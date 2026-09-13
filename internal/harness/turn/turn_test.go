@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	api "github.com/qiangli/ycode/internal/api"
@@ -16,7 +17,6 @@ import (
 	"github.com/qiangli/ycode/internal/harness/stages/hitl"
 	"github.com/qiangli/ycode/internal/harness/stages/ioctx"
 	memoryStage "github.com/qiangli/ycode/internal/harness/stages/memory"
-	memexmemory "github.com/qiangli/ycode/pkg/memex/memory"
 )
 
 func TestCompiledStarterTurnSurvivesStoreRestart(t *testing.T) {
@@ -55,7 +55,7 @@ func TestCompiledStarterTurnSurvivesStoreRestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		memoryEngine, err := memoryStage.New(memoryStage.Config{Document: doc, Events: events, Payloads: payloads, Facade: emptyMemory{}, Tokens: messageCounter{}})
+		memoryEngine, err := memoryStage.New(memoryStage.Config{Document: doc, Events: events, Payloads: payloads, Tokens: messageCounter{}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -64,7 +64,7 @@ func TestCompiledStarterTurnSurvivesStoreRestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		runtime, err := New(Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashy, Providers: map[string]Provider{"openai": adapter}, Queue: emptyQueue{}, Materialize: noMemoryWrites{}})
+		runtime, err := New(Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashy, Providers: map[string]Provider{"openai": adapter}, Queue: emptyQueue{}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -146,19 +146,6 @@ type rejectingDeadLetter struct{}
 
 func (rejectingDeadLetter) Store(context.Context, ioctx.DeadLetterRequest) error { return nil }
 
-type emptyMemory struct{}
-
-func (emptyMemory) Recall(context.Context, memoryStage.RecallQuery) ([]memoryStage.RecallHit, error) {
-	return nil, nil
-}
-func (emptyMemory) Write(context.Context, *memexmemory.Memory) error { return nil }
-
-type noMemoryWrites struct{}
-
-func (noMemoryWrites) Materialize(context.Context, string, []message.Message) ([]*memexmemory.Memory, error) {
-	return nil, nil
-}
-
 type emptyQueue struct{}
 
 func (emptyQueue) Drain(context.Context, string, []string) ([]QueueItem, error) { return nil, nil }
@@ -170,15 +157,32 @@ func (fakeBashy) Preflight(_ context.Context, _ hitl.Meta, call hitl.Call) (hitl
 }
 
 // Execute returns the harnessrunner wire shape so both the model-tool result
-// path and the bashy.run stage decode the same typed evidence.
+// path and the bashy.run stage decode the same typed evidence. The stub is
+// the test double for the sibling `bashy kb` surface: a kb context call
+// returns exactly the frozen golden envelope, a kb note add returns a slug.
 func (fakeBashy) Execute(_ context.Context, _ hitl.Meta, call hitl.Call, _ string) (any, error) {
+	stdout := []byte("workspace-ready")
+	switch {
+	case strings.Contains(call.Script, "bashy kb context"):
+		raw, err := os.ReadFile(kbContextEnvelopePath())
+		if err != nil {
+			return nil, err
+		}
+		stdout = raw
+	case strings.Contains(call.Script, "bashy kb note add"):
+		stdout = []byte("kb:starter-turn-note")
+	}
 	exit := 0
 	return map[string]any{
 		"call_id": call.ID,
 		"outcome": "completed",
 		"process": map[string]any{"exitCode": exit},
 		"output": map[string]any{
-			"stdout": []any{map[string]any{"from": 0, "to": 15, "encoding": "base64", "data": base64.StdEncoding.EncodeToString([]byte("workspace-ready"))}},
+			"stdout": []any{map[string]any{"from": 0, "to": len(stdout), "encoding": "base64", "data": base64.StdEncoding.EncodeToString(stdout)}},
 		},
 	}, nil
+}
+
+func kbContextEnvelopePath() string {
+	return filepath.Join("..", "stages", "memory", "testdata", "kb-context-envelope.json")
 }

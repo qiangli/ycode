@@ -20,7 +20,7 @@ spec:
   pipelines:
     turn:
       inputs: {request: ycode.input/v1}
-      state: {input: {type: ycode.input/v1, writer: single}, context: {type: ycode.context/v1, writer: single}, memory: {type: ycode.memory-items/v1, writer: single}, messages: {type: ycode.messages/v1, writer: single}, providerSession: {type: ycode.provider-session/v1, writer: single}, response: {type: ycode.provider-response/v1, writer: single}, intent: {type: ycode.bashy-call/v1, writer: single}, result: {type: ycode.bashy-result/v1, writer: single}, authorization: {type: ycode.authorization/v1, writer: single}, fencingToken: {type: ycode.fencing/v1, writer: single}, output: {type: ycode.output/v1, writer: single}}
+      state: {input: {type: ycode.input/v1, writer: single}, context: {type: ycode.context/v1, writer: single}, knowledge: {type: ycode.kb-context/v1, writer: single}, messages: {type: ycode.messages/v1, writer: single}, providerSession: {type: ycode.provider-session/v1, writer: single}, response: {type: ycode.provider-response/v1, writer: single}, intent: {type: ycode.bashy-call/v1, writer: single}, result: {type: ycode.bashy-result/v1, writer: single}, authorization: {type: ycode.authorization/v1, writer: single}, fencingToken: {type: ycode.fencing/v1, writer: single}, output: {type: ycode.output/v1, writer: single}}
       outputs: {output: ycode.output/v1}
       concurrency: 1
       failFast: true
@@ -28,8 +28,8 @@ spec:
         - {id: running, needs: [], run: {stage: lifecycle.transition}}
         - {id: input, needs: [running], run: {stage: input.normalize, in: {request: request}, out: {input: input}}}
         - {id: context, needs: [input], run: {stage: context.load, out: {context: context}}}
-        - {id: memory, needs: [input], run: {stage: memory.recall, in: {query: input}, out: {items: memory}}}
-        - {id: messages, needs: [context, memory], run: {stage: prompt.assemble, in: {input: input, context: context, memory: memory}, out: {state: messages}}}
+        - {id: kb-context, needs: [input], run: {stage: bashy.run, with: {script: "bashy kb context --json", timeoutMs: 1000, effects: [read]}, in: {task: input}, out: {knowledge: knowledge}}}
+        - {id: messages, needs: [context, kb-context], run: {stage: prompt.assemble, in: {input: input, context: context, knowledge: knowledge}, out: {state: messages}}}
         - {id: provider-session, needs: [input], run: {stage: state.forward, in: {value: input}, out: {value: providerSession}}}
         - {id: model, needs: [messages, provider-session], run: {stage: llm.call, with: {routeRef: main}, in: {messages: messages, providerSession: providerSession}, out: {response: response, providerSession: providerSession}}}
         - {id: intent, needs: [model], run: {stage: state.forward, in: {value: response}, out: {value: intent}}}

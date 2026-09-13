@@ -132,10 +132,13 @@ func (d *Document) validate() error {
 	if err := validatePlatformCompatibility(d); err != nil {
 		return err
 	}
+	if err := validateMemories(d.Spec.Memories); err != nil {
+		return err
+	}
 	if err := validatePipelines(d.Spec.Pipelines); err != nil {
 		return err
 	}
-	if err := validatePipelineContracts(d.Spec.Pipelines); err != nil {
+	if err := validatePipelineContracts(d.Spec.Pipelines, d.Spec.Memories); err != nil {
 		return err
 	}
 	return validateBashy(d.Spec.Bashy)

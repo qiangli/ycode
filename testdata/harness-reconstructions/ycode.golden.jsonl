@@ -1,7 +1,7 @@
 {"type":"stage","stage":"running","mechanism":"lifecycle.transition"}
 {"type":"stage","stage":"input","mechanism":"input.normalize"}
 {"type":"stage","stage":"context","mechanism":"context.load"}
-{"type":"stage","stage":"memory","mechanism":"memory.recall"}
+{"type":"stage","stage":"kb-context","mechanism":"bashy.run"}
 {"type":"stage","stage":"messages","mechanism":"prompt.assemble"}
 {"type":"stage","stage":"provider-session","mechanism":"state.forward"}
 {"type":"stage","stage":"model","mechanism":"llm.call"}

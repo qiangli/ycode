@@ -25,7 +25,7 @@ func validBashyRunWith() map[string]any {
 }
 
 func TestBashyRunNodesCompileTypedContract(t *testing.T) {
-	nodes, err := BashyRunNodes(bashyRunFixture(validBashyRunWith(), map[string]string{"task": "request"}, map[string]string{"knowledge": "knowledge"}))
+	nodes, err := BashyRunNodes(bashyRunFixture(validBashyRunWith(), map[string]string{"task": "request"}, map[string]string{"knowledge": "knowledge"}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestBashyRunNodesRejectMissingOrInvalidDeclarations(t *testing.T) {
 	}
 	for _, item := range cases {
 		t.Run(item.name, func(t *testing.T) {
-			_, err := BashyRunNodes(bashyRunFixture(item.with, item.in, item.out))
+			_, err := BashyRunNodes(bashyRunFixture(item.with, item.in, item.out), nil)
 			if err == nil || !strings.Contains(err.Error(), item.want) {
 				t.Fatalf("err = %v, want %q", err, item.want)
 			}
@@ -77,7 +77,7 @@ func TestBashyRunNodeIDsAreUniqueAcrossPipelines(t *testing.T) {
 	pipelines := bashyRunFixture(validBashyRunWith(), nil, map[string]string{"knowledge": "knowledge"})
 	other := pipelines["turn"]
 	pipelines["persist"] = other
-	_, err := BashyRunNodes(pipelines)
+	_, err := BashyRunNodes(pipelines, nil)
 	if err == nil || !strings.Contains(err.Error(), "must be unique") {
 		t.Fatalf("err = %v", err)
 	}
@@ -102,7 +102,7 @@ func TestCanonicalFixtureDeclaresBashyRunExample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nodes, err := BashyRunNodes(doc.Spec.Pipelines)
+	nodes, err := BashyRunNodes(doc.Spec.Pipelines, doc.Spec.Memories)
 	if err != nil {
 		t.Fatal(err)
 	}

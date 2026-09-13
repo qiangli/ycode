@@ -47,9 +47,12 @@ capabilities:
   - id: canonical-input-context-prompt-output
     owner: resource:spec.sources-contexts-sinks
     entrypoints: ["internal/harness/stages/ioctx/ioctx.go#type Engine struct"]
-  - id: memory-recall-write-compaction
+  - id: memory-measure-compaction
     owner: resource:spec.memories
     entrypoints: ["internal/harness/stages/memory/memory.go#type Engine struct"]
+  - id: bashy-kb-knowledge-provider
+    owner: resource:spec.memories
+    entrypoints: ["internal/harness/stages/memory/knowledge.go#func KnowledgeMessages", "internal/harness/spec/memories.go#const MemoryProviderBashyKB"]
   - id: approval-and-resume
     owner: resource:spec.policies-sessions
     entrypoints: ["internal/harness/stages/hitl/hitl.go#type Controller struct"]
@@ -78,8 +81,6 @@ stageCatalog:
   lock.release: spec.locks
   loop.finish: spec.pipelines
   memory.compact: spec.memories
-  memory.recall: spec.memories
-  memory.write: spec.memories
   messages.append-assistant: spec.pipelines
   messages.append-source: spec.sources
   messages.append-tool-results: spec.pipelines

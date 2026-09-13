@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -31,7 +32,7 @@ func newMemoryListCmd(file *string) *cobra.Command {
 			sort.Strings(names)
 			for _, name := range names {
 				memory := doc.Spec.Memories[name]
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%d\n", name, memory.Provider, memory.Recall.Ranking, memory.Recall.MaxItems)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%d\n", name, memory.Provider, strings.Join(memory.Recall.Rings, ","), memory.Recall.MaxItems)
 			}
 			return nil
 		},

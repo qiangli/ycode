@@ -183,7 +183,7 @@ func TestReconstructionDifferentialCoverageIsComplete(t *testing.T) {
 	corpus.Write(restart)
 	required := map[string]string{
 		"context assembly": "prompt.assemble", "prompt/cache boundary": "breakAfter:",
-		"memory": "memory.recall", "compaction": "memory.compact", "queue/steering": "queue.drain",
+		"knowledge": "kb context", "compaction": "memory.compact", "queue/steering": "queue.drain",
 		"provider": "provider.outcome", "tool": "bashy.execute", "HITL": "hitl.review",
 		"retry": "retryProbe", "subagent": "agent.invoke", "lifecycle": "lifecycle.transition",
 		"output": "output.emit", "restart/resume": "approval.resolved",
@@ -219,8 +219,8 @@ func reconstructionRegistry(t *testing.T, trace *reconstructionTrace) *Registry 
 	register("context.load", func(context.Context, Invocation) Outcome {
 		return Success(map[string]any{"context": map[string]any{"cacheBoundary": "run"}})
 	})
-	register("memory.recall", func(context.Context, Invocation) Outcome {
-		return Success(map[string]any{"items": []any{}})
+	register("bashy.run", func(context.Context, Invocation) Outcome {
+		return Success(map[string]any{"knowledge": map[string]any{"context_version": 1, "budget": map[string]any{"limit": 0, "used": 0}, "abstained": true, "rings": []any{}, "blocks": []any{}}})
 	})
 	register("prompt.assemble", func(_ context.Context, in Invocation) Outcome {
 		return Success(map[string]any{"state": in.Inputs})

@@ -32,6 +32,11 @@ func TestHarnessLoadValidateRunStreamsDurableEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer harness.Close()
+	// The bashy-kb provider replaced memex: Load must not open or create a
+	// memex store under the control root.
+	if _, err := os.Stat(filepath.Join(harness.control, "memex")); !os.IsNotExist(err) {
+		t.Fatalf("Load created a memex store under the control root: %v", err)
+	}
 	stream, err := harness.Run(context.Background(), RunRequest{SessionID: "public-session", RunID: "public-run", TriggerRef: "interactive-input", FrontendRef: "embed", Principal: "tester", IdempotencyKey: "once", Body: []byte(`{"request":"run from yaml"}`)})
 	if err != nil {
 		t.Fatal(err)

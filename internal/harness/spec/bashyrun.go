@@ -27,10 +27,20 @@ type BashyRunNode struct {
 // pattern keeps the uppercase mapping injective and shell-safe.
 var bashyRunPortPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
+// A script placeholder either names an input port or the reserved run
+// binding {{session}} (both substituted as single-quoted literals at stage
+// time, before preflight), or one of the {{memory.*}} policy values resolved
+// here at compile time from with.memoryRef. Literal substitution is the only
+// supported input path into a command argument: the Bashy intent analyzer
+// treats any shell variable expansion in an argument as unprovable, so a
+// $YCODE_IN_<PORT> consumer is always denied under the real boundary.
+var bashyRunPlaceholderPattern = regexp.MustCompile(`\{\{([^{}]*)\}\}`)
+
 // BashyRunNodes compiles every bashy.run node in the document. Node ids are
 // required to be unique across pipelines so that events, checkpoints and
-// Bashy idempotency bindings name exactly one compiled node.
-func BashyRunNodes(pipelines map[string]Pipeline) (map[string]BashyRunNode, error) {
+// Bashy idempotency bindings name exactly one compiled node. Memory-policy
+// placeholders are resolved against the declared memories.
+func BashyRunNodes(pipelines map[string]Pipeline, memories map[string]Memory) (map[string]BashyRunNode, error) {
 	names := make([]string, 0, len(pipelines))
 	for name := range pipelines {
 		names = append(names, name)
@@ -43,7 +53,7 @@ func BashyRunNodes(pipelines map[string]Pipeline) (map[string]BashyRunNode, erro
 			if node.Run.Stage != "bashy.run" {
 				continue
 			}
-			compiled, err := compileBashyRunNode(name, pipeline, node)
+			compiled, err := compileBashyRunNode(name, pipeline, node, memories)
 			if err != nil {
 				return nil, err
 			}
@@ -56,21 +66,25 @@ func BashyRunNodes(pipelines map[string]Pipeline) (map[string]BashyRunNode, erro
 	return out, nil
 }
 
-func validateBashyRunNodes(pipelines map[string]Pipeline) error {
-	_, err := BashyRunNodes(pipelines)
+func validateBashyRunNodes(pipelines map[string]Pipeline, memories map[string]Memory) error {
+	_, err := BashyRunNodes(pipelines, memories)
 	return err
 }
 
-func compileBashyRunNode(pipelineName string, pipeline Pipeline, node Stage) (BashyRunNode, error) {
+func compileBashyRunNode(pipelineName string, pipeline Pipeline, node Stage, memories map[string]Memory) (BashyRunNode, error) {
 	where := fmt.Sprintf("harness: pipeline %q node %q", pipelineName, node.ID)
 	for key := range node.Run.With {
-		if key != "script" && key != "timeoutMs" && key != "effects" {
+		if key != "script" && key != "timeoutMs" && key != "effects" && key != "memoryRef" {
 			return BashyRunNode{}, fmt.Errorf("%s: bashy.run does not accept with.%s", where, key)
 		}
 	}
 	script, _ := node.Run.With["script"].(string)
 	if strings.TrimSpace(script) == "" {
 		return BashyRunNode{}, fmt.Errorf("%s: bashy.run requires with.script", where)
+	}
+	script, err := resolveBashyRunPlaceholders(where, script, node.Run, memories)
+	if err != nil {
+		return BashyRunNode{}, err
 	}
 	timeout, ok := positiveWholeInt(node.Run.With["timeoutMs"])
 	if !ok {
@@ -86,6 +100,9 @@ func compileBashyRunNode(pipelineName string, pipeline Pipeline, node Stage) (Ba
 	for port := range node.Run.In {
 		if !bashyRunPortPattern.MatchString(port) {
 			return BashyRunNode{}, fmt.Errorf("%s: bashy.run input port %q must match %s", where, port, bashyRunPortPattern)
+		}
+		if port == "session" {
+			return BashyRunNode{}, fmt.Errorf("%s: bashy.run input port %q is reserved for the run session binding", where, port)
 		}
 	}
 	if len(node.Run.Out) != 1 {
@@ -121,6 +138,59 @@ func compileBashyRunNode(pipelineName string, pipeline Pipeline, node Stage) (Ba
 		OutTarget: outTarget,
 		OutType:   outType,
 	}, nil
+}
+
+// resolveBashyRunPlaceholders substitutes {{memory.*}} policy values now and
+// proves every remaining placeholder is resolvable at stage time. The result
+// still carries {{port}} and {{session}} markers; the turn runtime replaces
+// those with single-quoted literals before preflight, so the digest-bound
+// authorization always covers the fully composed script.
+func resolveBashyRunPlaceholders(where, script string, run Run, memories map[string]Memory) (string, error) {
+	memoryRef, hasMemoryRef := run.With["memoryRef"].(string)
+	if raw, declared := run.With["memoryRef"]; declared && (!hasMemoryRef || memoryRef == "") {
+		return "", fmt.Errorf("%s: bashy.run with.memoryRef must be a memory name, got %v", where, raw)
+	}
+	memory, memoryDeclared := memories[memoryRef]
+	if hasMemoryRef && !memoryDeclared {
+		return "", fmt.Errorf("%s: bashy.run with.memoryRef references unknown memory %q", where, memoryRef)
+	}
+	var resolveErr error
+	resolved := bashyRunPlaceholderPattern.ReplaceAllStringFunc(script, func(match string) string {
+		if resolveErr != nil {
+			return match
+		}
+		name := strings.TrimSpace(match[2 : len(match)-2])
+		if value, ok := strings.CutPrefix(name, "memory."); ok {
+			if !hasMemoryRef {
+				resolveErr = fmt.Errorf("%s: script placeholder {{%s}} requires with.memoryRef", where, name)
+				return match
+			}
+			switch value {
+			case "rings":
+				return strings.Join(memory.Recall.Rings, ",")
+			case "forms":
+				return strings.Join(memory.Recall.Forms, ",")
+			case "budget":
+				return fmt.Sprintf("%d", memory.Recall.MaxTokens)
+			case "k":
+				return fmt.Sprintf("%d", memory.Recall.MaxItems)
+			default:
+				resolveErr = fmt.Errorf("%s: script placeholder {{%s}} is not a compiled memory policy value (rings, forms, budget, k)", where, name)
+				return match
+			}
+		}
+		if name == "session" {
+			return match
+		}
+		if _, ok := run.In[name]; !ok {
+			resolveErr = fmt.Errorf("%s: script placeholder {{%s}} does not name an input port", where, name)
+		}
+		return match
+	})
+	if resolveErr != nil {
+		return "", resolveErr
+	}
+	return resolved, nil
 }
 
 func positiveWholeInt(value any) (int, bool) {
