@@ -3,9 +3,11 @@ id: 649028cb0be9
 kind: task
 title: Y2 memories provider bashy-kb via bashy.run (kb context / kb note add --candidate); knowledge port with ring/form/ref provenance; harness stops opening memex
 seq: 38
-status: todo
+status: assigned
 priority: p1
 created: 2026-09-13T01:31:42.207172Z
+weave: 4
+assignee: qiangli
 sprint: 163
 ---
 

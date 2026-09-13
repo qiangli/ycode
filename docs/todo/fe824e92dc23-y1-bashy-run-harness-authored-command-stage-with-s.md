@@ -3,9 +3,11 @@ id: fe824e92dc23
 kind: task
 title: 'Y1 bashy.run harness-authored command stage: with:{script,timeoutMs,effects}, typed in: -> env/stdin JSON, stdout -> typed out:; preflight -> policy -> digest; fail closed'
 seq: 37
-status: todo
+status: assigned
 priority: p0
 created: 2026-09-13T01:31:42.184328Z
+weave: 1
+assignee: qiangli
 sprint: 163
 ---
 

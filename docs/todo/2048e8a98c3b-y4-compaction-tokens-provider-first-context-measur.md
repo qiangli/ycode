@@ -3,9 +3,11 @@ id: 2048e8a98c3b
 kind: task
 title: 'Y4 compaction + tokens: provider-first context.measure + contextBudget; RouteText; user-role summary from YAML sources with rolling merge, pair-safe cut, fallback-deterministic; clear-tool-results; overflow retry'
 seq: 40
-status: todo
+status: assigned
 priority: p1
 created: 2026-09-13T01:31:42.253718Z
+weave: 2
+assignee: qiangli
 sprint: 163
 ---
 

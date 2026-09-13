@@ -3,9 +3,11 @@ id: 8b5d9e16c5ff
 kind: task
 title: 'Y3 session history: session.commit + session.load (newest boundary, drop system roles, clear old tool results, whole-turn maxTokens, tool-pair repair), history port, fork seed, --session'
 seq: 39
-status: todo
+status: assigned
 priority: p1
 created: 2026-09-13T01:31:42.230811Z
+weave: 3
+assignee: qiangli
 sprint: 163
 ---
 
