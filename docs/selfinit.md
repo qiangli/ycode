@@ -1,6 +1,6 @@
 # selfinit — ycode as the agentic-tool kernel
 
-ycode is the OS / infrastructure for agentic coding tools. Every Claude Code, OpenCode, Codex, or Gemini CLI session runs *on top of* a shared local substrate — memex (memory), ollama (inference), pulse (observability), treesitter (AST). `selfinit` is the mechanism that makes ycode a **first-class citizen in every local git repo on every entry-point invocation**.
+ycode is a local, YAML-native agent harness that other agentic coding tools (Claude Code, OpenCode, Codex, Gemini CLI) can discover and drive. `selfinit` is the mechanism that makes ycode a **first-class citizen in every local git repo on every entry-point invocation**: it leaves accurate breadcrumbs describing the `agent.yaml` command surface and the governed Bashy boundary, and nothing else.
 
 ## What it does
 
@@ -11,7 +11,7 @@ On any ycode entry-point (`ycode`, `ycode prompt`, `ycode serve`), `selfinit.Run
 3. Detects installed agentic tools (claude on PATH or `~/.claude/`; opencode on PATH or `~/.config/opencode/`; codex / gemini queued).
 4. Writes `<repo>/.ycode/AGENTS.md` — the long-form, manifest-derived ycode awareness doc.
 5. Patches `<repo>/AGENTS.md` and/or `<repo>/CLAUDE.md` with a small delimited reference block (or, in greenfield repos where neither exists, creates `AGENTS.md` as a fully ycode-owned file marked on line 1).
-6. For each detected foreign tool, refreshes its user-scope memory file with a delimited block describing the `yc <verb>` shell built-ins:
+6. For each detected foreign tool, refreshes its user-scope memory file with a delimited block describing the `agent.yaml` command surface and the governed `ycode shell -c` Bashy boundary:
    - **Claude Code**: `~/.claude/CLAUDE.md`.
    - **OpenCode**: `~/.config/opencode/AGENTS.md`.
 
@@ -73,7 +73,9 @@ type Tool interface {
 ```
 
 `WriteInstructions` takes no capability list: the block it writes
-describes only surfaces ycode actually serves — the `yc <verb>` shell
-built-ins — so there is nothing to enumerate per host.
+describes only surfaces ycode actually serves — the `agent.yaml`
+command surface and the governed Bashy boundary — so there is nothing
+to enumerate per host. There is no `yc <verb>` built-in registry and
+no MCP server to advertise.
 
 …then `RegisterTool(&yourTool{})` from an `init()`. SelfInit picks it up automatically. Reference impls: `claude.go`, `opencode.go`.
