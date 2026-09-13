@@ -99,7 +99,10 @@ func TestHarnessResumeContinuesSuspendedGraphWithoutRestart(t *testing.T) {
 		if calls.Add(1) == 1 {
 			stop, _ := json.Marshal(map[string]string{"stop_reason": api.StopReasonToolUse})
 			return []*api.StreamEvent{
-				{Type: "content_block_start", ContentBlock: &api.ContentBlock{Type: api.ContentTypeToolUse, ID: "review-call", Name: "bashy", Input: json.RawMessage(`{"script":"echo harmless"}`)}},
+				// An exact workspace overwrite matches the compiled destructive
+				// rule, so the suspended-graph review path stays exercised now
+				// that pure builtin evidence no longer blocks the allow rule.
+				{Type: "content_block_start", ContentBlock: &api.ContentBlock{Type: api.ContentTypeToolUse, ID: "review-call", Name: "bashy", Input: json.RawMessage(`{"script":"printf harmless > review.txt"}`)}},
 				{Type: "content_block_stop"}, {Type: "message_delta", Delta: stop},
 			}
 		}
