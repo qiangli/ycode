@@ -34,11 +34,13 @@ input admission ── identity, size, schema, idempotency
           ▼
 typed pipeline runner ── needs DAG, typed ports/state, hooks, repeat bounds
           │
+          ├── session history load (`session.load`, projection from the last committed turn)
           ├── context load + ordered prompt assembly
           ├── knowledge recall via bashy.run (`bashy kb context --json`)
           ├── configured context measure/compact
           ├── normalized provider stream
-          └── policy → Bashy preflight → allow/deny/ask → execution
+          ├── policy → Bashy preflight → allow/deny/ask → execution
+          └── turn-boundary commit (`session.commit`)
           │
           ▼
 output routing ── canonical event + content-addressed payload
@@ -113,6 +115,9 @@ Successful turns save a boundary checkpoint tied to the event position and
 typed output. `Harness.Fork` validates the requested parent event and completed
 checkpoint, appends one `session.forked` event, and saves a child checkpoint.
 Fork is a lifecycle operation; it never invokes the provider or tool pipeline.
+The forked event carries the parent's committed message reference, which
+`session.load` uses as the child's history seed — the child's first turn
+continues the parent's conversation.
 
 ## Frontends
 
@@ -133,9 +138,19 @@ loop or translate success from presentation text.
 
 `internal/harness/stages/ioctx` snapshots bounded sources and assembles prompt
 fragments in declared order with typed ports (`context`, `knowledge`,
-`input`). Knowledge-port messages keep per-block `ring`/`form`/`ref`
+`history`, `input`). Knowledge-port messages keep per-block `ring`/`form`/`ref`
 provenance from the kb envelope, and `prompt.assembled` records it. Missing
 required content, overflow, and delivery failure follow compiled behavior.
+
+`internal/harness/stages/session` gives a durable session conversational
+continuity. `session.load` projects the message history recorded at the last
+`session.turn-committed` event (or a fork's parent seed) through the compiled
+history policy — whole-turn trimming to `maxTokens`, tool-result clearing by
+age, tool-pair repair — into the `history` port, and emits
+`session.history.loaded`. `session.commit` writes the finished turn's message
+array to the payload store at the turn boundary and emits
+`session.turn-committed`. Two runs on one session id are one conversation,
+across process restarts and forks; no frontend keeps a private transcript.
 
 Memory is policy over the `bashy kb` front door (`provider: bashy-kb` is the
 only compiled provider; the harness opens no store of its own). Recall is a
@@ -151,8 +166,13 @@ expansion is never used because the intent analyzer cannot prove it.
 `internal/harness/stages/memory` keeps the measure and compaction mechanisms
 and decodes the frozen kb context envelope
 (`testdata/kb-context-envelope.json`, byte-identical to the umbrella golden).
-Budgets, triggers, routes, and failure behavior come from YAML. There is no
-background memory scheduler hidden outside the graph.
+`context.measure` reports the last provider token count plus an estimated
+tail, with provenance in `context.measured`; `memory.compact` produces a
+user-role `[compaction-summary]` message through the compiled route and
+prompt sources, with a deterministic fallback when so compiled. Budgets,
+triggers, routes, and failure behavior come from YAML. There is no
+background memory scheduler hidden outside the graph. See
+[memory.md](memory.md) for the full stage model.
 
 ## Observability and security
 
@@ -177,6 +197,7 @@ combinations fail during compilation or admission.
 | `internal/harness/provider` | canonical provider stream adapters |
 | `internal/harness/bashy` | preflight/execution/control boundary |
 | `internal/harness/stages/ioctx` | admission, content, prompt, output |
+| `internal/harness/stages/session` | durable session history load and turn commit |
 | `internal/harness/stages/memory` | context measure/compaction and kb envelope decoding |
 | `internal/harness/stages/hitl` | policy decisions and durable review |
 | `internal/harness/event` | event log, payload store, checkpoints |

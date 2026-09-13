@@ -53,6 +53,9 @@ capabilities:
   - id: bashy-kb-knowledge-provider
     owner: resource:spec.memories
     entrypoints: ["internal/harness/stages/memory/knowledge.go#func KnowledgeMessages", "internal/harness/spec/memories.go#const MemoryProviderBashyKB"]
+  - id: durable-session-history
+    owner: resource:spec.sessions
+    entrypoints: ["internal/harness/stages/session/session.go#func (e *Engine) Load", "internal/harness/stages/session/session.go#func (e *Engine) Commit"]
   - id: approval-and-resume
     owner: resource:spec.policies-sessions
     entrypoints: ["internal/harness/stages/hitl/hitl.go#type Controller struct"]
