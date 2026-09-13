@@ -16,5 +16,5 @@ Goal: ycode docs match the stage model.
 - docs/architecture.md, docs/usage.md ("continues from the boundary" now means conversational continuity), docs/harness-capability-map.yaml (new stages/events).
 - internal/selfinit/claude.go still writes the deleted yc symbols/refs/repomap/graph lines into CLAUDE.md — remove them.
 
-Gate: go test ./internal/selfinit/...; no doc references a removed stage or the memex provider; umbrella story U2 updates the index side.
+Gate: go test ./internal/selfinit/...; no doc references a removed stage or memex-as-provider; umbrella story U2 updates the index side.
 Depends on: Y1-Y4.

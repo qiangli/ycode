@@ -68,7 +68,7 @@ ycode runs a **5-layer Memex** (`pkg/memex/`) with four storage backends (bbolt 
 | Schema-versioned memory migrations | openhands (Alembic) | ycode's SQLStore doesn't have a migration story — schema changes will require ad-hoc backfill. Add Alembic-style or sqlc migrations. | Med | S | **A** |
 | Graceful embedding-provider fallback mode | openclaw (`provider: "none"`) | Explicit operator opt-out of vector search (FTS-only) rather than silent degradation when embeddings unavailable. | Low | S | **A** |
 
-**Memory dimension verdict.** ycode's memex is the most sophisticated in the field on architecture — no priorart has 4 backends + 7 types + 4 scopes + consolidation + adaptive recall. The gaps are at the edges: dialectic modeling (genuinely missing primitive), multimodal indexing, decay-curve tunability, and operations (migrations, fallback modes, sync). See `docs/gap-analysis-aider-memory.md`, `docs/gap-analysis-codex-memory.md`, `docs/gap-analysis-geminicli-memory.md`, `docs/gap-analysis-opencode-memory.md` for deeper per-project context.
+**Memory dimension verdict.** ycode's memex is the most sophisticated in the field on architecture — no priorart has 4 backends + 7 types + 4 scopes + consolidation + adaptive recall. The gaps are at the edges: dialectic modeling (genuinely missing primitive), multimodal indexing, decay-curve tunability, and operations (migrations, fallback modes, sync). (The per-project memory gap analyses this verdict cited were collapsed into `docs/prior-art-memory-and-compaction.md` when the memex runtime was removed; this verdict describes the deleted subsystem and is retained as historical evidence only.)
 
 ---
 
