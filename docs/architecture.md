@@ -35,7 +35,8 @@ input admission ── identity, size, schema, idempotency
 typed pipeline runner ── needs DAG, typed ports/state, hooks, repeat bounds
           │
           ├── context load + ordered prompt assembly
-          ├── configured memory recall/measure/compact/write
+          ├── knowledge recall via bashy.run (`bashy kb context --json`)
+          ├── configured context measure/compact
           ├── normalized provider stream
           └── policy → Bashy preflight → allow/deny/ask → execution
           │
@@ -128,16 +129,30 @@ authentication reference, HITL/resume support, routing, and output delivery
 come from that declaration. A protocol adapter must not start a second agent
 loop or translate success from presentation text.
 
-## Memory and context
+## Knowledge and context
 
 `internal/harness/stages/ioctx` snapshots bounded sources and assembles prompt
-fragments in declared order with typed ports. Missing required content,
-overflow, and delivery failure follow compiled behavior.
+fragments in declared order with typed ports (`context`, `knowledge`,
+`input`). Knowledge-port messages keep per-block `ring`/`form`/`ref`
+provenance from the kb envelope, and `prompt.assembled` records it. Missing
+required content, overflow, and delivery failure follow compiled behavior.
 
-`internal/harness/stages/memory` adapts `pkg/memex` behind explicit recall,
-write, measure, and compaction stages. Scopes, ranking, budgets, triggers,
-routes, and failure behavior come from YAML. There is no background memory
-scheduler hidden outside the graph.
+Memory is policy over the `bashy kb` front door (`provider: bashy-kb` is the
+only compiled provider; the harness opens no store of its own). Recall is a
+harness-authored `bashy.run` node running `bashy kb context --json` with the
+compiled policy substituted as flags (`--rings`, `--forms`, `--budget` =
+`recall.maxTokens`, `--k` = `recall.maxItems`); persist is a `bashy.run` node
+running `bashy kb note add --candidate --ring agent --episode <session>` once
+per turn (`write.everyTurns: 1`). Script templates substitute typed inputs and
+the session id as single-quoted literals at stage time, before preflight, so
+the digest-bound authorization covers the composed command; shell variable
+expansion is never used because the intent analyzer cannot prove it.
+
+`internal/harness/stages/memory` keeps the measure and compaction mechanisms
+and decodes the frozen kb context envelope
+(`testdata/kb-context-envelope.json`, byte-identical to the umbrella golden).
+Budgets, triggers, routes, and failure behavior come from YAML. There is no
+background memory scheduler hidden outside the graph.
 
 ## Observability and security
 
@@ -162,7 +177,7 @@ combinations fail during compilation or admission.
 | `internal/harness/provider` | canonical provider stream adapters |
 | `internal/harness/bashy` | preflight/execution/control boundary |
 | `internal/harness/stages/ioctx` | admission, content, prompt, output |
-| `internal/harness/stages/memory` | explicit memory and compaction stages |
+| `internal/harness/stages/memory` | context measure/compaction and kb envelope decoding |
 | `internal/harness/stages/hitl` | policy decisions and durable review |
 | `internal/harness/event` | event log, payload store, checkpoints |
 | `internal/harness/frontend` | local and network transport projections |
