@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,7 +16,7 @@ import (
 )
 
 func TestHarnessLoadValidateRunStreamsDurableEvents(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateHarnessStores(t)
 	backend := newStubProvider(api.ProviderOpenAI)
 	backend.streamFunc = func(*api.Request) []*api.StreamEvent {
 		text, _ := json.Marshal(map[string]string{"type": "text_delta", "text": "public yaml result"})
@@ -92,7 +94,7 @@ func TestHarnessLoadValidateRunStreamsDurableEvents(t *testing.T) {
 }
 
 func TestHarnessResumeContinuesSuspendedGraphWithoutRestart(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateHarnessStores(t)
 	var calls atomic.Int32
 	backend := newStubProvider(api.ProviderOpenAI)
 	backend.streamFunc = func(*api.Request) []*api.StreamEvent {
@@ -183,4 +185,123 @@ func TestHarnessResumeContinuesSuspendedGraphWithoutRestart(t *testing.T) {
 	if admitted != 1 || assembled != 1 {
 		t.Fatalf("resume reran entry stages: admitted=%d assembled=%d", admitted, assembled)
 	}
+}
+
+func TestHarnessCompactsBeforeContextBudgetAndRetriesOverflowOnce(t *testing.T) {
+	isolateHarnessStores(t)
+	var calls atomic.Int32
+	backend := newStubProvider(api.ProviderOpenAI)
+	backend.streamFunc = func(request *api.Request) []*api.StreamEvent {
+		call := calls.Add(1)
+		textValue := "final after retry"
+		if strings.Contains(request.System, "Handoff summary") || strings.Contains(request.System, "Updated handoff summary") {
+			textValue = "goal: keep working\nnext steps: answer"
+		} else if call == 2 {
+			return nil
+		}
+		text, _ := json.Marshal(map[string]string{"type": "text_delta", "text": textValue})
+		stop, _ := json.Marshal(map[string]string{"stop_reason": api.StopReasonEndTurn})
+		return []*api.StreamEvent{{Type: "content_block_delta", Delta: text}, {Type: "message_delta", Delta: stop}}
+	}
+	backend.errFunc = func(request *api.Request) error {
+		if !strings.Contains(request.System, "Handoff summary") && calls.Load() == 2 {
+			return errors.New("maximum context length is 40 tokens")
+		}
+		return nil
+	}
+	fixture := smallContextFixture(t)
+	harness, err := Load(fixture, WithHarnessProvider("openai", backend))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer harness.Close()
+	stream, err := harness.Run(context.Background(), RunRequest{SessionID: "compact-session", RunID: "compact-run", TriggerRef: "interactive-input", FrontendRef: "embed", Principal: "tester", IdempotencyKey: "compact-once", Body: []byte(`{"request":"please do enough work to need compaction"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compacted int
+	var overflowCompleted int
+	var retryRequestStartsWithSummary bool
+	for item := range stream {
+		switch item.Type {
+		case "memory.compacted":
+			compacted++
+		case "llm.completed":
+			var data struct {
+				Outcome string `json:"outcome"`
+			}
+			if err := json.Unmarshal(item.Data, &data); err != nil {
+				t.Fatal(err)
+			}
+			if data.Outcome == "context-overflow" {
+				overflowCompleted++
+			}
+		case "llm.requested":
+			var data struct {
+				PayloadRef string `json:"payload_ref"`
+			}
+			if err := json.Unmarshal(item.Data, &data); err != nil {
+				t.Fatal(err)
+			}
+			payload, err := harness.Payload(data.PayloadRef)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(payload, []byte(`"role":"user"`)) && bytes.Contains(payload, []byte("compaction-summary")) {
+				retryRequestStartsWithSummary = true
+			}
+		}
+	}
+	if compacted == 0 {
+		t.Fatal("memory.compacted did not fire")
+	}
+	if overflowCompleted != 1 {
+		t.Fatalf("context-overflow completions = %d, want exactly one", overflowCompleted)
+	}
+	if !retryRequestStartsWithSummary {
+		t.Fatal("no llm.requested payload began from a tagged compaction summary")
+	}
+}
+
+func isolateHarnessStores(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dir, "home"))
+	t.Setenv("BASHY_KB_DIR", filepath.Join(dir, "kb"))
+	t.Setenv("BASHY_HOME", filepath.Join(dir, "bashy-home"))
+	t.Setenv("BASHY_SKILLS_DIR", filepath.Join(dir, "skills"))
+	t.Setenv("YCODE_DATA_DIR", filepath.Join(dir, "ycode-data"))
+}
+
+func smallContextFixture(t *testing.T) string {
+	t.Helper()
+	canonical := filepath.Join("..", "..", "examples", "agent.yaml")
+	raw, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacements := map[string]string{
+		"contextTokens: 128000":            "contextTokens: 40",
+		"maxOutputTokens: 100000":          "maxOutputTokens: 10",
+		"maxOutputTokens: 20000":           "maxOutputTokens: 10",
+		"preserveRecentTokens: 24000":      "preserveRecentTokens: 6",
+		"preserveUserMessagesTokens: 4000": "preserveUserMessagesTokens: 6",
+		"reserveTokens: 8000":              "reserveTokens: 4",
+	}
+	for old, replacement := range replacements {
+		raw = bytes.Replace(raw, []byte(old), []byte(replacement), 1)
+	}
+	fixture, err := os.CreateTemp(filepath.Dir(canonical), ".compact-agent-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := fixture.Name()
+	t.Cleanup(func() { _ = os.Remove(path) })
+	if _, err := fixture.Write(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

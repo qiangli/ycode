@@ -223,6 +223,7 @@ func Load(path string, option ...LoadOption) (*Harness, error) {
 		_ = handle.Close()
 		return nil, err
 	}
+	memoryEngine.BindSummary(routeSummarizerFor(runtime))
 	return &Harness{doc: doc, events: events, payloads: payloads, io: ioEngine, turn: runtime, memex: handle, eventPath: eventPath, control: control, active: make(map[string]*activeRun)}, nil
 }
 
@@ -517,6 +518,19 @@ type emptyMaterializer struct{}
 
 func (emptyMaterializer) Materialize(context.Context, string, []message.Message) ([]*memexmemory.Memory, error) {
 	return nil, nil
+}
+
+type routeSummarizer struct {
+	runtime *turn.Runtime
+}
+
+func (s routeSummarizer) Summarize(ctx context.Context, route, system string, messages []message.Message, previous string) (string, error) {
+	_ = previous
+	return s.runtime.RouteText(ctx, route, system, messages)
+}
+
+func routeSummarizerFor(runtime *turn.Runtime) routeSummarizer {
+	return routeSummarizer{runtime: runtime}
 }
 
 type embeddedDelivery struct{}

@@ -79,6 +79,7 @@ stageCatalog:
   messages.append-assistant: spec.pipelines
   messages.append-source: spec.sources
   messages.append-tool-results: spec.pipelines
+  messages.clear-tool-results: spec.pipelines
   messages.apply-input: spec.queues
   messages.normalize-provider-response: spec.providers
   outcome.fail: spec.pipelines

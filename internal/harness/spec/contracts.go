@@ -14,7 +14,7 @@ var knownStageCatalog = map[string]struct{}{
 	"input.normalize": {}, "lifecycle.transition": {}, "llm.call": {},
 	"lock.acquire": {}, "lock.release": {}, "loop.finish": {}, "memory.compact": {},
 	"memory.recall": {}, "memory.write": {}, "messages.append-assistant": {},
-	"messages.append-source": {}, "messages.append-tool-results": {},
+	"messages.append-source": {}, "messages.append-tool-results": {}, "messages.clear-tool-results": {},
 	"messages.apply-input": {}, "messages.normalize-provider-response": {},
 	"outcome.fail": {}, "output.emit": {}, "policy.bind-approval": {},
 	"policy.evaluate": {}, "prompt.assemble": {}, "queue.drain": {},
@@ -57,12 +57,14 @@ func stagePorts(name string) (string, string) {
 		return "call", "state"
 	case "messages.append-tool-results":
 		return "state,results", "state"
+	case "messages.clear-tool-results":
+		return "state", "state"
 	case "queue.drain":
 		return "", "items"
 	case "messages.apply-input":
 		return "state,items", "state"
 	case "context.measure":
-		return "messages", "tokens"
+		return "messages", "tokens,contextBudget?,truncateBudget?,measured?"
 	case "messages.append-source":
 		return "state", "state"
 	case "llm.call":
@@ -370,10 +372,16 @@ func validateRun(id string, run Run, available, state typedSlots, catalog map[st
 }
 
 func validatePortNames(id, stage, direction string, bindings map[string]string, allowedCSV string) error {
-	allowed := make(map[string]struct{})
+	type portInfo struct{ required bool }
+	allowed := make(map[string]portInfo)
 	for _, name := range strings.Split(allowedCSV, ",") {
 		if name != "" {
-			allowed[name] = struct{}{}
+			required := true
+			if strings.HasSuffix(name, "?") {
+				name = strings.TrimSuffix(name, "?")
+				required = false
+			}
+			allowed[name] = portInfo{required: required}
 		}
 	}
 	for name := range bindings {
@@ -381,8 +389,8 @@ func validatePortNames(id, stage, direction string, bindings map[string]string, 
 			return fmt.Errorf("node %q stage %q binds unknown %s port %q", id, stage, direction, name)
 		}
 	}
-	for name := range allowed {
-		if _, ok := bindings[name]; !ok {
+	for name, info := range allowed {
+		if _, ok := bindings[name]; info.required && !ok {
 			return fmt.Errorf("node %q stage %q is missing required %s port %q", id, stage, direction, name)
 		}
 	}

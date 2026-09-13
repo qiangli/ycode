@@ -9,6 +9,11 @@ import (
 )
 
 func TestHarnessValidateCommand(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BASHY_KB_DIR", filepath.Join(dir, "kb"))
+	t.Setenv("BASHY_HOME", filepath.Join(dir, "bashy-home"))
+	t.Setenv("BASHY_SKILLS_DIR", filepath.Join(dir, "skills"))
+	t.Setenv("YCODE_DATA_DIR", filepath.Join(dir, "ycode-data"))
 	t.Setenv("OPENAI_API_KEY", "test-secret")
 	cmd := newHarnessValidateCmd()
 	var output bytes.Buffer
@@ -17,7 +22,7 @@ func TestHarnessValidateCommand(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if got := output.String(); !strings.Contains(got, "valid: ycode (2 agents, 16 pipelines)") {
+	if got := output.String(); !strings.Contains(got, "valid: ycode (2 agents, 19 pipelines)") {
 		t.Fatalf("output = %q", got)
 	}
 }

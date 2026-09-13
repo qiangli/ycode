@@ -535,14 +535,26 @@ func (d *Document) resolvePath(path string) (string, error) {
 		if !filepath.IsAbs(root) {
 			root = filepath.Join(d.BaseDir, root)
 		}
-		root, err = filepath.EvalSymlinks(filepath.Clean(root))
-		if err != nil {
-			return "", err
+		cleanRoot := filepath.Clean(root)
+		if pathWithin(cleanRoot, real) {
+			return real, nil
 		}
-		rel, relErr := filepath.Rel(root, real)
-		if relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		root, err = filepath.EvalSymlinks(cleanRoot)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				root = cleanRoot
+			} else {
+				return "", err
+			}
+		}
+		if pathWithin(root, real) {
 			return real, nil
 		}
 	}
 	return "", fmt.Errorf("file %q is outside readableRoots", path)
+}
+
+func pathWithin(root, path string) bool {
+	rel, relErr := filepath.Rel(root, path)
+	return relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

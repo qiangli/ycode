@@ -192,11 +192,15 @@ func (r *Runtime) measure(ctx context.Context, in pipeline.Invocation) pipeline.
 	if err != nil {
 		return fail(err)
 	}
-	result, err := r.memory.Measure(ctx, memoryMeta(meta), messages)
+	margin, ok := floatValue(in.With["safetyMargin"])
+	if !ok {
+		margin = 1
+	}
+	result, err := r.memory.Measure(ctx, memoryMeta(meta), memoryStage.MeasureRequest{MemoryRef: text(in.With["memoryRef"]), RouteRef: text(in.With["routeRef"]), SafetyMargin: margin, Messages: messages})
 	if err != nil {
 		return fail(err)
 	}
-	return pipeline.Success(map[string]any{"tokens": result.Tokens})
+	return pipeline.Success(map[string]any{"tokens": result.Tokens, "contextBudget": result.ContextBudget, "truncateBudget": result.TruncateBudget, "measured": result.Measured})
 }
 
 func (r *Runtime) appendSource(_ context.Context, in pipeline.Invocation) pipeline.Outcome {
@@ -230,67 +234,11 @@ func (r *Runtime) callModel(ctx context.Context, in pipeline.Invocation) pipelin
 	if err != nil {
 		return fail(err)
 	}
-	requestMessages, system := providerMessages(messages)
-	var last provider.Outcome
-	for attemptIndex, attempt := range route.Attempts {
-		model, ok := r.doc.Spec.Models[attempt.ModelRef]
-		if !ok {
-			return fail(fmt.Errorf("llm.call: undeclared model %q", attempt.ModelRef))
-		}
-		adapter := r.providers[model.ProviderRef]
-		if adapter == nil {
-			return fail(fmt.Errorf("llm.call: unavailable provider %q", model.ProviderRef))
-		}
-		maxAttempts := attempt.TransportRetry.MaxAttempts
-		if maxAttempts < 1 {
-			return fail(fmt.Errorf("llm.call: route %q has invalid retry count", routeRef))
-		}
-		for transportAttempt := 1; transportAttempt <= maxAttempts; transportAttempt++ {
-			maxTokens := route.Budget.MaxOutputTokens
-			if maxTokens > model.Limits.MaxOutputTokens {
-				maxTokens = model.Limits.MaxOutputTokens
-			}
-			request := provider.Request{Model: model.ID, System: system, Messages: requestMessages, MaxTokens: maxTokens, Stream: model.Capabilities.Streaming}
-			requestRef, err := r.payload(request)
-			if err != nil {
-				return fail(err)
-			}
-			if err := r.append(ctx, in.StageID, "llm.requested", map[string]any{"route_ref": routeRef, "model_ref": attempt.ModelRef, "attempt": transportAttempt, "payload_ref": requestRef}); err != nil {
-				return fail(err)
-			}
-			attemptCtx := ctx
-			cancel := func() {}
-			if attempt.TimeoutMS > 0 {
-				attemptCtx, cancel = context.WithTimeout(ctx, time.Duration(attempt.TimeoutMS)*time.Millisecond)
-			}
-			response, outcome := collectProvider(attemptCtx, adapter.Send(attemptCtx, request))
-			cancel()
-			responseRef, err := r.payload(map[string]any{"response": response, "outcome": outcome})
-			if err != nil {
-				return fail(err)
-			}
-			if err := r.append(ctx, in.StageID, "llm.completed", map[string]any{"route_ref": routeRef, "model_ref": attempt.ModelRef, "attempt": transportAttempt, "payload_ref": responseRef, "outcome": outcome.Class}); err != nil {
-				return fail(err)
-			}
-			last = outcome
-			if outcome.Class == provider.OutcomeCompleted || outcome.Class == provider.OutcomeToolCall || outcome.Class == provider.OutcomeLimit {
-				if outcome.Class == provider.OutcomeLimit {
-					response["finished"] = true
-				}
-				return pipeline.Success(map[string]any{"response": response, "providerSession": in.Inputs["providerSession"]})
-			}
-			if transportAttempt == maxAttempts || !retryableProvider(outcome.Class, attempt.TransportRetry.RetryOn) {
-				break
-			}
-			if err := waitBackoff(ctx, attempt.TransportRetry.Backoff, transportAttempt); err != nil {
-				return fail(err)
-			}
-		}
-		if attemptIndex+1 == len(route.Attempts) || !retryableProvider(last.Class, route.FallbackOn) {
-			break
-		}
+	response, outcome := r.routeProvider(ctx, in.StageID, routeRef, "", messages, in.Inputs["providerSession"])
+	if outcome.Class == provider.OutcomeCompleted || outcome.Class == provider.OutcomeToolCall || outcome.Class == provider.OutcomeLimit {
+		return pipeline.Success(map[string]any{"response": response, "providerSession": in.Inputs["providerSession"]})
 	}
-	return pipeline.Failure(string(last.Class), retryableProvider(last.Class, route.FallbackOn), errors.New(last.Error))
+	return pipeline.Failure(string(outcome.Class), retryableProvider(outcome.Class, route.FallbackOn), errors.New(outcome.Error))
 }
 
 func (r *Runtime) normalize(_ context.Context, in pipeline.Invocation) pipeline.Outcome {
@@ -334,7 +282,11 @@ func (r *Runtime) appendAssistant(_ context.Context, in pipeline.Invocation) pip
 	if len(blocks) == 0 {
 		return fail(errors.New("messages.append-assistant: provider response has no content"))
 	}
-	messages = append(messages, message.Message{Role: message.RoleAssistant, Content: blocks})
+	assistant := message.Message{Role: message.RoleAssistant, Content: blocks}
+	if usage, ok := tokenUsage(response["usage"]); ok {
+		assistant.Usage = &usage
+	}
+	messages = append(messages, assistant)
 	state["messages"] = messages
 	if remaining, ok := number(state["remainingIterations"]); ok {
 		state["remainingIterations"] = remaining - 1
@@ -390,11 +342,54 @@ func (r *Runtime) compact(ctx context.Context, in pipeline.Invocation) pipeline.
 	if err != nil {
 		return fail(err)
 	}
-	result, err := r.memory.Compact(ctx, memoryMeta(meta), memoryStage.CompactionRequest{MemoryRef: text(in.With["memoryRef"]), Messages: messages})
+	result, err := r.memory.Compact(ctx, memoryMeta(meta), memoryStage.CompactionRequest{MemoryRef: text(in.With["memoryRef"]), Messages: messages, PreviousSummary: text(state["summary"])})
 	if err != nil {
 		return fail(err)
 	}
 	state["messages"] = result.Messages
+	if result.Summary != "" {
+		state["summary"] = result.Summary
+	}
+	if result.Outcome == "compacted" || result.Outcome == "fallback-deterministic" {
+		count, _ := number(state["compactions"])
+		state["compactions"] = count + 1
+	}
+	return pipeline.Success(map[string]any{"state": state})
+}
+
+func (r *Runtime) clearToolResults(_ context.Context, in pipeline.Invocation) pipeline.Outcome {
+	state, err := object(in.Inputs["state"])
+	if err != nil {
+		return fail(err)
+	}
+	messages, err := messagesFrom(state["messages"])
+	if err != nil {
+		return fail(err)
+	}
+	olderThanTurns, ok := number(in.With["olderThanTurns"])
+	if !ok || olderThanTurns < 0 {
+		return fail(errors.New("messages.clear-tool-results: olderThanTurns must be non-negative"))
+	}
+	placeholder := text(in.With["placeholder"])
+	if placeholder == "" {
+		return fail(errors.New("messages.clear-tool-results: placeholder is required"))
+	}
+	userSeen := 0
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == message.RoleUser {
+			userSeen++
+		}
+		if userSeen <= olderThanTurns {
+			continue
+		}
+		for j := range messages[i].Content {
+			if messages[i].Content[j].Type == message.ContentTypeToolResult {
+				messages[i].Content[j].Content = placeholder
+				messages[i].Content[j].IsError = false
+			}
+		}
+	}
+	state["messages"] = messages
 	return pipeline.Success(map[string]any{"state": state})
 }
 
@@ -609,6 +604,53 @@ func number(value any) (int, bool) {
 		return int(typed), true
 	default:
 		return 0, false
+	}
+}
+
+func floatValue(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	default:
+		return 0, false
+	}
+}
+
+func tokenUsage(value any) (message.TokenUsage, bool) {
+	switch typed := value.(type) {
+	case provider.Usage:
+		return message.TokenUsage{InputTokens: typed.InputTokens, OutputTokens: typed.OutputTokens, CacheCreationInput: typed.CacheCreationInput, CacheReadInput: typed.CacheReadInput}, true
+	case map[string]any:
+		return message.TokenUsage{
+			InputTokens:        intFromAny(typed["input_tokens"]),
+			OutputTokens:       intFromAny(typed["output_tokens"]),
+			CacheCreationInput: intFromAny(typed["cache_creation_input_tokens"]),
+			CacheReadInput:     intFromAny(typed["cache_read_input_tokens"]),
+		}, true
+	default:
+		return message.TokenUsage{}, false
+	}
+}
+
+func intFromAny(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		n, _ := typed.Int64()
+		return int(n)
+	default:
+		return 0
 	}
 }
 

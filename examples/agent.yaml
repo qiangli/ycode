@@ -28,6 +28,14 @@ spec:
     final-step:
       text: This is the final permitted model step. Return the best complete answer now.
       limits: {maxBytes: 4096}
+    compaction-checkpoint:
+      file: {path: prompts/compaction-checkpoint.md, required: false}
+      limits: {maxBytes: 8192}
+      exported: true
+    compaction-update:
+      file: {path: prompts/compaction-update.md, required: false}
+      limits: {maxBytes: 8192}
+      exported: true
 
   providers:
     openai:
@@ -122,8 +130,12 @@ spec:
         maxBytes: 65536
       compaction:
         preserveRecentTokens: 24000
+        preserveUserMessagesTokens: 4000
+        reserveTokens: 8000
         routeRef: main
-        onFailure: preserve-original
+        promptSourceRef: compaction-checkpoint
+        updatePromptSourceRef: compaction-update
+        onFailure: fallback-deterministic
 
   queues:
     interactive:
@@ -258,8 +270,17 @@ spec:
             with: {sessionRef: durable, reason: compaction}
             in: {state: state}
             out: {checkpoint: compacted.checkpoint}
-        - id: compact
+        - id: clear-tool-results
           needs: [checkpoint]
+          run:
+            stage: messages.clear-tool-results
+            with:
+              olderThanTurns: 4
+              placeholder: "[tool result omitted before compaction]"
+            in: {state: state}
+            out: {state: state}
+        - id: compact
+          needs: [clear-tool-results]
           run:
             stage: memory.compact
             with: {memoryRef: main}
@@ -279,6 +300,23 @@ spec:
             stage: state.forward
             in: {value: state}
             out: {value: state}
+
+    truncate-tool-results-state:
+      inputs: {state: ycode.agent-loop/v1}
+      state: {}
+      outputs: {state: ycode.agent-loop/v1}
+      concurrency: 1
+      failFast: true
+      nodes:
+        - id: clear-tool-results
+          needs: []
+          run:
+            stage: messages.clear-tool-results
+            with:
+              olderThanTurns: 4
+              placeholder: "[tool result omitted before model retry]"
+            in: {state: state}
+            out: {state: state}
 
     finish-step:
       inputs: {state: ycode.agent-loop/v1}
@@ -572,6 +610,44 @@ spec:
             in: {state: state, items: steering}
             out: {state: state}
 
+    call-model:
+      inputs: {state: ycode.agent-loop/v1}
+      state: {}
+      outputs: {state: ycode.agent-loop/v1}
+      concurrency: 1
+      failFast: true
+      nodes:
+        - id: model
+          needs: []
+          run:
+            stage: llm.call
+            with:
+              routeRef: main
+              tool: bashy
+              responseType: ycode.provider-response/v1
+            in: {messages: state.messages, providerSession: state.providerSession}
+            out: {response: state.response, providerSession: state.providerSession}
+
+    compact-and-call-model:
+      inputs: {state: ycode.agent-loop/v1}
+      state: {}
+      outputs: {state: ycode.agent-loop/v1}
+      concurrency: 1
+      failFast: true
+      nodes:
+        - id: compact
+          needs: []
+          run:
+            pipelineRef: compact-state
+            in: {state: state}
+            out: {state: state}
+        - id: model
+          needs: [compact]
+          run:
+            pipelineRef: call-model
+            in: {state: state}
+            out: {state: state}
+
     agent-step:
       inputs: {state: ycode.agent-loop/v1}
       state:
@@ -597,15 +673,25 @@ spec:
           needs: [apply-steering]
           run:
             stage: context.measure
+            with:
+              memoryRef: main
+              routeRef: main
+              safetyMargin: 1.15
             in: {messages: state.messages}
-            out: {tokens: state.contextTokens}
+            out:
+              tokens: state.contextTokens
+              contextBudget: state.contextBudget
+              truncateBudget: state.truncateBudget
+              measured: state.contextMeasured
         - id: prepare
           needs: [measure]
           run:
             switch:
               cases:
-                - when: {gte: [{field: state.contextTokens}, {literal: 90000}]}
+                - when: {gte: [{field: state.contextTokens}, {field: state.contextBudget}]}
                   pipelineRef: compact-state
+                - when: {gte: [{field: state.contextTokens}, {field: state.truncateBudget}]}
+                  pipelineRef: truncate-tool-results-state
               defaultPipelineRef: preserve-state
               in: {state: state}
               out: {state: prepared}
@@ -621,13 +707,16 @@ spec:
           needs: [prepare, final-instruction]
           acceptsSkipped: [final-instruction]
           run:
-            stage: llm.call
-            with:
-              routeRef: main
-              tool: bashy
-              responseType: ycode.provider-response/v1
-            in: {messages: prepared.messages, providerSession: prepared.providerSession}
-            out: {response: prepared.response, providerSession: prepared.providerSession}
+            fallback:
+              maxAttempts: 2
+              attempts:
+                - pipelineRef: call-model
+                  on: [context-overflow]
+                - pipelineRef: compact-and-call-model
+                  on: [context-overflow]
+              noMatch: fail
+              in: {state: prepared}
+              out: {state: prepared}
         - id: normalize
           needs: [model]
           run:
