@@ -3,12 +3,13 @@ id: 649028cb0be9
 kind: task
 title: Y2 memories provider bashy-kb via bashy.run (kb context / kb note add --candidate); knowledge port with ring/form/ref provenance; harness stops opening memex
 seq: 38
-status: assigned
+status: done
 priority: p1
 created: 2026-09-13T01:31:42.207172Z
 weave: 4
 assignee: qiangli
 sprint: 163
+closed: 2026-09-13T03:54:28.574544Z
 ---
 
 Goal: ycode reaches kb through bashy.run; memex is no longer opened by the harness.
