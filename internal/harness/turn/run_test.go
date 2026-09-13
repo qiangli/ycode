@@ -271,14 +271,20 @@ func TestBashyRunMalformedJSONStdoutFailsClosed(t *testing.T) {
 // a script expanding its typed-input environment is incomplete evidence today
 // and the stage fails closed. This pins the current boundary posture; see
 // docs/todo-notes/fe824e92dc23.md.
-func TestBashyRunEnvExpansionIsIncompleteEvidenceUnderRealBoundary(t *testing.T) {
+// The typed-input mechanism end to end under the REAL boundary: a script that
+// consumes $YCODE_IN_<PORT> through an effect-pure builtin compiles complete
+// (bashy's harnessrunner proves that variable arguments to printf add no
+// governed effect — sprint 164 B4), runs, and its stdout lands in the typed
+// port. Until that refiner landed this exact node was denied as incomplete
+// preflight; the old pin asserting the denial was deleted with the refiner.
+func TestBashyRunEnvConsumptionSucceedsUnderRealBoundary(t *testing.T) {
 	harness := newBashyRunRuntime(t, replaceProbeScript(t, `script: 'printf "%s" "$YCODE_IN_GREETING"'`), nil)
 	out := harness.runtime.bashyRun(bashyRunContext(), pipeline.Invocation{StageID: "workspace-probe", Inputs: map[string]any{"greeting": "hello"}})
-	if out.Class != pipeline.OutcomeFailed || out.Code != "bashy.run-denied" {
+	if out.Class != pipeline.OutcomeSucceeded {
 		t.Fatalf("outcome = %#v", out)
 	}
-	if out.Err == nil || !strings.Contains(out.Err.Error(), "incomplete preflight") {
-		t.Fatalf("err = %v", out.Err)
+	if got := out.Outputs["probe"]; got != "hello" {
+		t.Fatalf("typed port probe = %#v, want the env value the script printed", got)
 	}
 }
 
