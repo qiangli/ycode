@@ -754,6 +754,7 @@ spec:
         input: {type: ycode.input/v1, writer: single}
         context: {type: ycode.context/v1, writer: single}
         memory: {type: ycode.memory-items/v1, writer: single}
+        probe: {type: string, writer: single}
         loop: {type: ycode.agent-loop/v1, writer: loop-carried}
       outputs: {output: ycode.output/v1}
       concurrency: 4
@@ -776,6 +777,19 @@ spec:
             stage: context.load
             with: {contextRef: coding}
             out: {context: context}
+        # Harness-authored Bashy call: same preflight -> policy -> digest-bound
+        # execution path as a model tool call. Inputs arrive as YCODE_IN_<PORT>
+        # env scalars plus one stdin JSON object; stdout lands in the out port.
+        - id: workspace-probe
+          needs: [input]
+          run:
+            stage: bashy.run
+            with:
+              script: "printf 'workspace-ready'"
+              timeoutMs: 5000
+              effects: [read]
+            in: {request: input}
+            out: {probe: probe}
         - id: recall
           needs: [input]
           run:

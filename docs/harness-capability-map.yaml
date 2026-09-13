@@ -32,6 +32,9 @@ capabilities:
   - id: bashy-preflight-and-execution
     owner: mechanism:stages.bashy
     entrypoints: ["internal/harness/bashy/executor.go#func (e *Executor) Preflight", "internal/harness/bashy/executor.go#func (e *Executor) Execute"]
+  - id: harness-authored-bashy-run-stage
+    owner: mechanism:stages.bashy
+    entrypoints: ["internal/harness/turn/run.go#func (r *Runtime) bashyRun", "internal/harness/spec/bashyrun.go#func BashyRunNodes"]
   - id: embedded-shell-runner
     owner: sibling-api:bashy.pkg.runner
     entrypoints: ["../bashy/pkg/runner/runner.go#func Preflight", "../bashy/pkg/runner/runner.go#func Run"]
@@ -59,6 +62,7 @@ stageCatalog:
   bashy.execute: spec.bashy
   bashy.preflight: spec.bashy
   bashy.reject: spec.policies
+  bashy.run: spec.bashy
   checkpoint.save: spec.sessions
   command.apply-edit: spec.policies
   command.finish: spec.pipelines

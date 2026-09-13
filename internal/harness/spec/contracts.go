@@ -8,7 +8,7 @@ import (
 
 var knownStageCatalog = map[string]struct{}{
 	"agent.invoke": {}, "bashy.deny": {}, "bashy.execute": {}, "bashy.preflight": {},
-	"bashy.reject": {}, "checkpoint.save": {}, "command.apply-edit": {},
+	"bashy.reject": {}, "bashy.run": {}, "checkpoint.save": {}, "command.apply-edit": {},
 	"command.finish": {}, "command.initialize": {}, "context.load": {},
 	"context.measure": {}, "event.annotate": {}, "hitl.review": {},
 	"input.normalize": {}, "lifecycle.transition": {}, "llm.call": {},
@@ -95,6 +95,9 @@ func stagePorts(name string) (string, string) {
 type typedSlots map[string]string
 
 func validatePipelineContracts(pipelines map[string]Pipeline) error {
+	if err := validateBashyRunNodes(pipelines); err != nil {
+		return err
+	}
 	names := make([]string, 0, len(pipelines))
 	for name := range pipelines {
 		names = append(names, name)
@@ -274,12 +277,15 @@ func validateRun(id string, run Run, available, state typedSlots, catalog map[st
 		if !isKnownStage(run.Stage) {
 			return nil, fmt.Errorf("node %q uses unknown stage %q", id, run.Stage)
 		}
-		inputs, outputs := stagePorts(run.Stage)
-		if err := validatePortNames(id, run.Stage, "input", run.In, inputs); err != nil {
-			return nil, err
-		}
-		if err := validatePortNames(id, run.Stage, "output", run.Out, outputs); err != nil {
-			return nil, err
+		// bashy.run declares free-form ports; validateBashyRunNodes owns its contract.
+		if run.Stage != "bashy.run" {
+			inputs, outputs := stagePorts(run.Stage)
+			if err := validatePortNames(id, run.Stage, "input", run.In, inputs); err != nil {
+				return nil, err
+			}
+			if err := validatePortNames(id, run.Stage, "output", run.Out, outputs); err != nil {
+				return nil, err
+			}
 		}
 		writeBindings(current, state, run.Out)
 	case run.PipelineRef != "":

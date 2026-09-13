@@ -68,6 +68,7 @@ type Runtime struct {
 	materialize MemoryMaterializer
 	registry    *pipeline.Registry
 	observer    pipeline.Observer
+	bashyRuns   map[string]spec.BashyRunNode
 	resumeMu    sync.Mutex
 	resumes     map[string]chan hitl.Resolution
 	early       map[string]hitl.Resolution
@@ -88,6 +89,11 @@ func New(config Config) (*Runtime, error) {
 		return nil, errors.New("turn runtime requires compiled document and all explicit mechanisms")
 	}
 	runtime := &Runtime{doc: config.Document, events: config.Events, payloads: config.Payloads, io: config.IO, memory: config.Memory, hitl: config.HITL, bashy: config.Bashy, providers: config.Providers, queue: config.Queue, materialize: config.Materialize, registry: pipeline.NewRegistry(), observer: config.Observer, resumes: make(map[string]chan hitl.Resolution), early: make(map[string]hitl.Resolution), activeRuns: make(map[string]struct{})}
+	bashyRuns, err := compileBashyRunIndex(config.Document)
+	if err != nil {
+		return nil, err
+	}
+	runtime.bashyRuns = bashyRuns
 	if err := runtime.register(); err != nil {
 		return nil, err
 	}
@@ -228,6 +234,7 @@ func (r *Runtime) register() error {
 			return pipeline.Failure(text(in.With["class"]), false, errors.New(text(in.With["class"])))
 		},
 		"bashy.preflight":              r.preflight,
+		"bashy.run":                    r.bashyRun,
 		"policy.evaluate":              r.evaluate,
 		"bashy.execute":                r.execute,
 		"bashy.deny":                   r.deny,

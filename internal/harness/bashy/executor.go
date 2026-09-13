@@ -356,6 +356,14 @@ func reportFor(call hitl.Call, result harnessrunner.Result) hitl.Preflight {
 	effects, paths := make(map[string]bool), make(map[string]bool)
 	for _, fact := range result.Intent.Effects {
 		report.EffectFacts = append(report.EffectFacts, hitl.EffectFact{Kind: fact.Kind, Scope: fact.Scope, Target: fact.Target, Source: fact.Source, Certainty: fact.Certainty})
+		// An atlas "pure" fact asserts the absence of a governed side effect.
+		// It stays in the typed review evidence but must not enter the compact
+		// policy-match indexes: "pure" is outside the compiled effect
+		// vocabulary, so indexing it would make every pure builtin unmatchable
+		// by any allow rule.
+		if fact.Kind == "pure" {
+			continue
+		}
 		effects[fact.Kind] = true
 		if fact.Scope != "" {
 			paths[fact.Scope] = true

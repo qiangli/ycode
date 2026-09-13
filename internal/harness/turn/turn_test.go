@@ -2,6 +2,7 @@ package turn
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -167,6 +168,17 @@ type fakeBashy struct{}
 func (fakeBashy) Preflight(_ context.Context, _ hitl.Meta, call hitl.Call) (hitl.Preflight, error) {
 	return hitl.Preflight{Call: call, Digest: stableID(call.ID, call.Script), Complete: true, Effects: []string{"read"}, Paths: []string{"workspace"}}, nil
 }
+
+// Execute returns the harnessrunner wire shape so both the model-tool result
+// path and the bashy.run stage decode the same typed evidence.
 func (fakeBashy) Execute(_ context.Context, _ hitl.Meta, call hitl.Call, _ string) (any, error) {
-	return map[string]any{"call_id": call.ID, "outcome": "success"}, nil
+	exit := 0
+	return map[string]any{
+		"call_id": call.ID,
+		"outcome": "completed",
+		"process": map[string]any{"exitCode": exit},
+		"output": map[string]any{
+			"stdout": []any{map[string]any{"from": 0, "to": 15, "encoding": "base64", "data": base64.StdEncoding.EncodeToString([]byte("workspace-ready"))}},
+		},
+	}, nil
 }
