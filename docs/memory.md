@@ -185,8 +185,8 @@ extraction, persona modeling, layered "context defense," and background
 consolidation. Earlier revisions of this document described that system; the
 YAML-native harness removed every runtime path into it. `Load` opens no memex
 store and creates no memex directory under the control root (pinned by test);
-there is no `memory.recall`/`memory.write` stage pair, no materializer seam,
-and no background scheduler.
+the dedicated recall/write stage pair is gone from the stage catalog, along
+with the materializer seam and the background scheduler.
 
 Its role is replaced by `bashy kb`: long-term records live in kb rings
 (`agent` for the owning principal, `repo` committed with the code, `host` for
