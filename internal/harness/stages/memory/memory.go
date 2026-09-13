@@ -41,7 +41,7 @@ type TokenCounter interface {
 }
 
 type Summarizer interface {
-	Summarize(context.Context, string, []message.Message, string) (string, error)
+	Summarize(context.Context, string, string, []message.Message, string) (string, error)
 }
 
 type Config struct {
@@ -56,6 +56,8 @@ type Config struct {
 type Engine struct {
 	memories map[string]spec.Memory
 	routes   map[string]spec.Route
+	models   map[string]spec.Model
+	sources  map[string]spec.Source
 	events   *event.Store
 	payloads *event.PayloadStore
 	facade   Facade
@@ -67,7 +69,11 @@ func New(config Config) (*Engine, error) {
 	if config.Document == nil || config.Events == nil || config.Payloads == nil || config.Facade == nil || config.Tokens == nil {
 		return nil, errors.New("memory stages require compiled document, stores, facade and token counter")
 	}
-	return &Engine{memories: cloneMemories(config.Document.Spec.Memories), routes: cloneRoutes(config.Document.Spec.Routes), events: config.Events, payloads: config.Payloads, facade: config.Facade, tokens: config.Tokens, summary: config.Summary}, nil
+	return &Engine{memories: cloneMemories(config.Document.Spec.Memories), routes: cloneRoutes(config.Document.Spec.Routes), models: cloneModels(config.Document.Spec.Models), sources: cloneSources(config.Document.Spec.Sources), events: config.Events, payloads: config.Payloads, facade: config.Facade, tokens: config.Tokens, summary: config.Summary}, nil
+}
+
+func (e *Engine) BindSummary(summary Summarizer) {
+	e.summary = summary
 }
 
 type Meta struct {
@@ -207,16 +213,48 @@ func (e *Engine) Write(ctx context.Context, meta Meta, memoryRef string, items [
 }
 
 type Measurement struct {
-	SchemaVersion string `json:"schema_version"`
-	PayloadRef    string `json:"payload_ref"`
-	Tokens        int    `json:"tokens"`
+	SchemaVersion  string                `json:"schema_version"`
+	PayloadRef     string                `json:"payload_ref"`
+	Tokens         int                   `json:"tokens"`
+	ContextBudget  int                   `json:"context_budget"`
+	TruncateBudget int                   `json:"truncate_budget"`
+	Measured       MeasurementProvenance `json:"measured"`
 }
 
-func (e *Engine) Measure(_ context.Context, meta Meta, messages []message.Message) (Measurement, error) {
+type MeasurementProvenance struct {
+	Source         string  `json:"source"`
+	ProviderTokens int     `json:"provider_tokens"`
+	EstimatedTail  int     `json:"estimated_tail"`
+	Margin         float64 `json:"margin"`
+}
+
+type MeasureRequest struct {
+	MemoryRef    string
+	RouteRef     string
+	SafetyMargin float64
+	Messages     []message.Message
+}
+
+func (e *Engine) Measure(_ context.Context, meta Meta, request MeasureRequest) (Measurement, error) {
 	if err := meta.validate(); err != nil {
 		return Measurement{}, err
 	}
-	encoded, err := json.Marshal(messages)
+	if request.SafetyMargin <= 0 {
+		return Measurement{}, errors.New("context measure: safety margin must be positive")
+	}
+	memoryConfig, err := e.memory(request.MemoryRef)
+	if err != nil {
+		return Measurement{}, err
+	}
+	route, ok := e.routes[request.RouteRef]
+	if !ok || len(route.Attempts) == 0 {
+		return Measurement{}, fmt.Errorf("context measure: undeclared route %q", request.RouteRef)
+	}
+	model, ok := e.models[route.Attempts[0].ModelRef]
+	if !ok {
+		return Measurement{}, fmt.Errorf("context measure: undeclared model %q", route.Attempts[0].ModelRef)
+	}
+	encoded, err := json.Marshal(request.Messages)
 	if err != nil {
 		return Measurement{}, err
 	}
@@ -224,13 +262,58 @@ func (e *Engine) Measure(_ context.Context, meta Meta, messages []message.Messag
 	if err != nil {
 		return Measurement{}, err
 	}
-	count, err := e.tokens.CountMessages(messages)
-	if err != nil || count < 0 {
+	count, measured, err := e.measureMessages(request.Messages, request.SafetyMargin)
+	if err != nil {
 		return Measurement{}, errors.New("context measure: token counter failed")
 	}
-	result := Measurement{SchemaVersion: SchemaVersion, PayloadRef: ref, Tokens: count}
+	result := Measurement{SchemaVersion: SchemaVersion, PayloadRef: ref, Tokens: count, ContextBudget: model.Limits.ContextTokens - route.Budget.MaxOutputTokens - memoryConfig.Compaction.ReserveTokens, Measured: measured}
+	if result.ContextBudget < 0 {
+		return Measurement{}, errors.New("context measure: computed context budget is negative")
+	}
+	result.TruncateBudget = result.ContextBudget - memoryConfig.Compaction.ReserveTokens
+	if result.TruncateBudget < 0 {
+		result.TruncateBudget = 0
+	}
 	_, err = e.append(meta, "context.measured", result)
 	return result, err
+}
+
+func (e *Engine) measureMessages(messages []message.Message, margin float64) (int, MeasurementProvenance, error) {
+	lastUsage := -1
+	providerTokens := 0
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == message.RoleAssistant && messages[i].Usage != nil {
+			lastUsage = i
+			providerTokens = usageTotal(*messages[i].Usage)
+			break
+		}
+	}
+	if lastUsage < 0 {
+		estimated, err := e.tokens.CountMessages(messages)
+		if err != nil || estimated < 0 {
+			return 0, MeasurementProvenance{}, err
+		}
+		total := applyMargin(estimated, margin)
+		return total, MeasurementProvenance{Source: "estimate", EstimatedTail: estimated, Margin: margin}, nil
+	}
+	tail, err := e.tokens.CountMessages(messages[lastUsage+1:])
+	if err != nil || tail < 0 {
+		return 0, MeasurementProvenance{}, err
+	}
+	total := providerTokens + applyMargin(tail, margin)
+	return total, MeasurementProvenance{Source: "provider", ProviderTokens: providerTokens, EstimatedTail: tail, Margin: margin}, nil
+}
+
+func usageTotal(usage message.TokenUsage) int {
+	return usage.InputTokens + usage.CacheReadInput + usage.CacheCreationInput + usage.OutputTokens
+}
+
+func applyMargin(tokens int, margin float64) int {
+	value := float64(tokens) * margin
+	if value == float64(int(value)) {
+		return int(value)
+	}
+	return int(value) + 1
 }
 
 func (e *Engine) memory(ref string) (spec.Memory, error) {
@@ -314,6 +397,22 @@ func cloneRoutes(in map[string]spec.Route) map[string]spec.Route {
 	sort.Strings(keys)
 	for _, key := range keys {
 		out[key] = in[key]
+	}
+	return out
+}
+
+func cloneModels(in map[string]spec.Model) map[string]spec.Model {
+	out := make(map[string]spec.Model, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneSources(in map[string]spec.Source) map[string]spec.Source {
+	out := make(map[string]spec.Source, len(in))
+	for key, value := range in {
+		out[key] = value
 	}
 	return out
 }

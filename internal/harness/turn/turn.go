@@ -236,6 +236,7 @@ func (r *Runtime) register() error {
 		"command.finish":               r.commandFinish,
 		"command.apply-edit":           r.commandApplyEdit,
 		"messages.append-tool-results": r.appendToolResults,
+		"messages.clear-tool-results":  r.clearToolResults,
 		"hitl.review":                  r.review,
 		"policy.bind-approval":         r.bindApproval,
 		"state.project":                passthrough("value"),

@@ -229,9 +229,13 @@ type WritePolicy struct {
 	MaxBytes int `yaml:"maxBytes" json:"maxBytes"`
 }
 type CompactionPolicy struct {
-	PreserveRecentTokens int    `yaml:"preserveRecentTokens" json:"preserveRecentTokens"`
-	RouteRef             string `yaml:"routeRef" json:"routeRef"`
-	OnFailure            string `yaml:"onFailure" json:"onFailure"`
+	PreserveRecentTokens       int    `yaml:"preserveRecentTokens" json:"preserveRecentTokens"`
+	PreserveUserMessagesTokens int    `yaml:"preserveUserMessagesTokens" json:"preserveUserMessagesTokens"`
+	ReserveTokens              int    `yaml:"reserveTokens" json:"reserveTokens"`
+	RouteRef                   string `yaml:"routeRef" json:"routeRef"`
+	PromptSourceRef            string `yaml:"promptSourceRef" json:"promptSourceRef"`
+	UpdatePromptSourceRef      string `yaml:"updatePromptSourceRef" json:"updatePromptSourceRef"`
+	OnFailure                  string `yaml:"onFailure" json:"onFailure"`
 }
 type CompactionTrigger struct {
 	ContextTokensGTE int `yaml:"contextTokensGte" json:"contextTokensGte"`

@@ -91,6 +91,15 @@ func TestProviderFailureAndCancellationAreOutcomes(t *testing.T) {
 		}
 	})
 
+	t.Run("context overflow", func(t *testing.T) {
+		backend := &MockBackend{Err: errors.New("maximum context length is 128000 tokens")}
+		adapter, _ := NewMock(backend)
+		events := collect(adapter.Send(context.Background(), testRequest()))
+		if got := events[len(events)-1].Outcome; got == nil || got.Class != OutcomeContextOverflow {
+			t.Fatalf("outcome = %#v", got)
+		}
+	})
+
 	t.Run("deadline", func(t *testing.T) {
 		adapter, _ := New(KindMock, blockingBackend{})
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)

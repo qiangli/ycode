@@ -10,6 +10,7 @@ type stubProvider struct {
 	kind       api.ProviderKind
 	lastReq    *api.Request
 	streamFunc func(*api.Request) []*api.StreamEvent
+	errFunc    func(*api.Request) error
 }
 
 func (p *stubProvider) Kind() api.ProviderKind { return p.kind }
@@ -24,6 +25,12 @@ func (p *stubProvider) Send(_ context.Context, request *api.Request) (<-chan *ap
 		if p.streamFunc != nil {
 			for _, item := range p.streamFunc(request) {
 				events <- item
+			}
+		}
+		if p.errFunc != nil {
+			if err := p.errFunc(request); err != nil {
+				errors <- err
+				return
 			}
 		}
 		events <- &api.StreamEvent{Type: "message_stop"}

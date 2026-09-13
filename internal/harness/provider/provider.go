@@ -54,13 +54,14 @@ const (
 type OutcomeClass string
 
 const (
-	OutcomeCompleted     OutcomeClass = "completed"
-	OutcomeToolCall      OutcomeClass = "tool_call"
-	OutcomeLimit         OutcomeClass = "limit"
-	OutcomeCanceled      OutcomeClass = "canceled"
-	OutcomeDeadline      OutcomeClass = "deadline"
-	OutcomeProviderError OutcomeClass = "provider_error"
-	OutcomeProtocolError OutcomeClass = "protocol_error"
+	OutcomeCompleted       OutcomeClass = "completed"
+	OutcomeToolCall        OutcomeClass = "tool_call"
+	OutcomeLimit           OutcomeClass = "limit"
+	OutcomeContextOverflow OutcomeClass = "context-overflow"
+	OutcomeCanceled        OutcomeClass = "canceled"
+	OutcomeDeadline        OutcomeClass = "deadline"
+	OutcomeProviderError   OutcomeClass = "provider_error"
+	OutcomeProtocolError   OutcomeClass = "protocol_error"
 )
 
 type ToolCall struct {
@@ -175,7 +176,11 @@ func (a *Adapter) send(ctx context.Context, request Request, out chan<- Event) {
 				continue
 			}
 			if err != nil {
-				emit(ctx, out, outcomeEvent(OutcomeProviderError, state.stopReason, err))
+				class := OutcomeProviderError
+				if api.IsTokenLimitError(err) || api.ParseTokenLimitError(err.Error()) != nil {
+					class = OutcomeContextOverflow
+				}
+				emit(ctx, out, outcomeEvent(class, state.stopReason, err))
 				return
 			}
 		case event, ok := <-events:
