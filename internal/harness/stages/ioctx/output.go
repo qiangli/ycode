@@ -26,6 +26,7 @@ type Output struct {
 	SchemaVersion string           `json:"schema_version"`
 	EventID       string           `json:"event_id"`
 	Deliveries    []DeliveryResult `json:"deliveries"`
+	MessagesRef   string           `json:"messages_ref,omitempty"`
 }
 
 // EmitStage binds delivery routing to the ordered sinkRefs list compiled from

@@ -3,12 +3,13 @@ id: fe824e92dc23
 kind: task
 title: 'Y1 bashy.run harness-authored command stage: with:{script,timeoutMs,effects}, typed in: -> env/stdin JSON, stdout -> typed out:; preflight -> policy -> digest; fail closed'
 seq: 37
-status: assigned
+status: done
 priority: p0
 created: 2026-09-13T01:31:42.184328Z
 weave: 1
 assignee: qiangli
 sprint: 163
+closed: 2026-09-13T03:02:06.116611Z
 ---
 
 Goal: bashy.run — a harness-authored bashy call as a neutral graph stage, so YAML can run "bashy kb context --json" (or any command) at a named point of the loop with harness authority. This is the plugin mechanism; it carries no kb-specific Go.

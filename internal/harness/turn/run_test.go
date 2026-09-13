@@ -97,7 +97,7 @@ func newBashyRunRuntime(t *testing.T, patch func([]byte) []byte, boundary func(w
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := New(Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashyBoundary, Queue: emptyQueue{}})
+	runtime, err := New(Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashyBoundary, Queue: emptyQueue{}, EventPath: eventPath, Tokens: messageCounter{}})
 	if err != nil {
 		t.Fatal(err)
 	}

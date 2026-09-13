@@ -16,6 +16,7 @@ import (
 	"github.com/qiangli/ycode/internal/harness/stages/hitl"
 	"github.com/qiangli/ycode/internal/harness/stages/ioctx"
 	memoryStage "github.com/qiangli/ycode/internal/harness/stages/memory"
+	sessionStage "github.com/qiangli/ycode/internal/harness/stages/session"
 )
 
 type Provider interface {
@@ -46,6 +47,8 @@ type Config struct {
 	Providers map[string]Provider
 	Queue     Queue
 	Observer  pipeline.Observer
+	EventPath string
+	Tokens    sessionStage.TokenCounter
 }
 
 type Runtime struct {
@@ -58,6 +61,8 @@ type Runtime struct {
 	bashy      BashyBoundary
 	providers  map[string]Provider
 	queue      Queue
+	session    *sessionStage.Engine
+	eventPath  string
 	registry   *pipeline.Registry
 	observer   pipeline.Observer
 	bashyRuns  map[string]spec.BashyRunNode
@@ -77,10 +82,14 @@ type Request struct {
 }
 
 func New(config Config) (*Runtime, error) {
-	if config.Document == nil || config.Events == nil || config.Payloads == nil || config.IO == nil || config.Memory == nil || config.HITL == nil || config.Bashy == nil || config.Queue == nil {
+	if config.Document == nil || config.Events == nil || config.Payloads == nil || config.IO == nil || config.Memory == nil || config.HITL == nil || config.Bashy == nil || config.Queue == nil || config.EventPath == "" || config.Tokens == nil {
 		return nil, errors.New("turn runtime requires compiled document and all explicit mechanisms")
 	}
-	runtime := &Runtime{doc: config.Document, events: config.Events, payloads: config.Payloads, io: config.IO, memory: config.Memory, hitl: config.HITL, bashy: config.Bashy, providers: config.Providers, queue: config.Queue, registry: pipeline.NewRegistry(), observer: config.Observer, resumes: make(map[string]chan hitl.Resolution), early: make(map[string]hitl.Resolution), activeRuns: make(map[string]struct{})}
+	sessionEngine, err := sessionStage.New(sessionStage.Config{Document: config.Document, Events: config.Events, Payloads: config.Payloads, Tokens: config.Tokens})
+	if err != nil {
+		return nil, err
+	}
+	runtime := &Runtime{doc: config.Document, events: config.Events, payloads: config.Payloads, io: config.IO, memory: config.Memory, hitl: config.HITL, bashy: config.Bashy, providers: config.Providers, queue: config.Queue, session: sessionEngine, eventPath: config.EventPath, registry: pipeline.NewRegistry(), observer: config.Observer, resumes: make(map[string]chan hitl.Resolution), early: make(map[string]hitl.Resolution), activeRuns: make(map[string]struct{})}
 	bashyRuns, err := compileBashyRunIndex(config.Document)
 	if err != nil {
 		return nil, err
@@ -169,6 +178,11 @@ func (r *Runtime) Run(ctx context.Context, request Request) (ioctx.Output, error
 	if !ok {
 		return ioctx.Output{}, fmt.Errorf("turn: output has type %T", value)
 	}
+	if messagesRef, _, _, ok := state.Read("messagesRef"); ok {
+		if ref, ok := messagesRef.(string); ok {
+			output.MessagesRef = ref
+		}
+	}
 	return output, nil
 }
 
@@ -207,6 +221,7 @@ func (r *Runtime) register() error {
 		"lifecycle.transition":                 r.lifecycle,
 		"input.normalize":                      r.input,
 		"context.load":                         r.context,
+		"session.load":                         r.loadSession,
 		"prompt.assemble":                      r.assemble,
 		"checkpoint.save":                      r.checkpoint,
 		"queue.drain":                          r.drain,
@@ -218,6 +233,7 @@ func (r *Runtime) register() error {
 		"messages.normalize-provider-response": r.normalize,
 		"messages.append-assistant":            r.appendAssistant,
 		"loop.finish":                          r.finish,
+		"session.commit":                       r.commitSession,
 		"memory.compact":                       r.compact,
 		"output.emit":                          r.output,
 		"outcome.fail": func(_ context.Context, in pipeline.Invocation) pipeline.Outcome {

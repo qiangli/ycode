@@ -23,6 +23,7 @@ var (
 )
 
 var harnessFile = "agent.yaml"
+var harnessSession string
 
 func main() {
 	buildinfo.Set(version, commit)
@@ -64,12 +65,12 @@ var rootCmd = &cobra.Command{
 		}
 		defer app.Close()
 		if len(args) != 0 {
-			return app.RunText(cmd.Context(), "one-shot", strings.Join(args, " "), cmd.OutOrStdout())
+			return app.RunText(cmd.Context(), "one-shot", harnessSession, strings.Join(args, " "), cmd.OutOrStdout())
 		}
 		if !stdinIsTerminal() {
-			return app.RunReader(cmd.Context(), "one-shot", cmd.InOrStdin(), cmd.OutOrStdout())
+			return app.RunReader(cmd.Context(), "one-shot", harnessSession, cmd.InOrStdin(), cmd.OutOrStdout())
 		}
-		return app.RunREPL(cmd.Context(), "tui", cmd.InOrStdin(), cmd.OutOrStdout())
+		return app.RunREPL(cmd.Context(), "tui", harnessSession, cmd.InOrStdin(), cmd.OutOrStdout())
 	},
 }
 
@@ -83,7 +84,7 @@ var promptCmd = &cobra.Command{
 			return err
 		}
 		defer app.Close()
-		return app.RunText(cmd.Context(), "one-shot", strings.Join(args, " "), cmd.OutOrStdout())
+		return app.RunText(cmd.Context(), "one-shot", harnessSession, strings.Join(args, " "), cmd.OutOrStdout())
 	},
 }
 
@@ -97,7 +98,7 @@ var replCmd = &cobra.Command{
 			return err
 		}
 		defer app.Close()
-		return app.RunREPL(cmd.Context(), "repl", cmd.InOrStdin(), cmd.OutOrStdout())
+		return app.RunREPL(cmd.Context(), "repl", harnessSession, cmd.InOrStdin(), cmd.OutOrStdout())
 	},
 }
 
@@ -132,6 +133,7 @@ var doctorCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&harnessFile, "file", "f", "agent.yaml", "strict harness configuration")
+	rootCmd.PersistentFlags().StringVar(&harnessSession, "session", "", "continue a durable session id")
 	rootCmd.AddCommand(promptCmd, replCmd, versionCmd, doctorCmd, newACPCmd())
 	rootCmd.AddCommand(newModelCmd(), newSkillCmd(), newConfigCmd(), newMemoryCmd(), newToolsCmd())
 	rootCmd.AddCommand(newFeaturesCmd(), newDocsCmd(), newHarnessValidateCmd(), newHarnessSchemaCmd())

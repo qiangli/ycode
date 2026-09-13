@@ -3,12 +3,13 @@ id: 8b5d9e16c5ff
 kind: task
 title: 'Y3 session history: session.commit + session.load (newest boundary, drop system roles, clear old tool results, whole-turn maxTokens, tool-pair repair), history port, fork seed, --session'
 seq: 39
-status: assigned
+status: done
 priority: p1
 created: 2026-09-13T01:31:42.230811Z
 weave: 3
 assignee: qiangli
 sprint: 163
+closed: 2026-09-13T03:27:13.65099Z
 ---
 
 Goal: prior turns of a session reach the next prompt (today every turn starts from an empty message list; the REPL reuses one SessionID but each line is a fresh prompt). SOTA common denominator: append-only transcript + read-side projection from the newest compaction boundary; ycode's event log IS the transcript.

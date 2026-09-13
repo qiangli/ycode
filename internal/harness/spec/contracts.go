@@ -18,6 +18,7 @@ var knownStageCatalog = map[string]struct{}{
 	"messages.apply-input": {}, "messages.normalize-provider-response": {},
 	"outcome.fail": {}, "output.emit": {}, "policy.bind-approval": {},
 	"policy.evaluate": {}, "prompt.assemble": {}, "queue.drain": {},
+	"session.commit": {}, "session.load": {},
 	"state.forward": {}, "state.project": {},
 }
 
@@ -76,7 +77,11 @@ func stagePorts(name string) (string, string) {
 	case "context.load":
 		return "", "context"
 	case "prompt.assemble":
-		return "input,context,knowledge", "state"
+		return "input,context,knowledge,history?", "state"
+	case "session.load":
+		return "", "history"
+	case "session.commit":
+		return "state", "messagesRef"
 	case "output.emit":
 		return "messages", "output"
 	case "lifecycle.transition":

@@ -259,6 +259,7 @@ type Session struct {
 	Payloads    SessionPayloads    `yaml:"payloads" json:"payloads"`
 	Checkpoints SessionCheckpoints `yaml:"checkpoints" json:"checkpoints"`
 	Branches    SessionBranches    `yaml:"branches" json:"branches"`
+	History     SessionHistory     `yaml:"history" json:"history"`
 	Retention   SessionRetention   `yaml:"retention" json:"retention"`
 }
 type SessionEvents struct {
@@ -288,6 +289,16 @@ type SessionPayloads struct {
 type SessionBranches struct {
 	Enabled    bool   `yaml:"enabled" json:"enabled"`
 	CopyEvents string `yaml:"copyEvents" json:"copyEvents"`
+}
+type SessionHistory struct {
+	MaxTokens        int                     `yaml:"maxTokens" json:"maxTokens"`
+	Unit             string                  `yaml:"unit" json:"unit"`
+	ClearToolResults SessionClearToolResults `yaml:"clearToolResults" json:"clearToolResults"`
+	Repair           string                  `yaml:"repair" json:"repair"`
+}
+type SessionClearToolResults struct {
+	OlderThanTurns int    `yaml:"olderThanTurns" json:"olderThanTurns"`
+	Placeholder    string `yaml:"placeholder" json:"placeholder"`
 }
 type SessionRetention struct {
 	MaxAgeDays                 int   `yaml:"maxAgeDays" json:"maxAgeDays"`

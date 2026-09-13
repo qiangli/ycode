@@ -9,6 +9,7 @@ import (
 type stubProvider struct {
 	kind       api.ProviderKind
 	lastReq    *api.Request
+	requests   []*api.Request
 	streamFunc func(*api.Request) []*api.StreamEvent
 	errFunc    func(*api.Request) error
 }
@@ -17,6 +18,7 @@ func (p *stubProvider) Kind() api.ProviderKind { return p.kind }
 
 func (p *stubProvider) Send(_ context.Context, request *api.Request) (<-chan *api.StreamEvent, <-chan error) {
 	p.lastReq = request
+	p.requests = append(p.requests, request)
 	events := make(chan *api.StreamEvent, 8)
 	errors := make(chan error, 1)
 	go func() {

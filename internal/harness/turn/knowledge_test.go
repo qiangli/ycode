@@ -62,7 +62,7 @@ func TestTurnKnowledgePortCarriesGoldenEnvelopeIntoPromptAssembled(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := New(Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashy, Providers: map[string]Provider{"openai": adapter}, Queue: emptyQueue{}})
+	runtime, err := New(Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashy, Providers: map[string]Provider{"openai": adapter}, Queue: emptyQueue{}, EventPath: eventPath, Tokens: messageCounter{}})
 	if err != nil {
 		t.Fatal(err)
 	}

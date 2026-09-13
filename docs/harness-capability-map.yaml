@@ -93,6 +93,8 @@ stageCatalog:
   policy.evaluate: spec.policies
   prompt.assemble: spec.contexts
   queue.drain: spec.queues
+  session.commit: spec.sessions
+  session.load: spec.sessions
   state.forward: spec.pipelines
   state.project: spec.pipelines
 
