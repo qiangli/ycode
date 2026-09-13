@@ -3,12 +3,13 @@ id: 2048e8a98c3b
 kind: task
 title: 'Y4 compaction + tokens: provider-first context.measure + contextBudget; RouteText; user-role summary from YAML sources with rolling merge, pair-safe cut, fallback-deterministic; clear-tool-results; overflow retry'
 seq: 40
-status: assigned
+status: done
 priority: p1
 created: 2026-09-13T01:31:42.253718Z
 weave: 2
 assignee: qiangli
 sprint: 163
+closed: 2026-09-13T03:02:06.382507Z
 ---
 
 Goal: compaction and token measurement stop being inert (today: Summary is never bound so Compact always takes the failure path; tokens are len/4; the trigger is the literal 90000).
