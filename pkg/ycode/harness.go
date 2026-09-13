@@ -128,6 +128,7 @@ type turnBoundary struct {
 	ConfigDigest string       `json:"config_digest"`
 	SessionID    string       `json:"session_id"`
 	RunID        string       `json:"run_id"`
+	MessagesRef  string       `json:"messages_ref,omitempty"`
 	Output       ioctx.Output `json:"output"`
 }
 
@@ -218,7 +219,7 @@ func Load(path string, option ...LoadOption) (*Harness, error) {
 		_ = handle.Close()
 		return nil, err
 	}
-	runtime, err := turn.New(turn.Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashyExecutor, Providers: providers, Queue: emptyHarnessQueue{}, Materialize: emptyMaterializer{}, Observer: observe.New(doc.Spec.Observability, options.tracer)})
+	runtime, err := turn.New(turn.Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashyExecutor, Providers: providers, Queue: emptyHarnessQueue{}, Materialize: emptyMaterializer{}, Observer: observe.New(doc.Spec.Observability, options.tracer), EventPath: eventPath, Tokens: harnessTokens{}})
 	if err != nil {
 		_ = handle.Close()
 		return nil, err
@@ -267,7 +268,7 @@ func (h *Harness) Run(ctx context.Context, request RunRequest) (<-chan Event, er
 		if active.err != nil {
 			_, _ = h.events.Append(event.Draft{SessionID: request.SessionID, RunID: request.RunID, StageID: "turn", Type: "turn.failed", ConfigDigest: h.doc.ConfigDigest, Data: map[string]any{"error": active.err.Error()}})
 		} else {
-			_, active.err = h.events.SaveCheckpoint(h.boundaryPath(request.SessionID, request.RunID), request.SessionID, request.RunID, turnBoundary{ConfigDigest: h.doc.ConfigDigest, SessionID: request.SessionID, RunID: request.RunID, Output: output})
+			_, active.err = h.events.SaveCheckpoint(h.boundaryPath(request.SessionID, request.RunID), request.SessionID, request.RunID, turnBoundary{ConfigDigest: h.doc.ConfigDigest, SessionID: request.SessionID, RunID: request.RunID, MessagesRef: output.MessagesRef, Output: output})
 			if active.err != nil {
 				_, _ = h.events.Append(event.Draft{SessionID: request.SessionID, RunID: request.RunID, StageID: "turn", Type: "turn.failed", ConfigDigest: h.doc.ConfigDigest, Data: map[string]any{"error": active.err.Error()}})
 			}
@@ -325,11 +326,11 @@ func (h *Harness) Fork(ctx context.Context, request ForkRequest) (<-chan Event, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	item, err := h.events.Append(event.Draft{SessionID: request.SessionID, RunID: request.RunID, StageID: "session.fork", Type: "session.forked", ConfigDigest: h.doc.ConfigDigest, CausationID: boundaryEvent.Digest, CorrelationID: request.ParentSessionID, Data: map[string]any{"parent_session_id": request.ParentSessionID, "parent_run_id": boundaryEvent.RunID, "at_sequence": request.AtSequence, "parent_event_digest": boundaryEvent.Digest, "parent_checkpoint": json.RawMessage(parent.State)}})
+	item, err := h.events.Append(event.Draft{SessionID: request.SessionID, RunID: request.RunID, StageID: "session.fork", Type: "session.forked", ConfigDigest: h.doc.ConfigDigest, CausationID: boundaryEvent.Digest, CorrelationID: request.ParentSessionID, Data: map[string]any{"parent_session_id": request.ParentSessionID, "parent_run_id": boundaryEvent.RunID, "at_sequence": request.AtSequence, "parent_event_digest": boundaryEvent.Digest, "parent_messages_ref": state.MessagesRef, "parent_checkpoint": json.RawMessage(parent.State)}})
 	if err != nil {
 		return nil, err
 	}
-	if _, err := h.events.SaveCheckpoint(h.boundaryPath(request.SessionID, request.RunID), request.SessionID, request.RunID, map[string]any{"config_digest": h.doc.ConfigDigest, "parent_session_id": request.ParentSessionID, "parent_run_id": boundaryEvent.RunID, "at_sequence": request.AtSequence, "parent_checkpoint": json.RawMessage(parent.State)}); err != nil {
+	if _, err := h.events.SaveCheckpoint(h.boundaryPath(request.SessionID, request.RunID), request.SessionID, request.RunID, map[string]any{"config_digest": h.doc.ConfigDigest, "parent_session_id": request.ParentSessionID, "parent_run_id": boundaryEvent.RunID, "at_sequence": request.AtSequence, "parent_messages_ref": state.MessagesRef, "parent_checkpoint": json.RawMessage(parent.State)}); err != nil {
 		return nil, err
 	}
 	out := make(chan Event, 1)

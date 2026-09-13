@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/qiangli/ycode/internal/harness/spec"
 	"github.com/qiangli/ycode/internal/harness/stages/ioctx"
 	memoryStage "github.com/qiangli/ycode/internal/harness/stages/memory"
+	sessionStage "github.com/qiangli/ycode/internal/harness/stages/session"
 	memexmemory "github.com/qiangli/ycode/pkg/memex/memory"
 )
 
@@ -95,6 +97,26 @@ func (r *Runtime) recall(ctx context.Context, in pipeline.Invocation) pipeline.O
 	return pipeline.Success(map[string]any{"items": messages})
 }
 
+func (r *Runtime) loadSession(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
+	run, err := runFrom(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	meta, err := r.meta(ctx, in.StageID)
+	if err != nil {
+		return fail(err)
+	}
+	events, err := event.Replay(r.eventPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fail(err)
+	}
+	result, err := r.session.Load(ctx, sessionStage.Meta(meta), sessionStage.LoadRequest{SessionRef: text(in.With["sessionRef"]), SessionID: run.sessionID, Events: events})
+	if err != nil {
+		return fail(err)
+	}
+	return pipeline.Success(map[string]any{"history": result.Messages})
+}
+
 func (r *Runtime) assemble(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
 	contextValue, ok := in.Inputs["context"].(ioctx.ContextSnapshot)
 	if !ok {
@@ -104,31 +126,91 @@ func (r *Runtime) assemble(ctx context.Context, in pipeline.Invocation) pipeline
 	if !ok {
 		return fail(fmt.Errorf("prompt.assemble: invalid memory %T", in.Inputs["memory"]))
 	}
-	inputValue, ok := in.Inputs["input"].(ioctx.CanonicalInput)
-	if !ok {
-		return fail(fmt.Errorf("prompt.assemble: invalid input %T", in.Inputs["input"]))
-	}
 	orderRaw := stringList(in.With["order"])
 	order := make([]ioctx.PortName, len(orderRaw))
 	for i := range orderRaw {
 		order[i] = ioctx.PortName(orderRaw[i])
 	}
+	var historyMessages []message.Message
+	if _, wantsHistory := containsPort(order, ioctx.PortHistory); wantsHistory {
+		var ok bool
+		historyMessages, ok = in.Inputs["history"].([]message.Message)
+		if !ok {
+			return fail(fmt.Errorf("prompt.assemble: invalid history %T", in.Inputs["history"]))
+		}
+	}
+	inputValue, ok := in.Inputs["input"].(ioctx.CanonicalInput)
+	if !ok {
+		return fail(fmt.Errorf("prompt.assemble: invalid input %T", in.Inputs["input"]))
+	}
 	meta, err := r.meta(ctx, in.StageID)
 	if err != nil {
 		return fail(err)
 	}
-	prompt, err := r.io.Assemble(ctx, meta, ioctx.PromptRequest{Order: order, Context: contextValue, Memory: memoryValue, Input: inputValue})
+	historyPrompt := make([]ioctx.PromptMessage, 0, len(historyMessages))
+	for _, item := range historyMessages {
+		ref, err := r.payload(item)
+		if err != nil {
+			return fail(err)
+		}
+		historyPrompt = append(historyPrompt, ioctx.PromptMessage{Role: string(item.Role), Content: messageText(item), PayloadRef: ref})
+	}
+	prompt, err := r.io.Assemble(ctx, meta, ioctx.PromptRequest{Order: order, Context: contextValue, History: historyPrompt, Memory: memoryValue, Input: inputValue})
 	if err != nil {
 		return fail(err)
 	}
-	messages := make([]message.Message, 0, len(prompt.Messages))
-	for _, item := range prompt.Messages {
-		messages = append(messages, message.Message{Role: message.Role(item.Role), Content: []message.ContentBlock{{Type: message.ContentTypeText, Text: item.Content}}})
+	messages := make([]message.Message, 0, len(prompt.Messages)+len(historyMessages))
+	for _, port := range order {
+		switch port {
+		case ioctx.PortContext:
+			for _, fragment := range contextValue.Fragments {
+				messages = append(messages, message.Message{Role: message.Role(fragment.Role), Content: []message.ContentBlock{{Type: message.ContentTypeText, Text: fragment.Content}}})
+			}
+		case ioctx.PortMemory:
+			for _, item := range memoryValue {
+				messages = append(messages, message.Message{Role: message.Role(item.Role), Content: []message.ContentBlock{{Type: message.ContentTypeText, Text: item.Content}}})
+			}
+		case ioctx.PortHistory:
+			messages = append(messages, cloneMessages(historyMessages)...)
+		case ioctx.PortInput:
+			messages = append(messages, message.Message{Role: message.RoleUser, Content: []message.ContentBlock{{Type: message.ContentTypeText, Text: string(inputValue.Data)}}})
+		}
 	}
 	return pipeline.Success(map[string]any{"state": map[string]any{
 		"messages": messages, "providerSession": "", "response": map[string]any{},
 		"finished": false, "remainingIterations": r.turnIterations(ctx),
 	}})
+}
+
+func (r *Runtime) commitSession(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
+	state, err := object(in.Inputs["state"])
+	if err != nil {
+		return fail(err)
+	}
+	messages, err := messagesFrom(state["messages"])
+	if err != nil {
+		return fail(err)
+	}
+	meta, err := r.meta(ctx, in.StageID)
+	if err != nil {
+		return fail(err)
+	}
+	compactions, _ := number(state["compactions"])
+	result, err := r.session.Commit(ctx, sessionStage.Meta(meta), sessionStage.CommitRequest{SessionRef: text(in.With["sessionRef"]), Messages: messages, Compactions: compactions})
+	if err != nil {
+		return fail(err)
+	}
+	state["messagesRef"] = result.MessagesRef
+	return pipeline.Success(map[string]any{"messagesRef": result.MessagesRef})
+}
+
+func containsPort(order []ioctx.PortName, target ioctx.PortName) (int, bool) {
+	for i, value := range order {
+		if value == target {
+			return i, true
+		}
+	}
+	return -1, false
 }
 
 func (r *Runtime) checkpoint(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
@@ -482,8 +564,30 @@ func messagesFrom(value any) ([]message.Message, error) {
 	return append([]message.Message(nil), messages...), nil
 }
 
+func cloneMessages(messages []message.Message) []message.Message {
+	raw, _ := json.Marshal(messages)
+	var result []message.Message
+	_ = json.Unmarshal(raw, &result)
+	return result
+}
+
 func textMessage(role message.Role, value string) message.Message {
 	return message.Message{Role: role, Content: []message.ContentBlock{{Type: message.ContentTypeText, Text: value}}}
+}
+
+func messageText(item message.Message) string {
+	var parts []string
+	for _, block := range item.Content {
+		switch block.Type {
+		case message.ContentTypeText:
+			parts = append(parts, block.Text)
+		case message.ContentTypeToolUse:
+			parts = append(parts, "tool_use "+block.Name)
+		case message.ContentTypeToolResult:
+			parts = append(parts, "tool_result "+block.ToolUseID+": "+block.Content)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func providerMessages(messages []message.Message) ([]api.Message, string) {

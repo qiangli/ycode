@@ -168,6 +168,13 @@ spec:
         directory: {controlPath: checkpoints}
         bind: [config-digest, event-sequence, typed-state, leases, placement]
       branches: {enabled: true, copyEvents: through-checkpoint}
+      history:
+        maxTokens: 20000
+        unit: turns
+        clearToolResults:
+          olderThanTurns: 4
+          placeholder: "[tool result omitted from older session history]"
+        repair: tool-pairs
       retention: {maxAgeDays: 90, maxBytes: 1073741824, preserveReferencedPayloads: true}
 
   lifecycles:
@@ -754,9 +761,11 @@ spec:
         input: {type: ycode.input/v1, writer: single}
         context: {type: ycode.context/v1, writer: single}
         memory: {type: ycode.memory-items/v1, writer: single}
+        history: {type: ycode.session-history/v1, writer: single}
         probe: {type: string, writer: single}
         loop: {type: ycode.agent-loop/v1, writer: loop-carried}
-      outputs: {output: ycode.output/v1}
+        messagesRef: {type: string, writer: single}
+      outputs: {output: ycode.output/v1, messagesRef: string}
       concurrency: 4
       failFast: true
       nodes:
@@ -797,12 +806,18 @@ spec:
             with: {memoryRef: main}
             in: {query: input}
             out: {items: memory}
+        - id: history
+          needs: [input]
+          run:
+            stage: session.load
+            with: {sessionRef: durable}
+            out: {history: history}
         - id: assemble
-          needs: [context, recall]
+          needs: [context, recall, history]
           run:
             stage: prompt.assemble
-            with: {order: [context, memory, input]}
-            in: {input: input, context: context, memory: memory}
+            with: {order: [context, memory, history, input]}
+            in: {input: input, context: context, memory: memory, history: history}
             out: {state: loop}
         - id: checkpoint
           needs: [assemble]
@@ -820,14 +835,21 @@ spec:
               carry: {state: loop}
               until: {eq: [{field: loop.finished}, {literal: true}]}
               out: {state: loop}
-        - id: remember
+        - id: commit
           needs: [loop]
+          run:
+            stage: session.commit
+            with: {sessionRef: durable}
+            in: {state: loop}
+            out: {messagesRef: messagesRef}
+        - id: remember
+          needs: [commit]
           run:
             stage: memory.write
             with: {memoryRef: main}
             in: {messages: loop.messages}
         - id: output
-          needs: [loop]
+          needs: [commit]
           run:
             stage: output.emit
             with: {sinkRefs: [primary-output]}

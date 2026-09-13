@@ -226,6 +226,7 @@ type PortName string
 
 const (
 	PortContext PortName = "context"
+	PortHistory PortName = "history"
 	PortMemory  PortName = "memory"
 	PortInput   PortName = "input"
 )
@@ -242,6 +243,7 @@ type PromptRequest struct {
 	// exists because changing it changes provider-visible semantics.
 	Order   []PortName
 	Context ContextSnapshot
+	History []PromptMessage
 	Memory  []PromptMessage
 	Input   CanonicalInput
 }
@@ -254,6 +256,7 @@ type Prompt struct {
 
 type PromptPorts struct {
 	Context ContextSnapshot
+	History []PromptMessage
 	Memory  []PromptMessage
 	Input   CanonicalInput
 }
@@ -273,7 +276,7 @@ func (e *Engine) AssembleStage(ctx context.Context, meta Meta, run spec.Run, por
 	if err != nil {
 		return Prompt{}, err
 	}
-	return e.Assemble(ctx, meta, PromptRequest{Order: order, Context: ports.Context, Memory: ports.Memory, Input: ports.Input})
+	return e.Assemble(ctx, meta, PromptRequest{Order: order, Context: ports.Context, History: ports.History, Memory: ports.Memory, Input: ports.Input})
 }
 
 func (e *Engine) Assemble(_ context.Context, meta Meta, request PromptRequest) (Prompt, error) {
@@ -297,6 +300,11 @@ func (e *Engine) Assemble(_ context.Context, meta Meta, request PromptRequest) (
 			}
 		case PortMemory:
 			for _, message := range request.Memory {
+				message.Port = port
+				result.Messages = append(result.Messages, message)
+			}
+		case PortHistory:
+			for _, message := range request.History {
 				message.Port = port
 				result.Messages = append(result.Messages, message)
 			}

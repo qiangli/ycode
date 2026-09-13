@@ -266,6 +266,54 @@ func TestHarnessCompactsBeforeContextBudgetAndRetriesOverflowOnce(t *testing.T) 
 	}
 }
 
+func TestHarnessSessionHistorySurvivesRunsForkAndRestart(t *testing.T) {
+	isolateHarnessStores(t)
+	backend := newStubProvider(api.ProviderOpenAI)
+	var calls atomic.Int32
+	backend.streamFunc = func(*api.Request) []*api.StreamEvent {
+		call := calls.Add(1)
+		value := map[int32]string{1: "first answer", 2: "second answer", 3: "child answer", 4: "restart answer"}[call]
+		if value == "" {
+			value = "extra answer"
+		}
+		text, _ := json.Marshal(map[string]string{"type": "text_delta", "text": value})
+		stop, _ := json.Marshal(map[string]string{"stop_reason": api.StopReasonEndTurn})
+		return []*api.StreamEvent{{Type: "content_block_delta", Delta: text}, {Type: "message_delta", Delta: stop}}
+	}
+	path := filepath.Join("..", "..", "examples", "agent.yaml")
+	harness, err := Load(path, WithHarnessProvider("openai", backend))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstSeq, _ := runHarnessTurn(t, harness, "history-session", "run-1", "first prompt")
+	_, secondPayloads := runHarnessTurn(t, harness, "history-session", "run-2", "second prompt")
+	if len(secondPayloads) == 0 || !bytes.Contains(secondPayloads[0], []byte("first prompt")) || !bytes.Contains(secondPayloads[0], []byte("first answer")) {
+		t.Fatalf("second llm.requested payload omitted first turn: %s", secondPayloads[0])
+	}
+	fork, err := harness.Fork(context.Background(), ForkRequest{ParentSessionID: "history-session", SessionID: "history-child", RunID: "fork-history-child", AtSequence: firstSeq})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range fork {
+	}
+	_, childPayloads := runHarnessTurn(t, harness, "history-child", "child-run-1", "child prompt")
+	if len(childPayloads) == 0 || !bytes.Contains(childPayloads[0], []byte("first prompt")) || !bytes.Contains(childPayloads[0], []byte("first answer")) {
+		t.Fatalf("child llm.requested payload omitted fork seed: %s", childPayloads[0])
+	}
+	time.Sleep(200 * time.Millisecond)
+	if err := harness.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Load(path, WithHarnessProvider("openai", backend))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, restartPayloads := runHarnessTurn(t, reopened, "history-session", "run-3", "after restart")
+	if len(restartPayloads) == 0 || !bytes.Contains(restartPayloads[0], []byte("second prompt")) || !bytes.Contains(restartPayloads[0], []byte("second answer")) {
+		t.Fatalf("restarted llm.requested payload omitted persisted history: %s", restartPayloads[0])
+	}
+}
+
 func isolateHarnessStores(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
@@ -307,4 +355,36 @@ func smallContextFixture(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func runHarnessTurn(t *testing.T, harness *Harness, sessionID, runID, prompt string) (uint64, [][]byte) {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"request": prompt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := harness.Run(context.Background(), RunRequest{SessionID: sessionID, RunID: runID, TriggerRef: "interactive-input", FrontendRef: "embed", Principal: "tester", IdempotencyKey: runID, Body: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last uint64
+	var payloads [][]byte
+	for item := range stream {
+		last = item.Sequence
+		if item.Type != "llm.requested" {
+			continue
+		}
+		var data struct {
+			PayloadRef string `json:"payload_ref"`
+		}
+		if err := json.Unmarshal(item.Data, &data); err != nil {
+			t.Fatal(err)
+		}
+		payload, err := harness.Payload(data.PayloadRef)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payloads = append(payloads, payload)
+	}
+	return last, payloads
 }

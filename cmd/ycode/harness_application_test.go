@@ -45,16 +45,16 @@ func TestCompositionRootRoutesOneShotStdinREPLAndTUIThroughHarness(t *testing.T)
 	defer app.Close()
 
 	var output bytes.Buffer
-	if err := app.RunText(context.Background(), "one-shot", "one", &output); err != nil {
+	if err := app.RunText(context.Background(), "one-shot", "", "one", &output); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.RunReader(context.Background(), "one-shot", bytes.NewBufferString("two\n"), &output); err != nil {
+	if err := app.RunReader(context.Background(), "one-shot", "", bytes.NewBufferString("two\n"), &output); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.RunREPL(context.Background(), "repl", bytes.NewBufferString("three\n\n"), &output); err != nil {
+	if err := app.RunREPL(context.Background(), "repl", "", bytes.NewBufferString("three\n\n"), &output); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.RunREPL(context.Background(), "tui", bytes.NewBufferString("four\n"), &output); err != nil {
+	if err := app.RunREPL(context.Background(), "tui", "", bytes.NewBufferString("four\n"), &output); err != nil {
 		t.Fatal(err)
 	}
 	if provider.calls.Load() != 4 {
@@ -73,7 +73,7 @@ func TestCompositionRootRejectsUndeclaredFrontend(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer app.Close()
-	if err := app.RunText(context.Background(), "invented", "no", &bytes.Buffer{}); err == nil {
+	if err := app.RunText(context.Background(), "invented", "", "no", &bytes.Buffer{}); err == nil {
 		t.Fatal("undeclared frontend was accepted")
 	}
 }

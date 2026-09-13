@@ -20,7 +20,7 @@ import (
 )
 
 func TestCompiledStarterTurnSurvivesStoreRestart(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	scratchStores(t)
 	root, err := os.MkdirTemp(".", ".turn-test-")
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +64,7 @@ func TestCompiledStarterTurnSurvivesStoreRestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		runtime, err := New(Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashy, Providers: map[string]Provider{"openai": adapter}, Queue: emptyQueue{}, Materialize: noMemoryWrites{}})
+		runtime, err := New(Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashy, Providers: map[string]Provider{"openai": adapter}, Queue: emptyQueue{}, Materialize: noMemoryWrites{}, EventPath: filepath.Join(root, "events.jsonl"), Tokens: messageCounter{}})
 		if err != nil {
 			t.Fatal(err)
 		}

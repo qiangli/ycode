@@ -43,7 +43,7 @@ func openHarnessApplication(path string, options ...public.LoadOption) (*harness
 
 func (a *harnessApplication) Close() error { return a.harness.Close() }
 
-func (a *harnessApplication) RunText(ctx context.Context, frontendRef, text string, output io.Writer) error {
+func (a *harnessApplication) RunText(ctx context.Context, frontendRef, sessionID, text string, output io.Writer) error {
 	body, err := encodePrompt(text)
 	if err != nil {
 		return err
@@ -53,10 +53,13 @@ func (a *harnessApplication) RunText(ctx context.Context, frontendRef, text stri
 		return err
 	}
 	defaults := a.defaults()
+	if sessionID != "" {
+		defaults.SessionID = sessionID
+	}
 	return local.Run(ctx, frontend.Input{SessionID: defaults.SessionID, AgentRef: defaults.AgentRef, Principal: defaults.Principal, Body: body}, a.renderer(output))
 }
 
-func (a *harnessApplication) RunReader(ctx context.Context, frontendRef string, input io.Reader, output io.Writer) error {
+func (a *harnessApplication) RunReader(ctx context.Context, frontendRef, sessionID string, input io.Reader, output io.Writer) error {
 	configured, ok := a.doc.Spec.Frontends[frontendRef]
 	if !ok {
 		return fmt.Errorf("frontend %q is not declared", frontendRef)
@@ -72,16 +75,19 @@ func (a *harnessApplication) RunReader(ctx context.Context, frontendRef string, 
 	if int64(len(raw)) > limit {
 		return fmt.Errorf("frontend input exceeds %d bytes", limit)
 	}
-	return a.RunText(ctx, frontendRef, strings.TrimSuffix(string(raw), "\n"), output)
+	return a.RunText(ctx, frontendRef, sessionID, strings.TrimSuffix(string(raw), "\n"), output)
 }
 
-func (a *harnessApplication) RunREPL(ctx context.Context, frontendRef string, input io.Reader, output io.Writer) error {
+func (a *harnessApplication) RunREPL(ctx context.Context, frontendRef, sessionID string, input io.Reader, output io.Writer) error {
 	local, err := frontend.NewLocal(a.doc, frontendRef, a)
 	if err != nil {
 		return err
 	}
 	configured := a.doc.Spec.Frontends[frontendRef]
 	defaults := a.defaults()
+	if sessionID != "" {
+		defaults.SessionID = sessionID
+	}
 	scanner := bufio.NewScanner(input)
 	if configured.Limits.MaxInputBytes > 0 {
 		scanner.Buffer(make([]byte, 4096), configured.Limits.MaxInputBytes)
