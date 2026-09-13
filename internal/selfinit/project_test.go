@@ -11,6 +11,7 @@ import (
 // makeRepo creates a temp directory with `git init` run inside.
 func makeRepo(t *testing.T) string {
 	t.Helper()
+	scratchStores(t)
 	dir := t.TempDir()
 	cmd := exec.Command("git", "init", "-q", "-b", "main")
 	cmd.Dir = dir
@@ -44,9 +45,7 @@ func TestWriteProjectFiles_BreadcrumbOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read breadcrumb: %v", err)
 	}
-	if !strings.Contains(string(body), "`yc symbols <path>`") {
-		t.Errorf("breadcrumb does not list capabilities:\n%s", body)
-	}
+	assertInstructionsBlock(t, string(body))
 
 	// Critically: must NOT have touched these.
 	for _, p := range []string{

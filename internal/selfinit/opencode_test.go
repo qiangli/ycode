@@ -16,6 +16,7 @@ func withFakeXDG(t *testing.T) string {
 	xdg := filepath.Join(dir, "xdg")
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", xdg)
+	scratchStores(t)
 	return xdg
 }
 
@@ -33,9 +34,7 @@ func TestOpenCode_WriteInstructions(t *testing.T) {
 	if !strings.Contains(string(body), BeginMarker) {
 		t.Errorf("missing BEGIN marker:\n%s", body)
 	}
-	if !strings.Contains(string(body), "`yc symbols <path>`") {
-		t.Errorf("missing yc built-in inventory:\n%s", body)
-	}
+	assertInstructionsBlock(t, string(body))
 
 	changed2, err := o.WriteInstructions(context.Background())
 	if err != nil {

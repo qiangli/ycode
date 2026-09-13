@@ -14,7 +14,35 @@ func withFakeHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	scratchStores(t)
 	return dir
+}
+
+// scratchStores points every store-selecting environment variable at a
+// tempdir so no test can read or write the operator's real stores.
+func scratchStores(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"BASHY_KB_DIR", "BASHY_HOME", "BASHY_SKILLS_DIR", "YCODE_DATA_DIR"} {
+		t.Setenv(key, t.TempDir())
+	}
+}
+
+// assertInstructionsBlock checks a written memory/breadcrumb body
+// describes the current command surface and none of the removed ones
+// (`yc <verb>` built-ins, MCP servers).
+func assertInstructionsBlock(t *testing.T, body string) {
+	t.Helper()
+	if !strings.Contains(body, "governed Bashy boundary") {
+		t.Errorf("missing command-surface description:\n%s", body)
+	}
+	if !strings.Contains(body, "ycode validate --file agent.yaml") {
+		t.Errorf("missing agent.yaml command surface:\n%s", body)
+	}
+	for _, stale := range []string{"`yc symbols", "`yc refs", "`yc repomap", "`yc graph", "ycode shell --manifest", "mcp__"} {
+		if strings.Contains(body, stale) {
+			t.Errorf("advertises removed surface %q:\n%s", stale, body)
+		}
+	}
 }
 
 func TestClaude_WriteInstructions(t *testing.T) {
@@ -31,9 +59,7 @@ func TestClaude_WriteInstructions(t *testing.T) {
 	if !strings.Contains(string(body), BeginMarker) {
 		t.Errorf("missing BEGIN marker:\n%s", body)
 	}
-	if !strings.Contains(string(body), "`yc symbols <path>`") {
-		t.Errorf("missing yc built-in inventory:\n%s", body)
-	}
+	assertInstructionsBlock(t, string(body))
 
 	// Idempotent.
 	changed2, err := c.WriteInstructions(context.Background())

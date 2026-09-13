@@ -48,6 +48,16 @@ The selected frontend reference must exist in YAML and permit that mode. Input
 size, schema, identity, idempotency, agent route, HITL capability, and output
 sinks are compiled controls.
 
+Turns on one session id form one conversation: `session.load` projects the
+previously committed history into each new turn's prompt under the compiled
+history policy, and `session.commit` records the finished turn. Pass
+`--session <id>` to continue a durable session across invocations:
+
+```bash
+ycode --file agent.yaml --session review-1 'review the current changes'
+ycode --file agent.yaml --session review-1 'now fix the first finding'
+```
+
 Run a single Bashy program without a model call:
 
 ```bash
@@ -94,17 +104,23 @@ ycode acp --config agent.yaml
 
 ACP negotiates the supported protocol strictly. New/load/resume/list/close and
 fork delegate to durable harness session state. Reusing a session or restarting
-the ACP process continues from the stored completed turn boundary; it does not
-start a parallel conversation loop. Fork records lineage and derives a child
-boundary without running a turn. Live approval continuation is exposed through
-the Harness/controller resume path described below.
+the ACP process continues the conversation from the stored completed turn
+boundary: the next turn's prompt carries the committed history, projected
+through the compiled history policy by `session.load`, rather than starting a
+parallel conversation loop. Fork records lineage and derives a child boundary
+without running a turn; the child's first turn continues the parent's
+conversation from the forked seed. Live approval continuation is exposed
+through the Harness/controller resume path described below.
 
 ## Events and outputs
 
 All surfaces observe the same canonical events. Useful event classes include
-input admission, prompt assembly, provider streaming, Bashy request/result,
-policy/HITL transitions, memory actions, output delivery, turn failure, and
-session fork. Events are ordered and hash-chained and carry the compiled config
+input admission, prompt assembly, provider streaming, Bashy request/result
+(including harness-authored `bashy.run` calls), policy/HITL transitions,
+session history (`session.history.loaded`, `session.turn-committed`), context
+measurement (`context.measured`), compaction (`memory.compacted` and its
+skipped/fallback/failure variants), output delivery, turn failure, and session
+fork. Events are ordered and hash-chained and carry the compiled config
 digest.
 
 Output content may be referenced rather than inlined. Go embedders resolve a
