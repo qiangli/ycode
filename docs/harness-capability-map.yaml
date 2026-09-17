@@ -60,8 +60,8 @@ capabilities:
     owner: resource:spec.policies-sessions
     entrypoints: ["internal/harness/stages/hitl/hitl.go#type Controller struct"]
   - id: harness-validation-cli
-    owner: frontend:operator-cli
-    entrypoints: ["cmd/ycode/harness_config.go#func newHarnessValidateCmd", "cmd/ycode/harness_config.go#func newHarnessSchemaCmd"]
+    owner: resource:spec.interfaces.cli
+    entrypoints: ["internal/harness/spec/cli.go#type CLI struct", "internal/harness/cli/cli.go#func New", "cmd/ycode/cli_dispatch.go#func dispatchCLI"]
 stageCatalog:
   agent.invoke: spec.agents.delegations
   bashy.deny: spec.policies

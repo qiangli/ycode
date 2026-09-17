@@ -11,24 +11,8 @@ import (
 	"time"
 
 	gonats "github.com/nats-io/nats.go"
-	"github.com/spf13/cobra"
-
 	"github.com/qiangli/ycode/internal/harness/frontend"
 )
-
-var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Serve the network frontends declared by agent.yaml",
-	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		app, err := openHarnessApplication(harnessFile)
-		if err != nil {
-			return err
-		}
-		defer app.Close()
-		return app.Serve(cmd.Context())
-	},
-}
 
 func (a *harnessApplication) Serve(ctx context.Context) error {
 	return a.serve(ctx, defaultServeDependencies())

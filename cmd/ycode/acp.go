@@ -6,15 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
-	"github.com/spf13/cobra"
-
 	coreacp "github.com/qiangli/coreutils/pkg/acp"
 	harnessacp "github.com/qiangli/ycode/internal/harness/acp"
+	harnessspec "github.com/qiangli/ycode/internal/harness/spec"
 	public "github.com/qiangli/ycode/pkg/ycode"
 )
 
@@ -33,6 +30,7 @@ type acpRunner struct {
 	stderr io.Writer
 	mu     sync.Mutex
 	apps   map[string]harnessApp
+	route  harnessspec.CLIDispatch
 }
 
 func newACPRunner(factory acpAppFactory, stderr io.Writer, stores ...*harnessacp.Store) *acpRunner {
@@ -64,7 +62,7 @@ func (r *acpRunner) Run(ctx context.Context, req coreacp.TurnRequest) (coreacp.T
 	if err != nil {
 		return coreacp.TurnResponse{}, err
 	}
-	stream, err := app.Run(ctx, public.RunRequest{SessionID: session.ID, RunID: runID, TriggerRef: "interactive-input", FrontendRef: "acp", Principal: "acp-client", IdempotencyKey: runID, HumanAvailable: true, Body: body})
+	stream, err := app.Run(ctx, public.RunRequest{SessionID: session.ID, RunID: runID, TriggerRef: r.route.TriggerRef, FrontendRef: r.route.FrontendRef, AgentRef: r.route.AgentRef, Principal: "acp-client", IdempotencyKey: runID, HumanAvailable: true, Body: body})
 	if err != nil {
 		return coreacp.TurnResponse{}, err
 	}
@@ -203,34 +201,16 @@ func joinACPPrompt(blocks []coreacp.ContentBlock) string {
 }
 
 func serveACP(input io.Reader, output, stderr io.Writer, factory acpAppFactory, stores ...*harnessacp.Store) error {
+	return serveACPWithRoute(input, output, stderr, factory, harnessspec.CLIDispatch{}, stores...)
+}
+
+func serveACPWithRoute(input io.Reader, output, stderr io.Writer, factory acpAppFactory, route harnessspec.CLIDispatch, stores ...*harnessacp.Store) error {
 	runner := newACPRunner(factory, stderr, stores...)
+	runner.route = route
 	defer runner.Close()
 	agent := coreacp.NewAgent(runner, coreacp.AgentOptions{}, input, output)
 	<-agent.Done()
 	return nil
-}
-
-func newACPCmd() *cobra.Command {
-	var configPath string
-	cmd := &cobra.Command{Use: "acp", Short: "Serve ycode as an ACP agent over stdio", Args: cobra.NoArgs, SilenceUsage: true, RunE: func(_ *cobra.Command, _ []string) error {
-		base, err := os.UserConfigDir()
-		if err != nil {
-			return err
-		}
-		store, err := harnessacp.Open(filepath.Join(base, "ycode", "harness", "acp-sessions.json"))
-		if err != nil {
-			return err
-		}
-		return serveACP(os.Stdin, os.Stdout, os.Stderr, func(cwd string) (harnessApp, error) {
-			path := configPath
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(cwd, path)
-			}
-			return public.Load(path)
-		}, store)
-	}}
-	cmd.Flags().StringVar(&configPath, "config", "agent.yaml", "compiled agent.yaml path (relative to ACP session cwd)")
-	return cmd
 }
 
 var _ coreacp.SessionLifecycle = (*acpRunner)(nil)

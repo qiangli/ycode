@@ -31,6 +31,7 @@ func validateReachability(d *Document) error {
 		}
 	}
 	queue := []string{"agents/" + d.Spec.Runtime.DefaultAgentRef}
+	queue = append(queue, collectResourceRefs(reflect.ValueOf(d.Spec.Interfaces))...)
 	for id, node := range resources {
 		if strings.HasPrefix(id, "triggers/") || node.exported {
 			queue = append(queue, id)
@@ -173,8 +174,10 @@ func resourceKindForRef(name string) string {
 		return "hooks"
 	case "skill":
 		return "skills"
-	case "frontend":
+	case "frontend", "terminalFrontend":
 		return "frontends"
+	case "trigger":
+		return "triggers"
 	case "sink":
 		return "sinks"
 	default:

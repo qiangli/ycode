@@ -8,6 +8,178 @@ metadata:
     dhnt.io/purpose: canonical-self-hosting-harness
 
 spec:
+  interfaces:
+    cli:
+      identity: {name: ycode, version: build, compatibility: "Native YAML harness CLI; provider execution follows the compiled graph. Foreign CLI profiles are outside this POC."}
+      bootstrap: {configFlags: [--file, -f, --config], defaultFile: agent.yaml, env: YCODE_CONFIG}
+      presentation:
+        formats: [text, json, table]
+        defaultFormat: text
+        color: never
+        quiet: false
+        redact: compiled
+        help:
+          flag: help
+          shorthand: h
+          flagUsage: Show command help
+          template: |
+            {{with (or .Long .Short)}}{{.}}
+
+            {{end}}{{if .HasExample}}Examples:
+            {{.Example}}
+
+            {{end}}{{.UsageString}}
+          usageTemplate: |
+            Usage:
+              {{.UseLine}}{{if .HasAvailableSubCommands}} [command]{{end}}
+            {{if .HasAvailableSubCommands}}
+            Available Commands:
+            {{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}  {{rpad .Name .NamePadding}} {{.Short}}
+            {{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
+            Flags:
+            {{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}
+            {{end}}{{if .HasAvailableInheritedFlags}}
+            Global Flags:
+            {{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}
+            {{end}}
+        errors: {prefix: "error: ", usage: false}
+      exitCodes: {success: 0, usage: 2, configuration: 3, runtime: 1, unsupported: 4, interrupted: 130}
+      root:
+        name: ycode
+        usage: ycode [prompt]
+        short: Run the YAML-native ycode agent harness
+        args: {min: 0, max: -1}
+        flags:
+          - {name: file, shorthand: f, type: string, default: agent.yaml, usage: Strict harness configuration, scope: inherited, env: YCODE_CONFIG}
+          - {name: session, type: string, default: "", usage: Continue a durable session id, scope: inherited}
+        dispatch:
+          operation: input
+          frontendRef: one-shot
+          triggerRef: interactive-input
+          agentRef: coder
+          input: {mode: auto, stdin: true, empty: reject, terminalFrontendRef: tui, payloadKey: request, sessionFlag: session}
+        commands:
+          - name: prompt
+            usage: prompt [message]
+            short: Submit one prompt through the configured one-shot frontend
+            args: {min: 1, max: -1}
+            dispatch:
+              operation: input
+              frontendRef: one-shot
+              triggerRef: interactive-input
+              agentRef: coder
+              input: {mode: args, stdin: false, empty: reject, payloadKey: request, sessionFlag: session}
+          - name: repl
+            short: Run the configured line-oriented REPL frontend
+            args: {min: 0, max: 0}
+            dispatch:
+              operation: input
+              frontendRef: repl
+              triggerRef: interactive-input
+              agentRef: coder
+              input: {mode: repl, stdin: true, empty: reject, payloadKey: request, sessionFlag: session}
+          - {name: version, short: Print version information, args: {min: 0, max: 0}, dispatch: {operation: version}}
+          - {name: doctor, short: Compile the harness and report provider readiness, args: {min: 0, max: 0}, dispatch: {operation: readiness, agentRef: coder}}
+          - {name: validate, short: Validate and compile an agent.yaml harness, args: {min: 0, max: 0}, dispatch: {operation: validate}}
+          - {name: schema, short: Print the agent.yaml JSON Schema, args: {min: 0, max: 0}, dispatch: {operation: schema}}
+          - name: config
+            short: Inspect the compiled agent.yaml harness
+            long: "agent.yaml is the sole source of truth. This view is read-only."
+            args: {min: 0, max: 0}
+            commands:
+              - {name: show, short: Print the compiled harness as JSON, args: {min: 0, max: 0}, dispatch: {operation: inspect, resource: document, action: show}}
+              - {name: path, short: Print the compiled harness path, args: {min: 0, max: 0}, dispatch: {operation: inspect, resource: document, action: path}}
+              - {name: get, usage: "get <key>", short: Print one dot-separated compiled field, args: {min: 1, max: 1}, dispatch: {operation: inspect, resource: document, action: get}}
+          - name: model
+            short: Inspect models compiled from agent.yaml
+            args: {min: 0, max: 0}
+            commands:
+              - {name: current, short: Print the default agent's first configured model, args: {min: 0, max: 0}, dispatch: {operation: inspect, resource: models, action: current}}
+              - name: list
+                short: List configured model resources
+                args: {min: 0, max: 0}
+                flags:
+                  - {name: json, type: bool, default: "false", usage: Machine-readable JSON, scope: local}
+                dispatch: {operation: inspect, resource: models, action: list, columns: [id, providerRef]}
+          - name: tools
+            short: Inspect the sole Bashy tool compiled from agent.yaml
+            args: {min: 0, max: 0}
+            flags:
+              - {name: json, type: bool, default: "false", usage: Machine-readable JSON, scope: inherited}
+            commands:
+              - {name: list, short: Print the configured Bashy contract, args: {min: 0, max: 0}, dispatch: {operation: inspect, resource: bashy, action: list}}
+          - name: memory
+            short: Inspect memory policies compiled from agent.yaml
+            args: {min: 0, max: 0}
+            commands:
+              - {name: list, short: List configured memory resources, args: {min: 0, max: 0}, dispatch: {operation: inspect, resource: memories, action: list, columns: [provider, recall.rings, recall.maxItems]}}
+              - {name: show, usage: "show <name>", short: Show one configured memory policy, args: {min: 1, max: 1}, dispatch: {operation: inspect, resource: memories, action: show}}
+          - name: skill
+            short: Inspect skills compiled from agent.yaml
+            args: {min: 0, max: 0}
+            commands:
+              - {name: list, short: List configured skill resources, args: {min: 0, max: 0}, dispatch: {operation: inspect, resource: skills, action: list, columns: [version, source.catalogRef, effectsCeiling]}}
+              - {name: show, usage: "show <name>", short: Show one configured skill resource, args: {min: 1, max: 1}, dispatch: {operation: inspect, resource: skills, action: show}}
+          - name: features
+            short: List and verify the shipped-capability registry
+            args: {min: 0, max: 0}
+            commands:
+              - {name: list, short: List all features and their tiers, args: {min: 0, max: 0}, dispatch: {operation: features, action: list}}
+              - name: readme
+                short: Print the stable features as markdown
+                args: {min: 0, max: 0}
+                flags:
+                  - {name: write, type: string, default: "", usage: Replace BEGIN/END FEATURES markers in a file, scope: local}
+                dispatch: {operation: features, action: readme}
+              - {name: verify, short: Verify registry structure and source paths, args: {min: 0, max: 0}, dispatch: {operation: features, action: verify}}
+          - name: docs
+            usage: docs [topic]
+            short: Agent-facing capability prompts (embedded; works offline)
+            args: {min: 0, max: 1}
+            flags:
+              - {name: list, type: bool, default: "false", usage: Print a JSON list of topics, scope: local, conflicts: [all, search]}
+              - {name: all, type: bool, default: "false", usage: Concatenate every topic, scope: local, conflicts: [list, search]}
+              - {name: search, type: string, default: "", usage: Substring match on topic summary and when, scope: local, conflicts: [list, all]}
+            dispatch: {operation: docs}
+            commands:
+              - name: catalog
+                short: Task to capability surfaces matrix
+                args: {min: 0, max: 0}
+                flags:
+                  - {name: json, type: bool, default: "false", usage: Emit JSON, scope: local}
+                  - {name: task, type: string, default: "", usage: Substring filter on the task field, scope: local}
+                dispatch: {operation: docs, action: catalog}
+          - name: shell
+            aliases: [bash]
+            short: Execute one command through the compiled Bashy contract
+            args: {min: 0, max: 0}
+            flags:
+              - {name: command, shorthand: c, type: string, default: "", usage: Command to execute, scope: local, required: true}
+              - {name: workdir, type: string, default: "", usage: Working directory within the compiled workspace, scope: local}
+              - {name: timeout, type: string, default: "", usage: Execution timeout bounded by agent.yaml, scope: local}
+              - {name: login, shorthand: l, type: bool, default: "false", usage: Shell-wrapper transport compatibility flag, scope: local}
+            dispatch: {operation: shell, agentRef: coder}
+          - name: serve
+            short: Serve the network frontends declared by agent.yaml
+            args: {min: 0, max: 0}
+            dispatch: {operation: serve, frontendRef: http, triggerRef: interactive-input, agentRef: coder}
+          - name: acp
+            short: Serve the configured ACP frontend over stdio
+            args: {min: 0, max: 0}
+            flags:
+              - {name: config, type: string, default: agent.yaml, usage: Compiled harness configuration path, scope: local}
+            dispatch: {operation: acp, frontendRef: acp, triggerRef: interactive-input, agentRef: coder}
+          - name: completion
+            usage: "completion <shell>"
+            short: Generate completion for the declared command tree
+            args: {min: 1, max: 1, enum: [bash, zsh, fish, powershell]}
+            dispatch: {operation: completion}
+          - name: help
+            usage: help [command]
+            short: Show help for a declared command
+            args: {min: 0, max: -1}
+            dispatch: {operation: help}
+
   runtime:
     defaultAgentRef: coder
     workspace: .

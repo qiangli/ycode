@@ -3,9 +3,10 @@ id: c80317de674d
 kind: task
 title: Define the ycode CLI declaratively in agent.yaml
 seq: 31
-status: todo
+status: assigned
 priority: p0
 created: 2026-09-06T19:13:28.072141Z
+assignee: codex-gpt5.6-sol
 sprint: 132
 ---
 

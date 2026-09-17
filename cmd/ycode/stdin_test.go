@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -196,20 +197,18 @@ func TestNoInputErrorNamesEveryWayForward(t *testing.T) {
 // TestRootCmdSilencesCobraOutput — cobra printed the error and main printed it
 // again; and a RunE failure dragged the whole command listing with it.
 func TestRootCmdSilencesCobraOutput(t *testing.T) {
+	rootCmd := testRoot(t)
 	if !rootCmd.SilenceErrors {
 		t.Error("rootCmd.SilenceErrors is false — errors print twice")
 	}
-	if rootCmd.PersistentPreRunE == nil {
-		t.Fatal("rootCmd has no PersistentPreRunE to silence usage on a run failure")
+	var output, errors bytes.Buffer
+	rootCmd.SetOut(&output)
+	rootCmd.SetErr(&errors)
+	rootCmd.SetArgs([]string{"config", "--file", harnessFixture(t), "get", "spec.runtime.missing"})
+	if err := rootCmd.Execute(); err == nil {
+		t.Fatal("config get of a missing key succeeded")
 	}
-	// Usage suppression must reach SUBCOMMANDS too, since root's
-	// PersistentPreRunE is what runs for them.
-	child := rootCmd.Commands()[0]
-	child.SilenceUsage = false
-	if err := rootCmd.PersistentPreRunE(child, nil); err != nil {
-		t.Fatalf("PersistentPreRunE returned %v; it must only set a flag", err)
-	}
-	if !child.SilenceUsage {
-		t.Errorf("PersistentPreRunE did not silence usage on %q", child.Name())
+	if output.Len() != 0 || errors.Len() != 0 {
+		t.Errorf("command failure printed duplicate error or usage: stdout=%q stderr=%q", output.String(), errors.String())
 	}
 }

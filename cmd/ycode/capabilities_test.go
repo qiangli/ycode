@@ -23,6 +23,7 @@ import (
 // to reflect the new reality. If you've genuinely retired a capability,
 // remove the entry. If you've moved it, update the path.
 func TestCapabilityRegistry(t *testing.T) {
+	rootCmd := testRoot(t)
 	reg, err := capabilities.Load()
 	if err != nil {
 		t.Fatalf("capabilities.Load: %v", err)
@@ -69,6 +70,7 @@ func TestCapabilityRegistry(t *testing.T) {
 //   - shell-trace: internal shim called by wrap/sitecustomize, not
 //     user-facing — documented in cmd/ycode/main.go.
 func TestEveryTopLevelCobraVerbIsClaimed(t *testing.T) {
+	rootCmd := testRoot(t)
 	reg, err := capabilities.Load()
 	if err != nil {
 		t.Fatalf("capabilities.Load: %v", err)

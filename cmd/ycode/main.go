@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
-	"github.com/spf13/cobra"
-
 	"github.com/qiangli/coreutils/pkg/telemetry"
+	"github.com/qiangli/ycode/examples"
 	"github.com/qiangli/ycode/internal/buildinfo"
+	harnesscli "github.com/qiangli/ycode/internal/harness/cli"
+	harnessspec "github.com/qiangli/ycode/internal/harness/spec"
+	"gopkg.in/yaml.v3"
 )
 
 // Set via -ldflags at build time.
@@ -22,20 +25,14 @@ var (
 	commit  = "unknown"
 )
 
-var harnessFile = "agent.yaml"
-var harnessSession string
-
 func main() {
 	buildinfo.Set(version, commit)
-	if maybeHandleShellCmd() {
-		return
-	}
 	if err := realMain(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		var exit interface{ ExitCode() int }
 		if errors.As(err, &exit) {
 			os.Exit(exit.ExitCode())
 		}
-		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
@@ -45,99 +42,99 @@ func realMain() error {
 	defer func() { _ = shutdown(context.Background()) }()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	return rootCmd.ExecuteContext(ctx)
-}
-
-var rootCmd = &cobra.Command{
-	Use:           "ycode [prompt]",
-	Short:         "Run the YAML-native ycode agent harness",
-	Args:          cobra.ArbitraryArgs,
-	SilenceErrors: true,
-	SilenceUsage:  true,
-	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-		cmd.SilenceUsage = true
-		return nil
-	},
-	RunE: func(cmd *cobra.Command, args []string) error {
-		app, err := openHarnessApplication(harnessFile)
-		if err != nil {
-			return err
-		}
-		defer app.Close()
-		if len(args) != 0 {
-			return app.RunText(cmd.Context(), "one-shot", harnessSession, strings.Join(args, " "), cmd.OutOrStdout())
-		}
-		if !stdinIsTerminal() {
-			return app.RunReader(cmd.Context(), "one-shot", harnessSession, cmd.InOrStdin(), cmd.OutOrStdout())
-		}
-		return app.RunREPL(cmd.Context(), "tui", harnessSession, cmd.InOrStdin(), cmd.OutOrStdout())
-	},
-}
-
-var promptCmd = &cobra.Command{
-	Use:   "prompt [message]",
-	Short: "Submit one prompt through the configured one-shot frontend",
-	Args:  cobra.MinimumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		app, err := openHarnessApplication(harnessFile)
-		if err != nil {
-			return err
-		}
-		defer app.Close()
-		return app.RunText(cmd.Context(), "one-shot", harnessSession, strings.Join(args, " "), cmd.OutOrStdout())
-	},
-}
-
-var replCmd = &cobra.Command{
-	Use:   "repl",
-	Short: "Run the configured line-oriented REPL frontend",
-	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		app, err := openHarnessApplication(harnessFile)
-		if err != nil {
-			return err
-		}
-		defer app.Close()
-		return app.RunREPL(cmd.Context(), "repl", harnessSession, cmd.InOrStdin(), cmd.OutOrStdout())
-	},
-}
-
-var versionCmd = &cobra.Command{
-	Use:   "version",
-	Short: "Print version information",
-	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		_, err := fmt.Fprintf(cmd.OutOrStdout(), "ycode %s (%s)\n", version, commit)
+	doc, err := discoverCLI(os.Args[1:])
+	if err != nil {
 		return err
-	},
-}
-
-var doctorCmd = &cobra.Command{
-	Use:   "doctor",
-	Short: "Strictly compile agent.yaml and report provider readiness",
-	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		doc, err := loadHarness(harnessFile)
-		if err != nil {
-			return fmt.Errorf("doctor: compile harness: %w", err)
-		}
-		message, ready := harnessCredentialStatus(doc)
-		status := "BLOCKED"
-		if ready {
-			status = "READY"
-		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "provider\t%s\t%s\nconfig\tREADY\t%s (%s)\n", status, message, doc.Source, doc.ConfigDigest)
+	}
+	cmd, err := harnesscli.New(doc, dispatchCLI, harnesscli.Options{
+		Version: version, Commit: commit, IsTerminal: stdinIsTerminal(), LookupEnv: os.LookupEnv,
+	})
+	if err != nil {
 		return err
-	},
+	}
+	cmd.SetArgs(os.Args[1:])
+	return cmd.ExecuteContext(ctx)
 }
 
-func init() {
-	rootCmd.PersistentFlags().StringVarP(&harnessFile, "file", "f", "agent.yaml", "strict harness configuration")
-	rootCmd.PersistentFlags().StringVar(&harnessSession, "session", "", "continue a durable session id")
-	rootCmd.AddCommand(promptCmd, replCmd, versionCmd, doctorCmd, newACPCmd())
-	rootCmd.AddCommand(newModelCmd(), newSkillCmd(), newConfigCmd(), newMemoryCmd(), newToolsCmd())
-	rootCmd.AddCommand(newFeaturesCmd(), newDocsCmd(), newHarnessValidateCmd(), newHarnessSchemaCmd())
-	rootCmd.AddCommand(newShellCmd(), serveCmd)
+// Discovery selects a document. The embedded authored YAML owns bootstrap
+// flags and the entire offline command surface. Explicit paths fail closed.
+func discoverCLI(args []string) (*harnessspec.Document, error) {
+	var seed harnessspec.Document
+	if err := yaml.Unmarshal(examples.Agent(), &seed); err != nil {
+		return nil, err
+	}
+	bootstrap := seed.Spec.Interfaces.CLI.Bootstrap
+	configurationError := func(err error) error {
+		return &harnesscli.Error{Class: "configuration", Code: seed.Spec.Interfaces.CLI.ExitCodes.Configuration, Prefix: seed.Spec.Interfaces.CLI.Presentation.Errors.Prefix, Err: err}
+	}
+	path, explicit := bootstrap.DefaultFile, false
+	if bootstrap.Env != "" {
+		if value, ok := os.LookupEnv(bootstrap.Env); ok && value != "" {
+			path, explicit = value, true
+		}
+	}
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			break
+		}
+		selected := false
+		for _, flag := range bootstrap.ConfigFlags {
+			if args[i] == flag {
+				if i+1 == len(args) {
+					return nil, configurationError(fmt.Errorf("%s requires a value", flag))
+				}
+				i++
+				path, explicit, selected = args[i], true, true
+				break
+			}
+			if strings.HasPrefix(args[i], flag+"=") {
+				path, explicit, selected = strings.TrimPrefix(args[i], flag+"="), true, true
+				break
+			}
+			if !strings.HasPrefix(flag, "--") && strings.HasPrefix(args[i], flag) && len(args[i]) > len(flag) {
+				path, explicit, selected = strings.TrimPrefix(args[i], flag), true, true
+				break
+			}
+		}
+		if selected {
+			continue
+		}
+		// A value belonging to another authored flag cannot select a config.
+		// In particular, shell code and docs search text may begin with -f.
+		if consumesCLIValue(seed.Spec.Interfaces.CLI.Root, args[i]) && i+1 < len(args) {
+			i++
+		}
+	}
+	doc, err := harnessspec.Load(path)
+	if err == nil {
+		return doc, nil
+	}
+	if explicit || !errors.Is(err, os.ErrNotExist) {
+		return nil, configurationError(err)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	doc, err = harnessspec.Compile(abs, examples.Agent())
+	if err != nil {
+		return nil, configurationError(err)
+	}
+	return doc, nil
+}
+
+func consumesCLIValue(command harnessspec.CLICommand, arg string) bool {
+	for _, flag := range command.Flags {
+		if (arg == "--"+flag.Name || flag.Shorthand != "" && arg == "-"+flag.Shorthand) && flag.Type != "bool" {
+			return true
+		}
+	}
+	for _, child := range command.Commands {
+		if consumesCLIValue(child, arg) {
+			return true
+		}
+	}
+	return false
 }
 
 func encodePrompt(text string) ([]byte, error) {

@@ -8,9 +8,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/spf13/cobra"
-
 	"github.com/qiangli/ycode/internal/features"
+	harnesscli "github.com/qiangli/ycode/internal/harness/cli"
 )
 
 // inYcodeSourceTree reports whether the current working directory looks like
@@ -47,103 +46,65 @@ func inYcodeSourceTree() (string, bool) {
 	}
 }
 
-func newFeaturesCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "features",
-		Short: "List and verify the shipped-capability registry",
-		Long: "Inspects the user-facing inventory of capabilities reachable through the\n" +
-			"YAML-native harness. Tiers describe maturity; they do not select Go build\n" +
-			"variants or enable runtime policy.",
+func runFeatureInvocation(inv harnesscli.Invocation, streams harnesscli.IO) error {
+	reg, err := features.Load()
+	if err != nil {
+		return err
 	}
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "list",
-		Short: "List all features and their tiers",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			reg, err := features.Load()
-			if err != nil {
-				return err
-			}
-			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "TIER\tNAME\tFILES\tNOTES")
-			for _, t := range []features.Tier{features.TierStable, features.TierExperimental, features.TierWIP} {
-				for _, f := range reg.ByTier(t) {
-					files := ""
-					if len(f.Files) > 0 {
-						files = f.Files[0]
-						if len(f.Files) > 1 {
-							files = fmt.Sprintf("%s (+%d)", files, len(f.Files)-1)
-						}
+	switch inv.Dispatch.Action {
+	case "list":
+		tw := tabwriter.NewWriter(streams.Out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "TIER\tNAME\tFILES\tNOTES")
+		for _, t := range []features.Tier{features.TierStable, features.TierExperimental, features.TierWIP} {
+			for _, f := range reg.ByTier(t) {
+				files := ""
+				if len(f.Files) > 0 {
+					files = f.Files[0]
+					if len(f.Files) > 1 {
+						files = fmt.Sprintf("%s (+%d)", files, len(f.Files)-1)
 					}
-					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", f.Tier, f.Name, files, f.Notes)
 				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", f.Tier, f.Name, files, f.Notes)
 			}
-			return tw.Flush()
-		},
-	})
-
-	var readmeWrite string
-	readmeCmd := &cobra.Command{
-		Use:   "readme",
-		Short: "Print the stable features as a markdown bullet list (or write into a file via --write)",
-		Long: "Renders the stable-tier features from the registry as the bullet list embedded between\n" +
-			"<!-- BEGIN FEATURES --> and <!-- END FEATURES --> sentinels in README.md.\n\n" +
-			"With no flags, prints the rendered list to stdout.\n" +
-			"With --write README.md, replaces the section in-place (idempotent — exits 0\n" +
-			"with no change if the file is already in sync).",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			reg, err := features.Load()
-			if err != nil {
-				return err
-			}
-			rendered := features.RenderReadmeFeatures(reg)
-			if readmeWrite == "" {
-				fmt.Print(rendered)
-				return nil
-			}
-			changed, err := features.ReplaceSection(readmeWrite, rendered)
-			if err != nil {
-				return err
-			}
-			if changed {
-				fmt.Printf("updated: %s\n", readmeWrite)
-			} else {
-				fmt.Printf("up to date: %s\n", readmeWrite)
-			}
+		}
+		return tw.Flush()
+	case "readme":
+		readmeWrite, _ := inv.Flags["write"].(string)
+		rendered := features.RenderReadmeFeatures(reg)
+		if readmeWrite == "" {
+			fmt.Fprint(streams.Out, rendered)
 			return nil
-		},
+		}
+		changed, err := features.ReplaceSection(readmeWrite, rendered)
+		if err != nil {
+			return err
+		}
+		if changed {
+			fmt.Fprintf(streams.Out, "updated: %s\n", readmeWrite)
+		} else {
+			fmt.Fprintf(streams.Out, "up to date: %s\n", readmeWrite)
+		}
+		return nil
+	case "verify":
+		// Always validate registry structure (Load already calls Validate).
+		// On-disk file check only when we're inside the ycode source tree;
+		// running from any other repo would false-positive every entry.
+		root, inSource := inYcodeSourceTree()
+		if !inSource {
+			fmt.Fprintf(streams.Out, "registry: structurally valid (%d features)\n", len(reg.Features))
+			fmt.Fprintln(streams.Out, "note: on-disk file check skipped — not running inside the ycode source tree")
+			return nil
+		}
+		issues := features.Verify(reg, root)
+		for _, iss := range issues {
+			fmt.Fprintln(streams.Err, iss)
+		}
+		if len(issues) > 0 {
+			return fmt.Errorf("%d feature registry verification issue(s)", len(issues))
+		}
+		fmt.Fprintf(streams.Out, "registry: ok (%d features, all declared paths exist)\n", len(reg.Features))
+		return nil
+	default:
+		return fmt.Errorf("unsupported feature action %q", inv.Dispatch.Action)
 	}
-	readmeCmd.Flags().StringVar(&readmeWrite, "write", "", "Path to a file containing BEGIN/END FEATURES markers; replaces the section in-place")
-	cmd.AddCommand(readmeCmd)
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "verify",
-		Short: "Verify the registry structure (and codebase paths if run from the ycode source tree)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			reg, err := features.Load()
-			if err != nil {
-				return err
-			}
-			// Always validate registry structure (Load already calls Validate).
-			// On-disk file check only when we're inside the ycode source tree;
-			// running from any other repo would false-positive every entry.
-			root, inSource := inYcodeSourceTree()
-			if !inSource {
-				fmt.Printf("registry: structurally valid (%d features)\n", len(reg.Features))
-				fmt.Println("note: on-disk file check skipped — not running inside the ycode source tree")
-				return nil
-			}
-			issues := features.Verify(reg, root)
-			for _, iss := range issues {
-				fmt.Fprintln(os.Stderr, iss)
-			}
-			if len(issues) > 0 {
-				return fmt.Errorf("%d feature registry verification issue(s)", len(issues))
-			}
-			fmt.Printf("registry: ok (%d features, all declared paths exist)\n", len(reg.Features))
-			return nil
-		},
-	})
-
-	return cmd
 }

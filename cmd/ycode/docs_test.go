@@ -32,6 +32,7 @@ import (
 // `model ls`) is not caught by this test today — add a deeper check if
 // a future rename actually causes pain.
 func TestDocsCobraCrossRef(t *testing.T) {
+	rootCmd := testRoot(t)
 	known := map[string]bool{}
 	collectCommandNames(rootCmd, known)
 	// Cobra built-ins registered lazily, not always visible via

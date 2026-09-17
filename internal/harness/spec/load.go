@@ -50,6 +50,9 @@ func Compile(source string, data []byte) (*Document, error) {
 	if err := inspectNode(&node); err != nil {
 		return nil, located(source, err)
 	}
+	if err := validateCLINode(&node); err != nil {
+		return nil, located(source, err)
+	}
 	doc.Source, doc.BaseDir = source, filepath.Dir(source)
 	if err := doc.resolveImports(); err != nil {
 		return nil, located(source, err)
@@ -118,6 +121,9 @@ func (d *Document) validate() error {
 		return err
 	}
 	if err := validateTypedReferences(d); err != nil {
+		return err
+	}
+	if err := ValidateCLI(d); err != nil {
 		return err
 	}
 	if err := validateReachability(d); err != nil {
@@ -243,6 +249,8 @@ func validateTypedReferences(d *Document) error {
 	register("hookRef", "spec.hooks", d.Spec.Hooks)
 	register("skillRef", "spec.skills", d.Spec.Skills)
 	register("frontendRef", "spec.frontends", d.Spec.Frontends)
+	register("terminalFrontendRef", "spec.frontends", d.Spec.Frontends)
+	register("triggerRef", "spec.triggers", d.Spec.Triggers)
 	register("sinkRef", "spec.sinks", d.Spec.Sinks)
 	if err := walkReferences(reflect.ValueOf(d.Spec), "spec", targets); err != nil {
 		return err

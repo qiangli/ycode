@@ -15,10 +15,10 @@ func TestHarnessValidateCommand(t *testing.T) {
 	t.Setenv("BASHY_SKILLS_DIR", filepath.Join(dir, "skills"))
 	t.Setenv("YCODE_DATA_DIR", filepath.Join(dir, "ycode-data"))
 	t.Setenv("OPENAI_API_KEY", "test-secret")
-	cmd := newHarnessValidateCmd()
+	cmd := testRoot(t)
 	var output bytes.Buffer
 	cmd.SetOut(&output)
-	cmd.SetArgs([]string{"--file", filepath.Join("..", "..", "examples", "agent.yaml")})
+	cmd.SetArgs([]string{"validate", "--file", filepath.Join("..", "..", "examples", "agent.yaml")})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -28,9 +28,10 @@ func TestHarnessValidateCommand(t *testing.T) {
 }
 
 func TestHarnessSchemaCommand(t *testing.T) {
-	cmd := newHarnessSchemaCmd()
+	cmd := testRoot(t)
 	var output bytes.Buffer
 	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"schema"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}

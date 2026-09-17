@@ -19,18 +19,18 @@ func harnessFixture(t *testing.T) string {
 
 func TestConfigIsReadOnlyCompiledHarnessInspection(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-secret")
-	cmd := newConfigCmd()
+	cmd := testRoot(t)
 	if cmd.CommandPath() == "" {
 		t.Fatal("command path is empty")
 	}
 	for _, forbidden := range []string{"set", "unset"} {
-		if child, _, err := cmd.Find([]string{forbidden}); err == nil && child.Name() == forbidden {
+		if child, _, err := cmd.Find([]string{"config", forbidden}); err == nil && child.Name() == forbidden {
 			t.Fatalf("imperative config command %q is still registered", forbidden)
 		}
 	}
 	var output bytes.Buffer
 	cmd.SetOut(&output)
-	cmd.SetArgs([]string{"--file", harnessFixture(t), "get", "spec.runtime.defaultAgentRef"})
+	cmd.SetArgs([]string{"config", "--file", harnessFixture(t), "get", "spec.runtime.defaultAgentRef"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -43,15 +43,15 @@ func TestModelToolsMemoryAndSkillsReadCompiledHarness(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-secret")
 	fixture := harnessFixture(t)
 
-	model := newModelCmd()
+	model := testRoot(t)
 	for _, forbidden := range []string{"use", "p2p"} {
-		if child, _, err := model.Find([]string{forbidden}); err == nil && child.Name() == forbidden {
+		if child, _, err := model.Find([]string{"model", forbidden}); err == nil && child.Name() == forbidden {
 			t.Fatalf("imperative model command %q is still registered", forbidden)
 		}
 	}
 	var modelOutput bytes.Buffer
 	model.SetOut(&modelOutput)
-	model.SetArgs([]string{"--file", fixture, "current"})
+	model.SetArgs([]string{"model", "--file", fixture, "current"})
 	if err := model.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -59,10 +59,10 @@ func TestModelToolsMemoryAndSkillsReadCompiledHarness(t *testing.T) {
 		t.Fatalf("model current = %q", modelOutput.String())
 	}
 
-	tools := newToolsCmd()
+	tools := testRoot(t)
 	var toolsOutput bytes.Buffer
 	tools.SetOut(&toolsOutput)
-	tools.SetArgs([]string{"--file", fixture, "--json", "list"})
+	tools.SetArgs([]string{"tools", "--file", fixture, "--json", "list"})
 	if err := tools.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -70,15 +70,15 @@ func TestModelToolsMemoryAndSkillsReadCompiledHarness(t *testing.T) {
 		t.Fatalf("tools = %s", toolsOutput.String())
 	}
 
-	memory := newMemoryCmd()
+	memory := testRoot(t)
 	for _, forbidden := range []string{"forget", "export"} {
-		if child, _, err := memory.Find([]string{forbidden}); err == nil && child.Name() == forbidden {
+		if child, _, err := memory.Find([]string{"memory", forbidden}); err == nil && child.Name() == forbidden {
 			t.Fatalf("legacy memory command %q is still registered", forbidden)
 		}
 	}
 	var memoryOutput bytes.Buffer
 	memory.SetOut(&memoryOutput)
-	memory.SetArgs([]string{"--file", fixture, "list"})
+	memory.SetArgs([]string{"memory", "--file", fixture, "list"})
 	if err := memory.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -86,10 +86,10 @@ func TestModelToolsMemoryAndSkillsReadCompiledHarness(t *testing.T) {
 		t.Fatalf("memory list = %q", memoryOutput.String())
 	}
 
-	skills := newSkillCmd()
+	skills := testRoot(t)
 	var skillsOutput bytes.Buffer
 	skills.SetOut(&skillsOutput)
-	skills.SetArgs([]string{"--file", fixture, "list"})
+	skills.SetArgs([]string{"skill", "--file", fixture, "list"})
 	if err := skills.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestShellOneShotUsesCompiledBashyPolicyBoundary(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-secret")
 	configRoot := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configRoot)
-	workspace := t.TempDir()
+	workspace := filepath.Dir(harnessFixture(t))
 	err := runHarnessShellOneShot(&shellFlags{harnessFile: harnessFixture(t), workDir: workspace, command: "pwd"})
 	if err != nil {
 		t.Fatal(err)

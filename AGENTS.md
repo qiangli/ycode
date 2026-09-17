@@ -12,7 +12,8 @@ another settings system.
 
 The ownership boundary is strict:
 
-- **YAML owns policy:** agents, models and routes, graph topology, typed state,
+- **YAML owns policy:** command trees, CLI presentation and dispatch, agents,
+  models and routes, graph topology, typed state,
   retry, budgets, queues, locks, hooks, triggers, sinks, placement, lifecycle,
   compaction, permissions and approval decisions.
 - **Go owns neutral mechanisms:** strict compilation, graph interpretation,

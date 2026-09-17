@@ -7,9 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	"github.com/qiangli/ycode/internal/docs"
+	harnesscli "github.com/qiangli/ycode/internal/harness/cli"
 )
 
 // `ycode docs` — the agent-facing capability index. See
@@ -17,7 +16,7 @@ import (
 //
 // SAFEGUARDS (mirror of internal/docs/embed.go safeguard #8):
 //
-//   - This is the ONLY cobra entry point for the agent-facing docs.
+//   - This is the ONLY execution entry point for the agent-facing docs.
 //     The AGENTS.md one-liner is a separate registration that
 //     delegates to internal/docs functions — never duplicate the
 //     content here.
@@ -32,81 +31,41 @@ import (
 //   - Do not add side effects (no telemetry, no analytics, no cache
 //     writes). `ycode docs` MUST be safe to run from any sandbox at any
 //     time including before `ycode init` has ever been run.
-func newDocsCmd() *cobra.Command {
-	var (
-		listFlag   bool
-		allFlag    bool
-		searchFlag string
-	)
-
-	cmd := &cobra.Command{
-		Use:   "docs [topic]",
-		Short: "Agent-facing capability prompts (embedded; works offline)",
-		Long: `Print curated agent-facing prompts describing ycode capabilities.
-
-With no arg, prints the topic index. With a <topic> arg, prints the
-prompt for that topic. Output is markdown on stdout, intended to be
-read by an LLM agent or piped into a system prompt.
-
-For the operator-facing CLI surface (subcommands, flags, usage), use
-'ycode help' or 'ycode <cmd> --help'. docs and help are complementary:
-docs is curated prose for agent decision-making; help is auto-generated
-structural metadata for humans.`,
-		Args:         cobra.MaximumNArgs(1),
-		SilenceUsage: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			switch {
-			case listFlag:
-				return runDocsList(cmd.OutOrStdout())
-			case allFlag:
-				return runDocsAll(cmd.OutOrStdout())
-			case searchFlag != "":
-				return runDocsSearch(cmd.OutOrStdout(), searchFlag)
-			case len(args) == 0:
-				return runDocsIndex(cmd.OutOrStdout())
-			default:
-				return runDocsTopic(cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0])
-			}
-		},
+func runDocsInvocation(inv harnesscli.Invocation, streams harnesscli.IO) error {
+	switch inv.Dispatch.Action {
+	case "":
+		listFlag, _ := inv.Flags["list"].(bool)
+		allFlag, _ := inv.Flags["all"].(bool)
+		searchFlag, _ := inv.Flags["search"].(string)
+		switch {
+		case listFlag:
+			return runDocsList(streams.Out)
+		case allFlag:
+			return runDocsAll(streams.Out)
+		case searchFlag != "":
+			return runDocsSearch(streams.Out, searchFlag)
+		case len(inv.Arguments) == 0:
+			return runDocsIndex(streams.Out)
+		default:
+			return runDocsTopic(streams.Out, streams.Err, inv.Arguments[0])
+		}
+	case "catalog":
+		cat, err := docs.LoadCatalog()
+		if err != nil {
+			return err
+		}
+		taskFlag, _ := inv.Flags["task"].(string)
+		jsonFlag, _ := inv.Flags["json"].(bool)
+		if taskFlag != "" {
+			cat = cat.FilterByTask(taskFlag)
+		}
+		if jsonFlag {
+			return cat.RenderJSON(streams.Out)
+		}
+		return cat.RenderText(streams.Out)
+	default:
+		return fmt.Errorf("unsupported docs action %q", inv.Dispatch.Action)
 	}
-	cmd.Flags().BoolVar(&listFlag, "list", false, "Print JSON list of topics (machine-readable)")
-	cmd.Flags().BoolVar(&allFlag, "all", false, "Concatenate every topic (for system-prompt stuffing; use sparingly)")
-	cmd.Flags().StringVar(&searchFlag, "search", "", "Substring match on topic, summary, and when fields")
-	cmd.AddCommand(newDocsCatalogCmd())
-	return cmd
-}
-
-// newDocsCatalogCmd is the task→surfaces catalog. One pull tells an
-// agent which CLI verb or yc built-in reaches a given capability,
-// without making them probe every surface in turn. Same offline
-// contract as the rest of `ycode docs` — no I/O, no telemetry, exit
-// 0 for documented invocations.
-func newDocsCatalogCmd() *cobra.Command {
-	var (
-		jsonFlag bool
-		taskFlag string
-	)
-	cmd := &cobra.Command{
-		Use:          "catalog",
-		Short:        "Task → surfaces matrix (cli / yc) across ycode capabilities",
-		SilenceUsage: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cat, err := docs.LoadCatalog()
-			if err != nil {
-				return err
-			}
-			if taskFlag != "" {
-				cat = cat.FilterByTask(taskFlag)
-			}
-			if jsonFlag {
-				return cat.RenderJSON(cmd.OutOrStdout())
-			}
-			return cat.RenderText(cmd.OutOrStdout())
-		},
-	}
-	cmd.Flags().BoolVar(&jsonFlag, "json", false, "Emit JSON instead of plain text")
-	cmd.Flags().StringVar(&taskFlag, "task", "", "Substring filter on the task field")
-	return cmd
 }
 
 func runDocsIndex(w io.Writer) error {

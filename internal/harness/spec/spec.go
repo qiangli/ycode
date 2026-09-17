@@ -31,6 +31,7 @@ type Metadata struct {
 	Annotations map[string]string `yaml:"annotations,omitempty" json:"annotations,omitempty"`
 }
 type Spec struct {
+	Interfaces    Interfaces                `yaml:"interfaces,omitempty" json:"interfaces,omitempty"`
 	Runtime       Runtime                   `yaml:"runtime" json:"runtime"`
 	Imports       map[string]Import         `yaml:"imports,omitempty" json:"imports,omitempty"`
 	Sources       map[string]Source         `yaml:"sources" json:"sources"`

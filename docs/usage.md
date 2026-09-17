@@ -4,6 +4,12 @@ ycode executes the harness compiled from `agent.yaml`. CLI flags choose a file
 or a declared frontend; they do not override models, tools, retries, policy, or
 loop behavior.
 
+The command tree, flags, help, completion and routes are declared in
+`spec.interfaces.cli`. See [the CLI contract](cli-contract.md) for migration,
+bootstrap discovery and the bounded POC compatibility statement. Offline
+help uses the embedded canonical YAML when no default project file exists;
+an explicitly selected missing or invalid file fails.
+
 ## Prepare and validate a harness
 
 ```bash
@@ -64,7 +70,7 @@ Run a single Bashy program without a model call:
 ycode shell --file agent.yaml -c 'pwd'
 ```
 
-For `shell`, put its local `--file` after the subcommand as shown. The command
+The inherited `--file` flag works before or after a subcommand. The command
 is preflighted, evaluated by the default agent's policy, and executed only on
 an allow decision with the same digest-bound cwd/environment/limits. There is
 no interactive legacy shell and no permission bypass flag.

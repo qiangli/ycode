@@ -18,10 +18,18 @@ computes the configuration digest. A valid document explicitly declares:
 - policies and HITL resume actions;
 - agents, subagent relationships, hooks, and typed pipelines;
 - local/network frontends, triggers, output routes, and observability.
+- the command tree, arguments, flags, help, completion and typed CLI dispatch.
 
 There is no secondary mutable configuration layer, no imperative model/tool
 activation, and no hidden retry, convergence, or fallback policy. If a choice
 changes behavior, it belongs in the compiled document.
+
+`spec.interfaces.cli` projects this document onto a generic Cobra parser in
+`internal/harness/cli`. The bootstrap discovers the selected YAML document;
+neutral operation handlers dispatch the resulting typed invocation to the
+existing composition root. Offline help embeds the authored canonical YAML,
+and configured execution still loads the selected project file. See
+[the CLI contract](cli-contract.md).
 
 ## Runtime flow
 

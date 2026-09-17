@@ -15,6 +15,7 @@ fi
 echo "==> contract, inventory, five-profile goldens, and platform rejection"
 go test -race -count="$count" \
 	./internal/harness/conformance \
+	./internal/harness/cli \
 	./internal/harness/spec \
 	./internal/harness/pipeline
 
@@ -37,7 +38,7 @@ go test -race -count="$count" ./internal/harness/frontend
 echo "==> public embedding and ACP adapter"
 go test -race -count="$count" ./pkg/ycode
 go test -race -count="$count" ./cmd/ycode \
-	-run 'Test(ACP|ServeACP|HarnessValidateCommand|HarnessSchemaCommand|ConfigIsReadOnlyCompiledHarnessInspection|ModelToolsMemoryAndSkillsReadCompiledHarness|ShellOneShotUsesCompiledBashyPolicyBoundary)'
+	-run 'Test(ACP|ServeACP|YAMLCLI|CLIDiscovery|HarnessValidateCommand|HarnessSchemaCommand|ConfigIsReadOnlyCompiledHarnessInspection|ModelToolsMemoryAndSkillsReadCompiledHarness|ShellOneShotUsesCompiledBashyPolicyBoundary)'
 
 goos="$(go env GOOS)"
 case "$goos" in
