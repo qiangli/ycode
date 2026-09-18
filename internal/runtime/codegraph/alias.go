@@ -1,11 +1,11 @@
 // The codegraph engine (gfy-backed code graph build/load/mirror) now lives
-// in the shared AgentOS hub at github.com/qiangli/coreutils/pkg/codegraph.
+// in the shared AgentOS hub at github.com/qiangli/yoke/pkg/codegraph.
 // This file re-exports it under the original import path so in-tree callers
 // and this package's MCP server (mcpserver.go, which depends on ycode's
 // internal mcp package) compile unchanged.
 package codegraph
 
-import ccg "github.com/qiangli/coreutils/pkg/codegraph"
+import ccg "github.com/qiangli/yoke/pkg/codegraph"
 
 // DefaultCachePath is the on-disk graph cache location.
 const DefaultCachePath = ccg.DefaultCachePath

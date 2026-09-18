@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/qiangli/coreutils/pkg/dag"
 	"github.com/qiangli/ycode/internal/harness/spec"
+	"github.com/qiangli/yoke/pkg/dag"
 )
 
 type Runner struct {

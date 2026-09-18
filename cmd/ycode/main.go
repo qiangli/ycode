@@ -11,11 +11,11 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/qiangli/coreutils/pkg/telemetry"
 	"github.com/qiangli/ycode/examples"
 	"github.com/qiangli/ycode/internal/buildinfo"
 	harnesscli "github.com/qiangli/ycode/internal/harness/cli"
 	harnessspec "github.com/qiangli/ycode/internal/harness/spec"
+	"github.com/qiangli/yoke/pkg/telemetry"
 	"gopkg.in/yaml.v3"
 )
 

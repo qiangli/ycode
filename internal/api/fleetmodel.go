@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/qiangli/coreutils/pkg/fleet"
+	"github.com/qiangli/yoke/pkg/fleet"
 )
 
 // bandRE matches a capability-band selector: L3, l3, b3, band:3, band=3, band 3.

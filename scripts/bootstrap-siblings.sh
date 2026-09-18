@@ -32,6 +32,7 @@ repo_url() {
         sh) echo "https://github.com/qiangli/sh.git" ;;
         nadir) echo "https://github.com/qiangli/nadir.git" ;;
         coreutils) echo "https://github.com/qiangli/coreutils.git" ;;
+        yoke) echo "https://github.com/qiangli/yoke.git" ;;
         bashy) echo "https://github.com/qiangli/bashy.git" ;;
         filebrowser) echo "https://github.com/qiangli/filebrowser.git" ;;
         readline) echo "https://github.com/qiangli/readline.git" ;;

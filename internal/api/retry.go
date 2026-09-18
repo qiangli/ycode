@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/qiangli/coreutils/pkg/telemetry"
+	"github.com/qiangli/yoke/pkg/telemetry"
 
 	yotel "github.com/qiangli/ycode/internal/telemetry/otel"
 )

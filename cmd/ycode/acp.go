@@ -9,10 +9,10 @@ import (
 	"strings"
 	"sync"
 
-	coreacp "github.com/qiangli/coreutils/pkg/acp"
 	harnessacp "github.com/qiangli/ycode/internal/harness/acp"
 	harnessspec "github.com/qiangli/ycode/internal/harness/spec"
 	public "github.com/qiangli/ycode/pkg/ycode"
+	coreacp "github.com/qiangli/yoke/pkg/acp"
 )
 
 type harnessApp interface {

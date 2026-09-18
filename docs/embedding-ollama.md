@@ -26,7 +26,7 @@ ycode binary
 
 ```
 go.mod:   replace github.com/ollama/ollama => ../coreutils/external/ollama/src
-import:   "github.com/qiangli/coreutils/pkg/ollm" → resolves to ../coreutils/pkg/ollm
+import:   "github.com/qiangli/yoke/pkg/ollm" → resolves to ../coreutils/pkg/ollm
 ```
 
 The `coreutils/pkg/ollm` package deliberately keeps ycode behind a small pure-Go client boundary. It imports Ollama's API/embed packages from `../coreutils/external/ollama/src` and avoids pulling the server/runner implementation into ycode itself.

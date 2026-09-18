@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/qiangli/coreutils/pkg/ollm"
+	"github.com/qiangli/yoke/pkg/ollm"
 )
 
 func main() {

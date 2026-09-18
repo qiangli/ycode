@@ -12,9 +12,9 @@ import (
 	"sync"
 	"testing"
 
-	coreacp "github.com/qiangli/coreutils/pkg/acp"
 	harnessacp "github.com/qiangli/ycode/internal/harness/acp"
 	public "github.com/qiangli/ycode/pkg/ycode"
+	coreacp "github.com/qiangli/yoke/pkg/acp"
 )
 
 type fakeHarness struct {

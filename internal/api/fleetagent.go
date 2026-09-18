@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/qiangli/coreutils/pkg/fleet"
+	"github.com/qiangli/yoke/pkg/fleet"
 )
 
 // FleetAgent is the ycode-facing view of a fleet agent: enough to list it,
