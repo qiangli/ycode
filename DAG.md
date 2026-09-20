@@ -23,21 +23,18 @@ bashy dag test          # unit tests
 
 ### help
 Show the target list.
-Effects: read
 ```bash
 bashy dag --list
 ```
 
 ### tidy
 Run go mod tidy, gofmt and vet.
-Effects: write
 ```bash
 ./scripts/tidy.sh
 ```
 
 ### fmtcheck
 Fail if any file is not gofmt-clean. Read-only; `tidy` is the apply step.
-Effects: read
 ```bash
 ./scripts/fmtcheck.sh
 ```
@@ -45,7 +42,7 @@ Effects: read
 ### vet
 Static analysis over every package in this module. Nested prior-art modules are
 excluded by Go's module boundary.
-Effects: read
+Effects: exec, net, read, write
 ```bash
 go vet ./...
 ```
@@ -53,14 +50,14 @@ go vet ./...
 ### verify-features
 Validate the feature registry: every path in internal/features/registry.yaml
 must exist. This is the usual failure after moving or deleting a package.
-Effects: read
+Effects: exec, net, read, write
 ```bash
 go test -count=1 ./internal/features/...
 ```
 
 ### compile
 Compile bin/ycode. One binary, no tags.
-Effects: write
+Effects: exec, net, read, write
 ```bash
 go build -trimpath \
   -ldflags "-s -w -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev) -X main.commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
@@ -72,7 +69,7 @@ echo "Built bin/ycode"
 ### test
 Unit tests with the race detector. Nested prior-art modules are excluded by
 Go's module boundary.
-Effects: read
+Effects: exec, net, read, write
 ```bash
 go test -short -race -count=1 ./...
 ```
@@ -103,14 +100,13 @@ echo "Installed ycode to $dir/ (shims not installed)"
 
 ### clean
 Remove build artifacts.
-Effects: write
+Effects: destroy, write
 ```bash
 rm -rf bin dist
 ```
 
 ### install-hooks
 Symlink scripts/git-hooks/* into .git/hooks/.
-Effects: write
 ```bash
 ./scripts/install-hooks.sh
 ```
@@ -120,14 +116,12 @@ Effects: write
 
 ### release-check
 Validate .goreleaser.yaml, its stages and its name templates. Builds nothing.
-Effects: read
 ```bash
 bashy release check
 ```
 
 ### release-plan
 Print what a release would build and package.
-Effects: read
 ```bash
 bashy release plan
 ```
@@ -135,7 +129,6 @@ bashy release plan
 ### release-snapshot
 Build, archive and checksum all five release targets without a tag. Produces
 `dist/ycode-<os>-<arch>.tar.gz`, `SHA256SUMS` and `release-ledger.json`.
-Effects: write
 ```bash
 bashy release --snapshot
 ```
@@ -146,7 +139,6 @@ Run the native, LLM-free release gate against exact bytes published under
 host's archive and the shared `SHA256SUMS`, verifies before extraction, then
 checks the version, help and in-process shell surfaces. All work stays in
 `.qa/`. `YCODE_REPO` defaults to `qiangli/ycode`.
-Effects: write, net
 ```bash
 set -e
 BASHY_EXE="${BASHY:-bashy}"
@@ -189,28 +181,27 @@ echo "Results: PASS $VER $os/$arch ($asset, sha256 verified)"
 
 ### test-integration
 Go integration tests. Requires a running server.
-Effects: read net
+Effects: exec, net, read, write
 ```bash
 go test -tags integration -v -count=1 ./internal/integration/...
 ```
 
 ### test-tui
 Local frontend parity and interactive approval lifecycle tests.
-Effects: read
+Effects: exec, net, read, write
 ```bash
 go test -race -count=1 ./internal/harness/frontend -run 'Test(OneShotStdinREPLAndTUIHaveCanonicalParity|InteractiveApprovalResumeUsesSameEventStream)'
 ```
 
 ### test-tui-e2e
 Interactive frontend projection in a pseudo-terminal.
-Effects: read
+Effects: exec, net, read, write
 ```bash
 go test -race -count=1 -timeout 60s ./internal/harness/frontend -run '^TestPTYREPLProjectsCanonicalEvents$'
 ```
 
 ### test-ui
 Playwright browser tests. Requires a running server and npx.
-Effects: read net
 ```bash
 cd e2e && npx playwright test
 ```
@@ -219,7 +210,7 @@ cd e2e && npx playwright test
 
 ### eval-contract
 Contract-tier evals: deterministic, no LLM.
-Effects: read
+Effects: exec, net, read, write
 ```bash
 go test -count=1 ./internal/eval/contract/...
 ```
@@ -227,14 +218,14 @@ go test -count=1 ./internal/eval/contract/...
 ### eval-init
 Replay /init via aperio. Offline; skips if the cassette is unrecorded.
 Requires: compile
-Effects: read
+Effects: exec, net, read, write
 ```bash
 go test -count=1 -tags eval ./internal/eval/init/...
 ```
 
 ### bench-memory
 Memory retrieval quality benchmarks. No LLM.
-Effects: read
+Effects: exec, net, read, write
 ```bash
 go test -run XXX -bench . -benchtime 1x ./pkg/memex/...
 ```
