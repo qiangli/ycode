@@ -12,6 +12,11 @@ replace github.com/qiangli/nadir => ../nadir
 
 replace github.com/qiangli/bashy => ../bashy
 
+// bashy's own `replace github.com/bashsharp/bashsharp => ../bashsharp`
+// (Sprint 211: sh <- bashsharp <- bashy) does not propagate here either — the
+// one non-qiangli sibling; flat like the rest.
+replace github.com/bashsharp/bashsharp => ../bashsharp
+
 // Bashy's filebrowser replacement does not propagate to embedding modules.
 replace github.com/filebrowser/filebrowser/v2 => ../filebrowser
 
@@ -103,6 +108,7 @@ require (
 	github.com/asticode/go-astits v1.15.0 // indirect
 	github.com/aymanbagabas/go-pty v0.2.3 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
+	github.com/bashsharp/bashsharp v0.0.0 // indirect
 	github.com/benhoyt/goawk v1.31.0 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/bodgit/plumbing v1.3.0 // indirect
