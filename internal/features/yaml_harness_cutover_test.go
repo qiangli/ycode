@@ -63,7 +63,7 @@ func TestYAMLHarnessLiveTreeExcludesLegacyHarness(t *testing.T) {
 		}
 		if entry.IsDir() {
 			switch entry.Name() {
-			case ".git", "external", "priorart":
+			case ".git", "examples", "external", "priorart":
 				return filepath.SkipDir
 			}
 			return nil
