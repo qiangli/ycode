@@ -31,7 +31,11 @@ type Metadata struct {
 	Annotations map[string]string `yaml:"annotations,omitempty" json:"annotations,omitempty"`
 }
 type Spec struct {
-	Interfaces    Interfaces                `yaml:"interfaces,omitempty" json:"interfaces,omitempty"`
+	Interfaces Interfaces `yaml:"interfaces,omitempty" json:"interfaces,omitempty"`
+	// Defaults is the explicit inheritance template for the resource sections.
+	// Compile applies it before typed decoding; the original declaration remains
+	// in the compiled document so dumps and digests retain its provenance.
+	Defaults      map[string]any            `yaml:"defaults,omitempty" json:"defaults,omitempty"`
 	Runtime       Runtime                   `yaml:"runtime" json:"runtime"`
 	Imports       map[string]Import         `yaml:"imports,omitempty" json:"imports,omitempty"`
 	Sources       map[string]Source         `yaml:"sources" json:"sources"`

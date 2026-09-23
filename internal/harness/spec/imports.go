@@ -159,6 +159,9 @@ func decodeImport(source string, data []byte) (*Document, error) {
 	if doc.APIVersion != APIVersion || doc.Kind != Kind {
 		return nil, located(source, errors.New("import has incompatible apiVersion or kind"))
 	}
+	if len(doc.Spec.Defaults) != 0 {
+		return nil, located(source, errors.New("import cannot contribute global defaults"))
+	}
 	doc.Source, doc.BaseDir = source, filepath.Dir(source)
 	return &doc, nil
 }

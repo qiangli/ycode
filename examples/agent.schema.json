@@ -1,0 +1,2359 @@
+{
+  "$comment": "Property and type inventory. The ycode compiler is authoritative for required fields and cross-field validity.",
+  "$defs": {
+    "Admission": {
+      "additionalProperties": false,
+      "properties": {
+        "maxPendingPerPrincipal": {
+          "type": "integer"
+        },
+        "onLimit": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Agent": {
+      "additionalProperties": false,
+      "properties": {
+        "contextRef": {
+          "type": "string"
+        },
+        "delegations": {
+          "items": {
+            "$ref": "#/$defs/Delegation"
+          },
+          "type": "array"
+        },
+        "description": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "effectsCeiling": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "hookRefs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "inputSchema": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "lifecycleRef": {
+          "type": "string"
+        },
+        "memoryRef": {
+          "type": "string"
+        },
+        "modelRouteRef": {
+          "type": "string"
+        },
+        "outputSchema": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "permissionCeiling": {
+          "type": "string"
+        },
+        "pipelineRef": {
+          "type": "string"
+        },
+        "placementRef": {
+          "type": "string"
+        },
+        "policyRef": {
+          "type": "string"
+        },
+        "presentation": {
+          "$ref": "#/$defs/Presentation"
+        },
+        "queueRef": {
+          "type": "string"
+        },
+        "sessionRef": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Backoff": {
+      "additionalProperties": false,
+      "properties": {
+        "initialMs": {
+          "type": "integer"
+        },
+        "jitter": {
+          "type": "string"
+        },
+        "maxMs": {
+          "type": "integer"
+        },
+        "multiplier": {
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "Bashy": {
+      "additionalProperties": false,
+      "properties": {
+        "commandResolution": {
+          "type": "string"
+        },
+        "cwdRoot": {
+          "type": "string"
+        },
+        "effectsCeiling": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "environment": {
+          "$ref": "#/$defs/Environment"
+        },
+        "hostFallback": {
+          "type": "string"
+        },
+        "incompletePreflight": {
+          "type": "string"
+        },
+        "jobLifetimeMs": {
+          "type": "integer"
+        },
+        "maxOutputChars": {
+          "type": "integer"
+        },
+        "maxParallel": {
+          "type": "integer"
+        },
+        "maxSpillBytes": {
+          "type": "integer"
+        },
+        "permissionCeiling": {
+          "type": "string"
+        },
+        "preflight": {
+          "type": "string"
+        },
+        "timeoutMs": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "BashyResource": {
+      "additionalProperties": false,
+      "properties": {
+        "contract": {
+          "type": "string"
+        },
+        "execution": {
+          "$ref": "#/$defs/Bashy"
+        },
+        "operations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requestType": {
+          "type": "string"
+        },
+        "resultType": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CLI": {
+      "additionalProperties": false,
+      "properties": {
+        "bootstrap": {
+          "$ref": "#/$defs/CLIBootstrap"
+        },
+        "exitCodes": {
+          "$ref": "#/$defs/CLIExitCodes"
+        },
+        "identity": {
+          "$ref": "#/$defs/CLIIdentity"
+        },
+        "presentation": {
+          "$ref": "#/$defs/CLIPresentation"
+        },
+        "root": {
+          "$ref": "#/$defs/CLICommand"
+        }
+      },
+      "type": "object"
+    },
+    "CLIArgs": {
+      "additionalProperties": false,
+      "properties": {
+        "enum": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max": {
+          "type": "integer"
+        },
+        "min": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "CLIBootstrap": {
+      "additionalProperties": false,
+      "properties": {
+        "configFlags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "defaultFile": {
+          "type": "string"
+        },
+        "env": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CLICommand": {
+      "additionalProperties": false,
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "args": {
+          "$ref": "#/$defs/CLIArgs"
+        },
+        "commands": {
+          "items": {
+            "$ref": "#/$defs/CLICommand"
+          },
+          "type": "array"
+        },
+        "deprecated": {
+          "type": "string"
+        },
+        "dispatch": {
+          "$ref": "#/$defs/CLIDispatch"
+        },
+        "example": {
+          "type": "string"
+        },
+        "flags": {
+          "items": {
+            "$ref": "#/$defs/CLIFlag"
+          },
+          "type": "array"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "long": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "short": {
+          "type": "string"
+        },
+        "usage": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CLIDispatch": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "agentRef": {
+          "type": "string"
+        },
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "frontendRef": {
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/CLIInput"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "pipelineRef": {
+          "type": "string"
+        },
+        "resource": {
+          "type": "string"
+        },
+        "triggerRef": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CLIErrors": {
+      "additionalProperties": false,
+      "properties": {
+        "prefix": {
+          "type": "string"
+        },
+        "usage": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "CLIExitCodes": {
+      "additionalProperties": false,
+      "properties": {
+        "configuration": {
+          "type": "integer"
+        },
+        "interrupted": {
+          "type": "integer"
+        },
+        "runtime": {
+          "type": "integer"
+        },
+        "success": {
+          "type": "integer"
+        },
+        "unsupported": {
+          "type": "integer"
+        },
+        "usage": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "CLIFlag": {
+      "additionalProperties": false,
+      "properties": {
+        "conflicts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "default": {
+          "type": "string"
+        },
+        "enum": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "env": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "requires": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "shorthand": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "usage": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CLIHelp": {
+      "additionalProperties": false,
+      "properties": {
+        "flag": {
+          "type": "string"
+        },
+        "flagUsage": {
+          "type": "string"
+        },
+        "shorthand": {
+          "type": "string"
+        },
+        "template": {
+          "type": "string"
+        },
+        "usageTemplate": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CLIIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "compatibility": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CLIInput": {
+      "additionalProperties": false,
+      "properties": {
+        "empty": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "payloadKey": {
+          "type": "string"
+        },
+        "sessionFlag": {
+          "type": "string"
+        },
+        "stdin": {
+          "type": "boolean"
+        },
+        "terminalFrontendRef": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CLIPresentation": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "type": "string"
+        },
+        "defaultFormat": {
+          "type": "string"
+        },
+        "errors": {
+          "$ref": "#/$defs/CLIErrors"
+        },
+        "formats": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "help": {
+          "$ref": "#/$defs/CLIHelp"
+        },
+        "quiet": {
+          "type": "boolean"
+        },
+        "redact": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CompactionPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "onFailure": {
+          "type": "string"
+        },
+        "preserveRecentTokens": {
+          "type": "integer"
+        },
+        "preserveUserMessagesTokens": {
+          "type": "integer"
+        },
+        "promptSourceRef": {
+          "type": "string"
+        },
+        "reserveTokens": {
+          "type": "integer"
+        },
+        "routeRef": {
+          "type": "string"
+        },
+        "updatePromptSourceRef": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Context": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/ContextBudget"
+        },
+        "fragments": {
+          "items": {
+            "$ref": "#/$defs/ContextFragment"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "ContextBudget": {
+      "additionalProperties": false,
+      "properties": {
+        "maxTokens": {
+          "type": "integer"
+        },
+        "overflow": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ContextCache": {
+      "additionalProperties": false,
+      "properties": {
+        "breakAfter": {
+          "type": "boolean"
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ContextFragment": {
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "$ref": "#/$defs/ContextCache"
+        },
+        "id": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "sourceRef": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ControlPath": {
+      "additionalProperties": false,
+      "properties": {
+        "controlPath": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ControlRoot": {
+      "additionalProperties": false,
+      "properties": {
+        "platformDataDir": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Delegation": {
+      "additionalProperties": false,
+      "properties": {
+        "agentRef": {
+          "type": "string"
+        },
+        "budget": {
+          "$ref": "#/$defs/TokenBudget"
+        },
+        "effectsCeiling": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "maxDepth": {
+          "type": "integer"
+        },
+        "maxParallel": {
+          "type": "integer"
+        },
+        "modelRouteRef": {
+          "type": "string"
+        },
+        "permissionCeiling": {
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/DelegationSession"
+        },
+        "timeoutMs": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "DelegationSession": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "cancel": {
+          "type": "string"
+        },
+        "join": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Delivery": {
+      "additionalProperties": false,
+      "properties": {
+        "deadLetter": {
+          "$ref": "#/$defs/ControlPath"
+        },
+        "deduplicateBy": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "retry": {
+          "$ref": "#/$defs/DeliveryRetry"
+        }
+      },
+      "type": "object"
+    },
+    "DeliveryRetry": {
+      "additionalProperties": false,
+      "properties": {
+        "backoffMs": {
+          "type": "integer"
+        },
+        "maxAttempts": {
+          "type": "integer"
+        },
+        "maxBackoffMs": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Environment": {
+      "additionalProperties": false,
+      "properties": {
+        "inherit": {
+          "type": "string"
+        },
+        "names": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Expression": {
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "items": {
+            "$ref": "#/$defs/Expression"
+          },
+          "type": "array"
+        },
+        "any": {
+          "items": {
+            "$ref": "#/$defs/Expression"
+          },
+          "type": "array"
+        },
+        "eq": {
+          "items": {
+            "$ref": "#/$defs/Operand"
+          },
+          "type": "array"
+        },
+        "exists": {
+          "items": {
+            "$ref": "#/$defs/Operand"
+          },
+          "type": "array"
+        },
+        "gt": {
+          "items": {
+            "$ref": "#/$defs/Operand"
+          },
+          "type": "array"
+        },
+        "gte": {
+          "items": {
+            "$ref": "#/$defs/Operand"
+          },
+          "type": "array"
+        },
+        "in": {
+          "items": {
+            "$ref": "#/$defs/Operand"
+          },
+          "type": "array"
+        },
+        "lt": {
+          "items": {
+            "$ref": "#/$defs/Operand"
+          },
+          "type": "array"
+        },
+        "lte": {
+          "items": {
+            "$ref": "#/$defs/Operand"
+          },
+          "type": "array"
+        },
+        "ne": {
+          "items": {
+            "$ref": "#/$defs/Operand"
+          },
+          "type": "array"
+        },
+        "not": {
+          "items": {
+            "$ref": "#/$defs/Expression"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "FallbackAttempt": {
+      "additionalProperties": false,
+      "properties": {
+        "in": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "on": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pipelineRef": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "FallbackRun": {
+      "additionalProperties": false,
+      "properties": {
+        "attempts": {
+          "items": {
+            "$ref": "#/$defs/FallbackAttempt"
+          },
+          "type": "array"
+        },
+        "in": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "maxAttempts": {
+          "type": "integer"
+        },
+        "noMatch": {
+          "type": "string"
+        },
+        "out": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "FieldOperand": {
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "FilePermissions": {
+      "additionalProperties": false,
+      "properties": {
+        "directory": {
+          "type": "integer"
+        },
+        "file": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "ForEachRun": {
+      "additionalProperties": false,
+      "properties": {
+        "as": {
+          "type": "string"
+        },
+        "collect": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "in": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "items": {
+          "$ref": "#/$defs/FieldOperand"
+        },
+        "maxItems": {
+          "type": "integer"
+        },
+        "maxParallel": {
+          "type": "integer"
+        },
+        "ordered": {
+          "type": "boolean"
+        },
+        "pipelineRef": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Frontend": {
+      "additionalProperties": false,
+      "properties": {
+        "auth": {
+          "$ref": "#/$defs/FrontendAuth"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "fork": {
+          "type": "boolean"
+        },
+        "hitl": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "limits": {
+          "$ref": "#/$defs/FrontendLimits"
+        },
+        "listen": {
+          "$ref": "#/$defs/Listen"
+        },
+        "resume": {
+          "type": "boolean"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "tls": {
+          "$ref": "#/$defs/TLS"
+        },
+        "transport": {
+          "type": "string"
+        },
+        "trust": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "FrontendAuth": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "secretRef": {
+          "$ref": "#/$defs/SecretRef"
+        }
+      },
+      "type": "object"
+    },
+    "FrontendLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "maxConcurrent": {
+          "type": "integer"
+        },
+        "maxInputBytes": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Hook": {
+      "additionalProperties": false,
+      "properties": {
+        "failure": {
+          "type": "string"
+        },
+        "inputType": {
+          "type": "string"
+        },
+        "maxInvocations": {
+          "type": "integer"
+        },
+        "order": {
+          "type": "integer"
+        },
+        "outputType": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "pipelineRef": {
+          "type": "string"
+        },
+        "reentrant": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Import": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "exported": {
+          "type": "boolean"
+        },
+        "exports": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Interfaces": {
+      "additionalProperties": false,
+      "properties": {
+        "cli": {
+          "$ref": "#/$defs/CLI"
+        }
+      },
+      "type": "object"
+    },
+    "Lifecycle": {
+      "additionalProperties": false,
+      "properties": {
+        "initial": {
+          "type": "string"
+        },
+        "terminal": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "transitions": {
+          "items": {
+            "$ref": "#/$defs/LifecycleTransition"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "LifecycleTransition": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Listen": {
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "LiteralValue": {
+      "additionalProperties": false,
+      "properties": {
+        "literal": true
+      },
+      "type": "object"
+    },
+    "Lock": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "fencing": {
+          "type": "string"
+        },
+        "leaseMs": {
+          "type": "integer"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "onTimeout": {
+          "type": "string"
+        },
+        "renewEveryMs": {
+          "type": "integer"
+        },
+        "resourceKey": {
+          "$ref": "#/$defs/LiteralValue"
+        }
+      },
+      "type": "object"
+    },
+    "Memory": {
+      "additionalProperties": false,
+      "properties": {
+        "compaction": {
+          "$ref": "#/$defs/CompactionPolicy"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "recall": {
+          "$ref": "#/$defs/RecallPolicy"
+        },
+        "write": {
+          "$ref": "#/$defs/WritePolicy"
+        }
+      },
+      "type": "object"
+    },
+    "Metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Model": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/ModelCapabilities"
+        },
+        "id": {
+          "type": "string"
+        },
+        "limits": {
+          "$ref": "#/$defs/ModelLimits"
+        },
+        "providerRef": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ModelCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "parallelToolCalls": {
+          "type": "boolean"
+        },
+        "streaming": {
+          "type": "boolean"
+        },
+        "structuredOutput": {
+          "type": "boolean"
+        },
+        "toolCalls": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "ModelLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "contextTokens": {
+          "type": "integer"
+        },
+        "maxOutputTokens": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Observability": {
+      "additionalProperties": false,
+      "properties": {
+        "attributes": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "endpoint": {
+          "$ref": "#/$defs/Value"
+        },
+        "exporter": {
+          "type": "string"
+        },
+        "recordContent": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Operand": {
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "literal": true
+      },
+      "type": "object"
+    },
+    "Pipeline": {
+      "additionalProperties": false,
+      "properties": {
+        "concurrency": {
+          "type": "integer"
+        },
+        "exported": {
+          "type": "boolean"
+        },
+        "failFast": {
+          "type": "boolean"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/Stage"
+          },
+          "type": "array"
+        },
+        "outputs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "state": {
+          "additionalProperties": {
+            "$ref": "#/$defs/StateSlot"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "Placement": {
+      "additionalProperties": false,
+      "properties": {
+        "isolation": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "mounts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "network": {
+          "type": "string"
+        },
+        "supportedPlatforms": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "unsupportedEffect": {
+          "type": "string"
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Policy": {
+      "additionalProperties": false,
+      "properties": {
+        "approvalBinding": {
+          "type": "string"
+        },
+        "incompletePreflight": {
+          "type": "string"
+        },
+        "maxEdits": {
+          "type": "integer"
+        },
+        "resume": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/PolicyRule"
+          },
+          "type": "array"
+        },
+        "unavailableHuman": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "PolicyMatch": {
+      "additionalProperties": false,
+      "properties": {
+        "always": {
+          "type": "boolean"
+        },
+        "effectsAllWithin": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "effectsAny": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pathsAllWithin": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "preflightComplete": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "PolicyRule": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "match": {
+          "$ref": "#/$defs/PolicyMatch"
+        }
+      },
+      "type": "object"
+    },
+    "Presentation": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Provider": {
+      "additionalProperties": false,
+      "properties": {
+        "credentials": {
+          "$ref": "#/$defs/ProviderCredentials"
+        },
+        "endpoint": {
+          "$ref": "#/$defs/Value"
+        },
+        "headers": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SecretValue"
+          },
+          "type": "object"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "transport": {
+          "$ref": "#/$defs/ProviderTransport"
+        }
+      },
+      "type": "object"
+    },
+    "ProviderCredentials": {
+      "additionalProperties": false,
+      "properties": {
+        "apiKey": {
+          "$ref": "#/$defs/SecretValue"
+        }
+      },
+      "type": "object"
+    },
+    "ProviderTransport": {
+      "additionalProperties": false,
+      "properties": {
+        "connectTimeoutMs": {
+          "type": "integer"
+        },
+        "maxResponseBytes": {
+          "type": "integer"
+        },
+        "requestTimeoutMs": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Queue": {
+      "additionalProperties": false,
+      "properties": {
+        "capacity": {
+          "type": "integer"
+        },
+        "deduplicateBy": {
+          "type": "string"
+        },
+        "discipline": {
+          "type": "string"
+        },
+        "leaseMs": {
+          "type": "integer"
+        },
+        "overflow": {
+          "type": "string"
+        },
+        "priorities": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "staleLease": {
+          "type": "string"
+        },
+        "store": {
+          "$ref": "#/$defs/ControlPath"
+        }
+      },
+      "type": "object"
+    },
+    "QuotaPool": {
+      "additionalProperties": false,
+      "properties": {
+        "onExhausted": {
+          "type": "string"
+        },
+        "strategy": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RecallPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "forms": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "maxItems": {
+          "type": "integer"
+        },
+        "maxTokens": {
+          "type": "integer"
+        },
+        "rings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "RepeatRun": {
+      "additionalProperties": false,
+      "properties": {
+        "carry": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "in": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "maxIterations": {
+          "type": "integer"
+        },
+        "out": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "pipelineRef": {
+          "type": "string"
+        },
+        "until": {
+          "$ref": "#/$defs/Expression"
+        }
+      },
+      "type": "object"
+    },
+    "RetryPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "backoff": {
+          "$ref": "#/$defs/Backoff"
+        },
+        "maxAttempts": {
+          "type": "integer"
+        },
+        "when": {
+          "$ref": "#/$defs/Expression"
+        }
+      },
+      "type": "object"
+    },
+    "Route": {
+      "additionalProperties": false,
+      "properties": {
+        "attempts": {
+          "items": {
+            "$ref": "#/$defs/RouteAttempt"
+          },
+          "type": "array"
+        },
+        "budget": {
+          "$ref": "#/$defs/TokenBudget"
+        },
+        "fallbackOn": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "providerSession": {
+          "type": "string"
+        },
+        "quotaPool": {
+          "$ref": "#/$defs/QuotaPool"
+        }
+      },
+      "type": "object"
+    },
+    "RouteAttempt": {
+      "additionalProperties": false,
+      "properties": {
+        "modelRef": {
+          "type": "string"
+        },
+        "timeoutMs": {
+          "type": "integer"
+        },
+        "transportRetry": {
+          "$ref": "#/$defs/TransportRetry"
+        }
+      },
+      "type": "object"
+    },
+    "Run": {
+      "additionalProperties": false,
+      "properties": {
+        "fallback": {
+          "$ref": "#/$defs/FallbackRun"
+        },
+        "forEach": {
+          "$ref": "#/$defs/ForEachRun"
+        },
+        "hook.invoke": {
+          "type": "string"
+        },
+        "in": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "out": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "pipelineRef": {
+          "type": "string"
+        },
+        "repeat": {
+          "$ref": "#/$defs/RepeatRun"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "switch": {
+          "$ref": "#/$defs/SwitchRun"
+        },
+        "with": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "Runtime": {
+      "additionalProperties": false,
+      "properties": {
+        "controlRoot": {
+          "$ref": "#/$defs/ControlRoot"
+        },
+        "defaultAgentRef": {
+          "type": "string"
+        },
+        "readableRoots": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rootOverlap": {
+          "type": "string"
+        },
+        "workspace": {
+          "type": "string"
+        },
+        "writableRoots": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SecretRef": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SecretValue": {
+      "additionalProperties": false,
+      "properties": {
+        "secretRef": {
+          "$ref": "#/$defs/SecretRef"
+        }
+      },
+      "type": "object"
+    },
+    "Session": {
+      "additionalProperties": false,
+      "properties": {
+        "branches": {
+          "$ref": "#/$defs/SessionBranches"
+        },
+        "checkpoints": {
+          "$ref": "#/$defs/SessionCheckpoints"
+        },
+        "events": {
+          "$ref": "#/$defs/SessionEvents"
+        },
+        "history": {
+          "$ref": "#/$defs/SessionHistory"
+        },
+        "payloads": {
+          "$ref": "#/$defs/SessionPayloads"
+        },
+        "retention": {
+          "$ref": "#/$defs/SessionRetention"
+        }
+      },
+      "type": "object"
+    },
+    "SessionBranches": {
+      "additionalProperties": false,
+      "properties": {
+        "copyEvents": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "SessionCheckpoints": {
+      "additionalProperties": false,
+      "properties": {
+        "bind": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "directory": {
+          "$ref": "#/$defs/ControlPath"
+        }
+      },
+      "type": "object"
+    },
+    "SessionClearToolResults": {
+      "additionalProperties": false,
+      "properties": {
+        "olderThanTurns": {
+          "type": "integer"
+        },
+        "placeholder": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SessionEvents": {
+      "additionalProperties": false,
+      "properties": {
+        "directory": {
+          "$ref": "#/$defs/ControlPath"
+        },
+        "format": {
+          "type": "string"
+        },
+        "fsync": {
+          "type": "string"
+        },
+        "integrity": {
+          "type": "string"
+        },
+        "permissions": {
+          "$ref": "#/$defs/FilePermissions"
+        },
+        "sequence": {
+          "type": "string"
+        },
+        "store": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SessionHistory": {
+      "additionalProperties": false,
+      "properties": {
+        "clearToolResults": {
+          "$ref": "#/$defs/SessionClearToolResults"
+        },
+        "maxTokens": {
+          "type": "integer"
+        },
+        "repair": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SessionPayloads": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "directory": {
+          "$ref": "#/$defs/ControlPath"
+        },
+        "inlineMaxBytes": {
+          "type": "integer"
+        },
+        "retainModelVisibleBytes": {
+          "type": "boolean"
+        },
+        "store": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SessionRetention": {
+      "additionalProperties": false,
+      "properties": {
+        "maxAgeDays": {
+          "type": "integer"
+        },
+        "maxBytes": {
+          "type": "integer"
+        },
+        "preserveReferencedPayloads": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Sink": {
+      "additionalProperties": false,
+      "properties": {
+        "delivery": {
+          "$ref": "#/$defs/Delivery"
+        },
+        "destinationAllowlist": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "frontendRefs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "redact": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Skill": {
+      "additionalProperties": false,
+      "properties": {
+        "effectsCeiling": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/SkillSource"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "SkillSource": {
+      "additionalProperties": false,
+      "properties": {
+        "catalogRef": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Source": {
+      "additionalProperties": false,
+      "properties": {
+        "exported": {
+          "type": "boolean"
+        },
+        "file": {
+          "$ref": "#/$defs/SourceFile"
+        },
+        "limits": {
+          "$ref": "#/$defs/SourceLimits"
+        },
+        "snapshot": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SourceFile": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "SourceLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "maxBytes": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Spec": {
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Agent"
+          },
+          "type": "object"
+        },
+        "bashy": {
+          "$ref": "#/$defs/BashyResource"
+        },
+        "contexts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Context"
+          },
+          "type": "object"
+        },
+        "defaults": {
+          "additionalProperties": false,
+          "properties": {
+            "agents": {
+              "$ref": "#/$defs/Agent"
+            },
+            "bashy": {
+              "$ref": "#/$defs/BashyResource"
+            },
+            "contexts": {
+              "$ref": "#/$defs/Context"
+            },
+            "extensions": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "frontends": {
+              "$ref": "#/$defs/Frontend"
+            },
+            "hooks": {
+              "$ref": "#/$defs/Hook"
+            },
+            "interfaces": {
+              "$ref": "#/$defs/Interfaces"
+            },
+            "lifecycles": {
+              "$ref": "#/$defs/Lifecycle"
+            },
+            "locks": {
+              "$ref": "#/$defs/Lock"
+            },
+            "memories": {
+              "$ref": "#/$defs/Memory"
+            },
+            "models": {
+              "$ref": "#/$defs/Model"
+            },
+            "observability": {
+              "$ref": "#/$defs/Observability"
+            },
+            "pipelines": {
+              "$ref": "#/$defs/Pipeline"
+            },
+            "placements": {
+              "$ref": "#/$defs/Placement"
+            },
+            "policies": {
+              "$ref": "#/$defs/Policy"
+            },
+            "providers": {
+              "$ref": "#/$defs/Provider"
+            },
+            "queues": {
+              "$ref": "#/$defs/Queue"
+            },
+            "routes": {
+              "$ref": "#/$defs/Route"
+            },
+            "runtime": {
+              "$ref": "#/$defs/Runtime"
+            },
+            "sessions": {
+              "$ref": "#/$defs/Session"
+            },
+            "sinks": {
+              "$ref": "#/$defs/Sink"
+            },
+            "skills": {
+              "$ref": "#/$defs/Skill"
+            },
+            "sources": {
+              "$ref": "#/$defs/Source"
+            },
+            "triggers": {
+              "$ref": "#/$defs/Trigger"
+            }
+          },
+          "type": "object"
+        },
+        "extensions": {
+          "additionalProperties": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "frontends": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Frontend"
+          },
+          "type": "object"
+        },
+        "hooks": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Hook"
+          },
+          "type": "object"
+        },
+        "imports": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Import"
+          },
+          "type": "object"
+        },
+        "interfaces": {
+          "$ref": "#/$defs/Interfaces"
+        },
+        "lifecycles": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Lifecycle"
+          },
+          "type": "object"
+        },
+        "locks": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Lock"
+          },
+          "type": "object"
+        },
+        "memories": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Memory"
+          },
+          "type": "object"
+        },
+        "models": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Model"
+          },
+          "type": "object"
+        },
+        "observability": {
+          "$ref": "#/$defs/Observability"
+        },
+        "pipelines": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Pipeline"
+          },
+          "type": "object"
+        },
+        "placements": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Placement"
+          },
+          "type": "object"
+        },
+        "policies": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Policy"
+          },
+          "type": "object"
+        },
+        "providers": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Provider"
+          },
+          "type": "object"
+        },
+        "queues": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Queue"
+          },
+          "type": "object"
+        },
+        "routes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Route"
+          },
+          "type": "object"
+        },
+        "runtime": {
+          "$ref": "#/$defs/Runtime"
+        },
+        "sessions": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Session"
+          },
+          "type": "object"
+        },
+        "sinks": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Sink"
+          },
+          "type": "object"
+        },
+        "skills": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Skill"
+          },
+          "type": "object"
+        },
+        "sources": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Source"
+          },
+          "type": "object"
+        },
+        "triggers": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Trigger"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "Stage": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptsSkipped": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "lockRef": {
+          "type": "string"
+        },
+        "needs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "retry": {
+          "$ref": "#/$defs/RetryPolicy"
+        },
+        "run": {
+          "$ref": "#/$defs/Run"
+        },
+        "runOn": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "when": {
+          "$ref": "#/$defs/Expression"
+        }
+      },
+      "type": "object"
+    },
+    "StateSlot": {
+      "additionalProperties": false,
+      "properties": {
+        "merge": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "writer": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SwitchRun": {
+      "additionalProperties": false,
+      "properties": {
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/SwitchRunCase"
+          },
+          "type": "array"
+        },
+        "defaultPipelineRef": {
+          "type": "string"
+        },
+        "in": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "noMatch": {
+          "type": "string"
+        },
+        "out": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "SwitchRunCase": {
+      "additionalProperties": false,
+      "properties": {
+        "in": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "pipelineRef": {
+          "type": "string"
+        },
+        "when": {
+          "$ref": "#/$defs/Expression"
+        }
+      },
+      "type": "object"
+    },
+    "TLS": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "TokenBudget": {
+      "additionalProperties": false,
+      "properties": {
+        "maxCostUSD": {
+          "type": "number"
+        },
+        "maxInputTokens": {
+          "type": "integer"
+        },
+        "maxOutputTokens": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "TransportRetry": {
+      "additionalProperties": false,
+      "properties": {
+        "backoff": {
+          "$ref": "#/$defs/Backoff"
+        },
+        "maxAttempts": {
+          "type": "integer"
+        },
+        "retryOn": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Trigger": {
+      "additionalProperties": false,
+      "properties": {
+        "admission": {
+          "$ref": "#/$defs/Admission"
+        },
+        "frontendRefs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "idempotency": {
+          "type": "string"
+        },
+        "inputMapping": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "route": {
+          "$ref": "#/$defs/TriggerRoute"
+        }
+      },
+      "type": "object"
+    },
+    "TriggerRoute": {
+      "additionalProperties": false,
+      "properties": {
+        "agentRef": {
+          "type": "string"
+        },
+        "queueRef": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Value": {
+      "additionalProperties": false,
+      "properties": {
+        "valueFrom": {
+          "$ref": "#/$defs/ValueFrom"
+        }
+      },
+      "type": "object"
+    },
+    "ValueFrom": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "string"
+        },
+        "env": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "WritePolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "everyTurns": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://ycode.dev/schema/agent-v1alpha1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "const": "ycode.dev/v1alpha1"
+    },
+    "kind": {
+      "const": "Harness"
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/Spec"
+    }
+  },
+  "title": "Ycode Harness",
+  "type": "object"
+}

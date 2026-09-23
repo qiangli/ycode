@@ -77,7 +77,7 @@ func stagePorts(name string) (string, string) {
 	case "context.load":
 		return "", "context"
 	case "prompt.assemble":
-		return "input,context,knowledge,history?", "state"
+		return "input,context?,knowledge?,history?", "state"
 	case "session.load":
 		return "", "history"
 	case "session.commit":

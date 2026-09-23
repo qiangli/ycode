@@ -31,11 +31,15 @@ const (
 // Request is the provider-independent inference input. It intentionally has no
 // Tools field: provider choice cannot expand the harness capability surface.
 type Request struct {
-	Model           string
-	System          string
-	Messages        []api.Message
-	MaxTokens       int
-	Stream          bool
+	Model     string
+	System    string
+	Messages  []api.Message
+	MaxTokens int
+	Stream    bool
+	// BashyTool controls whether the sole harness tool is exposed to this model
+	// call. False means no model-visible tools; the adapter never adds tools
+	// based on provider defaults.
+	BashyTool       bool
 	Temperature     *float64
 	TopP            *float64
 	ReasoningEffort string
@@ -147,6 +151,10 @@ func (a *Adapter) send(ctx context.Context, request Request, out chan<- Event) {
 		return
 	}
 
+	var tools []api.ToolDefinition
+	if request.BashyTool {
+		tools = []api.ToolDefinition{BashyTool()}
+	}
 	wire := &api.Request{
 		Model:           request.Model,
 		System:          request.System,
@@ -156,7 +164,7 @@ func (a *Adapter) send(ctx context.Context, request Request, out chan<- Event) {
 		Temperature:     request.Temperature,
 		TopP:            request.TopP,
 		ReasoningEffort: request.ReasoningEffort,
-		Tools:           []api.ToolDefinition{BashyTool()},
+		Tools:           tools,
 	}
 	events, errs := a.backend.Send(ctx, wire)
 	state := normalizer{requestSeed: requestDigest(request), tools: make(map[int]*toolState)}

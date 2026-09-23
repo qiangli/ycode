@@ -30,7 +30,21 @@ func Load(path string) (*Document, error) {
 }
 
 func Compile(source string, data []byte) (*Document, error) {
-	dec := yaml.NewDecoder(bytes.NewReader(data))
+	var node yaml.Node
+	if err := yaml.Unmarshal(data, &node); err != nil {
+		return nil, located(source, fmt.Errorf("parse harness: %w", err))
+	}
+	if err := inspectNode(&node); err != nil {
+		return nil, located(source, err)
+	}
+	if err := applyYAMLDefaults(&node); err != nil {
+		return nil, located(source, err)
+	}
+	compiledYAML, err := yaml.Marshal(&node)
+	if err != nil {
+		return nil, located(source, fmt.Errorf("compile defaults: %w", err))
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(compiledYAML))
 	dec.KnownFields(true)
 	var doc Document
 	if err := dec.Decode(&doc); err != nil {
@@ -42,13 +56,6 @@ func Compile(source string, data []byte) (*Document, error) {
 			return nil, located(source, errors.New("harness must contain exactly one YAML document"))
 		}
 		return nil, located(source, fmt.Errorf("decode trailing harness document: %w", err))
-	}
-	var node yaml.Node
-	if err := yaml.Unmarshal(data, &node); err != nil {
-		return nil, located(source, fmt.Errorf("parse harness: %w", err))
-	}
-	if err := inspectNode(&node); err != nil {
-		return nil, located(source, err)
 	}
 	if err := validateCLINode(&node); err != nil {
 		return nil, located(source, err)

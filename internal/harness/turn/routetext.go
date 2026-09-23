@@ -52,7 +52,7 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 			if maxTokens > model.Limits.MaxOutputTokens {
 				maxTokens = model.Limits.MaxOutputTokens
 			}
-			request := provider.Request{Model: model.ID, System: system, Messages: requestMessages, MaxTokens: maxTokens, Stream: model.Capabilities.Streaming}
+			request := provider.Request{Model: model.ID, System: system, Messages: requestMessages, MaxTokens: maxTokens, Stream: model.Capabilities.Streaming, BashyTool: model.Capabilities.ToolCalls}
 			requestRef, err := r.payload(request)
 			if err != nil {
 				return nil, provider.Outcome{Class: provider.OutcomeProtocolError, Error: err.Error()}

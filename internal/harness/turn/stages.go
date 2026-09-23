@@ -88,13 +88,21 @@ func (r *Runtime) loadSession(ctx context.Context, in pipeline.Invocation) pipel
 }
 
 func (r *Runtime) assemble(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
-	contextValue, ok := in.Inputs["context"].(ioctx.ContextSnapshot)
-	if !ok {
-		return fail(fmt.Errorf("prompt.assemble: invalid context %T", in.Inputs["context"]))
+	contextValue := ioctx.ContextSnapshot{}
+	if raw, exists := in.Inputs["context"]; exists {
+		var ok bool
+		contextValue, ok = raw.(ioctx.ContextSnapshot)
+		if !ok {
+			return fail(fmt.Errorf("prompt.assemble: invalid context %T", raw))
+		}
 	}
-	knowledgeValue, err := memoryStage.KnowledgeMessages(in.Inputs["knowledge"])
-	if err != nil {
-		return fail(fmt.Errorf("prompt.assemble: invalid knowledge port: %w", err))
+	var knowledgeValue []ioctx.PromptMessage
+	if raw, exists := in.Inputs["knowledge"]; exists {
+		var err error
+		knowledgeValue, err = memoryStage.KnowledgeMessages(raw)
+		if err != nil {
+			return fail(fmt.Errorf("prompt.assemble: invalid knowledge port: %w", err))
+		}
 	}
 	orderRaw := stringList(in.With["order"])
 	order := make([]ioctx.PortName, len(orderRaw))
@@ -274,9 +282,6 @@ func (r *Runtime) appendSource(_ context.Context, in pipeline.Invocation) pipeli
 }
 
 func (r *Runtime) callModel(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
-	if text(in.With["tool"]) != provider.ToolName {
-		return fail(fmt.Errorf("llm.call: compiled tool must be %q", provider.ToolName))
-	}
 	routeRef := text(in.With["routeRef"])
 	route, ok := r.doc.Spec.Routes[routeRef]
 	if !ok || len(route.Attempts) == 0 {

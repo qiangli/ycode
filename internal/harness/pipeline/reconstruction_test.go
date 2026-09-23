@@ -264,7 +264,7 @@ func reconstructionRegistry(t *testing.T, trace *reconstructionTrace) *Registry 
 		if err != nil {
 			return Failure("provider", false, err)
 		}
-		for event := range adapter.Send(ctx, provider.Request{Model: "deterministic-v1", Messages: []api.Message{{Role: api.RoleUser, Content: []api.ContentBlock{{Type: api.ContentTypeText, Text: "hello"}}}}, MaxTokens: 64, Stream: true}) {
+		for event := range adapter.Send(ctx, provider.Request{Model: "deterministic-v1", Messages: []api.Message{{Role: api.RoleUser, Content: []api.ContentBlock{{Type: api.ContentTypeText, Text: "hello"}}}}, MaxTokens: 64, Stream: true, BashyTool: true}) {
 			trace.add(traceEvent{Type: "provider." + string(event.Type), Tool: toolName(event)})
 		}
 		wire := backend.LastRequest()

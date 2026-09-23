@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ycode agent turn data flow</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172b3a;
+      --muted: #5e7180;
+      --line: #9aaab5;
+      --paper: #f4f7f9;
+      --white: #fff;
+      --blue: #e8f1ff;
+      --blue-line: #3973ac;
+      --violet: #f0eaff;
+      --violet-line: #7653b3;
+      --green: #e7f6ee;
+      --green-line: #32845a;
+      --amber: #fff2dd;
+      --amber-line: #b97816;
+      --teal: #e5f5f7;
+      --teal-line: #28818e;
+      --gray: #f1f3f5;
+      --gray-line: #8b99a5;
+      --shadow: 0 12px 32px rgb(23 43 58 / 9%);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { width: min(1500px, calc(100% - 40px)); margin: 44px auto 72px; }
+    header { max-width: 900px; margin-bottom: 24px; }
+    .eyebrow { color: #42708e; font-size: 12px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+    h1 { margin: 8px 0 10px; font-size: clamp(30px, 4vw, 48px); letter-spacing: -.04em; line-height: 1.05; }
+    header p { margin: 0; color: var(--muted); font-size: 17px; }
+    .toolbar { display: flex; align-items: center; gap: 8px; margin: 24px 0 14px; }
+    .toolbar button {
+      appearance: none; border: 1px solid #ccd6dd; border-radius: 999px; background: #fff;
+      padding: 9px 16px; color: #334b5c; font: inherit; font-weight: 700; cursor: pointer;
+      transition: background .16s ease, border-color .16s ease, transform .16s ease;
+    }
+    .toolbar button:hover { transform: translateY(-1px); border-color: #7c9aac; }
+    .toolbar button[aria-pressed="true"] { background: #193a50; border-color: #193a50; color: white; }
+    .source { margin-left: auto; color: var(--muted); font-size: 13px; }
+    .source a, .source a:visited { color: #286487; }
+    .board { overflow: hidden; border: 1px solid #dbe3e8; border-radius: 20px; background: var(--white); box-shadow: var(--shadow); }
+    .board-head { display: flex; justify-content: space-between; gap: 18px; align-items: center; padding: 18px 24px; border-bottom: 1px solid #e5ebef; }
+    .board-head h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
+    .board-head p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+    .turn-chip { flex: none; border-radius: 999px; padding: 6px 10px; color: #356078; background: #edf5f8; font-size: 11px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+    .canvas { overflow-x: auto; padding: 18px; }
+    svg { display: block; width: 100%; height: auto; min-width: 1050px; }
+    svg text { font-family: inherit; fill: var(--ink); }
+    .edge { fill: none; stroke: var(--line); stroke-width: 2.2; marker-end: url(#arrow); }
+    .edge.dashed { stroke-dasharray: 6 6; }
+    .edge-label { fill: #637786; font-size: 12px; font-weight: 700; }
+    .multi-edge { fill: none; stroke: var(--line); stroke-width: 2.2; marker-end: url(#arrow-multi); }
+    .multi-session { fill: none; stroke: var(--amber-line); stroke-width: 2.8; marker-end: url(#arrow-multi-amber); }
+    .multi-memory { fill: none; stroke: var(--green-line); stroke-width: 2.8; stroke-dasharray: 7 6; marker-end: url(#arrow-multi-green); }
+    .multi-label { font-size: 12px; font-weight: 750; }
+    .box { stroke-width: 1.6; rx: 15; }
+    .box-title { font-size: 15px; font-weight: 800; }
+    .box-copy { fill: #506574; font-size: 12px; }
+    .section { fill: #f8fafb; stroke: #dbe4e9; stroke-width: 1.5; rx: 20; }
+    .section-title { fill: #496170; font-size: 12px; font-weight: 850; letter-spacing: .1em; }
+    .pill { rx: 10; stroke-width: 1; }
+    .pill-text { font-size: 11px; font-weight: 750; }
+    .full { display: block; }
+    .zero { display: none; }
+    .multi { display: none; }
+    .board[data-mode="zero"] .full { display: none; }
+    .board[data-mode="zero"] .zero { display: block; }
+    .board[data-mode="multi"] .full { display: none; }
+    .board[data-mode="multi"] .zero { display: none; }
+    .board[data-mode="multi"] .multi { display: block; }
+    .notes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 18px 0 0; }
+    .note { min-height: 132px; padding: 17px 18px; border: 1px solid #dbe3e8; border-radius: 15px; background: #fff; }
+    .note h3 { display: flex; align-items: center; gap: 9px; margin: 0 0 7px; font-size: 15px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; }
+    .note p { margin: 0; color: var(--muted); font-size: 13px; }
+    .footer-note { margin: 20px 2px 0; color: var(--muted); font-size: 13px; }
+    @media (max-width: 760px) {
+      main { width: min(100% - 24px, 1500px); margin-top: 28px; }
+      .notes { grid-template-columns: 1fr; }
+      .source { width: 100%; margin: 4px 0 0; }
+      .toolbar { flex-wrap: wrap; }
+      .board-head { align-items: flex-start; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">Ycode · harness reference</div>
+    <h1>One request. Three kinds of context.</h1>
+    <p>See how prompt context, conversation history, and persistent memory flow through a turn—and what disappears in the zero baseline.</p>
+  </header>
+
+  <div class="toolbar" role="group" aria-label="Choose harness profile">
+    <button type="button" data-select="full" aria-pressed="true">Full harness</button>
+    <button type="button" data-select="zero" aria-pressed="false">Zero baseline</button>
+    <button type="button" data-select="multi" aria-pressed="false">Multi-turn</button>
+    <span class="source">Source: <a href="https://github.com/qiangli/ycode/blob/main/examples/agent.yaml" target="_blank" rel="noopener">agent.yaml</a> · <a href="https://github.com/qiangli/ycode/blob/main/examples/agent-zero.yaml" target="_blank" rel="noopener">agent-zero.yaml</a></span>
+  </div>
+
+  <section class="board" data-mode="full" aria-live="polite">
+    <div class="board-head">
+      <div>
+        <h2 class="full">Full harness · a turn can contain many model/tool steps</h2>
+        <h2 class="zero">Zero baseline · one independent request/response</h2>
+        <h2 class="multi">Multi-turn · two requests, one continuing session</h2>
+        <p class="full">Prepared inputs join once; the bounded agent loop runs before the transcript is committed.</p>
+        <p class="zero">Only the current request reaches the model. No history, memory, context, loop, or model tool.</p>
+        <p class="multi">Turn 2 reloads Turn 1’s committed transcript. Memory recall is separate; a newly written candidate is not guaranteed to be recalled.</p>
+      </div>
+      <span class="turn-chip full">one user turn</span>
+      <span class="turn-chip zero">stateless baseline</span>
+      <span class="turn-chip multi">same session ID</span>
+    </div>
+    <div class="canvas">
+      <svg class="full" viewBox="0 0 1760 830" role="img" aria-labelledby="full-title full-desc">
+        <title id="full-title">Full ycode harness turn data flow</title>
+        <desc id="full-desc">Input is combined with loaded instructions, recalled memory, and prior session turns. The prompt enters a bounded model and tool loop, then the transcript is committed, memory is updated, and a response is emitted.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#9aaab5"/></marker>
+          <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#3973ac"/></marker>
+        </defs>
+        <rect class="section" x="1240" y="45" width="490" height="440"/>
+
+        <!-- Flow connectors are drawn behind the nodes. -->
+        <path class="edge" d="M190 240 H235"/>
+        <path class="edge" d="M405 240 C435 240 427 112 465 112"/>
+        <path class="edge" d="M405 240 H465"/>
+        <path class="edge" d="M405 240 C435 240 427 368 465 368"/>
+        <path class="edge dashed" d="M405 240 C438 240 427 500 465 500"/>
+        <path class="edge" d="M685 112 C725 112 725 220 755 220"/>
+        <path class="edge" d="M685 240 H755"/>
+        <path class="edge" d="M685 368 C725 368 725 250 755 250"/>
+        <path class="edge" d="M975 235 H1020"/>
+        <path class="edge" d="M1190 235 H1260"/>
+        <path class="edge" d="M1360 235 V205"/>
+        <path class="edge" d="M1438 165 H1480"/>
+        <path class="edge" d="M1590 205 V246"/>
+        <path class="edge" d="M1535 285 C1504 285 1504 355 1535 355"/>
+        <path class="edge" d="M1405 395 C1350 395 1350 325 1360 305"/>
+        <path class="edge" d="M1645 285 C1692 305 1688 555 1570 570"/>
+        <path class="edge" d="M1490 610 C1450 650 1390 657 1345 690"/>
+        <path class="edge" d="M1510 610 C1530 650 1570 657 1610 690"/>
+
+        <!-- Admission and parallel preparation. -->
+        <rect class="box" x="30" y="198" width="160" height="84" fill="var(--blue)" stroke="var(--blue-line)"/>
+        <text x="110" y="232" text-anchor="middle" class="box-title">User request</text>
+        <text x="110" y="254" text-anchor="middle" class="box-copy">one admitted input</text>
+        <rect class="box" x="235" y="198" width="170" height="84" fill="var(--blue)" stroke="var(--blue-line)"/>
+        <text x="320" y="232" text-anchor="middle" class="box-title">Normalize input</text>
+        <text x="320" y="254" text-anchor="middle" class="box-copy">request + task text</text>
+
+        <rect class="box" x="465" y="67" width="220" height="90" fill="var(--violet)" stroke="var(--violet-line)"/>
+        <text x="485" y="95" class="box-title">Prompt context</text>
+        <text x="485" y="118" class="box-copy">Load coding instructions/sources</text>
+        <text x="485" y="139" class="box-copy">same configured context each turn</text>
+
+        <rect class="box" x="465" y="195" width="220" height="90" fill="var(--green)" stroke="var(--green-line)"/>
+        <text x="485" y="223" class="box-title">Memory recall</text>
+        <text x="485" y="246" class="box-copy">Find task-relevant KB notes</text>
+        <text x="485" y="267" class="box-copy">failure/denial → empty knowledge</text>
+
+        <rect class="box" x="465" y="323" width="220" height="90" fill="var(--amber)" stroke="var(--amber-line)"/>
+        <text x="485" y="351" class="box-title">Session history</text>
+        <text x="485" y="374" class="box-copy">Load prior committed turns</text>
+        <text x="485" y="395" class="box-copy">for this conversation session</text>
+
+        <rect class="box" x="465" y="460" width="220" height="80" fill="#fff" stroke="var(--gray-line)" stroke-dasharray="5 5"/>
+        <text x="485" y="489" class="box-title">Workspace probe</text>
+        <text x="485" y="512" class="box-copy">Separate harness-authored Bashy node</text>
+        <text x="485" y="530" class="box-copy">not one of the assembled prompt ports</text>
+
+        <rect class="box" x="755" y="174" width="220" height="122" fill="#f8fafb" stroke="#748b99"/>
+        <text x="865" y="204" text-anchor="middle" class="box-title">Assemble prompt</text>
+        <text x="865" y="230" text-anchor="middle" class="box-copy">context · knowledge</text>
+        <text x="865" y="250" text-anchor="middle" class="box-copy">history · current input</text>
+        <text x="865" y="276" text-anchor="middle" class="box-copy">explicit port order</text>
+
+        <rect class="box" x="1020" y="193" width="170" height="84" fill="#f8fafb" stroke="#748b99"/>
+        <text x="1105" y="226" text-anchor="middle" class="box-title">Checkpoint</text>
+        <text x="1105" y="249" text-anchor="middle" class="box-copy">save turn state</text>
+
+        <!-- Bounded within-turn loop. -->
+        <text x="1265" y="75" class="section-title">WITHIN-TURN AGENT LOOP · MAX 25 ITERATIONS</text>
+        <rect class="box" x="1260" y="235" width="200" height="70" fill="#f8fafb" stroke="#748b99"/>
+        <text x="1360" y="262" text-anchor="middle" class="box-title">Prepare next call</text>
+        <text x="1360" y="284" text-anchor="middle" class="box-copy">steering · budget · compact/truncate</text>
+        <rect class="box" x="1270" y="125" width="168" height="80" fill="var(--teal)" stroke="var(--teal-line)"/>
+        <text x="1354" y="157" text-anchor="middle" class="box-title">Model call</text>
+        <text x="1354" y="180" text-anchor="middle" class="box-copy">route main</text>
+        <rect class="box" x="1480" y="125" width="220" height="80" fill="var(--teal)" stroke="var(--teal-line)"/>
+        <text x="1590" y="157" text-anchor="middle" class="box-title">Normalize response</text>
+        <text x="1590" y="180" text-anchor="middle" class="box-copy">then append assistant message</text>
+        <path d="M1590 246 L1645 275 L1590 304 L1535 275 Z" fill="#fff" stroke="var(--teal-line)" stroke-width="1.6"/>
+        <text x="1590" y="280" text-anchor="middle" class="box-title" font-size="13">Finished?</text>
+        <rect class="box" x="1405" y="355" width="260" height="80" fill="#fff5e8" stroke="#bd7621"/>
+        <text x="1535" y="387" text-anchor="middle" class="box-title">Execute tool calls</text>
+        <text x="1535" y="410" text-anchor="middle" class="box-copy">preflight · authorize · Bashy</text>
+        <text x="1514" y="328" class="edge-label">no: tool call(s)</text>
+        <text x="1370" y="342" class="edge-label">next iteration</text>
+        <text x="1650" y="322" class="edge-label">yes</text>
+
+        <!-- Turn end and durable outputs. -->
+        <rect class="box" x="1480" y="545" width="190" height="68" fill="var(--amber)" stroke="var(--amber-line)"/>
+        <text x="1575" y="574" text-anchor="middle" class="box-title">Commit session</text>
+        <text x="1575" y="594" text-anchor="middle" class="box-copy">save this transcript</text>
+        <rect class="box" x="1190" y="690" width="240" height="78" fill="var(--green)" stroke="var(--green-line)"/>
+        <text x="1310" y="722" text-anchor="middle" class="box-title">Persist memory note</text>
+        <text x="1310" y="745" text-anchor="middle" class="box-copy">candidate note for future recall</text>
+        <rect class="box" x="1480" y="690" width="250" height="78" fill="var(--blue)" stroke="var(--blue-line)"/>
+        <text x="1605" y="722" text-anchor="middle" class="box-title">Emit response</text>
+        <text x="1605" y="745" text-anchor="middle" class="box-copy">output and memory write run after commit</text>
+        <rect class="pill" x="1250" y="790" width="420" height="28" fill="#f0f4f6" stroke="#d5dfe5"/>
+        <text x="1460" y="809" text-anchor="middle" class="pill-text" fill="#526979">Session = conversation · Memory = retrieved/persisted knowledge</text>
+      </svg>
+
+      <svg class="multi" viewBox="0 0 1620 1080" role="img" aria-labelledby="multi-title multi-desc">
+        <title id="multi-title">Two ycode turns in one conversation session</title>
+        <desc id="multi-desc">Turn one commits a transcript and submits a candidate memory note. Turn two reloads history from the same session and separately recalls relevant memory. The candidate note may not be returned by recall.</desc>
+        <defs>
+          <marker id="arrow-multi" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#9aaab5"/></marker>
+          <marker id="arrow-multi-amber" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#b97816"/></marker>
+          <marker id="arrow-multi-green" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#32845a"/></marker>
+        </defs>
+        <rect class="section" x="40" y="45" width="1410" height="435"/>
+        <rect class="section" x="40" y="565" width="1410" height="470"/>
+        <!-- Turn 1 ordinary data paths. -->
+        <path class="multi-edge" d="M220 235 C250 235 250 131 285 131"/>
+        <path class="multi-edge" d="M220 235 H285"/>
+        <path class="multi-edge" d="M220 235 C250 235 250 339 285 339"/>
+        <path class="multi-edge" d="M515 131 C550 131 548 210 585 210"/>
+        <path class="multi-edge" d="M515 235 H585"/>
+        <path class="multi-edge" d="M515 339 C550 339 548 280 585 280"/>
+        <path class="multi-edge" d="M815 240 H885"/>
+        <path class="multi-edge" d="M1000 295 V355"/>
+        <path class="multi-edge" d="M1115 387 C1140 387 1140 235 1165 235"/>
+        <path class="multi-edge" d="M1115 387 H1165"/>
+
+        <!-- Turn 2 ordinary data paths. -->
+        <path class="multi-edge" d="M220 775 C250 775 250 651 285 651"/>
+        <path class="multi-edge" d="M220 775 C250 775 250 761 285 761"/>
+        <path class="multi-edge" d="M220 775 C250 775 250 871 285 871"/>
+        <path class="multi-edge" d="M515 651 C550 651 548 735 585 735"/>
+        <path class="multi-edge" d="M515 761 C550 761 548 760 585 760"/>
+        <path class="multi-edge" d="M515 871 C550 871 548 805 585 805"/>
+        <path class="multi-edge" d="M815 765 H885"/>
+        <path class="multi-edge" d="M1000 820 V890"/>
+        <path class="multi-edge" d="M1115 922 C1140 922 1140 785 1165 785"/>
+        <path class="multi-edge" d="M1115 922 H1165"/>
+
+        <!-- Durable cross-turn paths: transcript is definite; memory recall is queried separately. -->
+        <path class="multi-session" d="M1000 419 C900 460 670 460 500 495"/>
+        <path class="multi-session" d="M500 549 H540 V761 H515"/>
+        <path class="multi-memory" d="M1260 419 V495"/>
+        <path class="multi-memory" d="M1440 522 H1575 V980 H540 V871 H515"/>
+
+        <text x="65" y="78" class="section-title">TURN 1 · USER ASKS A QUESTION</text>
+        <rect class="box" x="65" y="197" width="155" height="76" fill="var(--blue)" stroke="var(--blue-line)"/>
+        <text x="142" y="229" text-anchor="middle" class="box-title">Input A</text>
+        <text x="142" y="251" text-anchor="middle" class="box-copy">normalize request</text>
+        <rect class="box" x="285" y="93" width="230" height="76" fill="var(--violet)" stroke="var(--violet-line)"/>
+        <text x="305" y="122" class="box-title">Context</text>
+        <text x="305" y="145" class="box-copy">load configured instructions</text>
+        <rect class="box" x="285" y="197" width="230" height="76" fill="var(--green)" stroke="var(--green-line)"/>
+        <text x="305" y="226" class="box-title">Memory recall</text>
+        <text x="305" y="249" class="box-copy">lookup relevant knowledge for A</text>
+        <rect class="box" x="285" y="301" width="230" height="76" fill="var(--amber)" stroke="var(--amber-line)"/>
+        <text x="305" y="330" class="box-title">Load session history</text>
+        <text x="305" y="353" class="box-copy">empty if this is a new session</text>
+        <rect class="box" x="585" y="185" width="230" height="110" fill="#f8fafb" stroke="#748b99"/>
+        <text x="700" y="218" text-anchor="middle" class="box-title">Assemble prompt A</text>
+        <text x="700" y="243" text-anchor="middle" class="box-copy">context + recalled knowledge</text>
+        <text x="700" y="266" text-anchor="middle" class="box-copy">history + input A</text>
+        <rect class="box" x="885" y="185" width="230" height="110" fill="var(--teal)" stroke="var(--teal-line)"/>
+        <text x="1000" y="218" text-anchor="middle" class="box-title">Agent loop</text>
+        <text x="1000" y="243" text-anchor="middle" class="box-copy">model ↔ tool calls as needed</text>
+        <text x="1000" y="266" text-anchor="middle" class="box-copy">repeat until finished / bounded</text>
+        <rect class="box" x="885" y="355" width="230" height="64" fill="var(--amber)" stroke="var(--amber-line)"/>
+        <text x="1000" y="382" text-anchor="middle" class="box-title">Commit transcript A</text>
+        <text x="1000" y="402" text-anchor="middle" class="box-copy">to this session</text>
+        <rect class="box" x="1165" y="197" width="190" height="76" fill="var(--blue)" stroke="var(--blue-line)"/>
+        <text x="1260" y="229" text-anchor="middle" class="box-title">Emit response A</text>
+        <text x="1260" y="251" text-anchor="middle" class="box-copy">turn 1 completes</text>
+        <rect class="box" x="1165" y="355" width="190" height="64" fill="var(--green)" stroke="var(--green-line)"/>
+        <text x="1260" y="382" text-anchor="middle" class="box-title">Candidate memory note</text>
+        <text x="1260" y="402" text-anchor="middle" class="box-copy">submitted after commit</text>
+
+        <rect class="box" x="350" y="495" width="300" height="54" fill="var(--amber)" stroke="var(--amber-line)"/>
+        <text x="500" y="518" text-anchor="middle" class="box-title">Durable session store</text>
+        <text x="500" y="538" text-anchor="middle" class="box-copy">transcript continuity for the same session ID</text>
+        <rect class="box" x="1110" y="495" width="330" height="54" fill="var(--green)" stroke="var(--green-line)"/>
+        <text x="1275" y="518" text-anchor="middle" class="box-title">Persistent knowledge base</text>
+        <text x="1275" y="538" text-anchor="middle" class="box-copy">candidate workflow; queried separately on recall</text>
+
+        <text x="65" y="598" class="section-title">TURN 2 · SAME SESSION, A NEW USER REQUEST</text>
+        <rect class="box" x="65" y="737" width="155" height="76" fill="var(--blue)" stroke="var(--blue-line)"/>
+        <text x="142" y="769" text-anchor="middle" class="box-title">Input B</text>
+        <text x="142" y="791" text-anchor="middle" class="box-copy">normalize request</text>
+        <rect class="box" x="285" y="613" width="230" height="76" fill="var(--violet)" stroke="var(--violet-line)"/>
+        <text x="305" y="642" class="box-title">Context loaded again</text>
+        <text x="305" y="665" class="box-copy">same configured instructions</text>
+        <rect class="box" x="285" y="723" width="230" height="76" fill="var(--amber)" stroke="var(--amber-line)"/>
+        <text x="305" y="752" class="box-title">Load session history</text>
+        <text x="305" y="775" class="box-copy">includes committed transcript A</text>
+        <rect class="box" x="285" y="833" width="230" height="76" fill="var(--green)" stroke="var(--green-line)"/>
+        <text x="305" y="862" class="box-title">Memory recall</text>
+        <text x="305" y="885" class="box-copy">separate lookup, based on task B</text>
+        <rect class="box" x="585" y="710" width="230" height="110" fill="#f8fafb" stroke="#748b99"/>
+        <text x="700" y="743" text-anchor="middle" class="box-title">Assemble prompt B</text>
+        <text x="700" y="768" text-anchor="middle" class="box-copy">context + recalled knowledge</text>
+        <text x="700" y="791" text-anchor="middle" class="box-copy">history A + input B</text>
+        <rect class="box" x="885" y="710" width="230" height="110" fill="var(--teal)" stroke="var(--teal-line)"/>
+        <text x="1000" y="743" text-anchor="middle" class="box-title">Agent loop</text>
+        <text x="1000" y="768" text-anchor="middle" class="box-copy">model ↔ tool calls as needed</text>
+        <text x="1000" y="791" text-anchor="middle" class="box-copy">repeat until finished / bounded</text>
+        <rect class="box" x="885" y="890" width="230" height="64" fill="var(--amber)" stroke="var(--amber-line)"/>
+        <text x="1000" y="917" text-anchor="middle" class="box-title">Commit transcript A + B</text>
+        <text x="1000" y="937" text-anchor="middle" class="box-copy">updated session history</text>
+        <rect class="box" x="1165" y="710" width="190" height="76" fill="var(--blue)" stroke="var(--blue-line)"/>
+        <text x="1260" y="742" text-anchor="middle" class="box-title">Emit response B</text>
+        <text x="1260" y="764" text-anchor="middle" class="box-copy">turn 2 completes</text>
+        <rect class="box" x="1165" y="890" width="190" height="64" fill="var(--green)" stroke="var(--green-line)"/>
+        <text x="1260" y="917" text-anchor="middle" class="box-title">Candidate memory note</text>
+        <text x="1260" y="937" text-anchor="middle" class="box-copy">submitted after commit</text>
+
+      </svg>
+
+      <svg class="zero" viewBox="0 0 1320 470" role="img" aria-labelledby="zero-title zero-desc">
+        <title id="zero-title">Ycode zero baseline request flow</title>
+        <desc id="zero-desc">The current input alone is assembled and sent for one model call with tools disabled. There is no context, history, memory, or repeat loop.</desc>
+        <defs><marker id="arrow-zero" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#9aaab5"/></marker></defs>
+        <path d="M195 160 H260 M445 160 H510 M725 160 H790 M975 160 H1040" fill="none" stroke="#9aaab5" stroke-width="2.4" marker-end="url(#arrow-zero)"/>
+        <rect class="box" x="25" y="118" width="170" height="84" fill="var(--blue)" stroke="var(--blue-line)"/>
+        <text x="110" y="152" text-anchor="middle" class="box-title">User request</text>
+        <text x="110" y="175" text-anchor="middle" class="box-copy">one admitted input</text>
+        <rect class="box" x="260" y="118" width="185" height="84" fill="var(--blue)" stroke="var(--blue-line)"/>
+        <text x="352" y="152" text-anchor="middle" class="box-title">Normalize input</text>
+        <text x="352" y="175" text-anchor="middle" class="box-copy">current request only</text>
+        <rect class="box" x="510" y="105" width="215" height="110" fill="#f8fafb" stroke="#748b99"/>
+        <text x="617" y="145" text-anchor="middle" class="box-title">Assemble prompt</text>
+        <text x="617" y="170" text-anchor="middle" class="box-copy">input port only</text>
+        <text x="617" y="192" text-anchor="middle" class="box-copy">no prior turns loaded</text>
+        <rect class="box" x="790" y="105" width="185" height="110" fill="var(--teal)" stroke="var(--teal-line)"/>
+        <text x="882" y="145" text-anchor="middle" class="box-title">One model call</text>
+        <text x="882" y="170" text-anchor="middle" class="box-copy">toolCalls: false</text>
+        <text x="882" y="192" text-anchor="middle" class="box-copy">no model-visible Bashy tool</text>
+        <rect class="box" x="1040" y="118" width="235" height="84" fill="var(--blue)" stroke="var(--blue-line)"/>
+        <text x="1157" y="152" text-anchor="middle" class="box-title">Append and emit answer</text>
+        <text x="1157" y="175" text-anchor="middle" class="box-copy">then end this request</text>
+
+        <rect class="box" x="105" y="310" width="235" height="70" fill="var(--gray)" stroke="var(--gray-line)" stroke-dasharray="5 5"/>
+        <text x="222" y="340" text-anchor="middle" class="box-title">No context</text>
+        <text x="222" y="362" text-anchor="middle" class="box-copy">no instructions or source fragments</text>
+        <rect class="box" x="395" y="310" width="235" height="70" fill="var(--gray)" stroke="var(--gray-line)" stroke-dasharray="5 5"/>
+        <text x="512" y="340" text-anchor="middle" class="box-title">No session history</text>
+        <text x="512" y="362" text-anchor="middle" class="box-copy">cannot refer to earlier turns</text>
+        <rect class="box" x="685" y="310" width="235" height="70" fill="var(--gray)" stroke="var(--gray-line)" stroke-dasharray="5 5"/>
+        <text x="802" y="340" text-anchor="middle" class="box-title">No persistent memory</text>
+        <text x="802" y="362" text-anchor="middle" class="box-copy">no recall and no write</text>
+        <rect class="box" x="975" y="310" width="235" height="70" fill="var(--gray)" stroke="var(--gray-line)" stroke-dasharray="5 5"/>
+        <text x="1092" y="340" text-anchor="middle" class="box-title">No repeat loop</text>
+        <text x="1092" y="362" text-anchor="middle" class="box-copy">one request/response pass</text>
+        <text x="660" y="430" text-anchor="middle" class="box-copy">A question requiring a tool call (such as checking the working directory) cannot be answered from live workspace state.</text>
+      </svg>
+    </div>
+  </section>
+
+  <section class="notes full" aria-label="Full harness component meanings">
+    <article class="note"><h3><span class="dot" style="background:var(--violet-line)"></span>Prompt context</h3><p>Configured instructions and source fragments are loaded each turn. This is harness guidance, not conversation history.</p></article>
+    <article class="note"><h3><span class="dot" style="background:var(--amber-line)"></span>Session history</h3><p>Prior committed exchanges for the same session are included in the prompt. The current transcript is committed when the turn finishes.</p></article>
+    <article class="note"><h3><span class="dot" style="background:var(--green-line)"></span>Persistent memory</h3><p>Relevant knowledge is recalled separately from the transcript. A candidate note may be persisted for future retrieval.</p></article>
+  </section>
+  <p class="footer-note">The flow reflects the YAML graph: <code>turn</code>, <code>agent-step</code>, <code>load-knowledge</code>, and <code>persist-knowledge</code>. Dashed workspace probe is a separate harness-authored node, not a prompt input.</p>
+</main>
+<script>
+  const board = document.querySelector('.board');
+  const buttons = [...document.querySelectorAll('[data-select]')];
+  const notes = document.querySelector('.notes');
+  for (const button of buttons) {
+    button.addEventListener('click', () => {
+      const mode = button.dataset.select;
+      board.dataset.mode = mode;
+      for (const item of buttons) item.setAttribute('aria-pressed', String(item === button));
+      notes.hidden = mode === 'zero';
+    });
+  }
+</script>
+</body>
+</html>

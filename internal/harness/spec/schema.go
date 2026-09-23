@@ -14,10 +14,33 @@ func JSONSchema() ([]byte, error) {
 	root["$schema"] = "https://json-schema.org/draft/2020-12/schema"
 	root["$id"] = "https://ycode.dev/schema/agent-v1alpha1.json"
 	root["title"] = "Ycode Harness"
+	root["$comment"] = "Property and type inventory. The ycode compiler is authoritative for required fields and cross-field validity."
 	root["$defs"] = builder.defs
 	properties := root["properties"].(map[string]any)
 	properties["apiVersion"] = map[string]any{"const": APIVersion}
 	properties["kind"] = map[string]any{"const": Kind}
+
+	// Defaults templates use the same property contracts as their corresponding
+	// sections/resources, but the template key set is the supported sections.
+	specSchema := builder.defs["Spec"].(map[string]any)
+	specProperties := specSchema["properties"].(map[string]any)
+	defaults := make(map[string]any, len(defaultableSections))
+	specType := reflect.TypeOf(Spec{})
+	for i := range specType.NumField() {
+		field := specType.Field(i)
+		name := strings.Split(field.Tag.Get("yaml"), ",")[0]
+		if _, allowed := defaultableSections[name]; !allowed {
+			continue
+		}
+		templateType := field.Type
+		if templateType.Kind() == reflect.Map {
+			templateType = templateType.Elem()
+		}
+		defaults[name] = builder.schema(templateType)
+	}
+	specProperties["defaults"] = map[string]any{
+		"type": "object", "additionalProperties": false, "properties": defaults,
+	}
 	return json.MarshalIndent(root, "", "  ")
 }
 
@@ -64,7 +87,6 @@ func (b *schemaBuilder) schema(t reflect.Type) any {
 
 func (b *schemaBuilder) structSchema(t reflect.Type) map[string]any {
 	properties := make(map[string]any)
-	var required []string
 	for i := range t.NumField() {
 		field := t.Field(i)
 		tag := field.Tag.Get("yaml")
@@ -73,15 +95,8 @@ func (b *schemaBuilder) structSchema(t reflect.Type) map[string]any {
 		}
 		parts := strings.Split(tag, ",")
 		properties[parts[0]] = b.schema(field.Type)
-		if len(parts) == 1 || !stringSliceContains(parts[1:], "omitempty") {
-			required = append(required, parts[0])
-		}
 	}
-	result := map[string]any{"type": "object", "additionalProperties": false, "properties": properties}
-	if len(required) > 0 {
-		result["required"] = required
-	}
-	return result
+	return map[string]any{"type": "object", "additionalProperties": false, "properties": properties}
 }
 
 func stringSliceContains(values []string, target string) bool {

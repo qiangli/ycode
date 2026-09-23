@@ -141,7 +141,7 @@ func canonicalWireEvents(id string) []*api.StreamEvent {
 
 func testRequest() Request {
 	return Request{
-		Model: "test-model", MaxTokens: 128, Stream: true,
+		Model: "test-model", MaxTokens: 128, Stream: true, BashyTool: true,
 		Messages: []api.Message{{Role: api.RoleUser, Content: []api.ContentBlock{{Type: api.ContentTypeText, Text: "hello"}}}},
 	}
 }
