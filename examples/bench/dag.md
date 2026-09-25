@@ -167,7 +167,7 @@ while IFS= read -r req; do
           mkdir -p "$(dirname "$icfg")"
           [ -e "$(dirname "$icfg")/prompts" ] || cp -R "$(dirname "$config")/prompts" "$(dirname "$icfg")/"
           sed -e "s|^    workspace: \.$|    workspace: $ws|" \
-              -e "s|^    readableRoots: \[\.\]$|    readableRoots: [$ws]|" \
+              -e "s|^    readableRoots: \[\.\]$|    readableRoots: [$ws, $(dirname "$icfg")]|" \
               -e "s|^    writableRoots: \[\.\]$|    writableRoots: [$ws]|" "$config" > "$icfg"
           grep -q "^    workspace: $ws$" "$icfg" || { printf 'could not set workspace in %s\n' "$icfg" >&2; exit 1; }
           printf '%s' "$req" | B_WS="$ws" B_ART="$run/artifacts" B_RUN="$run_id" B_MODEL="$model" jq -c \
