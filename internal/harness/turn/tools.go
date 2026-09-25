@@ -61,7 +61,14 @@ func (r *Runtime) execute(ctx context.Context, in pipeline.Invocation) pipeline.
 	if err != nil {
 		return fail(err)
 	}
-	return pipeline.Success(map[string]any{"result": result})
+	// Tool results travel as plain objects carrying the call id, the same
+	// shape as the denied and rejected paths, so the transcript can link them.
+	fields, err := toolResultObject(result)
+	if err != nil {
+		return fail(err)
+	}
+	fields["call_id"] = call.ID
+	return pipeline.Success(map[string]any{"result": fields})
 }
 
 func (r *Runtime) deny(_ context.Context, in pipeline.Invocation) pipeline.Outcome {
@@ -130,19 +137,23 @@ func (r *Runtime) appendToolResults(_ context.Context, in pipeline.Invocation) p
 		return fail(err)
 	}
 	for _, raw := range anyList(in.Inputs["results"]) {
-		entry, err := object(raw)
+		// forEach collects each iteration's result value directly; accept a
+		// {"result": …} wrapper too.
+		result := raw
+		if entry, ok := raw.(map[string]any); ok {
+			if inner, wrapped := entry["result"]; wrapped {
+				result = inner
+			}
+		}
+		fields, err := toolResultObject(result)
 		if err != nil {
 			return fail(err)
 		}
-		result := entry["result"]
-		encoded, err := json.Marshal(result)
+		encoded, err := json.Marshal(fields)
 		if err != nil {
 			return fail(err)
 		}
-		callID := ""
-		if value, ok := result.(map[string]any); ok {
-			callID = text(value["call_id"])
-		}
+		callID := text(fields["call_id"])
 		messages = append(messages, message.Message{Role: message.RoleUser, Content: []message.ContentBlock{{Type: message.ContentTypeToolResult, ToolUseID: callID, Content: string(encoded)}}})
 	}
 	state["messages"] = messages
@@ -267,3 +278,24 @@ func (r *Runtime) bashyMeta(ctx context.Context, meta ioctx.Meta, callID string)
 }
 
 func intValue(value any) int { result, _ := number(value); return result }
+
+// toolResultObject normalises a tool result (a map or a typed result) into a
+// JSON object.
+func toolResultObject(result any) (map[string]any, error) {
+	if value, ok := result.(map[string]any); ok {
+		copy := make(map[string]any, len(value))
+		for key, item := range value {
+			copy[key] = item
+		}
+		return copy, nil
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("turn: encode tool result: %w", err)
+	}
+	fields := map[string]any{}
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		return nil, fmt.Errorf("turn: tool result is not an object: %w", err)
+	}
+	return fields, nil
+}
