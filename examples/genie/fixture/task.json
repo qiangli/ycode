@@ -1,0 +1,1 @@
+{"instance_id": "genie-fixture__stats-1", "problem_statement": "stats.mean returns the wrong value: mean([2, 4]) returns 6.0 and mean([5]) raises ZeroDivisionError. It should return the arithmetic mean (3.0 and 5.0). The unit tests run with: python3 -m unittest discover -s tests -t ."}

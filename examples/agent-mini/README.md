@@ -7,6 +7,11 @@ are retained as comparison references; the Python runtime is not on the
 agent-mini execution path. It has not yet been evaluated and makes no score
 claim.
 
+agent-mini is kept unchanged as a small reference example and as the
+permanent baseline arm of the benchmark plan. The agent that grows is
+[`genie`](../genie/) ("bashy genie"), seeded from this directory; every
+improvement lands there and is measured against agent-mini.
+
 ## Included
 
 - `agent.yaml`: complete ycode harness declaration, including model tool calls,

@@ -1,0 +1,5 @@
+#!/usr/bin/env bashy
+# Run the ycode harness from this extracted directory.
+set -e
+HERE=$(dirname "${BASH_SOURCE[0]}")
+exec ycode --file "$HERE/agent.yaml" "$@"
