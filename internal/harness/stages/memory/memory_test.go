@@ -253,3 +253,19 @@ func (f *fakeSummarizer) Summarize(_ context.Context, route, system string, mess
 	f.messages = cloneMessages(messages)
 	return f.summary, f.err
 }
+
+func TestMeasureReservesOneResponseNotTheWholeRouteBudget(t *testing.T) {
+	doc := testDocument("fallback-deterministic")
+	route := doc.Spec.Routes["main-route"]
+	route.Budget.MaxOutputTokens = 1000 // a whole-run allowance, far above one response
+	doc.Spec.Routes["main-route"] = route
+	engine, _, _ := testEngineWithDocument(t, doc, &fakeSummarizer{})
+	measurement, err := engine.Measure(context.Background(), testMeta(), MeasureRequest{MemoryRef: "main", RouteRef: "main-route", SafetyMargin: 1, Messages: nil})
+	if err != nil {
+		t.Fatalf("Measure: %v", err)
+	}
+	// 100 context - min(1000 route, 20 model) output - 8 reserve
+	if measurement.ContextBudget != 72 {
+		t.Fatalf("ContextBudget = %d, want 72", measurement.ContextBudget)
+	}
+}

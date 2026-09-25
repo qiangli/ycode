@@ -124,7 +124,14 @@ func (e *Engine) Measure(_ context.Context, meta Meta, request MeasureRequest) (
 	if err != nil {
 		return Measurement{}, errors.New("context measure: token counter failed")
 	}
-	result := Measurement{SchemaVersion: SchemaVersion, PayloadRef: ref, Tokens: count, ContextBudget: model.Limits.ContextTokens - route.Budget.MaxOutputTokens - memoryConfig.Compaction.ReserveTokens, Measured: measured}
+	// Reserve room for one response exactly as the request does
+	// (turn/routetext.go): the route budget capped at the model's output limit.
+	// The route budget can be a whole-run allowance far above one response.
+	outputReserve := route.Budget.MaxOutputTokens
+	if outputReserve > model.Limits.MaxOutputTokens {
+		outputReserve = model.Limits.MaxOutputTokens
+	}
+	result := Measurement{SchemaVersion: SchemaVersion, PayloadRef: ref, Tokens: count, ContextBudget: model.Limits.ContextTokens - outputReserve - memoryConfig.Compaction.ReserveTokens, Measured: measured}
 	if result.ContextBudget < 0 {
 		return Measurement{}, errors.New("context measure: computed context budget is negative")
 	}
