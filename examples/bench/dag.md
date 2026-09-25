@@ -160,10 +160,20 @@ while IFS= read -r req; do
       git -C "$ws" checkout --quiet "$base"
       case "$agent" in
         agent-mini)
+          # ycode resolves runtime.workspace and the roots against the config
+          # file's directory, so each task gets a config whose workspace is
+          # the checkout (prompts stay beside it).
+          icfg="$(dirname "$config")/instances/$id.yaml"
+          mkdir -p "$(dirname "$icfg")"
+          [ -e "$(dirname "$icfg")/prompts" ] || cp -R "$(dirname "$config")/prompts" "$(dirname "$icfg")/"
+          sed -e "s|^    workspace: \.$|    workspace: $ws|" \
+              -e "s|^    readableRoots: \[\.\]$|    readableRoots: [$ws]|" \
+              -e "s|^    writableRoots: \[\.\]$|    writableRoots: [$ws]|" "$config" > "$icfg"
+          grep -q "^    workspace: $ws$" "$icfg" || { printf 'could not set workspace in %s\n' "$icfg" >&2; exit 1; }
           printf '%s' "$req" | B_WS="$ws" B_ART="$run/artifacts" B_RUN="$run_id" B_MODEL="$model" jq -c \
             '{instance_id, problem_statement, repo_path: env.B_WS, artifact_dir: env.B_ART, run_id: env.B_RUN, model_name_or_path: env.B_MODEL}' |
           OPENAI_BASE_URL="$ollama/v1" OPENAI_API_KEY=ollama YCODE_BIN="$home/bin/host/ycode" \
-            "$home/bin/host/agent-mini" -config "$config" >> "$run/predictions.jsonl" 2>> "$run/stderr.log" || status=failed
+            "$home/bin/host/agent-mini" -config "$icfg" >> "$run/predictions.jsonl" 2>> "$run/stderr.log" || status=failed
           ;;
         mini-swe-agent)
           task=$(printf '%s' "$req" | jq -r .problem_statement)

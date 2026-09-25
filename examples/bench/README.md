@@ -18,3 +18,13 @@ whole monthly split.
 SWE-bench Verified is contamination-flagged (retired as a frontier measure in
 2026), so it is used for iteration and comparability with published bash-only
 results, never as the only evidence; SWE-rebench is the headline test set.
+
+## Runner notes
+
+- `bashy dag -f dag.md fetch|requests|tools|solve|smoke` — see the variable table
+  in `dag.md`. `smoke` is the only target meant for the dev box.
+- ycode resolves `runtime.workspace` and the readable/writable roots against the
+  **config file's directory**. The runner therefore writes one config per task
+  whose workspace and roots are the task checkout. (agent-mini's own `.bar`
+  keeps `workspace: .`, so run standalone it operates on the bundle directory —
+  a known limitation of the unchanged example, fixed in genie.)
