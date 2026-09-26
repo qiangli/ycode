@@ -264,7 +264,15 @@ func runCLIInput(ctx context.Context, app *harnessApplication, inv harnesscli.In
 		return err
 	}
 	defaults := app.defaults()
-	if session := stringFlag(inv, inv.Dispatch.Input.SessionFlag); session != "" {
+	session := stringFlag(inv, inv.Dispatch.Input.SessionFlag)
+	if session == "" && inv.Mode == "repl" && len(inv.Arguments) > 0 {
+		session = inv.Arguments[0] // resume [SESSION]
+	}
+	chosen := session != "" || inv.Dispatch.Input.SessionDefault == "latest"
+	if pointed := pointedSession(); session == "" && pointed != "" && inv.Mode != "repl" {
+		// A turn typed in a terminal front end continues the session it is on.
+		defaults.SessionID = pointed
+	} else if session != "" {
 		found, err := app.harness.Session(session)
 		switch {
 		case err == nil:
@@ -295,6 +303,9 @@ func runCLIInput(ctx context.Context, app *harnessApplication, inv harnesscli.In
 		if err != nil {
 			return err
 		}
+		if err := pointSession(defaults.SessionID); err != nil {
+			return err
+		}
 		return local.Run(ctx, frontend.Input{SessionID: defaults.SessionID, Principal: defaults.Principal, Body: body}, app.renderer(streams.Out))
 	}
 	switch inv.Mode {
@@ -311,6 +322,26 @@ func runCLIInput(ctx context.Context, app *harnessApplication, inv harnesscli.In
 		}
 		return submit(strings.TrimSuffix(string(body), "\n"))
 	case "repl":
+		if insideTerminal() {
+			// Already in a terminal front end: move its session pointer
+			// instead of nesting a second session loop.
+			if !chosen {
+				_, err := fmt.Fprintf(streams.Err, "already in session %s; `new` starts another, `resume SESSION` switches\n", pointedSession())
+				return err
+			}
+			if err := pointSession(defaults.SessionID); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintf(streams.Out, "session %s\n", defaults.SessionID)
+			return err
+		}
+		if TerminalUI != nil && app.doc.Spec.Frontends[ref].Kind == "tui" && stdinIsTerminal() {
+			config, err := absSource(app.doc.Source)
+			if err != nil {
+				return err
+			}
+			return TerminalUI(ctx, TerminalSession{Agent: app.doc.Metadata.Name, Config: config, Session: defaults.SessionID})
+		}
 		scanner := bufio.NewScanner(streams.In)
 		scanner.Buffer(make([]byte, 4096), app.doc.Spec.Frontends[ref].Limits.MaxInputBytes)
 		for scanner.Scan() {

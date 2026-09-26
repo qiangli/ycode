@@ -79,15 +79,22 @@ spec:
               agentRef: coder
               input: {mode: repl, stdin: true, empty: reject, payloadKey: request, sessionFlag: session}
           - name: resume
-            usage: resume [--session ID]
-            short: Continue the latest session (or --session ID) in the line-oriented REPL
-            args: {min: 0, max: 0}
+            usage: resume [SESSION]
+            short: Continue the latest session (or SESSION) on the terminal; inside a session, switch to it
+            args: {min: 0, max: 1}
             dispatch:
               operation: input
-              frontendRef: repl
+              frontendRef: tui
               triggerRef: interactive-input
               agentRef: coder
               input: {mode: repl, stdin: true, empty: reject, payloadKey: request, sessionFlag: session, sessionDefault: latest}
+          - {name: new, short: Start a fresh session (the current one stays resumable) and print its id, args: {min: 0, max: 0}, dispatch: {operation: session, action: new}}
+          - name: status
+            short: Show the agent, model and the session this terminal is on (else the latest)
+            args: {min: 0, max: 0}
+            flags:
+              - {name: json, type: bool, default: "false", usage: Machine-readable JSON, scope: local}
+            dispatch: {operation: session, action: status}
           - name: session
             short: List, show, export, search, rename and fork durable sessions
             long: "Views over the canonical event log. Sessions are listed newest first; SESSION is an id or a unique id prefix and defaults to the latest session."

@@ -3,6 +3,7 @@ package ycodecli
 import (
 	"bytes"
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -95,5 +96,75 @@ func TestYAMLCLISessionGroupAndResume(t *testing.T) {
 	}
 	if _, err := run("", "session", "rename", "sess-two"); err == nil {
 		t.Fatal("rename without a title must be a usage error")
+	}
+}
+
+// A terminal front end exports a session pointer: a turn typed there
+// continues the pointed session, `new` and `resume` move the pointer (resume
+// never nests a second session loop), and `status` reports it.
+func TestYAMLCLITerminalSessionPointer(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("BASHY_HOME", "")
+	pointer := home + "/terminal.session"
+	if err := os.WriteFile(pointer, []byte("sess-a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(SessionFileEnv, pointer)
+	provider := &applicationProvider{}
+	app, err := openHarnessApplication(harnessFixture(t), public.WithHarnessProvider("openai", provider))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	run := func(args ...string) string {
+		t.Helper()
+		root, err := harnesscli.New(app.doc, func(ctx context.Context, inv harnesscli.Invocation, streams harnesscli.IO) error {
+			if inv.Dispatch.Operation == "session" {
+				return sessionCLI(ctx, app, inv, streams.Out)
+			}
+			return runCLIInput(ctx, app, inv, streams)
+		}, harnesscli.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		root.SetIn(strings.NewReader(""))
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetArgs(args)
+		if err := root.ExecuteContext(context.Background()); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out.String())
+		}
+		return out.String()
+	}
+	pointed := func() string {
+		data, err := os.ReadFile(pointer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(data))
+	}
+
+	run("prompt", "first request")
+	if show := run("session", "show", "sess-a"); !strings.Contains(show, "[user] first request") {
+		t.Fatalf("the turn did not land in the pointed session:\n%s", show)
+	}
+	if status := run("status"); !strings.Contains(status, "sess-a") || !strings.Contains(status, "turns    1 committed") {
+		t.Fatalf("status:\n%s", status)
+	}
+	fresh := strings.TrimSpace(run("new"))
+	if fresh == "" || fresh == "sess-a" || pointed() != fresh {
+		t.Fatalf("new printed %q, pointer %q", fresh, pointed())
+	}
+	if status := run("status", "--json"); !strings.Contains(status, `"session": "`+fresh+`"`) || !strings.Contains(status, `"terminal": true`) {
+		t.Fatalf("status --json:\n%s", status)
+	}
+	if out := run("resume", "sess-a"); !strings.Contains(out, "session sess-a") || pointed() != "sess-a" {
+		t.Fatalf("resume inside a terminal: %q, pointer %q", out, pointed())
+	}
+	run("resume", fresh)
+	if out := run("resume"); pointed() != "sess-a" || !strings.Contains(out, "session sess-a") {
+		t.Fatalf("resume without a session picks the latest: %q, pointer %q", out, pointed())
 	}
 }

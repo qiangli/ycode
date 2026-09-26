@@ -426,8 +426,11 @@ func validateCLIDispatch(d *Document, route CLIDispatch, args CLIArgs, flags map
 		if input.Mode != "auto" && input.Mode != "args" && input.Mode != "stdin" && input.Mode != "repl" {
 			return fmt.Errorf("input.mode must be args, stdin, repl or auto")
 		}
-		if (input.Mode == "stdin" || input.Mode == "repl") && (args.Min != 0 || args.Max != 0) {
-			return fmt.Errorf("stdin/repl input cannot accept arguments")
+		// A repl may take one argument: the session it continues (resume
+		// SESSION), which needs a session flag to mean anything.
+		replSession := input.Mode == "repl" && input.SessionFlag != "" && args.Min == 0 && args.Max == 1
+		if (input.Mode == "stdin" || input.Mode == "repl") && (args.Min != 0 || args.Max != 0) && !replSession {
+			return fmt.Errorf("stdin/repl input cannot accept arguments (a repl with a session flag may take one: the session)")
 		}
 		if input.Mode == "stdin" && !input.Stdin {
 			return fmt.Errorf("stdin mode requires stdin=true")
@@ -482,7 +485,7 @@ func validateCLIDispatch(d *Document, route CLIDispatch, args CLIArgs, flags map
 		}
 		want, ok := sessionActionArgs[route.Action]
 		if !ok {
-			return fmt.Errorf("session.action must be list, show, export, rename, fork or search")
+			return fmt.Errorf("session.action must be list, show, export, rename, fork, search, new or status")
 		}
 		if args.Min != want.Min || args.Max != want.Max {
 			return fmt.Errorf("session action %s requires args {min: %d, max: %d}", route.Action, want.Min, want.Max)
@@ -538,6 +541,8 @@ var sessionActionArgs = map[string]CLIArgs{
 	"fork":   {Min: 0, Max: 1},  // [SESSION]
 	"rename": {Min: 2, Max: -1}, // SESSION TITLE...
 	"search": {Min: 1, Max: -1}, // QUERY...
+	"new":    {Min: 0, Max: 0},  // start a fresh session
+	"status": {Min: 0, Max: 0},  // the terminal's session, else the latest
 }
 
 func validateCLIInspection(route CLIDispatch, args CLIArgs) error {

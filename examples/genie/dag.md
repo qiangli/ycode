@@ -271,13 +271,18 @@ case $mode in
     "$BASHY" ycode -f "$config" web
     ;;
   resume)
+    # The terminal session runs where the caller is: its commands and the
+    # agent's work both land in the caller's tree.
+    cd "$caller"
     "$BASHY" ycode -f "$config" resume
     ;;
   *)
     if [ -n "$message" ]; then
       "$BASHY" ycode -f "$config" prompt "$message"
     else
-      # A terminal: the interactive session.
+      # A terminal: the interactive session (bashy's default agent TUI),
+      # in the caller's directory.
+      cd "$caller"
       "$BASHY" ycode -f "$config"
     fi
     ;;
