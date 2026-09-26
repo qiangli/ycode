@@ -32,10 +32,10 @@ func TestLifecycleConformanceInventory(t *testing.T) {
 		"nats":                    "internal/harness/frontend/network_ws_nats_test.go#func TestNATSSubscriptionUsesCompiledBoundaryAndCanonicalEvents",
 		"public-embedding":        "pkg/ycode/harness_test.go#func TestHarnessLoadValidateRunStreamsDurableEvents",
 		"platform-effects":        "internal/harness/spec/spec_test.go#func TestCompileRejectsUnsupportedPlatformAndEffectFallback",
-		"acp-protocol":            "cmd/ycode/acp_test.go#func TestServeACPHandshakeNegotiatesProtocolV1",
-		"acp-restart-resume":      "cmd/ycode/acp_test.go#func TestACPRunnerReusesHarnessAndPersistsSessionAcrossRestart",
+		"acp-protocol":            "pkg/ycodecli/acp_test.go#func TestServeACPHandshakeNegotiatesProtocolV1",
+		"acp-restart-resume":      "pkg/ycodecli/acp_test.go#func TestACPRunnerReusesHarnessAndPersistsSessionAcrossRestart",
 		"acp-fork-lineage":        "internal/harness/acp/store_test.go#func TestForkLineageHashChainSurvivesReplay",
-		"utility-yaml-boundary":   "cmd/ycode/utility_harness_test.go#func TestShellOneShotUsesCompiledBashyPolicyBoundary",
+		"utility-yaml-boundary":   "pkg/ycodecli/utility_harness_test.go#func TestShellOneShotUsesCompiledBashyPolicyBoundary",
 		"observability-lifecycle": "internal/harness/observe/otel_test.go#func TestPipelineRunnerEmitsPipelineAndStageSpans",
 	}
 	for capability, anchor := range gates {
