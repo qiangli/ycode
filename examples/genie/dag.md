@@ -160,6 +160,93 @@ jq -r '"model \(.model // "none") (tier \(.tier // "-"), need \(.need_gb // 0) G
 jq -e '.model != null' dist/model-choice.json > /dev/null
 ```
 
+### solve
+Requires: pick-model
+Effects: read, write, exec, net, spend
+
+The front door (`bashy genie "TASK"` runs this target): solve TASK in the git
+repository the caller is in, on a local model, with nothing shared. It picks
+the model for this host (`pick-model`; `GENIE_MODEL_ID` overrides), starts
+genie's OWN model server — bashy's Ollama on a kernel-chosen free port on
+127.0.0.1, sharing only the model store — pulls the model once under a lock,
+checks it answers, writes a per-model profile, runs the adapter, and stops
+the server on exit. The patch stays in the working tree; the prediction and
+the run record go to `GENIE_ARTIFACT_DIR` (default `~/.bashy/genie/runs`).
+A dirty working tree is refused (the patch is the diff against HEAD) unless
+`GENIE_ALLOW_DIRTY=1`.
+
+```bsh
+set -e
+caller=${BASHY_DAG_CALLER_PWD:-$PWD}
+task=$(printf '%s' "${BASHY_DAG_ARGS_JSON:-[]}" | jq -r 'join(" ")')
+if [ -z "$task" ]; then
+  printf '%s\n' 'usage: bashy genie "describe the task"' >&2
+  exit 2
+fi
+if ! repo=$(git -C "$caller" rev-parse --show-toplevel 2>/dev/null); then
+  printf 'genie: %s is not inside a git repository\n' "$caller" >&2
+  exit 2
+fi
+if [ -z "${GENIE_ALLOW_DIRTY:-}" ] && [ -n "$(git -C "$repo" status --porcelain)" ]; then
+  printf 'genie: %s has uncommitted changes; commit or stash them first (or set GENIE_ALLOW_DIRTY=1)\n' "$repo" >&2
+  exit 2
+fi
+model=$(jq -r .model dist/model-choice.json)
+context=$(jq -r '.context // 32768' dist/model-choice.json)
+run_id=${GENIE_RUN_ID:-genie-$(date +%Y%m%d-%H%M%S)}
+artifacts=${GENIE_ARTIFACT_DIR:-$HOME/.bashy/genie/runs}
+mkdir -p "$artifacts" dist/servers
+
+# genie's own model server: port 0 lets the kernel pick a free port, read
+# back from the server's log; only the model store is shared.
+log=$PWD/dist/servers/$run_id.log
+OLLAMA_HOST=127.0.0.1:0 OLLAMA_CONTEXT_LENGTH=$context "$BASHY" ollama serve > "$log" 2>&1 &
+server=$!
+lock=
+trap 'kill -TERM "$server" 2>/dev/null; wait "$server" 2>/dev/null; if [ -n "$lock" ]; then rmdir "$lock" 2>/dev/null; fi' EXIT
+addr=
+for _ in $(seq 1 120); do
+  addr=$(grep -o 'Listening on [0-9.]*:[0-9]*' "$log" | head -1 | cut -d' ' -f3) || true
+  [ -n "$addr" ] && break
+  kill -0 "$server" 2>/dev/null || break
+  sleep 0.5
+done
+if [ -z "$addr" ]; then
+  printf 'genie: the model server did not start; see %s\n' "$log" >&2
+  exit 1
+fi
+printf 'genie: model %s on its own server %s\n' "$model" "$addr" >&2
+
+# One download per model across concurrent runs: a lock directory in the
+# shared store's parent.
+lock=$HOME/.bashy/genie/locks/$(printf '%s' "$model" | tr ':/' '__').pull
+mkdir -p "$(dirname "$lock")"
+until mkdir "$lock" 2>/dev/null; do sleep 2; done
+if ! OLLAMA_HOST=$addr "$BASHY" ollama show "$model" > /dev/null 2>&1; then
+  printf 'genie: pulling %s (first use on this host)\n' "$model" >&2
+  OLLAMA_HOST=$addr "$BASHY" ollama pull "$model"
+fi
+rmdir "$lock"
+lock=
+check=$(M=$model jq -cn '{model: env.M, prompt: "Reply with OK.", stream: false, think: false, options: {num_predict: 2}}')
+if ! curl -sf -m 600 "http://$addr/api/generate" -d "$check" > /dev/null; then
+  printf 'genie: %s did not answer on %s; see %s\n' "$model" "$addr" "$log" >&2
+  exit 1
+fi
+
+profile=$(printf '%s' "$model" | tr ':/.' '___')
+GENIE_PROFILE=$profile GENIE_MODEL_ID=$model GENIE_CONTEXT_TOKENS=$context \
+  GENIE_REQUEST_TIMEOUT_MS=${GENIE_REQUEST_TIMEOUT_MS:-600000} "$BASHY" dag -f dag.md profile-model > /dev/null
+task_file=$PWD/dist/servers/$run_id.task.json
+T_ID="$(basename "$repo")-$run_id" T_TASK=$task T_REPO=$repo jq -cn \
+  '{instance_id: env.T_ID, problem_statement: env.T_TASK, repo_path: env.T_REPO}' > "$task_file"
+GENIE_TASK_JSON=$task_file GENIE_RUN_ID=$run_id GENIE_MODEL_NAME=$model \
+  GENIE_CONFIG=$PWD/dist/profiles/$profile/agent.yaml GENIE_MODEL_CHOICE=$PWD/dist/model-choice.json \
+  GENIE_ARTIFACT_DIR=$artifacts OPENAI_BASE_URL=http://$addr/v1 OPENAI_API_KEY=ollama \
+  "$BASHY" dag -f dag.md main
+printf 'genie: done; the change is in %s (git diff), the run record in %s\n' "$repo" "$artifacts" >&2
+```
+
 ### fixture
 Sources: fixture/task.json fixture/repo/
 Effects: read, write, exec

@@ -75,6 +75,28 @@ its [README](../agent-mini/README.md) for the request fields, `YCODE_BIN`
 and the SWE-bench plan. Benchmark runs go through
 [`../bench`](../bench/README.md).
 
+## bashy genie
+
+With bashy installed, genie is one command away:
+
+```bsh
+bashy genie build --from path/to/ycode/examples/genie   # once: installs ~/.bashy/genie/genie.bar
+cd my-repo && bashy genie "the failing test in tests/test_stats.py; fix stats.mean"
+bashy genie doctor                                      # bundle, bashy, ycode, and the model pick for this host
+```
+
+`bashy genie TASK` runs this bundle's `solve` target in the current git
+repository. `solve` picks the model for the host (below), starts genie's
+own model server — bashy's Ollama on a kernel-chosen free port on
+127.0.0.1, sharing only the model store, so concurrent runs never collide
+— pulls the model once under a lock, checks it answers, writes a per-model
+profile, runs the agent, and stops the server on exit. The change stays in
+the working tree; the prediction and run record go to
+`~/.bashy/genie/runs` (`GENIE_ARTIFACT_DIR`). A dirty tree is refused
+unless `GENIE_ALLOW_DIRTY=1`. ycode comes from `YCODE_BIN` or `PATH` and must
+be current (a released ycode will be provisioned automatically once one is
+published).
+
 ## Host-aware model pick
 
 `bashy dag -f dag.md pick-model` chooses a local Ollama model for this host.
