@@ -250,12 +250,11 @@ printf 'genie: done; the change is in %s (git diff), the run record in %s\n' "$r
 ### fixture
 Sources: fixture/task.json fixture/repo/
 Effects: read, write, exec
-Generates: dist/fixture/task.json
 
 A one-file Python bug with failing unit tests: the smallest task that
 exercises the whole loop (inspect, edit, a contained test run, a patch).
 `GENIE_FIXTURE_DIR` picks where the fresh checkout goes (default
-`dist/fixture`, replaced on every run).
+`dist/fixture`, replaced on every run: no `Generates`, so it always runs).
 
 ```bsh
 dir=${GENIE_FIXTURE_DIR:-$PWD/dist/fixture}

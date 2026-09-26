@@ -87,9 +87,11 @@ func run(input io.Reader, output, diagnostic io.Writer, config string) (retErr e
 			_ = os.WriteFile(filepath.Join(instanceArtifacts, "error.txt"), []byte(retErr.Error()+"\n"), 0o600)
 		}
 	}()
-	ycode := os.Getenv("YCODE_BIN")
-	if ycode == "" {
-		ycode = adjacentBinary("ycode")
+	// The engine: bashy's own `bashy ycode` (Sprint #301), so genie needs no
+	// separate ycode binary. YCODE_BIN still names another ycode explicitly.
+	engine := []string{bashyExecutable(), "ycode"}
+	if bin := os.Getenv("YCODE_BIN"); bin != "" {
+		engine = []string{bin}
 	}
 	timeout := 30 * time.Minute
 	if raw := os.Getenv("GENIE_TIMEOUT"); raw != "" {
@@ -106,7 +108,7 @@ func run(input io.Reader, output, diagnostic io.Writer, config string) (retErr e
 	if err != nil {
 		return fmt.Errorf("write instance config: %w", err)
 	}
-	cmd := exec.CommandContext(ctx, ycode, "--file", taskConfig, "--session", sessionID, prompt)
+	cmd := exec.CommandContext(ctx, engine[0], append(engine[1:], "--file", taskConfig, "--session", sessionID, prompt)...)
 	cmd.Dir = repo
 	cmd.Stderr = io.MultiWriter(diagnostic, &diagnostics)
 	cmd.Env = isolatedEnvironment(os.Environ(), instanceArtifacts)
@@ -231,15 +233,16 @@ func resolveConfig(config string) (string, error) {
 	return filepath.Join(filepath.Dir(exe), "..", config), nil
 }
 
-func adjacentBinary(name string) string {
-	exe, err := os.Executable()
-	if err == nil {
-		candidate := filepath.Join(filepath.Dir(exe), name)
-		if _, statErr := os.Stat(candidate); statErr == nil {
-			return candidate
-		}
+// bashyExecutable is the bashy running this workflow ($BASHY, which bashy dag
+// sets for its bodies), else bashy on PATH.
+func bashyExecutable() string {
+	if b := os.Getenv("BASHY"); b != "" {
+		return b
 	}
-	return name
+	if b, err := exec.LookPath("bashy"); err == nil {
+		return b
+	}
+	return "bashy"
 }
 
 func safePathComponent(value string) string {
