@@ -133,6 +133,18 @@ func run(input io.Reader, output, diagnostic io.Writer, config string) (retErr e
 	if err := os.WriteFile(filepath.Join(instanceArtifacts, "prediction.json"), append(encoded, '\n'), 0o600); err != nil {
 		return fmt.Errorf("save prediction artifact: %w", err)
 	}
+	// The host-aware model pick (dag target pick-model) travels with the
+	// run: its facts and reason are part of what made this prediction.
+	choicePath := os.Getenv("GENIE_MODEL_CHOICE")
+	if choicePath != "" {
+		choice, err := os.ReadFile(choicePath)
+		if err != nil {
+			return fmt.Errorf("read GENIE_MODEL_CHOICE: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(instanceArtifacts, "model-choice.json"), choice, 0o600); err != nil {
+			return fmt.Errorf("save model choice artifact: %w", err)
+		}
+	}
 	configBytes, err := os.ReadFile(config)
 	if err != nil {
 		return fmt.Errorf("read config for manifest: %w", err)
@@ -146,6 +158,9 @@ func run(input io.Reader, output, diagnostic io.Writer, config string) (retErr e
 		"finished_at_utc": time.Now().UTC().Format(time.RFC3339Nano),
 		"duration_ms":     time.Since(startedAt).Milliseconds(),
 		"session_id":      sessionID,
+	}
+	if choicePath != "" {
+		manifest["model_choice"] = "model-choice.json"
 	}
 	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {

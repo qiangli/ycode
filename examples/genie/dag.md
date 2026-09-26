@@ -76,7 +76,7 @@ printf 'Configured model profile: %s\n' "$PWD/$target/agent.yaml"
 ```
 
 ### package
-Sources: agent.yaml genie.bsh prompts/system.md cmd/genie/main.go go.mod README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md dag.md fixture/task.json fixture/repo/
+Sources: agent.yaml genie.bsh prompts/system.md cmd/genie/main.go go.mod README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md dag.md models.json fixture/task.json fixture/repo/
 Effects: read, write
 Generates: dist/genie.bar
 
@@ -84,7 +84,7 @@ Generates: dist/genie.bar
 set -e
 rm -rf dist/package
 mkdir -p dist/package
-cp agent.yaml genie.bsh README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md go.mod dag.md dist/package/
+cp agent.yaml genie.bsh README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md go.mod dag.md models.json dist/package/
 mkdir -p dist/package/cmd/genie
 cp cmd/genie/main.go dist/package/cmd/genie/main.go
 cp -R prompts dist/package/
@@ -102,6 +102,62 @@ Generates: dist/genie-profile.bar
 mkdir -p dist/package/profiles
 cp -R "dist/profiles/$GENIE_PROFILE" dist/package/profiles/
 tar -czf dist/genie-profile.bar -C dist/package .
+```
+
+### pick-model
+Sources: models.json
+Effects: read, write, exec
+
+Host-aware local model pick (G0.8). Host facts come from the rod
+`bashy resources system --json` (CPU, memory, GPUs with unified or discrete
+VRAM), or from a JSON file in `GENIE_HOST_FACTS` (tests, planning for another
+host). Usable memory is a fraction of unified memory, discrete VRAM, or RAM
+for CPU-only hosts (`models.json` `headroom`); a model fits when its weights,
+its KV cache at the chosen context and the overhead fit. The highest-ranked
+fitting model wins; `GENIE_MODEL_ID` always overrides. The choice and the
+facts it was made from go to `dist/model-choice.json`. The target declares no
+`Generates`, so it always runs: the answer depends on the host, not the sources.
+
+```bsh
+set -e
+if [ -n "${GENIE_HOST_FACTS:-}" ]; then
+  facts=$(cat "$GENIE_HOST_FACTS")
+else
+  facts=$("$BASHY" resources system --json)
+fi
+mkdir -p dist
+F_FACTS=$facts F_TABLE=$(cat models.json) F_OVERRIDE=${GENIE_MODEL_ID:-} jq -n '
+  def gb: . * 10 | round / 10;
+  (env.F_FACTS | fromjson) as $f
+  | (env.F_TABLE | fromjson) as $t
+  | ($f.gpus // []) as $gpus
+  | ([$gpus[] | select(.vram_kind == "unified")] | first) as $unified
+  | ([$gpus[] | select(.vram_kind != "unified" and (.vram_bytes // 0) > 0) | .vram_bytes] | max) as $vram
+  | (if $unified != null then {kind: "unified", bytes: $unified.vram_bytes, fraction: $t.headroom.unified_fraction}
+     elif $vram != null then {kind: "discrete", bytes: $vram, fraction: $t.headroom.discrete_fraction}
+     else {kind: "cpu", bytes: $f.memory.total_bytes, fraction: $t.headroom.cpu_fraction} end) as $mem
+  | ($mem.bytes / 1e9 * $mem.fraction | gb) as $budget
+  | [$t.models[] | . + {need_gb: (.weights_gb + .kv_gb_per_32k * .context / 32768 + $t.headroom.overhead_gb | gb)}
+     | . + {fits: (.need_gb <= $budget)}] as $rows
+  | ([$rows[] | select(.fits)] | sort_by(-.rank) | first) as $best
+  | (if env.F_OVERRIDE != "" then
+       (([$rows[] | select(.id == env.F_OVERRIDE)] | first) // {id: env.F_OVERRIDE}) + {reason: "override (GENIE_MODEL_ID)"}
+     elif $best != null then $best + {reason: "highest-ranked model that fits"}
+     else null end) as $choice
+  | {
+      schema: "genie-model-choice/v1",
+      model: ($choice.id // null),
+      tier: ($choice.tier // null),
+      context: ($choice.context // null),
+      need_gb: ($choice.need_gb // null),
+      reason: ($choice.reason // "no candidate fits the usable memory"),
+      memory: {kind: $mem.kind, total_gb: ($mem.bytes / 1e9 | gb), usable_gb: $budget},
+      host: {os: $f.os, arch: $f.arch, cpu: $f.cpu.model, logical_cores: $f.cpu.logical_cores,
+             ram_gb: ($f.memory.total_bytes / 1e9 | gb), gpus: [$gpus[] | {vendor, name, vram_gb: ((.vram_bytes // 0) / 1e9 | gb), vram_kind}]},
+      candidates: [$rows[] | {id, tier, need_gb, fits}]
+    }' > dist/model-choice.json
+jq -r '"model \(.model // "none") (tier \(.tier // "-"), need \(.need_gb // 0) GB of \(.memory.usable_gb) usable \(.memory.kind)): \(.reason)"' dist/model-choice.json
+jq -e '.model != null' dist/model-choice.json > /dev/null
 ```
 
 ### fixture
@@ -131,7 +187,6 @@ printf 'Fixture task: %s\n' "$dir/task.json"
 ```
 
 ### main
-Requires: build
 Effects: read, write, exec, net, spend
 
 ```bsh
@@ -160,5 +215,7 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 config_path=${GENIE_CONFIG:-$PWD/agent.yaml}
-printf '%s\n' "$task_json" | dist/bin/genie -config "$config_path"
+# The adapter is Go source that bashy runs as Bash# (interpreted): the bundle
+# needs no Go toolchain. `build` still makes a native binary when wanted.
+printf '%s\n' "$task_json" | "$BASHY" cmd/genie/main.go -config "$config_path"
 ```
