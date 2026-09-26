@@ -102,6 +102,30 @@ Listener addresses, endpoints, authentication, request limits, routes, resume
 support, and output delivery are taken from YAML. If no network frontend is
 declared, `serve` fails rather than inventing one.
 
+A serve command with `dispatch.scope: frontend` serves only its
+`frontendRef`. Each frontend's address is printed to stderr as it starts;
+address `127.0.0.1:0` lets the kernel pick a free port. On the HTTP API an
+`output.emitted` event carries the delivered answer text in `output`.
+
+An `http` frontend with `ui: chat` (bearer auth required) also serves a
+built-in browser chat page on `GET /` that calls the same authenticated POST
+API. Its start line is the URL to open, `http://ADDR/#token=…`: the token
+rides in the fragment, which the browser never sends to the server, and the
+page keeps it for the tab only. genie declares one as its `web` command:
+
+```yaml
+frontends:
+  web:
+    kind: http
+    ui: chat
+    listen: {network: tcp, address: "127.0.0.1:0"}
+    tls: {mode: disabled-loopback-only}
+    auth: {mode: bearer, secretRef: {provider: env, name: GENIE_WEB_TOKEN}}
+    limits: {maxInputBytes: 1048576, maxConcurrent: 4}
+# cli.root.commands:
+- {name: web, dispatch: {operation: serve, scope: frontend, frontendRef: web, triggerRef: interactive-input, agentRef: coder}}
+```
+
 Serve Agent Client Protocol over stdio:
 
 ```bash

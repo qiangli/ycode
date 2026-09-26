@@ -27,3 +27,36 @@ func TestSessionDispatchValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestServeScopeValidation(t *testing.T) {
+	d := &Document{}
+	for _, c := range []struct {
+		route CLIDispatch
+		want  string
+	}{
+		{CLIDispatch{Operation: "version", Scope: "frontend"}, "scope is serve-only"},
+		{CLIDispatch{Operation: "version", Scope: "nearby"}, "scope is serve-only"},
+	} {
+		if err := validateCLIDispatch(d, c.route, CLIArgs{}, nil); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%+v: err=%v", c.route, err)
+		}
+	}
+}
+
+func TestFrontendUIValidation(t *testing.T) {
+	bearer := &FrontendAuth{Mode: "bearer", SecretRef: SecretRef{Provider: "env", Name: "T"}}
+	for _, c := range []struct {
+		frontend Frontend
+		want     string
+	}{
+		{Frontend{Kind: "http", UI: "chat", Auth: bearer}, ""},
+		{Frontend{Kind: "websocket", UI: "chat", Auth: bearer}, "only ui: chat on an http frontend"},
+		{Frontend{Kind: "http", UI: "dashboard", Auth: bearer}, "only ui: chat on an http frontend"},
+		{Frontend{Kind: "http", UI: "chat"}, "requires bearer auth"},
+	} {
+		err := validateFrontendUI("web", c.frontend)
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+			t.Errorf("%+v: err=%v, want %q", c.frontend, err, c.want)
+		}
+	}
+}

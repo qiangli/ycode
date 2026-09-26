@@ -80,6 +80,9 @@ func (n *Network) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, "frontend is not HTTP", http.StatusNotFound)
 		return
 	}
+	if n.serveUI(writer, request) {
+		return
+	}
 	if request.Method != http.MethodPost {
 		writer.Header().Set("Allow", http.MethodPost)
 		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
@@ -125,7 +128,7 @@ func (n *Network) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			if !ok {
 				return
 			}
-			if err := encoder.Encode(item); err != nil {
+			if err := encoder.Encode(n.wireEvent(item)); err != nil {
 				return
 			}
 			if flush, ok := writer.(http.Flusher); ok {
@@ -210,7 +213,7 @@ func (n *Network) serveWebSocket(writer http.ResponseWriter, request *http.Reque
 					if !ok {
 						goto streamed
 					}
-					if err := conn.WriteJSON(item); err != nil {
+					if err := conn.WriteJSON(n.wireEvent(item)); err != nil {
 						n.release()
 						return
 					}

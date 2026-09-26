@@ -75,7 +75,7 @@ func dispatchCLI(ctx context.Context, inv harnesscli.Invocation, streams harness
 		}
 		defer app.Close()
 		if inv.Dispatch.Operation == "serve" {
-			return app.Serve(ctx)
+			return app.ServeRoute(ctx, inv.Dispatch, streams.Err)
 		}
 		return runCLIInput(ctx, app, inv, streams)
 	default:

@@ -75,6 +75,9 @@ type CLIDispatch struct {
 	AgentRef    string    `yaml:"agentRef,omitempty" json:"agentRef,omitempty"`
 	PipelineRef string    `yaml:"pipelineRef,omitempty" json:"pipelineRef,omitempty"`
 	Input       *CLIInput `yaml:"input,omitempty" json:"input,omitempty"`
+	// Scope bounds serve: "all" (the default) serves every network frontend,
+	// "frontend" serves only frontendRef.
+	Scope string `yaml:"scope,omitempty" json:"scope,omitempty"`
 }
 type CLIInput struct {
 	Mode                string `yaml:"mode" json:"mode"`
@@ -387,6 +390,9 @@ func validateCLIDispatch(d *Document, route CLIDispatch, args CLIArgs, flags map
 	}
 	if route.Operation != "input" && route.Input != nil {
 		return fmt.Errorf("input policy requires operation=input")
+	}
+	if route.Scope != "" && (route.Operation != "serve" || (route.Scope != "all" && route.Scope != "frontend")) {
+		return fmt.Errorf("scope is serve-only and must be all or frontend")
 	}
 	switch route.Operation {
 	case "input", "serve", "acp":

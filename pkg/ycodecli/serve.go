@@ -4,18 +4,50 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"sort"
 	"sync"
 	"time"
 
 	gonats "github.com/nats-io/nats.go"
 	"github.com/qiangli/ycode/internal/harness/frontend"
+	harnessspec "github.com/qiangli/ycode/internal/harness/spec"
 )
 
 func (a *harnessApplication) Serve(ctx context.Context) error {
 	return a.serve(ctx, defaultServeDependencies())
+}
+
+// ServeRoute serves what a declared serve command names: every network
+// frontend, or with scope: frontend only its frontendRef.
+func (a *harnessApplication) ServeRoute(ctx context.Context, route harnessspec.CLIDispatch, announce io.Writer) error {
+	dependencies := defaultServeDependencies()
+	dependencies.started = func(ref, address string) { a.announce(announce, ref, address) }
+	if route.Scope == "frontend" {
+		dependencies.only = route.FrontendRef
+	}
+	return a.serve(ctx, dependencies)
+}
+
+// announce tells the operator where a frontend listens. A UI frontend's line
+// is the URL to open: the bearer token rides in the fragment, which browsers
+// never send to the server.
+func (a *harnessApplication) announce(out io.Writer, ref, address string) {
+	configured := a.doc.Spec.Frontends[ref]
+	switch {
+	case configured.Kind == "nats":
+		fmt.Fprintf(out, "%s: subscribed at %s\n", ref, address)
+	case configured.UI != "" && configured.Auth != nil:
+		fmt.Fprintf(out, "%s: open http://%s/#token=%s\n", ref, address, url.QueryEscape(os.Getenv(configured.Auth.SecretRef.Name)))
+	case configured.Kind == "websocket":
+		fmt.Fprintf(out, "%s: listening on ws://%s/\n", ref, address)
+	default:
+		fmt.Fprintf(out, "%s: listening on http://%s/\n", ref, address)
+	}
 }
 
 type natsConnection interface {
@@ -27,6 +59,7 @@ type serveDependencies struct {
 	listen      func(network, address string) (net.Listener, error)
 	connectNATS func(endpoint string) (natsConnection, error)
 	started     func(ref, address string)
+	only        string // serve just this frontend ref when set
 }
 
 type liveNATSConnection struct {
@@ -61,7 +94,9 @@ func (a *harnessApplication) serve(ctx context.Context, dependencies serveDepend
 	}
 	refs := make([]string, 0, len(a.doc.Spec.Frontends))
 	for ref := range a.doc.Spec.Frontends {
-		refs = append(refs, ref)
+		if dependencies.only == "" || ref == dependencies.only {
+			refs = append(refs, ref)
+		}
 	}
 	sort.Strings(refs)
 

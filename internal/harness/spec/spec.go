@@ -611,6 +611,9 @@ type Frontend struct {
 	Endpoint  string         `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
 	Subject   string         `yaml:"subject,omitempty" json:"subject,omitempty"`
 	Transport string         `yaml:"transport,omitempty" json:"transport,omitempty"`
+	// UI serves a built-in browser page on an http frontend's GET /: "chat"
+	// is a minimal chat client for the same authenticated POST API.
+	UI string `yaml:"ui,omitempty" json:"ui,omitempty"`
 }
 type TLS struct {
 	Mode string `yaml:"mode" json:"mode"`

@@ -209,6 +209,24 @@ func validateStructuredValues(d *Document) error {
 				return err
 			}
 		}
+		if err := validateFrontendUI(name, frontend); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateFrontendUI admits the one built-in page: ui: chat on a bearer-auth
+// http frontend.
+func validateFrontendUI(name string, frontend Frontend) error {
+	if frontend.UI == "" {
+		return nil
+	}
+	if frontend.UI != "chat" || frontend.Kind != "http" {
+		return fmt.Errorf("harness: spec.frontends.%s.ui: only ui: chat on an http frontend is supported", name)
+	}
+	if frontend.Auth == nil || frontend.Auth.Mode != "bearer" {
+		return fmt.Errorf("harness: spec.frontends.%s.ui requires bearer auth", name)
 	}
 	return nil
 }

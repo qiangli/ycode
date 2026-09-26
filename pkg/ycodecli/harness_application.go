@@ -215,3 +215,6 @@ func (envAuthenticator) Authenticate(_ context.Context, _ string, auth spec.Fron
 }
 
 var _ frontend.Controller = (*harnessApplication)(nil)
+
+// Payload lets network frontends return delivered output text.
+func (a *harnessApplication) Payload(ref string) ([]byte, error) { return a.harness.Payload(ref) }
