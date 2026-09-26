@@ -13,7 +13,7 @@ function run_tests() {
 run_tests
 ```
 
-Put each decorator on its own line directly above `function name() {`. Declare only read, write and exec; a command that needs the network, credentials or deletion outside the repository is refused. Nothing can be downloaded or installed: use what the environment already has.
+A result saying `denied by policy rule "incomplete-preflight"` means exactly this: the command could not be checked, so wrap it as shown. Put each decorator on its own line directly above `function name() {`. Declare only read, write and exec; a command that needs the network, credentials or deletion outside the repository is refused. Nothing can be downloaded or installed: use what the environment already has.
 
 Read the issue and repository instructions first. Find the relevant implementation and tests. Reproduce the reported behavior when practical, make a focused general fix, and run the most relevant available checks. Inspect the final diff for unrelated changes. Do not modify benchmark harness files or tests unless the issue requires it.
 

@@ -272,6 +272,14 @@ func isolatedEnvironment(source []string, artifacts string) []string {
 	values["HOME"] = filepath.Join(artifacts, "home")
 	values["BASHY_KB_DIR"] = filepath.Join(artifacts, "kb")
 	values["BASHY_HOME"] = filepath.Join(artifacts, "bashy-home")
+	// Clean observations (G0.4): bashy's proactive hints, failure advice and
+	// telemetry banner go to stderr, which is part of what the model reads.
+	// Off unless the caller set them (an ablation run turns them back on).
+	for key, value := range map[string]string{"BASHY_HINTS": "off", "BASHY_ADVISOR": "off", "BASHY_TELEMETRY_QUIET": "1"} {
+		if _, set := values[key]; !set {
+			values[key] = value
+		}
+	}
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)

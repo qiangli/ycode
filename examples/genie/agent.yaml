@@ -263,7 +263,9 @@ spec:
       cwdRoot: workspace
       environment:
         inherit: allowlist
-        names: [PATH, LANG, LC_ALL, TERM, HOME, BASHY_KB_DIR, BASHY_HOME]
+        # BASHY_HINTS/ADVISOR/TELEMETRY_QUIET keep bashy's advisory lines out of
+        # the model's observations (G0.4); the adapter sets them.
+        names: [PATH, LANG, LC_ALL, TERM, HOME, BASHY_KB_DIR, BASHY_HOME, BASHY_HINTS, BASHY_ADVISOR, BASHY_TELEMETRY_QUIET]
       commandResolution: embedded-and-pinned-only
       timeoutMs: 60000
       jobLifetimeMs: 900000
@@ -369,13 +371,14 @@ spec:
       unavailableHuman: deny
       incompletePreflight: deny
       rules:
-        - id: unsupported
+        # Rule ids reach the model in denial observations: they say why.
+        - id: not-checkable-wrap-it-in-an-effects-envelope
           match: {preflightComplete: false}
           decision: deny
-        - id: destructive
+        - id: destructive-needs-a-human
           match: {effectsAny: [destroy, priv, persist, cred]}
           decision: ask
-        - id: network-or-remote
+        - id: network-or-remote-not-allowed
           match: {effectsAny: [net, remote, spend]}
           decision: ask
         - id: workspace-work
@@ -394,7 +397,7 @@ spec:
             effectsAllWithin: [read, write, exec]
             pathsAllWithin: [workspace, declared]
           decision: allow
-        - id: default
+        - id: outside-the-workspace
           match: {always: true}
           decision: deny
       resume: [approve, edit, reject]
@@ -588,6 +591,8 @@ spec:
           needs: []
           run:
             stage: bashy.deny
+            # G0.4: the denial names the policy rule, so the model sees why.
+            with: {reason: true}
             in: {intent: state.intent, decision: state.policy}
             out: {result: state.result, terminal: state.terminal}
 
@@ -788,6 +793,9 @@ spec:
           needs: [execute]
           run:
             stage: messages.append-tool-results
+            # G0.4: the model reads exit status + decoded stdout/stderr, not
+            # the execution record (which stays in the event store).
+            with: {format: observation}
             in: {state: state, results: results}
             out: {state: state}
         - id: drain-after-tool
