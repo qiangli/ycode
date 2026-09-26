@@ -234,7 +234,7 @@ func validateControlRootAt(runtime Runtime, placements map[string]Placement, doc
 	if err := rejectSymlinkComponents(platformDir, control); err != nil {
 		return fmt.Errorf("harness: runtime.controlRoot: %w", err)
 	}
-	if info, err := os.Stat(control); err == nil && info.Mode().Perm()&0o077 != 0 {
+	if info, err := os.Stat(control); err == nil && unixModeBits && info.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("harness: runtime.controlRoot %q must have private permissions, got %04o", control, info.Mode().Perm())
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("harness: runtime.controlRoot: %w", err)
