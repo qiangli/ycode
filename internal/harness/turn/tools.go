@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/qiangli/ycode/internal/harness/message"
 	"github.com/qiangli/ycode/internal/harness/pipeline"
@@ -277,8 +278,14 @@ func callFrom(value any) (hitl.Call, error) {
 	if err := json.Unmarshal(raw, &call); err != nil {
 		return hitl.Call{}, err
 	}
-	if call.ID == "" || call.Name != "bashy" || call.Script == "" {
+	if call.ID == "" {
 		return hitl.Call{}, errors.New("turn: invalid Bashy call")
+	}
+	switch {
+	case call.Name != "bashy":
+		call.Invalid = fmt.Sprintf("there is no tool %q: the only tool is bashy, called with {\"script\": \"<shell commands>\"}", call.Name)
+	case strings.TrimSpace(call.Script) == "":
+		call.Invalid = "the bashy call has no script: pass the shell commands to run as {\"script\": \"...\"}"
 	}
 	return call, nil
 }

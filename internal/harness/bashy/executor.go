@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -122,6 +123,12 @@ func within(parent, child string) bool {
 // Preflight returns both the compact policy indexes and the complete typed
 // Bashy evidence used by a human review UI.
 func (e *Executor) Preflight(_ context.Context, meta Meta, call hitl.Call) (hitl.Preflight, error) {
+	if call.Invalid != "" {
+		// Nothing to compile: the model's call is malformed. An incomplete
+		// report carries the reason to policy (deny) and on to the model.
+		raw, _ := json.Marshal(call)
+		return hitl.Preflight{Call: call, Digest: digestBytes(raw), Unsupported: []hitl.UnsupportedFact{{Kind: "call", Value: call.Name, Reason: call.Invalid}}}, nil
+	}
 	req, err := e.request(meta, call, harnessrunner.OperationPreflight)
 	if err != nil {
 		return hitl.Preflight{}, err
@@ -153,6 +160,9 @@ func (e *Executor) Start(ctx context.Context, meta Meta, call hitl.Call, grantDi
 }
 
 func (e *Executor) run(ctx context.Context, meta Meta, call hitl.Call, grantDigest string, operation harnessrunner.Operation) (harnessrunner.Result, error) {
+	if call.Invalid != "" {
+		return harnessrunner.Result{}, fmt.Errorf("bashy %s: invalid call: %s", operation, call.Invalid)
+	}
 	if err := validDigest(grantDigest); err != nil {
 		return harnessrunner.Result{}, fmt.Errorf("bashy %s authorization: %w", operation, err)
 	}

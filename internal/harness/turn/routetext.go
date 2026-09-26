@@ -66,7 +66,9 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 			}
 			response, outcome := collectProvider(attemptCtx, adapter.Send(attemptCtx, request))
 			cancel()
-			if outcome.Class == provider.OutcomeCompleted && emptyResponse(response) {
+			// A small thinking model can spend the whole output budget on
+			// reasoning it never shows: that limit is as empty as a completion.
+			if (outcome.Class == provider.OutcomeCompleted || outcome.Class == provider.OutcomeLimit) && emptyResponse(response) {
 				outcome = provider.Outcome{Class: provider.OutcomeEmpty, Error: "provider response has no content"}
 			}
 			responseRef, err := r.payload(map[string]any{"response": response, "outcome": outcome})

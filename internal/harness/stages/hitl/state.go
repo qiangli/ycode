@@ -99,6 +99,14 @@ func (c *Controller) policy(ref string) (spec.Policy, error) {
 }
 
 func validateReport(report Preflight) error {
+	if report.Call.Invalid != "" {
+		// A malformed model call: never compiled, never complete — policy can
+		// only deny it, and the denial carries the reason to the model.
+		if report.Call.ID == "" || report.Complete || report.Digest == "" {
+			return errors.New("policy evaluate: invalid Bashy preflight report")
+		}
+		return nil
+	}
 	if report.Call.ID == "" || report.Call.Name != "bashy" || report.Call.Script == "" || report.Digest == "" {
 		return errors.New("policy evaluate: invalid Bashy preflight report")
 	}

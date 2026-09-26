@@ -149,3 +149,58 @@ func TestRouteRetriesAnEmptyResponse(t *testing.T) {
 		})
 	}
 }
+
+// wrongToolProvider first calls bashy without a script (small models send
+// {"command": ...}), then — after it has read the denial — answers with text.
+type wrongToolProvider struct {
+	calls   atomic.Int32
+	sawDeny atomic.Bool
+}
+
+func (*wrongToolProvider) Kind() api.ProviderKind { return api.ProviderOpenAI }
+func (p *wrongToolProvider) Send(_ context.Context, request *api.Request) (<-chan *api.StreamEvent, <-chan error) {
+	n := p.calls.Add(1)
+	if raw, _ := json.Marshal(request.Messages); bytes.Contains(raw, []byte("has no script")) {
+		p.sawDeny.Store(true)
+	}
+	events := make(chan *api.StreamEvent, 4)
+	errs := make(chan error, 1)
+	go func() {
+		defer close(events)
+		defer close(errs)
+		if n == 1 {
+			events <- &api.StreamEvent{Type: "content_block_start", ContentBlock: &api.ContentBlock{Type: api.ContentTypeToolUse, ID: "call_1", Name: "bashy", Input: json.RawMessage(`{"command":"ls"}`)}}
+			events <- &api.StreamEvent{Type: "content_block_stop"}
+			stop, _ := json.Marshal(map[string]string{"stop_reason": api.StopReasonToolUse})
+			events <- &api.StreamEvent{Type: "message_delta", Delta: stop}
+		} else {
+			text, _ := json.Marshal(map[string]string{"type": "text_delta", "text": "recovered"})
+			events <- &api.StreamEvent{Type: "content_block_delta", Delta: text}
+			stop, _ := json.Marshal(map[string]string{"stop_reason": api.StopReasonEndTurn})
+			events <- &api.StreamEvent{Type: "message_delta", Delta: stop}
+		}
+		events <- &api.StreamEvent{Type: "message_stop"}
+	}()
+	return events, errs
+}
+
+// A bashy call without a script is denied with the reason and the turn goes
+// on; the model reads why on its next request. (A call to another tool stays
+// a protocol error: the adapter admits only bashy.)
+func TestInvalidToolCallIsDeniedNotFatal(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fixture, _ := filepath.Abs(filepath.Join("..", "..", "examples", "genie", "agent.yaml"))
+	provider := &wrongToolProvider{}
+	app, err := openHarnessApplication(fixture, public.WithHarnessProvider("openai", provider))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	var output bytes.Buffer
+	if err := app.RunText(context.Background(), "one-shot", "", "hello", &output); err != nil {
+		t.Fatalf("turn failed: %v; output %q", err, output.String())
+	}
+	if !bytes.Contains(output.Bytes(), []byte("recovered")) || !provider.sawDeny.Load() {
+		t.Fatalf("output %q, model saw the denial reason: %v", output.String(), provider.sawDeny.Load())
+	}
+}

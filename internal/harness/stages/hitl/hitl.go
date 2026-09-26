@@ -19,6 +19,11 @@ type Call struct {
 	Name      string `json:"name"`
 	Script    string `json:"script"`
 	TimeoutMS int    `json:"timeout_ms,omitempty"`
+	// Invalid says why a model's call cannot run (another tool name, no
+	// script). Such a call is never sent to Bashy: its preflight is
+	// incomplete with this reason, so policy denies it and the model reads
+	// the reason instead of the turn failing.
+	Invalid string `json:"invalid,omitempty"`
 }
 
 type Preflight struct {
