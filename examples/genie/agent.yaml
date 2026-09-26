@@ -265,7 +265,7 @@ spec:
         inherit: allowlist
         # BASHY_HINTS/ADVISOR/TELEMETRY_QUIET keep bashy's advisory lines out of
         # the model's observations (G0.4); the adapter sets them.
-        names: [PATH, LANG, LC_ALL, TERM, HOME, BASHY_KB_DIR, BASHY_HOME, BASHY_HINTS, BASHY_ADVISOR, BASHY_TELEMETRY_QUIET]
+        names: [PATH, LANG, LC_ALL, TERM, HOME, BASHY_KB_DIR, BASHY_HOME, YCODE_DATA_DIR, BASHY_HINTS, BASHY_ADVISOR, BASHY_TELEMETRY_QUIET]
       commandResolution: embedded-and-pinned-only
       timeoutMs: 60000
       jobLifetimeMs: 900000
@@ -299,7 +299,10 @@ spec:
     main:
       provider: bashy-kb
       recall:
-        rings: [agent, repo, host]
+        # kb context fails a requested ring that does not exist; a benchmark
+        # repository has no docs/kb and genie must not write one into the
+        # workspace, so genie reads its own run's agent and host rings.
+        rings: [agent, host]
         forms: [note, page, relation]
         maxItems: 8
         maxTokens: 3000
@@ -994,28 +997,9 @@ spec:
               effects: [read]
             out: {knowledge: knowledge}
 
-    # Persist once per turn (memories.main.write.everyTurns: 1): a candidate
-    # agent-ring note keyed to this session as the episode; the transcript
-    # arrives on the composed command's stdin as one JSON object.
-    persist-knowledge:
-      inputs: {transcript: ycode.messages/v1}
-      state: {}
-      outputs: {noted: string}
-      concurrency: 1
-      failFast: true
-      nodes:
-        - id: kb-note-add
-          needs: []
-          run:
-            stage: bashy.run
-            with:
-              memoryRef: main
-              script: "bashy kb note add --candidate --ring agent --episode {{session}} --json"
-              timeoutMs: 10000
-              effects: [read, write]
-            in: {transcript: transcript}
-            out: {noted: noted}
-
+    # persist-knowledge (a candidate agent-ring note per turn from the
+    # transcript) is removed until the kb rod can write one (todo d2cb2137,
+    # Sprint 284); agent-mini's agent.yaml keeps the original definition.
     skip-persist:
       inputs: {}
       state: {}
@@ -1128,15 +1112,16 @@ spec:
             with: {sessionRef: durable}
             in: {state: loop}
             out: {messagesRef: messagesRef}
+        # Persisting a note from the turn transcript needs a kb capability
+        # that does not exist yet (kb note add has no transcript mode and no
+        # --json; Sprint 284 memory front door). Until then genie skips the
+        # write instead of failing a kb call every turn (todo d2cb2137).
         - id: remember
           needs: [commit]
           run:
             fallback:
-              maxAttempts: 2
+              maxAttempts: 1
               attempts:
-                - pipelineRef: persist-knowledge
-                  on: [bashy.run-denied, bashy.run-failed]
-                  in: {transcript: loop.messages}
                 - pipelineRef: skip-persist
                   on: [bashy.run-failed]
               noMatch: fail

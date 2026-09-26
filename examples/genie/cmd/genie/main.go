@@ -67,7 +67,7 @@ func run(input io.Reader, output, diagnostic io.Writer, config string) (retErr e
 	}
 	sessionID := safePathComponent(req.RunID + "_" + req.InstanceID)
 	instanceArtifacts := filepath.Join(artifacts, safePathComponent(req.RunID), safePathComponent(req.InstanceID))
-	for _, dir := range []string{instanceArtifacts, filepath.Join(instanceArtifacts, "home"), filepath.Join(instanceArtifacts, "kb"), filepath.Join(instanceArtifacts, "bashy-home")} {
+	for _, dir := range []string{instanceArtifacts, filepath.Join(instanceArtifacts, "home"), filepath.Join(instanceArtifacts, "kb"), filepath.Join(instanceArtifacts, "bashy-home"), filepath.Join(instanceArtifacts, "agent-data", "kb")} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("create artifact directory %s: %w", dir, err)
 		}
@@ -272,6 +272,9 @@ func isolatedEnvironment(source []string, artifacts string) []string {
 	values["HOME"] = filepath.Join(artifacts, "home")
 	values["BASHY_KB_DIR"] = filepath.Join(artifacts, "kb")
 	values["BASHY_HOME"] = filepath.Join(artifacts, "bashy-home")
+	// The kb agent ring lives under the agent's data directory; each run has
+	// its own, like HOME, so recall reads a real ring instead of failing.
+	values["YCODE_DATA_DIR"] = filepath.Join(artifacts, "agent-data")
 	// Clean observations (G0.4): bashy's proactive hints, failure advice and
 	// telemetry banner go to stderr, which is part of what the model reads.
 	// Off unless the caller set them (an ablation run turns them back on).
