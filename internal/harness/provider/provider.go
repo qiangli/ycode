@@ -66,6 +66,10 @@ const (
 	OutcomeDeadline        OutcomeClass = "deadline"
 	OutcomeProviderError   OutcomeClass = "provider_error"
 	OutcomeProtocolError   OutcomeClass = "protocol_error"
+	// OutcomeEmpty is a response that completed with neither text nor a tool
+	// call (a small local model sometimes emits a malformed call the server
+	// drops). A route retries it when its retryOn names "empty-response".
+	OutcomeEmpty OutcomeClass = "empty-response"
 )
 
 type ToolCall struct {

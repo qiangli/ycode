@@ -28,10 +28,11 @@ func TestObservationTextReadsLikeATerminal(t *testing.T) {
 			"output": map[string]any{"stderr": chunk("grep: x: No such file or directory\n")}}, "exit 2\nstderr:\ngrep: x: No such file or directory"},
 		"truncated": {map[string]any{"outcome": "completed", "process": map[string]any{"exitCode": float64(0)},
 			"output": map[string]any{"stdout": chunk("a\n"), "truncated": true}}, "exit 0\na\n[output truncated]"},
-		"timed out":        {map[string]any{"outcome": "timed_out", "output": map[string]any{}}, "timed_out"},
-		"denied with rule": {map[string]any{"call_id": "c", "outcome": "denied", "rule_id": "not-checkable"}, `denied by policy rule "not-checkable"; the command did not run`},
-		"denied":           {map[string]any{"call_id": "c", "outcome": "denied"}, "denied by policy; the command did not run"},
-		"rejected":         {map[string]any{"call_id": "c", "outcome": "rejected"}, "rejected by the reviewer; the command did not run"},
+		"timed out":              {map[string]any{"outcome": "timed_out", "output": map[string]any{}}, "timed_out"},
+		"denied with rule":       {map[string]any{"call_id": "c", "outcome": "denied", "rule_id": "not-checkable"}, `denied by policy rule "not-checkable"; the command did not run`},
+		"denied, does not parse": {map[string]any{"call_id": "c", "outcome": "denied", "rule_id": "not-checkable", "unsupported": []any{map[string]any{"kind": "syntax", "value": "foo(", "reason": "the command does not parse: <harness>:1:1: `foo(` must be followed by `)`"}}}, "denied by policy rule \"not-checkable\"; the command did not run: the command does not parse: <harness>:1:1: `foo(` must be followed by `)`"},
+		"denied":                 {map[string]any{"call_id": "c", "outcome": "denied"}, "denied by policy; the command did not run"},
+		"rejected":               {map[string]any{"call_id": "c", "outcome": "rejected"}, "rejected by the reviewer; the command did not run"},
 	} {
 		if got := observationText(tc.fields); got != tc.want {
 			t.Errorf("%s: got %q, want %q", name, got, tc.want)

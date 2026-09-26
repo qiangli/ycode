@@ -83,6 +83,11 @@ func (r *Runtime) deny(_ context.Context, in pipeline.Invocation) pipeline.Outco
 		if decision, ok := in.Inputs["decision"].(hitl.Decision); ok {
 			result["policy_ref"], result["rule_id"] = decision.PolicyRef, decision.RuleID
 		}
+		// What the preflight could not prove — a parse error, a dynamic
+		// command — is the concrete reason the model can act on.
+		if report, ok := in.Inputs["preflight"].(hitl.Preflight); ok && len(report.Unsupported) > 0 {
+			result["unsupported"] = report.Unsupported
+		}
 	}
 	return pipeline.Success(map[string]any{"result": result, "terminal": true})
 }

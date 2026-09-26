@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/qiangli/ycode/internal/harness/message"
@@ -65,6 +66,9 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 			}
 			response, outcome := collectProvider(attemptCtx, adapter.Send(attemptCtx, request))
 			cancel()
+			if outcome.Class == provider.OutcomeCompleted && emptyResponse(response) {
+				outcome = provider.Outcome{Class: provider.OutcomeEmpty, Error: "provider response has no content"}
+			}
 			responseRef, err := r.payload(map[string]any{"response": response, "outcome": outcome})
 			if err != nil {
 				return nil, provider.Outcome{Class: provider.OutcomeProtocolError, Error: err.Error()}
@@ -90,4 +94,11 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 	}
 	_ = providerSession
 	return nil, last
+}
+
+// emptyResponse reports a completed response that carries nothing to act on:
+// no text and no tool call.
+func emptyResponse(response map[string]any) bool {
+	hasTools, _ := response["hasToolCalls"].(bool)
+	return !hasTools && len(anyList(response["toolCalls"])) == 0 && strings.TrimSpace(text(response["text"])) == ""
 }

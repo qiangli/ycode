@@ -45,7 +45,7 @@ func stagePorts(name string) (string, string) {
 	case "bashy.execute":
 		return "intent,authorization,fencingToken", "result"
 	case "bashy.deny":
-		return "intent,decision", "result,terminal"
+		return "intent,decision,preflight?", "result,terminal"
 	case "bashy.reject":
 		return "intent,resolution", "result,terminal"
 	case "hitl.review":

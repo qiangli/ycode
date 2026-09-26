@@ -2,6 +2,7 @@ package turn
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -18,10 +19,11 @@ func observationText(fields map[string]any) string {
 	outcome := text(fields["outcome"])
 	switch outcome {
 	case "denied":
+		why := unsupportedReasons(fields["unsupported"])
 		if rule := text(fields["rule_id"]); rule != "" {
-			return fmt.Sprintf("denied by policy rule %q; the command did not run", rule)
+			return fmt.Sprintf("denied by policy rule %q; the command did not run", rule) + why
 		}
-		return "denied by policy; the command did not run"
+		return "denied by policy; the command did not run" + why
 	case "rejected":
 		return "rejected by the reviewer; the command did not run"
 	}
@@ -86,4 +88,31 @@ func decodeChunks(raw any) string {
 		b.WriteString(c.data)
 	}
 	return b.String()
+}
+
+// unsupportedReasons renders what the preflight could not prove (a parse
+// error, a dynamic command) as ": reason; reason", or "" when there is none.
+func unsupportedReasons(value any) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	var facts []struct {
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal(data, &facts) != nil {
+		return ""
+	}
+	var reasons []string
+	seen := map[string]bool{}
+	for _, fact := range facts {
+		if fact.Reason != "" && !seen[fact.Reason] {
+			seen[fact.Reason] = true
+			reasons = append(reasons, fact.Reason)
+		}
+	}
+	if len(reasons) == 0 {
+		return ""
+	}
+	return ": " + strings.Join(reasons, "; ")
 }
