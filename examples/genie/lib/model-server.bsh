@@ -1,0 +1,43 @@
+# genie_model_server: start genie's own model server — bashy's Ollama on a
+# kernel-chosen free port on 127.0.0.1, sharing only the model store — pull
+# $model once under a lock, check it answers, and set `addr`. An EXIT trap
+# stops the server. Sourced by the solve and chat targets (dag.md); expects
+# $model, $context and $run_id, and runs in the bundle directory.
+genie_model_server() {
+  mkdir -p dist/servers
+  local log=$PWD/dist/servers/$run_id.log
+  OLLAMA_HOST=127.0.0.1:0 OLLAMA_CONTEXT_LENGTH=$context "$BASHY" ollama serve > "$log" 2>&1 &
+  genie_server=$!
+  genie_lock=
+  trap 'kill -TERM "$genie_server" 2>/dev/null; wait "$genie_server" 2>/dev/null; if [ -n "$genie_lock" ]; then rmdir "$genie_lock" 2>/dev/null; fi' EXIT
+  addr=
+  for _ in $(seq 1 120); do
+    addr=$(grep -o 'Listening on [0-9.]*:[0-9]*' "$log" | head -1 | cut -d' ' -f3) || true
+    [ -n "$addr" ] && break
+    kill -0 "$genie_server" 2>/dev/null || break
+    sleep 0.5
+  done
+  if [ -z "$addr" ]; then
+    printf 'genie: the model server did not start; see %s\n' "$log" >&2
+    return 1
+  fi
+  printf 'genie: model %s on its own server %s\n' "$model" "$addr" >&2
+
+  # One download per model across concurrent runs: a lock directory in the
+  # shared store's parent.
+  genie_lock=$HOME/.bashy/genie/locks/$(printf '%s' "$model" | tr ':/' '__').pull
+  mkdir -p "$(dirname "$genie_lock")"
+  until mkdir "$genie_lock" 2>/dev/null; do sleep 2; done
+  if ! OLLAMA_HOST=$addr "$BASHY" ollama show "$model" > /dev/null 2>&1; then
+    printf 'genie: pulling %s (first use on this host)\n' "$model" >&2
+    OLLAMA_HOST=$addr "$BASHY" ollama pull "$model"
+  fi
+  rmdir "$genie_lock"
+  genie_lock=
+  local check
+  check=$(M=$model jq -cn '{model: env.M, prompt: "Reply with OK.", stream: false, think: false, options: {num_predict: 2}}')
+  if ! curl -sf -m 600 "http://$addr/api/generate" -d "$check" > /dev/null; then
+    printf 'genie: %s did not answer on %s; see %s\n' "$model" "$addr" "$log" >&2
+    return 1
+  fi
+}

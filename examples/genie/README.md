@@ -77,25 +77,38 @@ and the SWE-bench plan. Benchmark runs go through
 
 ## bashy genie
 
-With bashy installed, genie is one command away:
+With bashy installed, genie is one command away. It works in the directory
+you are in, on a local model picked for this host (`-m MODEL` overrides):
 
 ```bsh
 bashy genie build --from path/to/ycode/examples/genie   # once: installs ~/.bashy/genie/genie.bar
-cd my-repo && bashy genie "the failing test in tests/test_stats.py; fix stats.mean"
+
+bashy genie "what does add() in calc.py return for add(2, 3)?"   # one turn; the answer on stdout
+git diff | bashy genie -m qwen3:8b                              # the message from stdin
+bashy genie                                                     # interactive, on a terminal
+bashy genie web                                                 # browser chat: prints the URL to open
+bashy genie resume                                              # continue the latest session
+bashy genie session list                                        # also show|export|search|rename|fork
+
+bashy genie solve "the failing test in tests/test_stats.py; fix stats.mean"
 bashy genie doctor                                      # bundle, bashy, ycode, and the model pick for this host
 ```
 
-`bashy genie TASK` runs this bundle's `solve` target in the current git
-repository. `solve` picks the model for the host (below), starts genie's
-own model server — bashy's Ollama on a kernel-chosen free port on
-127.0.0.1, sharing only the model store, so concurrent runs never collide
-— pulls the model once under a lock, checks it answers, writes a per-model
-profile, runs the agent, and stops the server on exit. The change stays in
-the working tree; the prediction and run record go to
-`~/.bashy/genie/runs` (`GENIE_ARTIFACT_DIR`). A dirty tree is refused
-unless `GENIE_ALLOW_DIRTY=1`. ycode comes from `YCODE_BIN` or `PATH` and must
-be current (a released ycode will be provisioned automatically once one is
-published).
+The chat modes run this bundle's `chat` target: pick the model, start
+genie's own model server — bashy's Ollama on a kernel-chosen free port on
+127.0.0.1, sharing only the model store, so concurrent runs never collide —
+pull the model once under a lock, check it answers, write an instance config
+whose workspace is your directory, and hand the input to the engine
+(`bashy ycode`). `web` serves the engine's built-in chat page (the `web`
+frontend: `ui: chat` on loopback) and prints `http://127.0.0.1:PORT/#token=…`;
+the token rides in the URL fragment, which the browser never sends to the
+server, and every API call needs it. The server stops when genie exits.
+
+`bashy genie solve TASK` is the bench-style run (the `solve` target): the
+same model server, a clean git tree (refused when dirty unless
+`GENIE_ALLOW_DIRTY=1`), the change left in the working tree, and the
+prediction and run record in `~/.bashy/genie/runs` (`GENIE_ARTIFACT_DIR`).
+The engine is bashy's own `bashy ycode`; `YCODE_BIN` names another.
 
 ## Host-aware model pick
 

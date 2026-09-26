@@ -36,7 +36,18 @@ type prediction struct {
 
 func main() {
 	config := flag.String("config", "agent.yaml", "path to ycode harness YAML")
+	workspace := flag.String("workspace", "", "write an instance config whose workspace is DIR, print its path and exit (chat modes)")
+	instanceDir := flag.String("instance-dir", "", "directory for the -workspace instance config")
 	flag.Parse()
+	if *workspace != "" {
+		path, err := chatConfig(*config, *workspace, *instanceDir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "genie:", err)
+			os.Exit(1)
+		}
+		fmt.Println(path)
+		return
+	}
 	if err := run(os.Stdin, os.Stdout, os.Stderr, *config); err != nil {
 		fmt.Fprintln(os.Stderr, "genie:", err)
 		os.Exit(1)
@@ -215,6 +226,28 @@ func instanceConfig(config, repo, dir string) (string, error) {
 	}
 	target := filepath.Join(dir, "agent.yaml")
 	return target, os.WriteFile(target, []byte(text), 0o600)
+}
+
+// chatConfig is the instance config for the chat modes: the caller's
+// directory is the workspace, written under dir (default: a per-workspace
+// directory under ~/.bashy/genie/chat).
+func chatConfig(config, workspace, dir string) (string, error) {
+	config, err := resolveConfig(config)
+	if err != nil {
+		return "", err
+	}
+	workspace, err = filepath.Abs(workspace)
+	if err != nil {
+		return "", err
+	}
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(home, ".bashy", "genie", "chat", safePathComponent(filepath.Base(workspace)+"_"+workspace))
+	}
+	return instanceConfig(config, workspace, dir)
 }
 
 func resolveConfig(config string) (string, error) {

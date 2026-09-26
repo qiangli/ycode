@@ -186,6 +186,10 @@ spec:
             short: Serve the network frontends declared by agent.yaml
             args: {min: 0, max: 0}
             dispatch: {operation: serve, frontendRef: http, triggerRef: interactive-input, agentRef: coder}
+          - name: web
+            short: Serve the browser chat page on loopback and print the URL to open
+            args: {min: 0, max: 0}
+            dispatch: {operation: serve, scope: frontend, frontendRef: web, triggerRef: interactive-input, agentRef: coder}
           - name: acp
             short: Serve the configured ACP frontend over stdio
             args: {min: 0, max: 0}
@@ -1252,6 +1256,13 @@ spec:
       tls: {mode: disabled-loopback-only}
       auth: {mode: bearer, secretRef: {provider: env, name: YCODE_HTTP_TOKEN}}
       limits: {maxInputBytes: 1048576, maxConcurrent: 32}
+    web:
+      kind: http
+      ui: chat
+      listen: {network: tcp, address: "127.0.0.1:0"}
+      tls: {mode: disabled-loopback-only}
+      auth: {mode: bearer, secretRef: {provider: env, name: GENIE_WEB_TOKEN}}
+      limits: {maxInputBytes: 1048576, maxConcurrent: 4}
     websocket:
       kind: websocket
       listen: {network: tcp, address: "127.0.0.1:31416"}
@@ -1280,7 +1291,7 @@ spec:
   triggers:
     interactive-input:
       kind: frontend
-      frontendRefs: [one-shot, repl, tui, http, websocket, nats, acp, embed]
+      frontendRefs: [one-shot, repl, tui, http, web, websocket, nats, acp, embed]
       route:
         agentRef: coder
         queueRef: interactive
@@ -1291,7 +1302,7 @@ spec:
   sinks:
     primary-output:
       kind: frontend-response
-      frontendRefs: [one-shot, repl, tui, http, websocket, nats, acp, embed]
+      frontendRefs: [one-shot, repl, tui, http, web, websocket, nats, acp, embed]
       destinationAllowlist: [originating-frontend]
       redact: secrets-and-control-paths
       delivery:

@@ -76,7 +76,7 @@ printf 'Configured model profile: %s\n' "$PWD/$target/agent.yaml"
 ```
 
 ### package
-Sources: agent.yaml genie.bsh prompts/system.md cmd/genie/main.go go.mod README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md dag.md models.json fixture/task.json fixture/repo/
+Sources: agent.yaml genie.bsh lib/model-server.bsh prompts/system.md cmd/genie/main.go go.mod README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md dag.md models.json fixture/task.json fixture/repo/
 Effects: read, write
 Generates: dist/genie.bar
 
@@ -84,6 +84,7 @@ Generates: dist/genie.bar
 set -e
 rm -rf dist/package
 mkdir -p dist/package
+cp -R lib dist/package/
 cp agent.yaml genie.bsh README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md go.mod dag.md models.json dist/package/
 mkdir -p dist/package/cmd/genie
 cp cmd/genie/main.go dist/package/cmd/genie/main.go
@@ -156,7 +157,7 @@ F_FACTS=$facts F_TABLE=$(cat models.json) F_OVERRIDE=${GENIE_MODEL_ID:-} jq -n '
              ram_gb: ($f.memory.total_bytes / 1e9 | gb), gpus: [$gpus[] | {vendor, name, vram_gb: ((.vram_bytes // 0) / 1e9 | gb), vram_kind}]},
       candidates: [$rows[] | {id, tier, need_gb, fits}]
     }' > dist/model-choice.json
-jq -r '"model \(.model // "none") (tier \(.tier // "-"), need \(.need_gb // 0) GB of \(.memory.usable_gb) usable \(.memory.kind)): \(.reason)"' dist/model-choice.json
+jq -r '"model \(.model // "none") (tier \(.tier // "-"), need \(.need_gb // 0) GB of \(.memory.usable_gb) usable \(.memory.kind)): \(.reason)"' dist/model-choice.json >&2
 jq -e '.model != null' dist/model-choice.json > /dev/null
 ```
 
@@ -164,7 +165,7 @@ jq -e '.model != null' dist/model-choice.json > /dev/null
 Requires: pick-model
 Effects: read, write, exec, net, spend
 
-The front door (`bashy genie "TASK"` runs this target): solve TASK in the git
+The bench-style run (`bashy genie solve "TASK"` runs this target): solve TASK in the git
 repository the caller is in, on a local model, with nothing shared. It picks
 the model for this host (`pick-model`; `GENIE_MODEL_ID` overrides), starts
 genie's OWN model server — bashy's Ollama on a kernel-chosen free port on
@@ -180,7 +181,7 @@ set -e
 caller=${BASHY_DAG_CALLER_PWD:-$PWD}
 task=$(printf '%s' "${BASHY_DAG_ARGS_JSON:-[]}" | jq -r 'join(" ")')
 if [ -z "$task" ]; then
-  printf '%s\n' 'usage: bashy genie "describe the task"' >&2
+  printf '%s\n' 'usage: bashy genie solve "describe the task"' >&2
   exit 2
 fi
 if ! repo=$(git -C "$caller" rev-parse --show-toplevel 2>/dev/null); then
@@ -195,44 +196,9 @@ model=$(jq -r .model dist/model-choice.json)
 context=$(jq -r '.context // 32768' dist/model-choice.json)
 run_id=${GENIE_RUN_ID:-genie-$(date +%Y%m%d-%H%M%S)}
 artifacts=${GENIE_ARTIFACT_DIR:-$HOME/.bashy/genie/runs}
-mkdir -p "$artifacts" dist/servers
-
-# genie's own model server: port 0 lets the kernel pick a free port, read
-# back from the server's log; only the model store is shared.
-log=$PWD/dist/servers/$run_id.log
-OLLAMA_HOST=127.0.0.1:0 OLLAMA_CONTEXT_LENGTH=$context "$BASHY" ollama serve > "$log" 2>&1 &
-server=$!
-lock=
-trap 'kill -TERM "$server" 2>/dev/null; wait "$server" 2>/dev/null; if [ -n "$lock" ]; then rmdir "$lock" 2>/dev/null; fi' EXIT
-addr=
-for _ in $(seq 1 120); do
-  addr=$(grep -o 'Listening on [0-9.]*:[0-9]*' "$log" | head -1 | cut -d' ' -f3) || true
-  [ -n "$addr" ] && break
-  kill -0 "$server" 2>/dev/null || break
-  sleep 0.5
-done
-if [ -z "$addr" ]; then
-  printf 'genie: the model server did not start; see %s\n' "$log" >&2
-  exit 1
-fi
-printf 'genie: model %s on its own server %s\n' "$model" "$addr" >&2
-
-# One download per model across concurrent runs: a lock directory in the
-# shared store's parent.
-lock=$HOME/.bashy/genie/locks/$(printf '%s' "$model" | tr ':/' '__').pull
-mkdir -p "$(dirname "$lock")"
-until mkdir "$lock" 2>/dev/null; do sleep 2; done
-if ! OLLAMA_HOST=$addr "$BASHY" ollama show "$model" > /dev/null 2>&1; then
-  printf 'genie: pulling %s (first use on this host)\n' "$model" >&2
-  OLLAMA_HOST=$addr "$BASHY" ollama pull "$model"
-fi
-rmdir "$lock"
-lock=
-check=$(M=$model jq -cn '{model: env.M, prompt: "Reply with OK.", stream: false, think: false, options: {num_predict: 2}}')
-if ! curl -sf -m 600 "http://$addr/api/generate" -d "$check" > /dev/null; then
-  printf 'genie: %s did not answer on %s; see %s\n' "$model" "$addr" "$log" >&2
-  exit 1
-fi
+mkdir -p "$artifacts"
+. lib/model-server.bsh
+genie_model_server
 
 profile=$(printf '%s' "$model" | tr ':/.' '___')
 GENIE_PROFILE=$profile GENIE_MODEL_ID=$model GENIE_CONTEXT_TOKENS=$context \
@@ -245,6 +211,77 @@ GENIE_TASK_JSON=$task_file GENIE_RUN_ID=$run_id GENIE_MODEL_NAME=$model \
   GENIE_ARTIFACT_DIR=$artifacts OPENAI_BASE_URL=http://$addr/v1 OPENAI_API_KEY=ollama \
   "$BASHY" dag -f dag.md main
 printf 'genie: done; the change is in %s (git diff), the run record in %s\n' "$repo" "$artifacts" >&2
+```
+
+### chat
+Requires: pick-model
+Effects: read, write, exec, net, spend
+
+The front door (`bashy genie` runs this target): genie as a coding assistant
+in the directory the caller is in, on a local model picked for this host
+(`GENIE_MODEL_ID`, or `bashy genie -m MODEL`, overrides). The mode follows the
+input:
+
+- a message (the arguments), or a message piped on stdin: one turn, answer on
+  stdout — the one-off mode;
+- no message on a terminal: the interactive session (`bashy ycode`'s terminal
+  frontend);
+- `GENIE_MODE=web` (`bashy genie web`): the browser chat page on a free
+  loopback port; the URL to open, with its one-time token, goes to stderr;
+- `GENIE_MODE=resume` / `session` (`bashy genie resume`, `bashy genie session
+  list`): continue the latest session, or the session views.
+
+Unlike `solve`, the working tree may be dirty and nothing is recorded beyond
+the engine's own session log. The model server is genie's own (`solve`'s),
+stopped on exit.
+
+```bsh
+set -e
+caller=${BASHY_DAG_CALLER_PWD:-$PWD}
+mode=${GENIE_MODE:-chat}
+message=$(printf '%s' "${BASHY_DAG_ARGS_JSON:-[]}" | jq -r 'join(" ")')
+if [ "$mode" = chat ] && [ -z "$message" ] && [ ! -t 0 ]; then
+  # A piped message: read it before anything else can touch stdin.
+  message=$(cat)
+  if [ -z "$message" ]; then
+    printf '%s\n' 'genie: the piped message is empty' >&2
+    exit 2
+  fi
+fi
+model=$(jq -r .model dist/model-choice.json)
+context=$(jq -r '.context // 32768' dist/model-choice.json)
+profile=$(printf '%s' "$model" | tr ':/.' '___')
+GENIE_PROFILE=$profile GENIE_MODEL_ID=$model GENIE_CONTEXT_TOKENS=$context \
+  GENIE_REQUEST_TIMEOUT_MS=${GENIE_REQUEST_TIMEOUT_MS:-600000} "$BASHY" dag -f dag.md profile-model > /dev/null
+config=$("$BASHY" cmd/genie/main.go -config "$PWD/dist/profiles/$profile/agent.yaml" -workspace "$caller")
+if [ "$mode" = session ]; then
+  # A read view over the session log: no model needed.
+  args=()
+  while IFS= read -r arg; do args+=("$arg"); done < <(printf '%s' "${BASHY_DAG_ARGS_JSON:-[]}" | jq -r '.[]')
+  exec "$BASHY" ycode -f "$config" session "${args[@]}"
+fi
+run_id=${GENIE_RUN_ID:-genie-chat-$(date +%Y%m%d-%H%M%S)}
+. lib/model-server.bsh
+genie_model_server
+export OPENAI_BASE_URL=http://$addr/v1 OPENAI_API_KEY=ollama
+case $mode in
+  web)
+    GENIE_WEB_TOKEN=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+    export GENIE_WEB_TOKEN
+    "$BASHY" ycode -f "$config" web
+    ;;
+  resume)
+    "$BASHY" ycode -f "$config" resume
+    ;;
+  *)
+    if [ -n "$message" ]; then
+      "$BASHY" ycode -f "$config" prompt "$message"
+    else
+      # A terminal: the interactive session.
+      "$BASHY" ycode -f "$config"
+    fi
+    ;;
+esac
 ```
 
 ### fixture
