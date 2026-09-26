@@ -276,9 +276,11 @@ spec:
       attempts:
         - modelRef: primary
           transportRetry:
-            maxAttempts: 2
+            # A small local model now and then answers with nothing usable
+            # (a malformed tool call the server drops): ask again.
+            maxAttempts: 3
             backoff: {initialMs: 250, multiplier: 2, maxMs: 2000, jitter: full}
-            retryOn: [transport, rate-limit, server, stream-before-first-event]
+            retryOn: [transport, rate-limit, server, stream-before-first-event, empty-response]
           timeoutMs: 120000
       fallbackOn: [transport-exhausted, rate-limit-exhausted, server-exhausted]
       providerSession: turn
@@ -630,7 +632,7 @@ spec:
             stage: bashy.deny
             # G0.4: the denial names the policy rule, so the model sees why.
             with: {reason: true}
-            in: {intent: state.intent, decision: state.policy}
+            in: {intent: state.intent, decision: state.policy, preflight: state.preflight}
             out: {result: state.result, terminal: state.terminal}
 
     approve-command:

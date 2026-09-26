@@ -25,7 +25,7 @@ genie_model_server() {
 
   # One download per model across concurrent runs: a lock directory in the
   # shared store's parent.
-  genie_lock=$HOME/.bashy/genie/locks/$(printf '%s' "$model" | tr ':/' '__').pull
+  genie_lock=${BASHY_HOME:-$HOME/.bashy}/genie/locks/$(printf '%s' "$model" | tr ':/' '__').pull
   mkdir -p "$(dirname "$genie_lock")"
   until mkdir "$genie_lock" 2>/dev/null; do sleep 2; done
   if ! OLLAMA_HOST=$addr "$BASHY" ollama show "$model" > /dev/null 2>&1; then
@@ -34,9 +34,9 @@ genie_model_server() {
   fi
   rmdir "$genie_lock"
   genie_lock=
-  local check
-  check=$(M=$model jq -cn '{model: env.M, prompt: "Reply with OK.", stream: false, think: false, options: {num_predict: 2}}')
-  if ! curl -sf -m 600 "http://$addr/api/generate" -d "$check" > /dev/null; then
+  # The server's own client checks it answers: a host with only bashy has
+  # no curl.
+  if ! OLLAMA_HOST=$addr "$BASHY" ollama run --think=false --hidethinking "$model" "Reply with OK." < /dev/null > /dev/null 2>&1; then
     printf 'genie: %s did not answer on %s; see %s\n' "$model" "$addr" "$log" >&2
     return 1
   fi

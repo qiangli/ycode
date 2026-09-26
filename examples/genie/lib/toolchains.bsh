@@ -1,0 +1,26 @@
+# genie_toolchains DIR: prepare, before the agent starts, the toolchains the
+# workspace needs. bashy fetches a toolchain on first use (Python: uv and a
+# CPython), and the agent itself may not reach the network, so a fresh host
+# would otherwise leave it unable to run a single test. The recipe may use the
+# network; this is the one place it does so for the workspace.
+# GENIE_TOOLCHAINS overrides the detection: a space-separated list, or none.
+genie_toolchains() {
+  local dir=$1 want=${GENIE_TOOLCHAINS-auto} t
+  if [ "$want" = auto ]; then
+    want=
+    if [ -n "$(find "$dir" -maxdepth 4 -name '*.py' -not -path '*/.git/*' 2>/dev/null | head -1)" ]; then
+      want=python
+    fi
+  fi
+  for t in $want; do
+    case $t in
+      none) ;;
+      python)
+        if ! "$BASHY" python -c '' > /dev/null 2>&1; then
+          printf 'genie: could not prepare python for the workspace\n' >&2
+        fi
+        ;;
+      *) printf 'genie: unknown toolchain %s (GENIE_TOOLCHAINS)\n' "$t" >&2 ;;
+    esac
+  done
+}

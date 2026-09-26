@@ -12,6 +12,10 @@ replace github.com/qiangli/nadir => ../nadir
 
 replace github.com/qiangli/bashy => ../bashy
 
+// genie (its own module in examples/genie) is embedded by bashy as its
+// builtin agent; bashy's replace does not apply here, so restate it.
+replace github.com/qiangli/ycode/examples/genie => ./examples/genie
+
 // bashy's own `replace github.com/bashsharp/bashsharp => ../bashsharp`
 // (Sprint 211: sh <- bashsharp <- bashy) does not propagate here either — the
 // one non-qiangli sibling; flat like the rest.
@@ -54,6 +58,7 @@ require (
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
 	github.com/qiangli/bashy v0.0.0
+	github.com/qiangli/ycode/examples/genie v0.0.0 // indirect
 	github.com/qiangli/bonsai v0.0.0-20260505184649-a3cb69dbf211
 	github.com/spf13/cobra v1.10.2
 	github.com/xuri/excelize/v2 v2.10.1 // indirect

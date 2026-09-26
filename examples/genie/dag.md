@@ -76,7 +76,7 @@ printf 'Configured model profile: %s\n' "$PWD/$target/agent.yaml"
 ```
 
 ### package
-Sources: agent.yaml genie.bsh lib/model-server.bsh prompts/system.md cmd/genie/main.go go.mod README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md dag.md models.json fixture/task.json fixture/repo/
+Sources: agent.yaml genie.bsh lib/model-server.bsh lib/toolchains.bsh prompts/system.md cmd/genie/main.go go.mod README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md dag.md models.json fixture/task.json fixture/repo/
 Effects: read, write
 Generates: dist/genie.bar
 
@@ -195,10 +195,12 @@ fi
 model=$(jq -r .model dist/model-choice.json)
 context=$(jq -r '.context // 32768' dist/model-choice.json)
 run_id=${GENIE_RUN_ID:-genie-$(date +%Y%m%d-%H%M%S)}
-artifacts=${GENIE_ARTIFACT_DIR:-$HOME/.bashy/genie/runs}
+artifacts=${GENIE_ARTIFACT_DIR:-${BASHY_HOME:-$HOME/.bashy}/genie/runs}
 mkdir -p "$artifacts"
 . lib/model-server.bsh
 genie_model_server
+. lib/toolchains.bsh
+genie_toolchains "$repo"
 
 profile=$(printf '%s' "$model" | tr ':/.' '___')
 GENIE_PROFILE=$profile GENIE_MODEL_ID=$model GENIE_CONTEXT_TOKENS=$context \
@@ -263,6 +265,8 @@ fi
 run_id=${GENIE_RUN_ID:-genie-chat-$(date +%Y%m%d-%H%M%S)}
 . lib/model-server.bsh
 genie_model_server
+. lib/toolchains.bsh
+genie_toolchains "$caller"
 export OPENAI_BASE_URL=http://$addr/v1 OPENAI_API_KEY=ollama
 case $mode in
   web)
