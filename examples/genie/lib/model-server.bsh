@@ -5,6 +5,9 @@
 # $model, $context and $run_id, and runs in the bundle directory.
 genie_model_server() {
   mkdir -p dist/servers
+  # First use on a host fetches the Ollama runtime (hundreds of MB on
+  # Windows); do it before the start-up wait below, which is for the server.
+  "$BASHY" ollama --version > /dev/null 2>&1 || true
   local log=$PWD/dist/servers/$run_id.log
   OLLAMA_HOST=127.0.0.1:0 OLLAMA_CONTEXT_LENGTH=$context "$BASHY" ollama serve > "$log" 2>&1 &
   genie_server=$!

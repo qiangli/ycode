@@ -37,3 +37,18 @@ func TestChatConfigPutsTheWorkspaceInTheCallersDirectory(t *testing.T) {
 		t.Fatalf("default instance dir: %q %v", path, err)
 	}
 }
+
+func TestNativePathForWindowsDrivePaths(t *testing.T) {
+	for _, tc := range []struct{ goos, in, want string }{
+		{"windows", "/c/Users/x/agent.yaml", "C:/Users/x/agent.yaml"},
+		{"windows", "/d", "D:/"},
+		{"windows", "/cd/x", "/cd/x"},
+		{"windows", "C:/Users/x", "C:/Users/x"},
+		{"windows", "rel/x", "rel/x"},
+		{"linux", "/c/Users/x", "/c/Users/x"},
+	} {
+		if got := nativePathFor(tc.goos, tc.in); got != tc.want {
+			t.Errorf("nativePathFor(%q, %q) = %q, want %q", tc.goos, tc.in, got, tc.want)
+		}
+	}
+}

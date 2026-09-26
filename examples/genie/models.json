@@ -1,6 +1,6 @@
 {
   "schema": "genie-models/v1",
-  "note": "Local Ollama candidates by hardware tier (docs/agent-mini-benchmark-plan.md section 3). weights_gb = Q4 download size; kv_gb_per_32k and the headroom rules are planning estimates to be replaced by measured values from the bench host. rank: higher is preferred when it fits. verify: tag not yet pulled/verified on a dhnt host.",
+  "note": "Local Ollama candidates by hardware tier (docs/agent-mini-benchmark-plan.md section 3). weights_gb = Q4 download size; kv_gb_per_32k and the headroom rules are planning estimates to be replaced by measured values from the bench host. rank: higher is preferred when it fits. verify: tag not yet pulled/verified on a dhnt host. Tier XS (qwen3:1.7b, qwen3:0.6b) is the floor: genie runs on a 2 GB host with a short context and close to no coding ability; overhead_gb on a row overrides the headroom default (a sub-2B model's runtime needs far less).",
   "headroom": {
     "unified_fraction": 0.75,
     "discrete_fraction": 0.95,
@@ -8,12 +8,103 @@
     "overhead_gb": 2
   },
   "models": [
-    {"id": "gpt-oss:120b", "tier": "L", "rank": 90, "weights_gb": 65, "kv_gb_per_32k": 6, "max_context": 131072, "context": 65536, "actions": "tools"},
-    {"id": "qwen3.6:27b", "tier": "M", "rank": 80, "weights_gb": 17, "kv_gb_per_32k": 4, "max_context": 262144, "context": 65536, "actions": "tools", "verify": true},
-    {"id": "qwen3-coder:30b", "tier": "M", "rank": 75, "weights_gb": 19, "kv_gb_per_32k": 3, "max_context": 262144, "context": 65536, "actions": "tools"},
-    {"id": "glm-4.7-flash", "tier": "M", "rank": 70, "weights_gb": 19, "kv_gb_per_32k": 4, "max_context": 131072, "context": 65536, "actions": "tools", "verify": true},
-    {"id": "devstral:24b", "tier": "S", "rank": 60, "weights_gb": 14, "kv_gb_per_32k": 5, "max_context": 131072, "context": 32768, "actions": "tools"},
-    {"id": "gpt-oss:20b", "tier": "S", "rank": 55, "weights_gb": 14, "kv_gb_per_32k": 2, "max_context": 131072, "context": 32768, "actions": "tools"},
-    {"id": "qwen3:8b", "tier": "S", "rank": 30, "weights_gb": 5.2, "kv_gb_per_32k": 4.5, "max_context": 40960, "context": 32768, "actions": "text"}
+    {
+      "id": "gpt-oss:120b",
+      "tier": "L",
+      "rank": 90,
+      "weights_gb": 65,
+      "kv_gb_per_32k": 6,
+      "max_context": 131072,
+      "context": 65536,
+      "actions": "tools"
+    },
+    {
+      "id": "qwen3.6:27b",
+      "tier": "M",
+      "rank": 80,
+      "weights_gb": 17,
+      "kv_gb_per_32k": 4,
+      "max_context": 262144,
+      "context": 65536,
+      "actions": "tools",
+      "verify": true
+    },
+    {
+      "id": "qwen3-coder:30b",
+      "tier": "M",
+      "rank": 75,
+      "weights_gb": 19,
+      "kv_gb_per_32k": 3,
+      "max_context": 262144,
+      "context": 65536,
+      "actions": "tools"
+    },
+    {
+      "id": "glm-4.7-flash",
+      "tier": "M",
+      "rank": 70,
+      "weights_gb": 19,
+      "kv_gb_per_32k": 4,
+      "max_context": 131072,
+      "context": 65536,
+      "actions": "tools",
+      "verify": true
+    },
+    {
+      "id": "devstral:24b",
+      "tier": "S",
+      "rank": 60,
+      "weights_gb": 14,
+      "kv_gb_per_32k": 5,
+      "max_context": 131072,
+      "context": 32768,
+      "actions": "tools"
+    },
+    {
+      "id": "gpt-oss:20b",
+      "tier": "S",
+      "rank": 55,
+      "weights_gb": 14,
+      "kv_gb_per_32k": 2,
+      "max_context": 131072,
+      "context": 32768,
+      "actions": "tools"
+    },
+    {
+      "id": "qwen3:8b",
+      "tier": "S",
+      "rank": 30,
+      "weights_gb": 5.2,
+      "kv_gb_per_32k": 4.5,
+      "max_context": 40960,
+      "context": 32768,
+      "actions": "text"
+    },
+    {
+      "id": "qwen3:1.7b",
+      "tier": "XS",
+      "rank": 20,
+      "weights_gb": 1.4,
+      "kv_gb_per_32k": 3.7,
+      "overhead_gb": 0.2,
+      "context": 6144,
+      "max_context": 40960,
+      "actions": "text",
+      "tools": null,
+      "verify": null
+    },
+    {
+      "id": "qwen3:0.6b",
+      "tier": "XS",
+      "rank": 10,
+      "weights_gb": 0.52,
+      "kv_gb_per_32k": 3.7,
+      "overhead_gb": 0.2,
+      "context": 4096,
+      "max_context": 40960,
+      "actions": "text",
+      "tools": null,
+      "verify": null
+    }
   ]
 }

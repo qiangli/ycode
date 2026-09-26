@@ -63,6 +63,17 @@ quoted=${quoted//|/\\|}
 edits=(-e "s|^      id: gpt-5\.6\$|      id: $quoted|")
 if [ -n "${GENIE_CONTEXT_TOKENS:-}" ]; then
   edits+=(-e "s|^\( *contextTokens:\) 128000\$|\1 $GENIE_CONTEXT_TOKENS|")
+  # The fixed reserves (one response, compaction, recent history, knowledge)
+  # are sized for 32k and up; a tier-XS context would leave the prompt a
+  # negative budget, so scale them with the context.
+  ctx=$GENIE_CONTEXT_TOKENS
+  if [ "$ctx" -lt 32768 ]; then
+    edits+=(-e "s|^\( *maxOutputTokens:\) 16384\$|\1 $((ctx / 4))|")
+    edits+=(-e "s|^\( *reserveTokens:\) 8000\$|\1 $((ctx / 8))|")
+    edits+=(-e "s|^\( *preserveRecentTokens:\) 24000\$|\1 $((ctx / 4))|")
+    edits+=(-e "s|^\( *preserveUserMessagesTokens:\) 4000\$|\1 $((ctx / 16))|")
+    edits+=(-e "s|^\( *maxTokens:\) 3000\$|\1 $((ctx / 8))|")
+  fi
 fi
 if [ -n "${GENIE_REQUEST_TIMEOUT_MS:-}" ]; then
   edits+=(-e "s|^\( *requestTimeoutMs:\) 120000\$|\1 $GENIE_REQUEST_TIMEOUT_MS|")
@@ -121,6 +132,15 @@ facts it was made from go to `dist/model-choice.json`. The target declares no
 
 ```bsh
 set -e
+if [ -n "${GENIE_EXTERNAL_MODEL:-}" ]; then
+  # A registered API model: nothing to fit on this host.
+  mkdir -p dist
+  X_NAME=$GENIE_EXTERNAL_MODEL X_ID=$GENIE_MODEL_ID X_CTX=${GENIE_EXTERNAL_CONTEXT:-32768} jq -n '
+    {schema: "genie-model-choice/v1", model: env.X_ID, tier: "external", context: (env.X_CTX | tonumber),
+     need_gb: 0, reason: ("external model (bashy model " + env.X_NAME + ")"), external: env.X_NAME}' > dist/model-choice.json
+  jq -r '"model \(.model) (\(.reason))"' dist/model-choice.json >&2
+  exit 0
+fi
 if [ -n "${GENIE_HOST_FACTS:-}" ]; then
   facts=$(cat "$GENIE_HOST_FACTS")
 else
@@ -137,9 +157,15 @@ F_FACTS=$facts F_TABLE=$(cat models.json) F_OVERRIDE=${GENIE_MODEL_ID:-} jq -n '
   | (if $unified != null then {kind: "unified", bytes: $unified.vram_bytes, fraction: $t.headroom.unified_fraction}
      elif $vram != null then {kind: "discrete", bytes: $vram, fraction: $t.headroom.discrete_fraction}
      else {kind: "cpu", bytes: $f.memory.total_bytes, fraction: $t.headroom.cpu_fraction} end) as $mem
+  # A GPU too small for every model (the carve-out of an integrated GPU, a small
+  # card) is no reason to stop: ollama runs the model on the CPU, so fall back
+  # to the RAM budget.
+  | {kind: "cpu", bytes: $f.memory.total_bytes, fraction: $t.headroom.cpu_fraction} as $cpu
+  | [$t.models[] | . + {need_gb: (.weights_gb + .kv_gb_per_32k * .context / 32768 + (.overhead_gb // $t.headroom.overhead_gb) | gb)}] as $needs
+  | (if $mem.kind != "cpu" and ([$needs[] | select(.need_gb <= ($mem.bytes / 1e9 * $mem.fraction | gb))] | length) == 0
+     then $cpu else $mem end) as $mem
   | ($mem.bytes / 1e9 * $mem.fraction | gb) as $budget
-  | [$t.models[] | . + {need_gb: (.weights_gb + .kv_gb_per_32k * .context / 32768 + $t.headroom.overhead_gb | gb)}
-     | . + {fits: (.need_gb <= $budget)}] as $rows
+  | [$needs[] | . + {fits: (.need_gb <= $budget)}] as $rows
   | ([$rows[] | select(.fits)] | sort_by(-.rank) | first) as $best
   | (if env.F_OVERRIDE != "" then
        (([$rows[] | select(.id == env.F_OVERRIDE)] | first) // {id: env.F_OVERRIDE}) + {reason: "override (GENIE_MODEL_ID)"}
@@ -158,7 +184,10 @@ F_FACTS=$facts F_TABLE=$(cat models.json) F_OVERRIDE=${GENIE_MODEL_ID:-} jq -n '
       candidates: [$rows[] | {id, tier, need_gb, fits}]
     }' > dist/model-choice.json
 jq -r '"model \(.model // "none") (tier \(.tier // "-"), need \(.need_gb // 0) GB of \(.memory.usable_gb) usable \(.memory.kind)): \(.reason)"' dist/model-choice.json >&2
-jq -e '.model != null' dist/model-choice.json > /dev/null
+if ! jq -e '.model != null' dist/model-choice.json > /dev/null; then
+  printf '%s\n' 'genie: this host is below genie'"'"'s minimum for a local model (about 2 GB of RAM, qwen3:0.6b); run it on an external model instead (bashy genie -m NAME, NAME a registered API model: about 1 GB of RAM); see "Host requirements" in the genie README' >&2
+  exit 1
+fi
 ```
 
 ### solve
@@ -179,6 +208,10 @@ A dirty working tree is refused (the patch is the diff against HEAD) unless
 ```bsh
 set -e
 caller=${BASHY_DAG_CALLER_PWD:-$PWD}
+# A host with only bashy (Windows, a bare image) has no git: bashy carries one.
+if ! command -v git > /dev/null 2>&1; then
+  git() { "$BASHY" git "$@"; }
+fi
 task=$(printf '%s' "${BASHY_DAG_ARGS_JSON:-[]}" | jq -r 'join(" ")')
 if [ -z "$task" ]; then
   printf '%s\n' 'usage: bashy genie solve "describe the task"' >&2
@@ -196,9 +229,16 @@ model=$(jq -r .model dist/model-choice.json)
 context=$(jq -r '.context // 32768' dist/model-choice.json)
 run_id=${GENIE_RUN_ID:-genie-$(date +%Y%m%d-%H%M%S)}
 artifacts=${GENIE_ARTIFACT_DIR:-${BASHY_HOME:-$HOME/.bashy}/genie/runs}
-mkdir -p "$artifacts"
-. lib/model-server.bsh
-genie_model_server
+mkdir -p "$artifacts" dist/servers
+if [ -z "${GENIE_EXTERNAL_MODEL:-}" ]; then
+  . lib/model-server.bsh
+  genie_model_server
+  OPENAI_BASE_URL=http://$addr/v1 OPENAI_API_KEY=ollama
+else
+  # An external model (bashy genie -m NAME, NAME a registered API model):
+  # bashy exported its endpoint and key; no local server.
+  printf 'genie: external model %s (%s)\n' "$GENIE_EXTERNAL_MODEL" "$model" >&2
+fi
 . lib/toolchains.bsh
 genie_toolchains "$repo"
 
@@ -210,7 +250,7 @@ T_ID="$(basename "$repo")-$run_id" T_TASK=$task T_REPO=$repo jq -cn \
   '{instance_id: env.T_ID, problem_statement: env.T_TASK, repo_path: env.T_REPO}' > "$task_file"
 GENIE_TASK_JSON=$task_file GENIE_RUN_ID=$run_id GENIE_MODEL_NAME=$model \
   GENIE_CONFIG=$PWD/dist/profiles/$profile/agent.yaml GENIE_MODEL_CHOICE=$PWD/dist/model-choice.json \
-  GENIE_ARTIFACT_DIR=$artifacts OPENAI_BASE_URL=http://$addr/v1 OPENAI_API_KEY=ollama \
+  GENIE_ARTIFACT_DIR=$artifacts OPENAI_BASE_URL=$OPENAI_BASE_URL OPENAI_API_KEY=$OPENAI_API_KEY \
   "$BASHY" dag -f dag.md main
 printf 'genie: done; the change is in %s (git diff), the run record in %s\n' "$repo" "$artifacts" >&2
 ```
@@ -263,11 +303,15 @@ if [ "$mode" = session ]; then
   exec "$BASHY" ycode -f "$config" session "${args[@]}"
 fi
 run_id=${GENIE_RUN_ID:-genie-chat-$(date +%Y%m%d-%H%M%S)}
-. lib/model-server.bsh
-genie_model_server
+if [ -z "${GENIE_EXTERNAL_MODEL:-}" ]; then
+  . lib/model-server.bsh
+  genie_model_server
+  export OPENAI_BASE_URL=http://$addr/v1 OPENAI_API_KEY=ollama
+else
+  printf 'genie: external model %s (%s)\n' "$GENIE_EXTERNAL_MODEL" "$model" >&2
+fi
 . lib/toolchains.bsh
 genie_toolchains "$caller"
-export OPENAI_BASE_URL=http://$addr/v1 OPENAI_API_KEY=ollama
 case $mode in
   web)
     GENIE_WEB_TOKEN=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
@@ -305,7 +349,7 @@ exercises the whole loop (inspect, edit, a contained test run, a patch).
 ```bsh
 dir=${GENIE_FIXTURE_DIR:-$PWD/dist/fixture}
 case "$dir" in
-  /*) ;;
+  /* | [A-Za-z]:[\\/]*) ;;  # absolute, POSIX or a Windows drive path
   *) dir="${BASHY_DAG_CALLER_PWD:-$PWD}/$dir" ;;
 esac
 rm -rf "$dir/repo"
@@ -318,6 +362,56 @@ F_REPO="$dir/repo" jq -c '. + {repo_path: env.F_REPO}' fixture/task.json > "$dir
 printf 'Fixture task: %s\n' "$dir/task.json"
 ```
 
+### smoke
+Effects: read, write, exec, net, spend
+
+The host smoke (`bashy genie smoke [-m MODEL]`): on this host, from the
+bundle, a one-off question and a bench-style solve of the fixture, each in a
+fresh checkout, on the host's own model pick (or `-m`, a local tag or a
+registered API model). One JSON line per step and a summary line go to
+stdout; each step's log and the solve diff go to `dist/smoke/RUN/`. The same
+body runs on Linux, macOS and Windows.
+
+```bsh
+set -e
+run=${GENIE_RUN_ID:-smoke-$(date +%Y%m%d-%H%M%S)}
+out=$PWD/dist/smoke/$run
+mkdir -p "$out"
+if ! command -v git > /dev/null 2>&1; then
+  git() { "$BASHY" git "$@"; }
+fi
+problem=$(jq -r .problem_statement fixture/task.json)
+fresh() {
+  rm -rf "$out/$1"
+  cp -R fixture/repo "$out/$1"
+  git -C "$out/$1" init -q
+  git -C "$out/$1" add -A
+  git -C "$out/$1" -c user.name=genie -c user.email=genie@example.invalid commit -q -m fixture
+}
+failed=0
+step() {
+  local name=$1 start rc
+  shift
+  start=$(date +%s)
+  set +e
+  "$@" > "$out/$name.log" 2>&1
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || failed=$((failed + 1))
+  S_NAME=$name S_RC=$rc S_SECS=$(( $(date +%s) - start )) jq -cn \
+    '{step: env.S_NAME, rc: (env.S_RC | tonumber), secs: (env.S_SECS | tonumber)}'
+}
+fresh question
+step question awd "$out/question" -- "$BASHY" genie "In one sentence: what does stats.py define? Answer from reading the file."
+fresh solve
+step solve awd "$out/solve" -- "$BASHY" genie solve "$problem"
+git -C "$out/solve" diff > "$out/solve.diff"
+lines=$(wc -l < "$out/solve.diff" | tr -d ' ')
+S_RUN=$run S_OUT=$out S_LINES=$lines S_FAILED=$failed jq -cn \
+  '{smoke: env.S_RUN, logs: env.S_OUT, solve_diff_lines: (env.S_LINES | tonumber), failed_steps: (env.S_FAILED | tonumber)}'
+[ "$failed" -eq 0 ]
+```
+
 ### main
 Effects: read, write, exec, net, spend
 
@@ -328,12 +422,12 @@ if [ -z "${GENIE_TASK_JSON:-}" ]; then
 fi
 task_path=$GENIE_TASK_JSON
 case "$task_path" in
-  /*) ;;
+  /* | [A-Za-z]:[\\/]*) ;;  # absolute, POSIX or a Windows drive path
   *) task_path="${BASHY_DAG_CALLER_PWD:-$PWD}/$task_path" ;;
 esac
 artifact_dir=${GENIE_ARTIFACT_DIR:-${BASHY_DAG_CALLER_PWD:-$PWD}/artifacts}
 case "$artifact_dir" in
-  /*) ;;
+  /* | [A-Za-z]:[\\/]*) ;;  # absolute, POSIX or a Windows drive path
   *) artifact_dir="${BASHY_DAG_CALLER_PWD:-$PWD}/$artifact_dir" ;;
 esac
 task_json=$(T_ART=$artifact_dir T_RUN=${GENIE_RUN_ID:-} T_MODEL=${GENIE_MODEL_NAME:-} jq -c '

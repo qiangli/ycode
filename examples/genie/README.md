@@ -124,7 +124,63 @@ file when running the bundle and the adapter stores it with the run
 (`model-choice.json`, referenced from `run.json`). `GENIE_HOST_FACTS` points
 the pick at another host's facts. Measured on the dev box (M4 Pro, 24 GB) it
 picks tier S; 48 GB and 192 GB hosts get tier M and L. The KV-cache and
-headroom figures are planning estimates until the bench host measures them.
+headroom figures are planning estimates until the bench host measures them. A GPU too small for
+every candidate (an integrated GPU's few-hundred-MB carve-out, a small card)
+does not stop the pick: it falls back to the RAM budget and the model runs on
+the CPU.
+
+## Host requirements
+
+genie needs only bashy: no ycode, Python, curl or git (bashy provides git,
+fetches the official Ollama runtime for a local model, and prepares Python for
+a workspace with `.py` files on first use). The requirements depend on where
+the model runs.
+
+### With a cloud / external model
+
+`bashy genie -m NAME`, where NAME is an API model in the registry
+(`bashy model add NAME --provider openai-compat --kind api --base-url URL
+--upstream ID --api-key-ref SECRET`), runs genie against that
+OpenAI-compatible endpoint and starts no local model server. The key comes
+from the environment or the cloudbox vault (`bashy secret`), never the
+command line.
+
+| | Minimum | Measured |
+|---|---|---|
+| RAM | **1 GB** | peak 410 MB PSS across genie's 7 bashy processes while solving the fixture (Linux, 4 GB droplet, `glm-5.3`) |
+| CPU | 1 vCPU | |
+| Disk | ~0.5 GB | the bashy binary (~115 MB), the bundle, a Python toolchain when the workspace needs one |
+| Network | to the provider | |
+
+A 512 MB host is below this once the OS is counted. This is the path for a
+cheap cloud host (a 1 GB droplet) running genie for its owner.
+
+### With a local model (Ollama)
+
+genie picks the model for the host (below) and runs its own Ollama server.
+
+| RAM (CPU-only host) | Tier | Model (context) | Expect |
+|---|---|---|---|
+| under ~2 GB | — | none: genie refuses and points here | use an external model, or `-m` at your own risk |
+| ~2 GB | XS | `qwen3:0.6b` (4k) | runs end to end; close to no coding ability |
+| ~4 GB | XS | `qwen3:1.7b` (6k) | runs end to end; weak answers, no reliable fixes |
+| ~20 GB, or 16 GB unified | S | `qwen3:8b` (32k), then `gpt-oss:20b`, `devstral:24b` | useful help; small fixes unreliable |
+| 48 GB+ (36 GB unified) | M | `qwen3.6:27b`, `qwen3-coder:30b`, `glm-4.7-flash` | fixes the fixture bug |
+| 192 GB | L | `gpt-oss:120b` | |
+
+Disk: the model (0.5 GB for XS up to ~65 GB for L) plus ~1–2 GB for the
+Ollama runtime. The thresholds follow from `models.json` (weights + KV cache
+at the tier's context + overhead, against 60% of RAM on a CPU-only host, 75%
+of unified memory, 95% of discrete VRAM). A GPU too small for every model (an
+integrated GPU's carve-out) falls back to the RAM budget.
+
+Measured with `bashy genie smoke` (a question and a fixture solve,
+2026-09-26): a 36 GB Apple M-series host picks `qwen3.6:27b` and solves the
+fixture (question 67 s, solve 88 s); a 4 GB / 2 vCPU Linux droplet picks
+`qwen3:1.7b` on the CPU (question 165–276 s; the fixture is not fixed); a
+16 GB Windows laptop with an integrated Radeon picks `qwen3:1.7b` on the CPU.
+These are "it runs" results; which local models can actually do the work an
+operator expects is a separate, per-task validation.
 
 ## Attribution
 

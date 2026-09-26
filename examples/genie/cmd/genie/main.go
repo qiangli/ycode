@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,6 +40,7 @@ func main() {
 	workspace := flag.String("workspace", "", "write an instance config whose workspace is DIR, print its path and exit (chat modes)")
 	instanceDir := flag.String("instance-dir", "", "directory for the -workspace instance config")
 	flag.Parse()
+	*config, *workspace, *instanceDir = nativePath(*config), nativePath(*workspace), nativePath(*instanceDir)
 	if *workspace != "" {
 		path, err := chatConfig(*config, *workspace, *instanceDir)
 		if err != nil {
@@ -64,6 +66,7 @@ func run(input io.Reader, output, diagnostic io.Writer, config string) (retErr e
 	if req.InstanceID == "" || req.ProblemStatement == "" || req.RepoPath == "" || req.ArtifactDir == "" || req.RunID == "" || req.ModelName == "" {
 		return errors.New("instance_id, problem_statement, repo_path, artifact_dir, run_id, and model_name_or_path are required")
 	}
+	req.RepoPath, req.ArtifactDir = nativePath(req.RepoPath), nativePath(req.ArtifactDir)
 	repo, err := filepath.Abs(req.RepoPath)
 	if err != nil {
 		return fmt.Errorf("resolve repo_path: %w", err)
@@ -332,13 +335,13 @@ func isolatedEnvironment(source []string, artifacts string) []string {
 }
 
 func workspacePatch(ctx context.Context, repo string) (string, error) {
-	tracked := exec.CommandContext(ctx, "git", "diff", "--binary", "HEAD", "--")
+	tracked := gitCommand(ctx, "diff", "--binary", "HEAD", "--")
 	tracked.Dir = repo
 	diff, err := tracked.Output()
 	if err != nil {
 		return "", fmt.Errorf("collect tracked changes: %w", err)
 	}
-	untracked := exec.CommandContext(ctx, "git", "ls-files", "--others", "--exclude-standard", "-z")
+	untracked := gitCommand(ctx, "ls-files", "--others", "--exclude-standard", "-z")
 	untracked.Dir = repo
 	paths, err := untracked.Output()
 	if err != nil {
@@ -350,7 +353,7 @@ func workspacePatch(ctx context.Context, repo string) (string, error) {
 		if len(path) == 0 {
 			continue
 		}
-		cmd := exec.CommandContext(ctx, "git", "diff", "--binary", "--no-index", "--", "/dev/null", string(path))
+		cmd := gitCommand(ctx, "diff", "--binary", "--no-index", "--", "/dev/null", string(path))
 		cmd.Dir = repo
 		out, runErr := cmd.Output()
 		if runErr != nil {
@@ -362,4 +365,30 @@ func workspacePatch(ctx context.Context, repo string) (string, error) {
 		patch.Write(out)
 	}
 	return patch.String(), nil
+}
+
+// nativePath turns the POSIX spelling bashy uses for a Windows drive path
+// ("/c/Users/x", its $PWD) into the native one ("C:/Users/x"). bashy passes
+// arguments to a program unconverted, and Go on Windows reads "/c/..." as a
+// path relative to the current drive's root. Elsewhere it is the identity.
+func nativePath(p string) string { return nativePathFor(runtime.GOOS, p) }
+
+func nativePathFor(goos, p string) string {
+	if goos != "windows" || len(p) < 2 || p[0] != '/' {
+		return p
+	}
+	d := p[1]
+	if !(d >= 'a' && d <= 'z' || d >= 'A' && d <= 'Z') || len(p) > 2 && p[2] != '/' {
+		return p
+	}
+	return strings.ToUpper(string(d)) + ":" + "/" + strings.TrimPrefix(p[2:], "/")
+}
+
+// gitCommand runs git: the host's, else bashy's own (a host with only bashy,
+// such as Windows without Git, has no git on PATH).
+func gitCommand(ctx context.Context, args ...string) *exec.Cmd {
+	if _, err := exec.LookPath("git"); err != nil {
+		return exec.CommandContext(ctx, bashyExecutable(), append([]string{"git"}, args...)...)
+	}
+	return exec.CommandContext(ctx, "git", args...)
 }
