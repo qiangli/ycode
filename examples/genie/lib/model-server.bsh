@@ -12,7 +12,11 @@ genie_model_server() {
   OLLAMA_HOST=127.0.0.1:0 OLLAMA_CONTEXT_LENGTH=$context "$BASHY" ollama serve > "$log" 2>&1 &
   genie_server=$!
   genie_lock=
-  trap 'kill -TERM "$genie_server" 2>/dev/null; wait "$genie_server" 2>/dev/null; if [ -n "$genie_lock" ]; then rmdir "$genie_lock" 2>/dev/null; fi' EXIT
+  # Stopping our own server must not decide the run's exit status: the target
+  # runs under set -e, which the trap inherits, and on Windows a terminated
+  # process exits 1 (Linux/macOS: the server handles SIGTERM and exits 0), so
+  # a bare `wait` failed a run that had already answered.
+  trap 'kill -TERM "$genie_server" 2>/dev/null || true; wait "$genie_server" 2>/dev/null || true; if [ -n "$genie_lock" ]; then rmdir "$genie_lock" 2>/dev/null || true; fi' EXIT
   addr=
   for _ in $(seq 1 120); do
     addr=$(grep -o 'Listening on [0-9.]*:[0-9]*' "$log" | head -1 | cut -d' ' -f3) || true
