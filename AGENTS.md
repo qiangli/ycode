@@ -32,8 +32,8 @@ when the schema cannot represent it.
 
 ## Runtime flow and layout
 
-`cmd/ycode/main.go` opens the single composition root in
-`cmd/ycode/harness_application.go`. Argument, stdin, REPL/TUI, ACP, HTTP,
+`pkg/ycodecli/main.go` (wrapped by `cmd/ycode`, mounted by bashy as `bashy ycode`) opens the single composition root in
+`pkg/ycodecli/harness_application.go`. Argument, stdin, REPL/TUI, ACP, HTTP,
 WebSocket and NATS inputs are projections onto the same compiled graph and
 canonical event stream.
 
@@ -105,7 +105,7 @@ YCODE_HARNESS_CONFORMANCE_COUNT=10 ./scripts/harness-conformance.sh
 
 # Focused packages while iterating.
 go test -short -race ./internal/harness/...
-go test -short -race ./pkg/ycode ./cmd/ycode
+go test -short -race ./pkg/ycode ./pkg/ycodecli
 ```
 
 Never run a repository-wide test glob that descends into `priorart/`. For a

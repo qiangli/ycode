@@ -1,4 +1,4 @@
-package main
+package ycodecli
 
 type configuredTool struct {
 	Name         string   `json:"name"`

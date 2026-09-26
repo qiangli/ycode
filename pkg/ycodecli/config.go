@@ -1,4 +1,4 @@
-package main
+package ycodecli
 
 import (
 	harnessspec "github.com/qiangli/ycode/internal/harness/spec"
