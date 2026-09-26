@@ -76,7 +76,15 @@ func (r *Runtime) deny(_ context.Context, in pipeline.Invocation) pipeline.Outco
 	if err != nil {
 		return fail(err)
 	}
-	return pipeline.Success(map[string]any{"result": map[string]any{"call_id": call.ID, "outcome": "denied"}, "terminal": true})
+	result := map[string]any{"call_id": call.ID, "outcome": "denied"}
+	// with.reason names the policy rule that denied the call, so the model
+	// can tell an unprovable command from a network or destructive one.
+	if reason, _ := in.With["reason"].(bool); reason {
+		if decision, ok := in.Inputs["decision"].(hitl.Decision); ok {
+			result["policy_ref"], result["rule_id"] = decision.PolicyRef, decision.RuleID
+		}
+	}
+	return pipeline.Success(map[string]any{"result": result, "terminal": true})
 }
 
 func (r *Runtime) reject(_ context.Context, in pipeline.Invocation) pipeline.Outcome {
@@ -149,12 +157,18 @@ func (r *Runtime) appendToolResults(_ context.Context, in pipeline.Invocation) p
 		if err != nil {
 			return fail(err)
 		}
-		encoded, err := json.Marshal(fields)
-		if err != nil {
-			return fail(err)
+		content := ""
+		if text(in.With["format"]) == "observation" {
+			content = observationText(fields)
+		} else {
+			encoded, err := json.Marshal(fields)
+			if err != nil {
+				return fail(err)
+			}
+			content = string(encoded)
 		}
 		callID := text(fields["call_id"])
-		messages = append(messages, message.Message{Role: message.RoleUser, Content: []message.ContentBlock{{Type: message.ContentTypeToolResult, ToolUseID: callID, Content: string(encoded)}}})
+		messages = append(messages, message.Message{Role: message.RoleUser, Content: []message.ContentBlock{{Type: message.ContentTypeToolResult, ToolUseID: callID, Content: content}}})
 	}
 	state["messages"] = messages
 	return pipeline.Success(map[string]any{"state": state})
