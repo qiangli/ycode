@@ -17,6 +17,7 @@ import (
 	harnessbashy "github.com/qiangli/ycode/internal/harness/bashy"
 	harnesscli "github.com/qiangli/ycode/internal/harness/cli"
 	"github.com/qiangli/ycode/internal/harness/event"
+	harnessspec "github.com/qiangli/ycode/internal/harness/spec"
 	"github.com/qiangli/ycode/internal/harness/stages/hitl"
 )
 
@@ -51,11 +52,7 @@ func executeHarnessShell(ctx context.Context, flags *shellFlags, streams harness
 	if err != nil {
 		return err
 	}
-	platform, err := os.UserConfigDir()
-	if err != nil {
-		return fmt.Errorf("shell: platform data directory: %w", err)
-	}
-	controlRoot := filepath.Join(platform, doc.Spec.Runtime.ControlRoot.PlatformDataDir)
+	controlRoot := harnessspec.ControlRootPath(doc)
 	if err := os.MkdirAll(controlRoot, 0o700); err != nil {
 		return fmt.Errorf("shell: control root: %w", err)
 	}

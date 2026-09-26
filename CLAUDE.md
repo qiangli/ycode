@@ -58,7 +58,9 @@ Key paths:
 - `internal/harness/observe/` — lifecycle instrumentation controlled by YAML.
 - `internal/harness/acp/` — durable ACP session/fork metadata.
 - `pkg/ycode/harness.go` — public `Validate`, `Load`, `Run`, `Resume`, `Fork`,
-  `Payload` and `Close` API.
+  `Payload` and `Close` API; `pkg/ycode/sessions.go` — sessions projected
+  from the event log (`Sessions`, `Session`, `Transcript`, `RenameSession`,
+  `SearchSessions`).
 
 Durability is part of the behavior, not optional logging. State transitions are
 events; large/binary bodies are payload references; resume and fork bind exact
@@ -77,6 +79,8 @@ ycode tools --file agent.yaml list       # exactly one model tool: bashy
 ycode prompt --file agent.yaml "request"
 printf '%s\n' 'request' | ycode --file agent.yaml
 ycode repl --file agent.yaml
+ycode resume --file agent.yaml           # REPL on the latest session (or --session ID)
+ycode session --file agent.yaml list     # also show|export|search|rename|fork
 ycode --file agent.yaml                  # configured terminal/TUI frontend
 ycode serve --file agent.yaml            # configured HTTP/WS/NATS only
 ycode acp --config agent.yaml
@@ -144,7 +148,9 @@ Never create a tag merely to test a release fix.
 - Use structured logging; never emit prompts, credentials, approval material or
   control-root paths without the compiled redaction policy.
 - Keep filesystem access inside compiled readable/writable roots. Control state
-  belongs under the trusted `controlRoot` with restrictive permissions.
+  belongs under the trusted `controlRoot` with restrictive permissions; it
+  resolves under `$BASHY_HOME`, else `~/.bashy`, else the temp dir
+  (`spec.ControlBase`) — never a per-OS config directory.
 - Use `apply_patch` for edits, preserve unrelated work, stage named files only,
   and do not push without explicit approval.
 - This repository is an umbrella submodule. Commit from inside `ycode/`, then

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	spec "github.com/qiangli/ycode/internal/harness/spec"
 )
 
 func harnessFixture(t *testing.T) string {
@@ -107,11 +109,7 @@ func TestShellOneShotUsesCompiledBashyPolicyBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	platform, err := os.UserConfigDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(platform, "ycode", "harness", "authorization.key")); err != nil {
+	if _, err := os.Stat(filepath.Join(spec.ControlBase(), "ycode", "harness", "authorization.key")); err != nil {
 		t.Fatalf("authorization key: %v", err)
 	}
 }

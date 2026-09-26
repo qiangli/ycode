@@ -54,11 +54,7 @@ func TestYAMLCLIProjectsInputsThroughDurableHarness(t *testing.T) {
 	if provider.calls.Load() != int32(len(cases)) {
 		t.Fatalf("provider calls = %d", provider.calls.Load())
 	}
-	base, err := os.UserConfigDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	log, err := os.ReadFile(filepath.Join(base, app.doc.Spec.Runtime.ControlRoot.PlatformDataDir, "sessions", "events.jsonl"))
+	log, err := os.ReadFile(filepath.Join(spec.ControlRootPath(app.doc), "sessions", "events.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}

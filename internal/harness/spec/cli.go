@@ -83,6 +83,9 @@ type CLIInput struct {
 	TerminalFrontendRef string `yaml:"terminalFrontendRef,omitempty" json:"terminalFrontendRef,omitempty"`
 	PayloadKey          string `yaml:"payloadKey" json:"payloadKey"`
 	SessionFlag         string `yaml:"sessionFlag,omitempty" json:"sessionFlag,omitempty"`
+	// SessionDefault picks the session when the session flag is unset: "new"
+	// (the default) starts one, "latest" continues the most recently updated.
+	SessionDefault string `yaml:"sessionDefault,omitempty" json:"sessionDefault,omitempty"`
 }
 type CLIPresentation struct {
 	Formats       []string  `yaml:"formats" json:"formats"`
@@ -366,7 +369,7 @@ func validateCLIDispatch(d *Document, route CLIDispatch, args CLIArgs, flags map
 		}
 	}
 	routed := route.FrontendRef != "" || route.TriggerRef != "" || route.AgentRef != ""
-	if route.Operation != "inspect" && route.Operation != "docs" && route.Operation != "features" && (route.Resource != "" || route.Action != "") {
+	if route.Operation != "inspect" && route.Operation != "docs" && route.Operation != "features" && route.Operation != "session" && (route.Resource != "" || route.Action != "") {
 		return fmt.Errorf("operation %s does not accept resource or action", route.Operation)
 	}
 	if len(route.Columns) > 0 {
@@ -450,6 +453,9 @@ func validateCLIDispatch(d *Document, route CLIDispatch, args CLIArgs, flags map
 				return fmt.Errorf("sessionFlag must reference an available string flag")
 			}
 		}
+		if input.SessionDefault != "" && input.SessionDefault != "new" && input.SessionDefault != "latest" {
+			return fmt.Errorf("input.sessionDefault must be new or latest")
+		}
 	case "shell":
 		if route.AgentRef == "" || route.FrontendRef != "" || route.TriggerRef != "" {
 			return fmt.Errorf("shell requires agentRef and no frontendRef or triggerRef")
@@ -463,6 +469,17 @@ func validateCLIDispatch(d *Document, route CLIDispatch, args CLIArgs, flags map
 		}
 		if err := validateCLIInspection(route, args); err != nil {
 			return err
+		}
+	case "session":
+		if routed || route.Resource != "" {
+			return fmt.Errorf("session requires an action and no resource or routing references")
+		}
+		want, ok := sessionActionArgs[route.Action]
+		if !ok {
+			return fmt.Errorf("session.action must be list, show, export, rename, fork or search")
+		}
+		if args.Min != want.Min || args.Max != want.Max {
+			return fmt.Errorf("session action %s requires args {min: %d, max: %d}", route.Action, want.Min, want.Max)
 		}
 	case "readiness":
 		if route.FrontendRef != "" || route.TriggerRef != "" {
@@ -504,6 +521,17 @@ func validateCLIDispatch(d *Document, route CLIDispatch, args CLIArgs, flags map
 		return fmt.Errorf("docs requires zero or one topic argument")
 	}
 	return nil
+}
+
+// sessionActionArgs fixes each session action's positional arguments, so a
+// declared command cannot promise arguments the mechanism ignores.
+var sessionActionArgs = map[string]CLIArgs{
+	"list":   {Min: 0, Max: 0},
+	"show":   {Min: 0, Max: 1},  // [SESSION] (default: latest)
+	"export": {Min: 0, Max: 1},  // [SESSION]
+	"fork":   {Min: 0, Max: 1},  // [SESSION]
+	"rename": {Min: 2, Max: -1}, // SESSION TITLE...
+	"search": {Min: 1, Max: -1}, // QUERY...
 }
 
 func validateCLIInspection(route CLIDispatch, args CLIArgs) error {

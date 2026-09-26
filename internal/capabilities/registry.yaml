@@ -21,6 +21,13 @@ capabilities:
     gaps:
       - network addresses, authentication, routing, triggers, and sinks are declared by agent.yaml
 
+  - id: sessions
+    summary: durable sessions projected from the canonical event log - list, show, export, search, rename, fork, and resume the latest
+    audience: [agent, human]
+    cli: [session, resume]
+    http: []
+    config: []
+
   - id: bashy
     summary: sole model tool and operator shell execution through compiled preflight, policy, authorization, and fencing
     audience: [agent, human]

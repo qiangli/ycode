@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -62,6 +61,13 @@ func dispatchCLI(ctx context.Context, inv harnesscli.Invocation, streams harness
 		return err
 	case "inspect":
 		return inspectCLI(doc, inv, streams.Out)
+	case "session":
+		app, err := openHarnessApplication(file)
+		if err != nil {
+			return err
+		}
+		defer app.Close()
+		return sessionCLI(ctx, app, inv, streams.Out)
 	case "input", "serve":
 		app, err := openHarnessApplication(file)
 		if err != nil {
@@ -259,7 +265,24 @@ func runCLIInput(ctx context.Context, app *harnessApplication, inv harnesscli.In
 	}
 	defaults := app.defaults()
 	if session := stringFlag(inv, inv.Dispatch.Input.SessionFlag); session != "" {
-		defaults.SessionID = session
+		found, err := app.harness.Session(session)
+		switch {
+		case err == nil:
+			defaults.SessionID = found.ID
+		case strings.HasPrefix(err.Error(), "no session"):
+			defaults.SessionID = session // a new session under a caller-chosen id
+		default:
+			return err
+		}
+	} else if inv.Dispatch.Input.SessionDefault == "latest" {
+		sessions, err := app.harness.Sessions()
+		if err != nil {
+			return err
+		}
+		if len(sessions) == 0 {
+			return &harnesscli.Error{Class: "usage", Code: app.doc.Spec.Interfaces.CLI.ExitCodes.Usage, Err: errors.New("no session to resume")}
+		}
+		defaults.SessionID = sessions[0].ID
 	}
 	submit := func(text string) error {
 		if strings.TrimSpace(text) == "" {
@@ -304,15 +327,11 @@ func runCLIInput(ctx context.Context, app *harnessApplication, inv harnesscli.In
 }
 
 func runACPInvocation(file string, dispatch harnessspec.CLIDispatch, streams harnesscli.IO) error {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return err
-	}
 	doc, err := loadHarness(file)
 	if err != nil {
 		return err
 	}
-	store, err := harnessacp.Open(filepath.Join(base, doc.Spec.Runtime.ControlRoot.PlatformDataDir, "acp-sessions.json"))
+	store, err := harnessacp.Open(filepath.Join(harnessspec.ControlRootPath(doc), "acp-sessions.json"))
 	if err != nil {
 		return err
 	}

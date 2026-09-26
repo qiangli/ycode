@@ -396,11 +396,7 @@ func sendReplay(ctx context.Context, out chan<- Event, path, sessionID, runID st
 }
 
 func harnessControlRoot(doc *spec.Document) (string, error) {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(base, doc.Spec.Runtime.ControlRoot.PlatformDataDir), nil
+	return spec.ControlRootPath(doc), nil
 }
 
 func harnessProviders(doc *spec.Document, overrides map[string]api.Provider) (map[string]turn.Provider, error) {

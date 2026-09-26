@@ -78,6 +78,29 @@ spec:
               triggerRef: interactive-input
               agentRef: coder
               input: {mode: repl, stdin: true, empty: reject, payloadKey: request, sessionFlag: session}
+          - name: resume
+            usage: resume [--session ID]
+            short: Continue the latest session (or --session ID) in the line-oriented REPL
+            args: {min: 0, max: 0}
+            dispatch:
+              operation: input
+              frontendRef: repl
+              triggerRef: interactive-input
+              agentRef: coder
+              input: {mode: repl, stdin: true, empty: reject, payloadKey: request, sessionFlag: session, sessionDefault: latest}
+          - name: session
+            short: List, show, export, search, rename and fork durable sessions
+            long: "Views over the canonical event log. Sessions are listed newest first; SESSION is an id or a unique id prefix and defaults to the latest session."
+            args: {min: 0, max: 0}
+            flags:
+              - {name: json, type: bool, default: "false", usage: Machine-readable JSON, scope: inherited}
+            commands:
+              - {name: list, short: List sessions newest first, args: {min: 0, max: 0}, dispatch: {operation: session, action: list}}
+              - {name: show, usage: "show [SESSION]", short: Print a session's summary and transcript, args: {min: 0, max: 1}, dispatch: {operation: session, action: show}}
+              - {name: export, usage: "export [SESSION]", short: Print a session's transcript as Markdown, args: {min: 0, max: 1}, dispatch: {operation: session, action: export}}
+              - {name: search, usage: "search QUERY...", short: Find transcript text across sessions, args: {min: 1, max: -1}, dispatch: {operation: session, action: search}}
+              - {name: rename, usage: "rename SESSION TITLE...", short: Record a session title, args: {min: 2, max: -1}, dispatch: {operation: session, action: rename}}
+              - {name: fork, usage: "fork [SESSION]", short: Start a child session from the latest committed turn and print its id, args: {min: 0, max: 1}, dispatch: {operation: session, action: fork}}
           - {name: version, short: Print version information, args: {min: 0, max: 0}, dispatch: {operation: version}}
           - {name: doctor, short: Compile the harness and report provider readiness, args: {min: 0, max: 0}, dispatch: {operation: readiness, agentRef: coder}}
           - {name: validate, short: Validate and compile an agent.yaml harness, args: {min: 0, max: 0}, dispatch: {operation: validate}}

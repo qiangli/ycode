@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 
@@ -289,10 +288,5 @@ func stringList(value any) []string {
 }
 
 func checkpointPath(doc *spec.Document, sessionID, runID string) string {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		base = doc.BaseDir
-	}
-	root := filepath.Join(base, doc.Spec.Runtime.ControlRoot.PlatformDataDir)
-	return filepath.Join(root, "turns", sessionID, runID+".json")
+	return filepath.Join(spec.ControlRootPath(doc), "turns", sessionID, runID+".json")
 }

@@ -210,11 +210,7 @@ func referenceStrings(v reflect.Value) []string {
 }
 
 func validateControlRoot(d *Document) error {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return fmt.Errorf("harness: locate platform data directory: %w", err)
-	}
-	if err := validateControlRootAt(d.Spec.Runtime, d.Spec.Placements, d.BaseDir, base); err != nil {
+	if err := validateControlRootAt(d.Spec.Runtime, d.Spec.Placements, d.BaseDir, ControlBase()); err != nil {
 		return err
 	}
 	for name, session := range d.Spec.Sessions {
