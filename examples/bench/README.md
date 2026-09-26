@@ -28,3 +28,7 @@ results, never as the only evidence; SWE-rebench is the headline test set.
   whose workspace and roots are the task checkout. (agent-mini's own `.bar`
   keeps `workspace: .`, so run standalone it operates on the bundle directory —
   a known limitation of the unchanged example, fixed in genie.)
+- Scoreboard numbers come from `bashy stats` (G0.2) over results JSONL with one
+  record per attempt: join each run's records with the official evaluation's
+  per-instance `resolved`, then `bashy stats summary|paired|passk --arm agent`
+  (see `docs/agent-mini-scoreboard.md` in the umbrella for the row recipe).
