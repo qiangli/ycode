@@ -91,8 +91,19 @@ bashy genie resume                                              # continue the l
 bashy genie session list                                        # also show|export|search|rename|fork
 
 bashy genie solve "the failing test in tests/test_stats.py; fix stats.mean"
-bashy genie doctor                                      # bundle, bashy, ycode, and the model pick for this host
+bashy genie doctor                                      # bundle, bashy, ycode, the model door, and the model pick for this host
 ```
+`bashy genie doctor` in a clean image with only bashy (no network, no door):
+
+```text
+bundle:  $HOME/.bashy/genie/genie.bar sha256 ea36a517…
+source:  builtin 14b89d71bf3f
+bashy:   /b/bashy
+ycode:   bashy ycode (built in)
+door:    down at http://127.0.0.1:24556 (start it with `bashy llm up`)
+model:   qwen3:1.7b (tier XS, 2.5 GB usable cpu): highest-ranked model that fits
+```
+
 
 The chat modes run this bundle's `chat` target: pick the model, start
 genie's own model server — bashy's Ollama on a kernel-chosen free port on
