@@ -58,8 +58,8 @@ require (
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
 	github.com/qiangli/bashy v0.0.0
-	github.com/qiangli/ycode/examples/genie v0.0.0 // indirect
 	github.com/qiangli/bonsai v0.0.0-20260505184649-a3cb69dbf211
+	github.com/qiangli/ycode/examples/genie v0.0.0 // indirect
 	github.com/spf13/cobra v1.10.2
 	github.com/xuri/excelize/v2 v2.10.1 // indirect
 	go.etcd.io/bbolt v1.4.3
@@ -408,6 +408,7 @@ require (
 	github.com/prometheus/statsd_exporter v0.29.0 // indirect
 	github.com/qiangli/coreutils v0.0.0 // indirect
 	github.com/qiangli/yoke v0.0.0
+	github.com/qiangli/yoke/pkg/llmgw v0.0.0-00010101000000-000000000000
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/richardlehane/mscfb v1.0.6 // indirect
 	github.com/richardlehane/msoleps v1.0.6 // indirect
@@ -468,3 +469,5 @@ exclude (
 )
 
 replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20260622175928-b703f567277d
+
+replace github.com/qiangli/yoke/pkg/llmgw => ../yoke/pkg/llmgw

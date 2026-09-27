@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/qiangli/coreutils/pkg/lockfile"
 )
 
 const SchemaVersion = 1
@@ -117,6 +119,30 @@ func (s *Store) Append(d Draft) (Event, error) {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return Event{}, fmt.Errorf("create event directory: %w", err)
 	}
+	// The log is shared by every process that runs a harness on this host
+	// (concurrent genie runs, a TUI and a one-off): hold the log's lock for
+	// the append, and take the sequence and chain tip from the file itself,
+	// because another process may have appended since this one last did.
+	lock, err := lockfile.AcquireWithin(s.path+".lock", 30*time.Second,
+		lockfile.Holder{Name: "ycode event log", PID: os.Getpid(), Intent: "append", Since: s.now().UTC()})
+	if err != nil {
+		return Event{}, fmt.Errorf("lock event log: %w", err)
+	}
+	defer lock.Release()
+	if seq, digest, ok, err := readTail(s.path); err != nil {
+		return Event{}, fmt.Errorf("read event log tail: %w", err)
+	} else if ok {
+		s.next, s.previousDigest = seq+1, digest
+	}
+	e.Sequence, e.PreviousDigest = s.next, s.previousDigest
+	e.Digest, err = eventDigest(e)
+	if err != nil {
+		return Event{}, fmt.Errorf("digest event: %w", err)
+	}
+	line, err = json.Marshal(e)
+	if err != nil {
+		return Event{}, fmt.Errorf("marshal event: %w", err)
+	}
 	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return Event{}, fmt.Errorf("open event log: %w", err)
@@ -134,6 +160,49 @@ func (s *Store) Append(d Draft) (Event, error) {
 	s.next++
 	s.previousDigest = e.Digest
 	return e, nil
+}
+
+// readTail returns the sequence and digest of the log's last event, reading
+// backwards from the end so an append does not replay the whole log.
+func readTail(path string) (seq uint64, digest string, ok bool, err error) {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, "", false, nil
+	}
+	if err != nil {
+		return 0, "", false, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return 0, "", false, err
+	}
+	size := info.Size()
+	for window := int64(64 << 10); ; window *= 2 {
+		if window > size {
+			window = size
+		}
+		buf := make([]byte, window)
+		if _, err := f.ReadAt(buf, size-window); err != nil && !errors.Is(err, io.EOF) {
+			return 0, "", false, err
+		}
+		trimmed := strings.TrimRight(string(buf), "\n")
+		if trimmed == "" {
+			return 0, "", false, nil
+		}
+		i := strings.LastIndexByte(trimmed, '\n')
+		if i < 0 && window < size {
+			continue // the last line is longer than the window
+		}
+		var last struct {
+			Sequence uint64 `json:"sequence"`
+			Digest   string `json:"digest"`
+		}
+		if err := json.Unmarshal([]byte(trimmed[i+1:]), &last); err != nil {
+			return 0, "", false, fmt.Errorf("decode last event: %w", err)
+		}
+		return last.Sequence, last.Digest, true, nil
+	}
 }
 
 func digestBytes(value []byte) string {

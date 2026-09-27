@@ -3,6 +3,7 @@ package event
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"strings"
 	"testing"
 	"time"
@@ -134,5 +135,47 @@ func TestPayloadStoreRoundTripAndIntegrity(t *testing.T) {
 	}
 	if _, err := store.Get(digest); err == nil {
 		t.Fatal("expected corruption error")
+	}
+}
+
+// Sprint: #302; Story: #1039; Story-ID: 37bbc5482cde
+//
+// Two processes (here: two Stores) append to ONE event log — concurrent genie
+// runs share ycode's harness sessions log. Each Store used to cache the next
+// sequence and the chain tip, so interleaved appends wrote duplicate
+// sequences and every later Open failed ("event line N: sequence N-1").
+func TestTwoStoresShareOneLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	a, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for _, s := range []*Store{a, b, a, b} {
+		wg.Add(1)
+		go func(s *Store) {
+			defer wg.Done()
+			for i := 0; i < 25; i++ {
+				if _, err := s.Append(Draft{SessionID: "s", RunID: "r", Type: "t"}); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}(s)
+	}
+	wg.Wait()
+	events, err := Replay(path)
+	if err != nil {
+		t.Fatalf("log corrupted by interleaved appends: %v", err)
+	}
+	if len(events) != 100 {
+		t.Fatalf("got %d events, want 100", len(events))
+	}
+	if _, err := Open(path); err != nil {
+		t.Fatal(err)
 	}
 }
