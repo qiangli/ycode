@@ -1,50 +1,47 @@
-# genie_model_server: start genie's own model server — bashy's Ollama on a
-# kernel-chosen free port on 127.0.0.1, sharing only the model store — pull
-# $model once under a lock, check it answers, and set `addr`. An EXIT trap
-# stops the server. Sourced by the solve and chat targets (dag.md); expects
-# $model, $context and $run_id, and runs in the bundle directory.
+# genie_model_server: reach the host's model door (bashy's one model server,
+# port 24556, shared by every shell and agent) instead of starting a server of
+# our own. The door is started if it is not running; $model is pulled once
+# under a lock; a sticky binding pins the model's digest and the context
+# length for this run, and OPENAI_BASE_URL / OPENAI_API_KEY are exported with
+# the binding in the base URL. An EXIT trap deletes the binding. Sourced by
+# the solve and chat targets (dag.md); expects $model, $context and $run_id.
 genie_model_server() {
-  mkdir -p dist/servers
-  # First use on a host fetches the Ollama runtime (hundreds of MB on
-  # Windows); do it before the start-up wait below, which is for the server.
-  "$BASHY" ollama --version > /dev/null 2>&1 || true
-  local log=$PWD/dist/servers/$run_id.log
-  OLLAMA_HOST=127.0.0.1:0 OLLAMA_CONTEXT_LENGTH=$context "$BASHY" ollama serve > "$log" 2>&1 &
-  genie_server=$!
   genie_lock=
-  # Stopping our own server must not decide the run's exit status: the target
-  # runs under set -e, which the trap inherits, and on Windows a terminated
-  # process exits 1 (Linux/macOS: the server handles SIGTERM and exits 0), so
-  # a bare `wait` failed a run that had already answered.
-  trap 'kill -TERM "$genie_server" 2>/dev/null || true; wait "$genie_server" 2>/dev/null || true; if [ -n "$genie_lock" ]; then rmdir "$genie_lock" 2>/dev/null || true; fi' EXIT
-  addr=
-  for _ in $(seq 1 120); do
-    addr=$(grep -o 'Listening on [0-9.]*:[0-9]*' "$log" | head -1 | cut -d' ' -f3) || true
-    [ -n "$addr" ] && break
-    kill -0 "$genie_server" 2>/dev/null || break
-    sleep 0.5
-  done
-  if [ -z "$addr" ]; then
-    printf 'genie: the model server did not start; see %s\n' "$log" >&2
+  genie_sticky=
+  trap 'if [ -n "$genie_sticky" ]; then "$BASHY" llm sticky rm "$genie_sticky" > /dev/null 2>&1 || true; fi; if [ -n "$genie_lock" ]; then rmdir "$genie_lock" 2>/dev/null || true; fi' EXIT
+  if ! "$BASHY" llm up > /dev/null; then
+    printf 'genie: the model door did not start; see %s\n' "${BASHY_HOME:-$HOME/.bashy}/broker/door.log" >&2
     return 1
   fi
-  printf 'genie: model %s on its own server %s\n' "$model" "$addr" >&2
+  eval "$("$BASHY" llm env)"
 
   # One download per model across concurrent runs: a lock directory in the
   # shared store's parent.
   genie_lock=${BASHY_HOME:-$HOME/.bashy}/genie/locks/$(printf '%s' "$model" | tr ':/' '__').pull
   mkdir -p "$(dirname "$genie_lock")"
   until mkdir "$genie_lock" 2>/dev/null; do sleep 2; done
-  if ! OLLAMA_HOST=$addr "$BASHY" ollama show "$model" > /dev/null 2>&1; then
+  if ! "$BASHY" ollama show "$model" > /dev/null 2>&1; then
     printf 'genie: pulling %s (first use on this host)\n' "$model" >&2
-    OLLAMA_HOST=$addr "$BASHY" ollama pull "$model"
+    "$BASHY" ollama pull "$model"
   fi
   rmdir "$genie_lock"
   genie_lock=
-  # The server's own client checks it answers: a host with only bashy has
-  # no curl.
-  if ! OLLAMA_HOST=$addr "$BASHY" ollama run --think=false --hidethinking "$model" "Reply with OK." < /dev/null > /dev/null 2>&1; then
-    printf 'genie: %s did not answer on %s; see %s\n' "$model" "$addr" "$log" >&2
+
+  # The binding freezes the model digest and the context length: every call
+  # of this run is served by exactly that, or refused.
+  genie_sticky=$(printf '%s' "$run_id" | tr -c 'A-Za-z0-9_.-' '-')
+  if ! "$BASHY" llm sticky create "$genie_sticky" --model "$model" --num-ctx "$context" --ttl 24h > /dev/null; then
+    printf 'genie: could not bind %s on the model door\n' "$model" >&2
+    genie_sticky=
     return 1
   fi
+  eval "$("$BASHY" llm env --sticky "$genie_sticky")"
+  export OPENAI_BASE_URL OPENAI_API_KEY OLLAMA_HOST
+  # The door's own client checks the model answers: a host with only bashy
+  # has no curl.
+  if ! "$BASHY" ollama run --think=false --hidethinking "$model" "Reply with OK." < /dev/null > /dev/null 2>&1; then
+    printf 'genie: %s did not answer through the model door\n' "$model" >&2
+    return 1
+  fi
+  printf 'genie: model %s on the model door (sticky %s)\n' "$model" "$genie_sticky" >&2
 }

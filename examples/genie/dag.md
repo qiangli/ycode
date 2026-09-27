@@ -233,7 +233,6 @@ mkdir -p "$artifacts" dist/servers
 if [ -z "${GENIE_EXTERNAL_MODEL:-}" ]; then
   . lib/model-server.bsh
   genie_model_server
-  OPENAI_BASE_URL=http://$addr/v1 OPENAI_API_KEY=ollama
 else
   # An external model (bashy genie -m NAME, NAME a registered API model):
   # bashy exported its endpoint and key; no local server.
@@ -274,8 +273,8 @@ input:
   list`): continue the latest session, or the session views.
 
 Unlike `solve`, the working tree may be dirty and nothing is recorded beyond
-the engine's own session log. The model server is genie's own (`solve`'s),
-stopped on exit.
+the engine's own session log. The model is served by the host's model door
+(`bashy llm`), shared with every other shell and agent.
 
 ```bsh
 set -e
@@ -306,7 +305,6 @@ run_id=${GENIE_RUN_ID:-genie-chat-$(date +%Y%m%d-%H%M%S)}
 if [ -z "${GENIE_EXTERNAL_MODEL:-}" ]; then
   . lib/model-server.bsh
   genie_model_server
-  export OPENAI_BASE_URL=http://$addr/v1 OPENAI_API_KEY=ollama
 else
   printf 'genie: external model %s (%s)\n' "$GENIE_EXTERNAL_MODEL" "$model" >&2
 fi
