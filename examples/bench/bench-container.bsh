@@ -1,0 +1,26 @@
+# bench-container: the SWE-bench runner's @contain provider: custom
+# (registered on bench hosts by prep-container; BASHY_CONTAIN_CUSTOM=bench-container).
+# It receives the prepared command line (BASHY podman run OPTIONS IMAGE ARGS...)
+# and adds the one network path the benchmark needs: the model door, only on
+# the run's sticky binding (BENCH_STICKY), through doorrelay. The door token
+# (in BENCH_DOOR) stays on the host.
+set -eu
+home=${BENCH_HOME:-$HOME/.cache/bashy-bench}
+relay=$home/bin/linux-amd64/doorrelay
+: "${BENCH_STICKY:?bench-container needs BENCH_STICKY}" "${BENCH_DOOR:?bench-container needs BENCH_DOOR (http://127.0.0.1:24556/k/<token>)}"
+dir=$(mktemp -d /tmp/bench-door.XXXXXX)
+"$relay" serve "$dir/door.sock" "$BENCH_STICKY" 2> "$dir/serve.log" &
+pid=$!
+trap 'kill "$pid" 2> /dev/null || true; rm -rf "$dir"' EXIT
+n=0
+until [ -S "$dir/door.sock" ]; do
+  n=$((n + 1))
+  if [ "$n" -gt 50 ]; then cat "$dir/serve.log" >&2; exit 125; fi
+  sleep 0.1
+done
+self=$1
+shift 3 # <bashy> podman run
+base=http://127.0.0.1:24556/sticky/$BENCH_STICKY
+"$self" podman run -v "$dir:/.door" -v "$relay:/.door-relay:ro" \
+  -e OPENAI_BASE_URL="$base/v1" -e OPENAI_API_KEY=contained \
+  -e ANTHROPIC_BASE_URL="$base/anthropic" -e ANTHROPIC_API_KEY=contained "$@"
