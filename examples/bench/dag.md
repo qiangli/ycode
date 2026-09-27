@@ -329,7 +329,8 @@ while IFS= read -r req; do
       printf '%s' "$req" | B_MODEL="$model" jq -c '. + {model: env.B_MODEL}' > "$out/request.json"
       printf '%s\n' "$req" > "$out/dataset/test.jsonl"
       [ "$agent" = agent-mini ] && agent_mini_config /testbed "$out/config/agent.yaml" /out/config
-      bench_arm "$agent" "$model" "$ctx" "$home/msa" || status=failed
+      # < /dev/null: the container must not read the loop's requests
+      bench_arm "$agent" "$model" "$ctx" "$home/msa" < /dev/null || status=failed
       patch=$(cat "$out/model.patch" 2>/dev/null || true)
       ;;
   esac
