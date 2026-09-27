@@ -301,7 +301,10 @@ spec:
         inherit: allowlist
         # BASHY_HINTS/ADVISOR/TELEMETRY_QUIET keep bashy's advisory lines out of
         # the model's observations (G0.4); the adapter sets them.
-        names: [PATH, LANG, LC_ALL, TERM, HOME, BASHY_KB_DIR, BASHY_HOME, YCODE_DATA_DIR, BASHY_HINTS, BASHY_ADVISOR, BASHY_TELEMETRY_QUIET]
+        # The Windows names are what native programs there need to start at all
+        # (git.exe, bashy's podman, python); absent on Linux/macOS, so skipped.
+        names: [PATH, LANG, LC_ALL, TERM, HOME, BASHY_KB_DIR, BASHY_HOME, YCODE_DATA_DIR, BASHY_HINTS, BASHY_ADVISOR, BASHY_TELEMETRY_QUIET,
+          SYSTEMROOT, WINDIR, COMSPEC, PATHEXT, TEMP, TMP, USERPROFILE, HOMEDRIVE, HOMEPATH, LOCALAPPDATA, APPDATA, PROGRAMDATA]
       commandResolution: embedded-and-pinned-only
       timeoutMs: 60000
       jobLifetimeMs: 900000

@@ -104,7 +104,7 @@ func run(input io.Reader, output, diagnostic io.Writer, config string) (retErr e
 	// The engine: bashy's own `bashy ycode` (Sprint #301), so genie needs no
 	// separate ycode binary. YCODE_BIN still names another ycode explicitly.
 	engine := []string{bashyExecutable(), "ycode"}
-	if bin := os.Getenv("YCODE_BIN"); bin != "" {
+	if bin := nativePath(os.Getenv("YCODE_BIN")); bin != "" {
 		engine = []string{bin}
 	}
 	timeout := 30 * time.Minute
@@ -151,7 +151,7 @@ func run(input io.Reader, output, diagnostic io.Writer, config string) (retErr e
 	}
 	// The host-aware model pick (dag target pick-model) travels with the
 	// run: its facts and reason are part of what made this prediction.
-	choicePath := os.Getenv("GENIE_MODEL_CHOICE")
+	choicePath := nativePath(os.Getenv("GENIE_MODEL_CHOICE"))
 	if choicePath != "" {
 		choice, err := os.ReadFile(choicePath)
 		if err != nil {
@@ -272,7 +272,7 @@ func resolveConfig(config string) (string, error) {
 // bashyExecutable is the bashy running this workflow ($BASHY, which bashy dag
 // sets for its bodies), else bashy on PATH.
 func bashyExecutable() string {
-	if b := os.Getenv("BASHY"); b != "" {
+	if b := nativePath(os.Getenv("BASHY")); b != "" {
 		return b
 	}
 	if b, err := exec.LookPath("bashy"); err == nil {
