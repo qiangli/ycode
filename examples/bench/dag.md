@@ -332,6 +332,12 @@ while IFS= read -r req; do
       # < /dev/null: the container must not read the loop's requests
       bench_arm "$agent" "$model" "$ctx" "$home/msa" < /dev/null || status=failed
       patch=$(cat "$out/model.patch" 2>/dev/null || true)
+      # mini-swe-agent's prediction is its own submission (upstream's way):
+      # its submit step writes patch.txt into the repo, which a plain
+      # `git add -A` diff would nest inside the patch (unappliable)
+      if [ "$agent" = mini-swe-agent ] && [ -f "$out/traj.json" ]; then
+        patch=$(jq -r '.info.submission // ""' "$out/traj.json")
+      fi
       ;;
   esac
   B_ID="$id" B_MODEL="$model" B_PATCH="$patch" jq -cn '{instance_id: env.B_ID, model_name_or_path: env.B_MODEL, model_patch: env.B_PATCH}' >> "$run/predictions.jsonl"
