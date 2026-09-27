@@ -3,8 +3,8 @@ package event
 import (
 	"os"
 	"path/filepath"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
