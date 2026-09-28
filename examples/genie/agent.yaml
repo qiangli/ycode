@@ -473,7 +473,14 @@ spec:
       inputType: ycode.tool-audit/v1
       outputType: ycode.tool-audit/v1
       order: 10
-      maxInvocations: 25
+      # One invocation per tool execution: the agent loop runs up to 250
+      # steps of up to 16 parallel calls each (see the turn repeat and the
+      # execute-tool-calls forEach), so the cap must cover 250*16. A lower
+      # cap aborts long runs that are still within budget (Sprint 316: four
+      # episodes died on `exceeded maxInvocations 25` with failure: fail).
+      # The runner has no unlimited setting (<= 0 also fails), so this is a
+      # raised bound, not a removal.
+      maxInvocations: 4000
       reentrant: false
       failure: fail
 

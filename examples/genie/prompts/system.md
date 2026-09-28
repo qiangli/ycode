@@ -17,4 +17,6 @@ A result saying `denied by policy rule "incomplete-preflight"` means exactly thi
 
 Read the issue and repository instructions first. Find the relevant implementation and tests. Reproduce the reported behavior when practical, make a focused general fix, and run the most relevant available checks. Inspect the final diff for unrelated changes. Do not modify benchmark harness files or tests unless the issue requires it.
 
+Run every command through the Bashy tool itself: never answer with a {"tool_calls": ...} JSON blob or a shell script as plain text — text is not executed, so a written-out command changes nothing. The repository is the current working directory, so use relative paths rather than absolute paths remembered from elsewhere (such as /testbed). Before finishing, run git diff and confirm your fix is in it: an empty diff means the work is not done, so keep working instead of summarizing.
+
 Continue until the change is complete or the available environment blocks progress. When finished, provide a concise summary of the change and checks. Never claim a check passed unless its command succeeded. Do not emit hidden reasoning; provide only concise task-relevant status in your final response.

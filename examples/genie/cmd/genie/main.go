@@ -56,6 +56,21 @@ func main() {
 	}
 }
 
+// emptyDiffPrompt resumes a session whose finish left no diff: the same
+// session id continues the turn, so the model sees its own transcript plus
+// this nudge instead of starting over.
+const emptyDiffPrompt = "No changes were recorded (git diff is empty), so the task is not complete. Continue where you left off: inspect the repository, implement the fix with the Bashy tool, and run git diff to confirm the change is present before finishing."
+
+// runYcode runs one ycode turn (or resume: same session id) for the task.
+func runYcode(ctx context.Context, engine []string, taskConfig, sessionID, prompt, repo, instanceArtifacts string, diagnostic, diagnostics, response io.Writer) error {
+	cmd := exec.CommandContext(ctx, engine[0], append(engine[1:], "--file", taskConfig, "--session", sessionID, prompt)...)
+	cmd.Dir = repo
+	cmd.Stderr = io.MultiWriter(diagnostic, diagnostics)
+	cmd.Env = isolatedEnvironment(os.Environ(), instanceArtifacts)
+	cmd.Stdout = response
+	return cmd.Run()
+}
+
 func run(input io.Reader, output, diagnostic io.Writer, config string) (retErr error) {
 	var req request
 	dec := json.NewDecoder(io.LimitReader(input, 4<<20))
@@ -122,12 +137,7 @@ func run(input io.Reader, output, diagnostic io.Writer, config string) (retErr e
 	if err != nil {
 		return fmt.Errorf("write instance config: %w", err)
 	}
-	cmd := exec.CommandContext(ctx, engine[0], append(engine[1:], "--file", taskConfig, "--session", sessionID, prompt)...)
-	cmd.Dir = repo
-	cmd.Stderr = io.MultiWriter(diagnostic, &diagnostics)
-	cmd.Env = isolatedEnvironment(os.Environ(), instanceArtifacts)
-	cmd.Stdout = &response
-	if err := cmd.Run(); err != nil {
+	if err := runYcode(ctx, engine, taskConfig, sessionID, prompt, repo, instanceArtifacts, diagnostic, &diagnostics, &response); err != nil {
 		if ctx.Err() != nil {
 			return fmt.Errorf("ycode timed out after %s: %w", timeout, ctx.Err())
 		}
@@ -138,7 +148,22 @@ func run(input io.Reader, output, diagnostic io.Writer, config string) (retErr e
 		return err
 	}
 	if strings.TrimSpace(patch) == "" {
-		return errors.New("ycode completed without producing a git diff")
+		// No-diff fallback (Sprint 316: ten episodes ended on an empty
+		// finish): resume the same durable session once with an explicit
+		// continue instead of accepting the empty submission.
+		if err := runYcode(ctx, engine, taskConfig, sessionID, emptyDiffPrompt, repo, instanceArtifacts, diagnostic, &diagnostics, &response); err != nil {
+			if ctx.Err() != nil {
+				return fmt.Errorf("ycode timed out after %s: %w", timeout, ctx.Err())
+			}
+			return fmt.Errorf("run ycode: %w", err)
+		}
+		patch, err = workspacePatch(ctx, repo)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(patch) == "" {
+			return errors.New("ycode completed without producing a git diff")
+		}
 	}
 	model := req.ModelName
 	pred := prediction{InstanceID: req.InstanceID, ModelName: model, ModelPatch: patch}
@@ -334,6 +359,19 @@ func isolatedEnvironment(source []string, artifacts string) []string {
 	return result
 }
 
+// backupArtifact reports whether an untracked path is an editor/backup copy
+// rather than an intended new file. Models often edit via backup copies
+// (django__django-11790 left forms.py.bak in its model.patch); those copies
+// are never the change.
+func backupArtifact(path string) bool {
+	base := path
+	if i := strings.LastIndexByte(base, '/'); i >= 0 {
+		base = base[i+1:]
+	}
+	return strings.HasSuffix(base, ".bak") || strings.HasSuffix(base, "~") ||
+		strings.HasSuffix(base, ".orig") || strings.HasSuffix(base, ".rej")
+}
+
 func workspacePatch(ctx context.Context, repo string) (string, error) {
 	tracked := gitCommand(ctx, "diff", "--binary", "HEAD", "--")
 	tracked.Dir = repo
@@ -351,6 +389,9 @@ func workspacePatch(ctx context.Context, repo string) (string, error) {
 	patch.Write(diff)
 	for _, path := range bytes.Split(paths, []byte{0}) {
 		if len(path) == 0 {
+			continue
+		}
+		if backupArtifact(string(path)) {
 			continue
 		}
 		cmd := gitCommand(ctx, "diff", "--binary", "--no-index", "--", "/dev/null", string(path))
