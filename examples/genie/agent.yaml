@@ -303,7 +303,11 @@ spec:
         # the model's observations (G0.4); the adapter sets them.
         # The Windows names are what native programs there need to start at all
         # (git.exe, bashy's podman, python); absent on Linux/macOS, so skipped.
+        # VIRTUAL_ENV / CONDA_PREFIX / CONDA_DEFAULT_ENV carry an ACTIVATED Python
+        # environment (a SWE-bench image activates `testbed`): bashy's agent-mode
+        # python/pip use it only when they can see it, else they fetch bashy's own.
         names: [PATH, LANG, LC_ALL, TERM, HOME, BASHY_KB_DIR, BASHY_HOME, YCODE_DATA_DIR, BASHY_HINTS, BASHY_ADVISOR, BASHY_TELEMETRY_QUIET,
+          VIRTUAL_ENV, CONDA_PREFIX, CONDA_DEFAULT_ENV,
           SYSTEMROOT, WINDIR, COMSPEC, PATHEXT, TEMP, TMP, USERPROFILE, HOMEDRIVE, HOMEPATH, LOCALAPPDATA, APPDATA, PROGRAMDATA]
       commandResolution: embedded-and-pinned-only
       timeoutMs: 60000
