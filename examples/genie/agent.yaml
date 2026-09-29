@@ -645,7 +645,25 @@ spec:
           run:
             stage: bashy.deny
             # G0.4: the denial names the policy rule, so the model sees why.
-            with: {reason: true}
+            # #1168: an unprovable command (bare python, awk) comes back
+            # already wrapped in the effects envelope the prompt describes, so
+            # the next call is that form instead of a probe and a rewrite.
+            # Preflight is not loosened: the wrapped form is checked like any
+            # call and allowed by declared-envelope, never by this remedy.
+            with:
+              reason: true
+              remedy:
+                rules: [incomplete-preflight]
+                kinds: [command, effectRefinement, dynamicCommand, dynamicRedirection, redirection]
+                unlessScriptMatches: '^\s*@(effects|guard|contain)\('
+                text: |-
+                  To run it, send this instead (the same command in an effects envelope):
+                  @effects("read,write,exec")
+                  @contain(net: "deny")
+                  function run_checked() {
+                  {{command}}
+                  }
+                  run_checked
             in: {intent: state.intent, decision: state.policy, preflight: state.preflight}
             out: {result: state.result, terminal: state.terminal}
 

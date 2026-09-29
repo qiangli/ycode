@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/qiangli/ycode/internal/harness/message"
@@ -90,7 +91,72 @@ func (r *Runtime) deny(_ context.Context, in pipeline.Invocation) pipeline.Outco
 			result["unsupported"] = report.Unsupported
 		}
 	}
+	remedy, err := denialRemedy(in.With["remedy"], in.Inputs["decision"], in.Inputs["preflight"], call)
+	if err != nil {
+		return fail(err)
+	}
+	if remedy != "" {
+		result["remedy"] = remedy
+	}
 	return pipeline.Success(map[string]any{"result": result, "terminal": true})
+}
+
+// denialRemedy renders with.remedy, the agent's own answer to a denial it
+// knows how to fix: the ready-to-run form of the denied command, so the
+// model's next call is that form instead of a probe and a rewrite. The
+// agent's YAML owns the whole policy:
+//
+//	remedy:
+//	  rules: [incomplete-preflight]   # rule ids it answers
+//	  kinds: [command, ...]           # optional: every unsupported fact's kind is one of these
+//	  unlessScriptMatches: '^@effects' # optional: a script already in that form gets none
+//	  text: "...{{command}}..."       # the model's script, verbatim
+//
+// It never changes the decision: the command still did not run, and the
+// remedy's form goes through preflight and policy like any other call.
+func denialRemedy(config, decision, preflight any, call hitl.Call) (string, error) {
+	cfg, _ := config.(map[string]any)
+	if cfg == nil {
+		return "", nil
+	}
+	template := text(cfg["text"])
+	if template == "" {
+		return "", errors.New("bashy.deny: with.remedy requires text")
+	}
+	d, ok := decision.(hitl.Decision)
+	if !ok || !containsString(stringList(cfg["rules"]), d.RuleID) {
+		return "", nil
+	}
+	if kinds := stringList(cfg["kinds"]); len(kinds) > 0 {
+		report, _ := preflight.(hitl.Preflight)
+		if len(report.Unsupported) == 0 {
+			return "", nil
+		}
+		for _, fact := range report.Unsupported {
+			if !containsString(kinds, fact.Kind) {
+				return "", nil
+			}
+		}
+	}
+	if pattern := text(cfg["unlessScriptMatches"]); pattern != "" {
+		re, err := regexp.Compile("(?m)" + pattern)
+		if err != nil {
+			return "", fmt.Errorf("bashy.deny: with.remedy.unlessScriptMatches: %w", err)
+		}
+		if re.MatchString(call.Script) {
+			return "", nil
+		}
+	}
+	return strings.ReplaceAll(template, "{{command}}", strings.TrimRight(call.Script, "\n")), nil
+}
+
+func containsString(list []string, want string) bool {
+	for _, item := range list {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runtime) reject(_ context.Context, in pipeline.Invocation) pipeline.Outcome {

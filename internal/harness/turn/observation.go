@@ -20,6 +20,9 @@ func observationText(fields map[string]any) string {
 	switch outcome {
 	case "denied":
 		why := unsupportedReasons(fields["unsupported"])
+		if remedy := text(fields["remedy"]); remedy != "" {
+			why += "\n" + remedy
+		}
 		if rule := text(fields["rule_id"]); rule != "" {
 			return fmt.Sprintf("denied by policy rule %q; the command did not run", rule) + why
 		}

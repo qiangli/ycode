@@ -132,7 +132,7 @@ func run(input io.Reader, output, diagnostic io.Writer, config string) (retErr e
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	startedAt := time.Now().UTC()
-	prompt := "Solve this SWE-bench issue in the current repository. Inspect, implement, and verify the fix.\n\nInstance: " + req.InstanceID + "\n\nIssue:\n" + req.ProblemStatement
+	prompt := taskPrompt(req.InstanceID, req.ProblemStatement)
 	taskConfig, err := instanceConfig(config, repo, filepath.Join(instanceArtifacts, "config"))
 	if err != nil {
 		return fmt.Errorf("write instance config: %w", err)
@@ -432,4 +432,19 @@ func gitCommand(ctx context.Context, args ...string) *exec.Cmd {
 		return exec.CommandContext(ctx, bashyExecutable(), append([]string{"git"}, args...)...)
 	}
 	return exec.CommandContext(ctx, "git", args...)
+}
+
+// taskPrompt is the SWE-bench task template (mini-swe-agent's instance
+// template plays the same part): the task is source-only. The evaluation
+// replaces the test files with its own, so edited tests are never scored and
+// only cost calls; the check is a throwaway reproduction script plus the
+// tests already in the repository. The rules live here, not in
+// prompts/system.md, because chat shares that prompt and a user there may
+// well ask for tests.
+func taskPrompt(instanceID, issue string) string {
+	return "Solve this SWE-bench issue in the current repository. Inspect, implement, and verify the fix.\n\n" +
+		"Change non-test source files only. Do not add, edit, or delete test files or configuration: the evaluation runs its own tests. " +
+		"Verify the fix with a throwaway reproduction script and the existing tests for the code you changed, then delete the script so the diff holds only the fix. " +
+		"Stay inside the repository.\n\n" +
+		"Instance: " + instanceID + "\n\nIssue:\n" + issue
 }

@@ -13,9 +13,9 @@ function run_tests() {
 run_tests
 ```
 
-A result saying `denied by policy rule "incomplete-preflight"` means exactly this: the command could not be checked, so wrap it as shown. Put each decorator on its own line directly above `function name() {`. Declare only read, write and exec; a command that needs the network, credentials or deletion outside the repository is refused. Nothing can be downloaded or installed: use what the environment already has.
+A result saying `denied by policy rule "incomplete-preflight"` means exactly this: the command could not be checked and did not run. The result then shows the same command already wrapped: send that as your next command. Put each decorator on its own line directly above `function name() {`. Declare only read, write and exec; a command that needs the network, credentials or deletion outside the repository is refused. Nothing can be downloaded or installed: use what the environment already has.
 
-Read the issue and repository instructions first. Find the relevant implementation and tests. Reproduce the reported behavior when practical, make a focused general fix, and run the most relevant available checks. Inspect the final diff for unrelated changes. Do not modify benchmark harness files or tests unless the issue requires it.
+Start from the task. For repository conventions a quick look at the repository root is enough; do not search further for instructions. Stay inside the repository: a path outside it (such as .. or /) is refused. Find the relevant implementation and tests. Reproduce the reported behavior when practical, make a focused general fix, and run the most relevant available checks. Inspect the final diff for unrelated changes. Do not modify benchmark harness files or tests unless the task asks for it.
 
 Run every command through the Bashy tool itself: never answer with a {"tool_calls": ...} JSON blob or a shell script as plain text — text is not executed, so a written-out command changes nothing. The repository is the current working directory, so use relative paths rather than absolute paths remembered from elsewhere (such as /testbed). Before finishing, run git diff and confirm your fix is in it: an empty diff means the work is not done, so keep working instead of summarizing.
 
