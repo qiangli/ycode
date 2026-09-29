@@ -148,7 +148,9 @@ func (rejectingDeadLetter) Store(context.Context, ioctx.DeadLetterRequest) error
 
 type emptyQueue struct{}
 
-func (emptyQueue) Drain(context.Context, string, []string) ([]QueueItem, error) { return nil, nil }
+func (emptyQueue) Drain(context.Context, string, string, []string) ([]QueueItem, error) {
+	return nil, nil
+}
 
 type fakeBashy struct{}
 

@@ -143,6 +143,12 @@ func doWithRetry(ctx context.Context, client *http.Client, makeReq func() (*http
 		host := req.URL.Host
 		if err != nil {
 			yotel.RecordHTTPRequest(ctx, req.Method, host, 0, time.Since(started), false)
+			if ctx.Err() != nil {
+				// The caller cancelled (a turn interrupted with ESC): the
+				// transport error is that cancellation, not a flaky network,
+				// and must not be retried or reported as a retry.
+				return nil, fmt.Errorf("send request: %w", err)
+			}
 			if isRetryableNetError(err) {
 				lastErr = fmt.Errorf("send request: %w", err)
 				continue

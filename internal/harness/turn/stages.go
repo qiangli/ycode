@@ -207,7 +207,11 @@ func (r *Runtime) checkpoint(ctx context.Context, in pipeline.Invocation) pipeli
 }
 
 func (r *Runtime) drain(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
-	items, err := r.queue.Drain(ctx, text(in.With["queueRef"]), stringList(in.With["classes"]))
+	run, err := runFrom(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	items, err := r.queue.Drain(ctx, run.sessionID, text(in.With["queueRef"]), stringList(in.With["classes"]))
 	if err != nil {
 		return fail(err)
 	}

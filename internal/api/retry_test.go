@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -141,6 +144,43 @@ func TestDoWithRetry_ContextCancellation(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error on cancelled context")
+	}
+}
+
+// A request cancelled in flight is the caller's cancellation (a turn stopped
+// with ESC), not a network fault: one attempt, no retry.
+func TestDoWithRetry_CancelledInFlightIsNotRetried(t *testing.T) {
+	release := make(chan struct{})
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	defer slog.SetDefault(previous)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+	_, err := doWithRetry(ctx, srv.Client(), func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if n := attempts.Load(); n != 1 {
+		t.Fatalf("attempts = %d, want 1", n)
+	}
+	if strings.Contains(logged.String(), "retrying") {
+		t.Fatalf("a cancelled request was reported as a retry: %s", logged.String())
 	}
 }
 

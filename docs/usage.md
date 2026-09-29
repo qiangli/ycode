@@ -64,6 +64,30 @@ ycode --file agent.yaml --session review-1 'review the current changes'
 ycode --file agent.yaml --session review-1 'now fix the first finding'
 ```
 
+### Mid-turn input: steer, follow-up, interrupt
+
+A turn typed in a terminal front end (bashy's agent terminal, which exports
+`BASHY_YCODE_SESSION_FILE`) owns the terminal while it runs. The terminal stays
+in canonical mode, so echo and line editing are unchanged and a partly typed
+line is never read — it is still there for the shell when the turn ends.
+
+- A complete line typed mid-turn is queued on the agent's compiled queue
+  (`spec.queues`, class `steering`). The stock loop drains `interrupt` and
+  `steering` before every model call and after every tool batch
+  (`queue.drain` + `messages.apply-input`), so the model reads the line at its
+  next step: a STOP typed mid-turn halts work before the next tool call.
+- A line no turn drained (the turn ended first) runs next, in the same
+  session, as a follow-up turn. A bare Enter is nothing.
+- ESC — or Ctrl-C — cancels the turn: no further stage starts, the in-flight
+  tool is stopped, the run records `turn.failed`, and the session continues
+  at the shell prompt (exit code `interrupted`). Lines typed before the
+  interrupt still run next. SIGTERM ends the turns.
+
+Every queue transition is an event (`queue.enqueued`, `queue.drained`,
+`queue.taken`). Embedders use `Harness.Enqueue`, `Harness.TakeQueued` and
+`Harness.Settle`. Enqueue and drain happen in the process running the
+session's turn; the declared `store.controlPath` is not used yet.
+
 Run a single Bashy program without a model call:
 
 ```bash

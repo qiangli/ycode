@@ -26,8 +26,10 @@ type QueueItem struct {
 	Text string `json:"text"`
 }
 
+// Queue drains a session's pending input of the named classes from a
+// compiled queue (spec.queues) in its declared order.
 type Queue interface {
-	Drain(context.Context, string, []string) ([]QueueItem, error)
+	Drain(ctx context.Context, sessionID, queueRef string, classes []string) ([]QueueItem, error)
 }
 
 type BashyBoundary interface {

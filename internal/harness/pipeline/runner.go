@@ -128,6 +128,13 @@ type graphExecutor struct {
 
 func (x *graphExecutor) Execute(ctx context.Context, t *dag.Task, _ dag.TaskIO) dag.TaskResult {
 	n := x.byID[t.Name]
+	if err := ctx.Err(); err != nil && !contains(n.RunOn, OutcomeCancelled) {
+		// A cancelled run starts no further stage: a turn stopped by its
+		// frontend (ESC) must not reach its next model call, tool call or
+		// file write. Only nodes declared to run on cancellation still run.
+		x.put(n.ID, Outcome{Class: OutcomeCancelled, Code: "cancelled", Err: err})
+		return dag.TaskResult{Name: t.Name, Status: dag.StatusDone}
+	}
 	if x.pipeline.FailFast && x.hasTerminalFailure() && !contains(n.RunOn, OutcomeFailed) && !contains(n.RunOn, OutcomeCancelled) {
 		x.put(n.ID, Outcome{Class: OutcomeSkipped, Code: "fail-fast"})
 		return dag.TaskResult{Name: t.Name, Status: dag.StatusDone}
@@ -329,7 +336,7 @@ func (r *Runner) runStage(ctx context.Context, id string, run spec.Run, state *S
 	if out.Class == "" {
 		out.Class = OutcomeSucceeded
 	}
-	if out.Class == OutcomeFailed {
+	if stopped(out) {
 		return out
 	}
 	writes := map[string]any{}
@@ -363,7 +370,7 @@ func (r *Runner) runCall(ctx context.Context, name string, in, out map[string]st
 		}
 	}
 	result := r.runPipeline(ctx, name, child)
-	if result.Class == OutcomeFailed {
+	if stopped(result) {
 		return result
 	}
 	writes := map[string]any{}
@@ -380,6 +387,11 @@ func (r *Runner) runCall(ctx context.Context, name string, in, out map[string]st
 	return result
 }
 
+// stopped reports an outcome that ends the enclosing call, loop or
+// fan-out: a failure, or a cancellation (a cancelled iteration must not be
+// followed by another one).
+func stopped(o Outcome) bool { return o.Class == OutcomeFailed || o.Class == OutcomeCancelled }
+
 func (r *Runner) runRepeat(ctx context.Context, x spec.RepeatRun, state *State) Outcome {
 	in := cloneMapString(x.In)
 	for port, path := range x.Carry {
@@ -387,7 +399,7 @@ func (r *Runner) runRepeat(ctx context.Context, x spec.RepeatRun, state *State) 
 	}
 	for i := 0; i < x.MaxIterations; i++ {
 		out := r.runCall(ctx, x.PipelineRef, in, x.Out, state)
-		if out.Class == OutcomeFailed {
+		if stopped(out) {
 			return out
 		}
 		ok, err := evalExpression(x.Until, state, nil)
@@ -498,7 +510,7 @@ func (r *Runner) runForEach(ctx context.Context, x spec.ForEachRun, state *State
 	}
 	wg.Wait()
 	for _, o := range errs {
-		if o.Class == OutcomeFailed {
+		if stopped(o) {
 			return o
 		}
 	}

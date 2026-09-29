@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -292,7 +294,7 @@ func runCLIInput(ctx context.Context, app *harnessApplication, inv harnesscli.In
 		}
 		defaults.SessionID = sessions[0].ID
 	}
-	submit := func(text string) error {
+	submitWith := func(ctx context.Context, text string) error {
 		if strings.TrimSpace(text) == "" {
 			if inv.Dispatch.Input.Empty == "help" && streams.Help != nil {
 				return streams.Help()
@@ -308,9 +310,20 @@ func runCLIInput(ctx context.Context, app *harnessApplication, inv harnesscli.In
 		}
 		return local.Run(ctx, frontend.Input{SessionID: defaults.SessionID, Principal: defaults.Principal, Body: body}, app.renderer(streams.Out))
 	}
+	submit := func(text string) error { return submitWith(ctx, text) }
 	switch inv.Mode {
 	case "args":
-		return submit(strings.Join(inv.Arguments, " "))
+		text := strings.Join(inv.Arguments, " ")
+		if queueRef, ok := ownsTerminalTurns(app, inv.Dispatch.AgentRef, ref); ok && strings.TrimSpace(text) != "" {
+			// A turn typed in a terminal front end owns the terminal while it
+			// runs: mid-turn lines steer it, ESC stops it (turninput.go).
+			host := ownedTurnHost{app: app, session: defaults.SessionID, queueRef: queueRef, submit: submitWith}
+			sigint := make(chan os.Signal, 1)
+			signal.Notify(sigint, os.Interrupt)
+			defer signal.Stop(sigint)
+			return app.interruptedError(runOwnedTurns(ctx, host, openStdinKeys, text, streams.Err, sigint))
+		}
+		return submit(text)
 	case "stdin":
 		limit := app.doc.Spec.Frontends[ref].Limits.MaxInputBytes
 		body, err := io.ReadAll(io.LimitReader(streams.In, int64(limit)+1))

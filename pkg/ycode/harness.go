@@ -77,6 +77,7 @@ type Harness struct {
 	turn      *turn.Runtime
 	eventPath string
 	control   string
+	queue     *sessionQueue
 
 	mu     sync.Mutex
 	active map[string]*activeRun
@@ -203,12 +204,13 @@ func Load(path string, option ...LoadOption) (*Harness, error) {
 	if err != nil {
 		return nil, err
 	}
-	runtime, err := turn.New(turn.Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashyExecutor, Providers: providers, Queue: emptyHarnessQueue{}, Observer: observe.New(doc.Spec.Observability, options.tracer), EventPath: eventPath, Tokens: harnessTokens{}})
+	queue := newSessionQueue(doc, events, payloads)
+	runtime, err := turn.New(turn.Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashyExecutor, Providers: providers, Queue: queue, Observer: observe.New(doc.Spec.Observability, options.tracer), EventPath: eventPath, Tokens: harnessTokens{}})
 	if err != nil {
 		return nil, err
 	}
 	memoryEngine.BindSummary(routeSummarizerFor(runtime))
-	return &Harness{doc: doc, events: events, payloads: payloads, io: ioEngine, turn: runtime, eventPath: eventPath, control: control, active: make(map[string]*activeRun)}, nil
+	return &Harness{doc: doc, events: events, payloads: payloads, io: ioEngine, turn: runtime, eventPath: eventPath, control: control, queue: queue, active: make(map[string]*activeRun)}, nil
 }
 
 func (h *Harness) Validate() error {
@@ -471,6 +473,11 @@ func nextSequence(path string) (uint64, error) {
 
 func runKey(sessionID, runID string) string { return sessionID + "\x00" + runID }
 
+func sessionOf(key string) string {
+	session, _, _ := strings.Cut(key, "\x00")
+	return session
+}
+
 func (h *Harness) boundaryPath(sessionID, runID string) string {
 	return filepath.Join(h.control, "turn-boundaries", sessionID, runID+".json")
 }
@@ -481,12 +488,6 @@ func (harnessTokens) Count(value string) (int, error) { return len(value)/4 + 1,
 func (harnessTokens) CountMessages(value []message.Message) (int, error) {
 	raw, err := json.Marshal(value)
 	return len(raw)/4 + 1, err
-}
-
-type emptyHarnessQueue struct{}
-
-func (emptyHarnessQueue) Drain(context.Context, string, []string) ([]turn.QueueItem, error) {
-	return nil, nil
 }
 
 type routeSummarizer struct {
