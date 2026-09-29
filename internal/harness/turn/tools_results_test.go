@@ -47,3 +47,34 @@ func TestAppendToolResultsAcceptsCollectedResults(t *testing.T) {
 		}
 	}
 }
+
+// Sprint 322 (django__django-15280): tool observations entered the
+// transcript unbounded, so one large sed/test-log dump stayed in every later
+// request and in the committed session. With YAML maxChars the model sees
+// the head and tail plus a note of what was left out.
+func TestAppendToolResultsBoundsObservationsByMaxChars(t *testing.T) {
+	r := &Runtime{}
+	stdout := "HEAD\n" + strings.Repeat("0123456789012345678901234567890\n", 2000) + "TAIL\n"
+	result := map[string]any{"call_id": "big", "outcome": "completed",
+		"process": map[string]any{"exitCode": 0},
+		"output":  map[string]any{"stdout": []any{map[string]any{"data": stdout, "encoding": "utf-8", "from": 0}}}}
+	in := pipeline.Invocation{
+		With:   map[string]any{"format": "observation", "maxChars": 10000},
+		Inputs: map[string]any{"state": map[string]any{"messages": []message.Message{}}, "results": []any{result}},
+	}
+	out := r.appendToolResults(context.Background(), in)
+	if out.Err != nil {
+		t.Fatal(out.Err)
+	}
+	content := out.Outputs["state"].(map[string]any)["messages"].([]message.Message)[0].Content[0].Content
+	if len(content) > 10200 {
+		t.Fatalf("observation = %d bytes, want about 10000", len(content))
+	}
+	if !strings.HasPrefix(content, "exit 0\nHEAD") || !strings.HasSuffix(content, "TAIL") || !strings.Contains(content, "[output truncated: ") {
+		t.Fatalf("observation must keep head, tail and a truncation note: %.60q ... %.60q", content, content[len(content)-60:])
+	}
+	in.With["maxChars"] = 0
+	if out := r.appendToolResults(context.Background(), in); out.Err == nil {
+		t.Fatal("maxChars 0 must be rejected, not silently unbounded")
+	}
+}

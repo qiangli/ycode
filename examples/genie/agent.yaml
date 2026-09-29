@@ -876,8 +876,13 @@ spec:
             # A command stopped at bashy.execution.timeoutMs comes back as
             # "exit N (timedOut)" with the output it printed; the note says
             # what that means so the model moves on instead of retrying.
+            # maxChars bounds each observation as mini-swe-agent does (10000:
+            # head and tail halves + "[output truncated: N lines (B bytes)
+            # omitted]"); one sed/test-log dump no longer rides every later
+            # request and the committed session (Sprint 322, 15280).
             with:
               format: observation
+              maxChars: 10000
               outcomeNotes:
                 timedOut: >-
                   The command reached its time limit and was stopped, together

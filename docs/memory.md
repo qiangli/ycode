@@ -50,7 +50,13 @@ is an event:
   `session.forked` parent seed, else empty), reads that message array from the
   payload store, and projects it through the compiled history policy:
   - `maxTokens` with `unit: turns` — older *whole turns* are trimmed until the
-    projection fits; a turn is never split;
+    projection fits. The newest turn is always kept; when it alone exceeds
+    the budget (an agent loop is one turn: one request, then every tool
+    call), it is elided instead of failing the load — oldest tool results
+    become the placeholder first (the newest result is spared), then the
+    oldest calls after the request are dropped, then the middle of the
+    largest remaining block is cut. `session.history.loaded` records the
+    counts under `elided`;
   - `clearToolResults: {olderThanTurns, placeholder}` — tool results older
     than N turns are replaced by the declared placeholder;
   - `repair: tool-pairs` — dangling tool calls/results are repaired before
