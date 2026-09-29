@@ -37,6 +37,7 @@ Common variables:
 | `BASHY_CONTAIN_BASHY` | required (container) | the static linux bashy injected into task images (`make build-bashy-scratch`) |
 | `BENCH_DOOR` | required (container) | the door the contained calls reach, `/k/<token>` form, e.g. tunnelled from the dev box (`http://127.0.0.1:24556/k/<token>`) |
 | `BENCH_TOOLS` | `build` | `prebuilt`: use linux tools already in `$BENCH_HOME/bin/linux-amd64` (a host without the sibling checkouts) |
+| `BENCH_GENIE_TIMEOUT` | `4h` | genie's wall clock per task (`GENIE_TIMEOUT`); mini-swe-agent has none, only its 250-step budget, so the default leaves genie's 250-iteration loop to decide |
 | `BENCH_HOME` | `~/.cache/bashy-bench` | datasets, git mirrors, workspaces, runs |
 
 ## Tasks
@@ -230,7 +231,11 @@ if [ "$mode" = container ]; then
     # genie's adapter is Bash# Go source: it needs a Go SDK, and the
     # container has no network to fetch one — bashy's own SDK, read-only.
     GOROOT=$("$BASHY" go env GOROOT); export GOROOT
-    ro="$ro,$GOROOT:$GOROOT" pass=GOROOT
+    ro="$ro,$GOROOT:$GOROOT" pass=GOROOT,GENIE_TIMEOUT
+    # genie's own wall clock defaults to 30 minutes; mini-swe-agent has no wall
+    # clock, only its step budget (it needed 50 min on some Verified instances).
+    # Give genie the same footing: its 250-step budget decides, not a deadline.
+    export GENIE_TIMEOUT=${BENCH_GENIE_TIMEOUT:-4h}
   fi
   if [ "$agent" = mini-swe-agent ]; then
     [ -f "$home/msa.python-root" ] || { printf 'run prep-container first\n' >&2; exit 1; }
