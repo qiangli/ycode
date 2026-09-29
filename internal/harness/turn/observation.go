@@ -15,7 +15,12 @@ import (
 // (binding, intent, effects, job ids) stays in the event store either way.
 // A small model cannot read base64 chunks or pick an exit code out of an
 // execution envelope; it can read this.
-func observationText(fields map[string]any) string {
+//
+// notes maps an execution outcome (timedOut, cancelled, …) to a line the
+// agent's YAML wants the model to read under the status line — what the
+// outcome means and what to do next (with.outcomeNotes). The words are policy;
+// this only places them.
+func observationText(fields map[string]any, notes map[string]string) string {
 	outcome := text(fields["outcome"])
 	switch outcome {
 	case "denied":
@@ -41,6 +46,10 @@ func observationText(fields map[string]any) string {
 		b.WriteString(outcome)
 	} else {
 		b.WriteString("finished")
+	}
+	if note := strings.TrimSpace(notes[outcome]); note != "" {
+		b.WriteString("\n")
+		b.WriteString(note)
 	}
 	output, _ := fields["output"].(map[string]any)
 	stdout := decodeChunks(output["stdout"])
@@ -118,4 +127,25 @@ func unsupportedReasons(value any) string {
 		return ""
 	}
 	return ": " + strings.Join(reasons, "; ")
+}
+
+// outcomeNotes reads with.outcomeNotes: a map from execution outcome to the
+// note shown under that outcome's status line.
+func outcomeNotes(raw any) (map[string]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	entries, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("messages.append-tool-results: with.outcomeNotes must map an outcome to text, got %T", raw)
+	}
+	notes := make(map[string]string, len(entries))
+	for outcome, value := range entries {
+		note, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("messages.append-tool-results: with.outcomeNotes.%s must be text, got %T", outcome, value)
+		}
+		notes[outcome] = note
+	}
+	return notes, nil
 }

@@ -310,6 +310,13 @@ spec:
           VIRTUAL_ENV, CONDA_PREFIX, CONDA_DEFAULT_ENV,
           SYSTEMROOT, WINDIR, COMSPEC, PATHEXT, TEMP, TMP, USERPROFILE, HOMEDRIVE, HOMEPATH, LOCALAPPDATA, APPDATA, PROGRAMDATA]
       commandResolution: embedded-and-pinned-only
+      # Per-command wall time, the ceiling for a model's timeout_ms and the
+      # default when it gives none. 60 s is mini-swe-agent's
+      # environment.timeout, the baseline genie is measured against: long
+      # enough for a focused test run, short enough that a command which
+      # never exits (Django runserver in a repro, Sprint 322) costs one
+      # minute rather than the episode. bashy stops the command's whole
+      # process tree at this bound.
       timeoutMs: 60000
       jobLifetimeMs: 900000
       maxOutputChars: 32768
@@ -866,7 +873,19 @@ spec:
             stage: messages.append-tool-results
             # G0.4: the model reads exit status + decoded stdout/stderr, not
             # the execution record (which stays in the event store).
-            with: {format: observation}
+            # A command stopped at bashy.execution.timeoutMs comes back as
+            # "exit N (timedOut)" with the output it printed; the note says
+            # what that means so the model moves on instead of retrying.
+            with:
+              format: observation
+              outcomeNotes:
+                timedOut: >-
+                  The command reached its time limit and was stopped, together
+                  with every process it started; the output it printed before
+                  that is shown below. Do not rerun it unchanged: avoid or mock
+                  anything that never finishes on its own (a server, a watcher,
+                  a prompt waiting for input), and narrow a long test run to
+                  the relevant tests.
             in: {state: state, results: results}
             out: {state: state}
         - id: drain-after-tool

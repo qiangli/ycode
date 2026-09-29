@@ -55,7 +55,7 @@ func TestDenyRemedyHandsBackTheReadyForm(t *testing.T) {
 	if res["remedy"] != want {
 		t.Fatalf("remedy = %q, want %q", res["remedy"], want)
 	}
-	obs := observationText(res)
+	obs := observationText(res, nil)
 	if !strings.HasPrefix(obs, `denied by policy rule "incomplete-preflight"; the command did not run: why`) || !strings.HasSuffix(obs, "\n"+want) {
 		t.Fatalf("observation = %q", obs)
 	}

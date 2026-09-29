@@ -216,6 +216,10 @@ func (r *Runtime) appendToolResults(_ context.Context, in pipeline.Invocation) p
 	if err != nil {
 		return fail(err)
 	}
+	notes, err := outcomeNotes(in.With["outcomeNotes"])
+	if err != nil {
+		return fail(err)
+	}
 	for _, raw := range anyList(in.Inputs["results"]) {
 		// forEach collects each iteration's result value directly; accept a
 		// {"result": …} wrapper too.
@@ -231,7 +235,7 @@ func (r *Runtime) appendToolResults(_ context.Context, in pipeline.Invocation) p
 		}
 		content := ""
 		if text(in.With["format"]) == "observation" {
-			content = observationText(fields)
+			content = observationText(fields, notes)
 		} else {
 			encoded, err := json.Marshal(fields)
 			if err != nil {

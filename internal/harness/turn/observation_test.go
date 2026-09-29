@@ -34,7 +34,7 @@ func TestObservationTextReadsLikeATerminal(t *testing.T) {
 		"denied":                 {map[string]any{"call_id": "c", "outcome": "denied"}, "denied by policy; the command did not run"},
 		"rejected":               {map[string]any{"call_id": "c", "outcome": "rejected"}, "rejected by the reviewer; the command did not run"},
 	} {
-		if got := observationText(tc.fields); got != tc.want {
+		if got := observationText(tc.fields, nil); got != tc.want {
 			t.Errorf("%s: got %q, want %q", name, got, tc.want)
 		}
 	}
@@ -80,5 +80,38 @@ func TestDenyReasonIsOptIn(t *testing.T) {
 		if _, has := res["rule_id"]; has != reason {
 			t.Fatalf("reason=%v: rule_id present=%v (%v)", reason, has, res)
 		}
+	}
+}
+
+// Sprint: #285; Story: #1172; Story-ID: 6fbc6ccec8b4
+//
+// A command stopped at its wall time comes back with whatever it printed and
+// the agent's own note for that outcome, so the model knows the command was
+// killed (not that it finished) and can go on.
+func TestObservationOutcomeNotesComeFromYAML(t *testing.T) {
+	r := &Runtime{}
+	timedOut := map[string]any{"call_id": "call-1", "outcome": "timedOut", "process": map[string]any{"exitCode": float64(130)},
+		"output": map[string]any{"stdout": chunk("Performing system checks...\n")}}
+	completed := map[string]any{"call_id": "call-2", "outcome": "completed", "process": map[string]any{"exitCode": float64(0)},
+		"output": map[string]any{"stdout": chunk("ok\n")}}
+	note := "The command hit its time limit and was stopped, with every process it started."
+	out := r.appendToolResults(context.Background(), pipeline.Invocation{
+		With:   map[string]any{"format": "observation", "outcomeNotes": map[string]any{"timedOut": note}},
+		Inputs: map[string]any{"state": map[string]any{"messages": []message.Message{}}, "results": []any{timedOut, completed}}})
+	if out.Err != nil {
+		t.Fatal(out.Err)
+	}
+	messages := out.Outputs["state"].(map[string]any)["messages"].([]message.Message)
+	if got, want := messages[0].Content[0].Content, "exit 130 (timedOut)\n"+note+"\nPerforming system checks..."; got != want {
+		t.Fatalf("timed out observation = %q, want %q", got, want)
+	}
+	if got := messages[1].Content[0].Content; got != "exit 0\nok" {
+		t.Fatalf("a note must only follow its own outcome, got %q", got)
+	}
+	bad := r.appendToolResults(context.Background(), pipeline.Invocation{
+		With:   map[string]any{"format": "observation", "outcomeNotes": map[string]any{"timedOut": 5}},
+		Inputs: map[string]any{"state": map[string]any{"messages": []message.Message{}}, "results": []any{timedOut}}})
+	if bad.Err == nil {
+		t.Fatal("a non-text outcome note was accepted")
 	}
 }
