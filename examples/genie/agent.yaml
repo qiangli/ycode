@@ -848,7 +848,11 @@ spec:
             stage: messages.append-tool-results
             # G0.4: the model reads exit status + decoded stdout/stderr, not
             # the execution record (which stays in the event store).
-            with: {format: observation}
+            # maxChars bounds each observation as mini-swe-agent does (10000:
+            # head and tail halves + "[output truncated: N lines (B bytes)
+            # omitted]"); one sed/test-log dump no longer rides every later
+            # request and the committed session (Sprint 322, 15280).
+            with: {format: observation, maxChars: 10000}
             in: {state: state, results: results}
             out: {state: state}
         - id: drain-after-tool

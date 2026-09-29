@@ -150,6 +150,17 @@ func (r *Runtime) appendToolResults(_ context.Context, in pipeline.Invocation) p
 	if err != nil {
 		return fail(err)
 	}
+	// maxChars (optional, YAML) bounds every tool result entering the
+	// transcript: its head and tail stay, the middle becomes a note saying
+	// how much was left out. The spilled record keeps the full output.
+	maxChars := 0
+	if raw, declared := in.With["maxChars"]; declared {
+		value, ok := number(raw)
+		if !ok || value <= 0 {
+			return fail(errors.New("messages.append-tool-results: maxChars must be a positive integer"))
+		}
+		maxChars = value
+	}
 	for _, raw := range anyList(in.Inputs["results"]) {
 		// forEach collects each iteration's result value directly; accept a
 		// {"result": …} wrapper too.
@@ -173,6 +184,7 @@ func (r *Runtime) appendToolResults(_ context.Context, in pipeline.Invocation) p
 			}
 			content = string(encoded)
 		}
+		content, _ = message.ElideMiddle(content, maxChars)
 		callID := text(fields["call_id"])
 		messages = append(messages, message.Message{Role: message.RoleUser, Content: []message.ContentBlock{{Type: message.ContentTypeToolResult, ToolUseID: callID, Content: content}}})
 	}
