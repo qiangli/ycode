@@ -589,7 +589,10 @@ func collectProvider(ctx context.Context, stream <-chan provider.Event) (map[str
 				}
 			case provider.EventUsage:
 				if value.Usage != nil {
-					response["usage"] = *value.Usage
+					// One response's usage can arrive split across events
+					// (input tokens, then output tokens): merge, never replace.
+					prior, _ := response["usage"].(provider.Usage)
+					response["usage"] = mergeUsage(prior, *value.Usage)
 				}
 			case provider.EventOutcome:
 				if value.Outcome != nil {
@@ -598,6 +601,23 @@ func collectProvider(ctx context.Context, stream <-chan provider.Event) (map[str
 				}
 			}
 		}
+	}
+}
+
+// mergeUsage folds a later usage event into the ones before it: a non-zero
+// field updates the value (a cumulative restatement), a zero field keeps it.
+func mergeUsage(prior, next provider.Usage) provider.Usage {
+	pick := func(old, updated int) int {
+		if updated != 0 {
+			return updated
+		}
+		return old
+	}
+	return provider.Usage{
+		InputTokens:        pick(prior.InputTokens, next.InputTokens),
+		OutputTokens:       pick(prior.OutputTokens, next.OutputTokens),
+		CacheCreationInput: pick(prior.CacheCreationInput, next.CacheCreationInput),
+		CacheReadInput:     pick(prior.CacheReadInput, next.CacheReadInput),
 	}
 }
 

@@ -64,15 +64,21 @@ edits=(-e "s|^      id: gpt-5\.6\$|      id: $quoted|")
 if [ -n "${GENIE_CONTEXT_TOKENS:-}" ]; then
   edits+=(-e "s|^\( *contextTokens:\) 128000\$|\1 $GENIE_CONTEXT_TOKENS|")
   # The fixed reserves (one response, compaction, recent history, knowledge)
-  # are sized for 32k and up; a tier-XS context would leave the prompt a
-  # negative budget, so scale them with the context.
+  # are sized for a 64k-and-up window. ycode clears old tool results past
+  # contextTokens - response - 2 x compaction reserve: at 32768 the fixed
+  # values left 384 tokens, so the agent kept only its last four
+  # observations. Below 64k scale each reserve with the window (never above
+  # its fixed value), which starts clearing at half the window, as at 64k.
   ctx=$GENIE_CONTEXT_TOKENS
-  if [ "$ctx" -lt 32768 ]; then
-    edits+=(-e "s|^\( *maxOutputTokens:\) 16384\$|\1 $((ctx / 4))|")
-    edits+=(-e "s|^\( *reserveTokens:\) 8000\$|\1 $((ctx / 8))|")
-    edits+=(-e "s|^\( *preserveRecentTokens:\) 24000\$|\1 $((ctx / 4))|")
-    edits+=(-e "s|^\( *preserveUserMessagesTokens:\) 4000\$|\1 $((ctx / 16))|")
-    edits+=(-e "s|^\( *maxTokens:\) 3000\$|\1 $((ctx / 8))|")
+  if [ "$ctx" -lt 65536 ]; then
+    scaled() { # $1 fixed value, $2 divisor
+      if [ $((ctx / $2)) -lt "$1" ]; then printf '%s' $((ctx / $2)); else printf '%s' "$1"; fi
+    }
+    edits+=(-e "s|^\( *maxOutputTokens:\) 16384\$|\1 $(scaled 16384 4)|")
+    edits+=(-e "s|^\( *reserveTokens:\) 8000\$|\1 $(scaled 8000 8)|")
+    edits+=(-e "s|^\( *preserveRecentTokens:\) 24000\$|\1 $(scaled 24000 4)|")
+    edits+=(-e "s|^\( *preserveUserMessagesTokens:\) 4000\$|\1 $(scaled 4000 16)|")
+    edits+=(-e "s|^\( *maxTokens:\) 3000\$|\1 $(scaled 3000 8)|")
   fi
 fi
 if [ -n "${GENIE_REQUEST_TIMEOUT_MS:-}" ]; then
