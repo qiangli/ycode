@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -73,8 +74,16 @@ func sessionCLI(ctx context.Context, app *harnessApplication, inv harnesscli.Inv
 		if err != nil {
 			return err
 		}
+		pending, err := h.UncommittedToolCalls(s.ID)
+		if err != nil {
+			return err
+		}
 		if asJSON {
-			return writeJSON(out, map[string]any{"schema_version": "ycode-session-v1", "session": s, "messages": transcript})
+			doc := map[string]any{"schema_version": "ycode-session-v1", "session": s, "messages": transcript}
+			if len(pending) > 0 {
+				doc["uncommitted_tool_calls"] = pending
+			}
+			return writeJSON(out, doc)
 		}
 		if inv.Dispatch.Action == "show" {
 			fmt.Fprintf(out, "session  %s\ntitle    %s\nupdated  %s\nturns    %d committed, %d failed\n", s.ID, s.Title, s.Updated.Local().Format(time.DateTime), s.Committed, s.Failed)
@@ -95,6 +104,16 @@ func sessionCLI(ctx context.Context, app *harnessApplication, inv harnesscli.Inv
 				continue
 			}
 			fmt.Fprintf(out, "[%s] %s\n", m.Role, text)
+		}
+		if inv.Dispatch.Action == "show" && len(pending) > 0 {
+			fmt.Fprintf(out, "\nuncommitted turn: %d tool call(s)\n", len(pending))
+			for _, call := range pending {
+				exit := "-"
+				if call.ExitCode != nil {
+					exit = strconv.Itoa(*call.ExitCode)
+				}
+				fmt.Fprintf(out, "[tool] %s exit=%s %s\n", call.Name, exit, call.Summary)
+			}
 		}
 		return nil
 	case "rename":

@@ -12,6 +12,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/harness/event"
 	"github.com/qiangli/ycode/internal/harness/message"
+	sessionStage "github.com/qiangli/ycode/internal/harness/stages/session"
 )
 
 // Message is one transcript entry as the session stage stores it.
@@ -151,6 +152,48 @@ func (h *Harness) Transcript(id string) ([]Message, error) {
 		return nil, err
 	}
 	return h.messages(s.messagesRef)
+}
+
+// ToolCall is one tool call of a session's uncommitted trailing turn.
+type ToolCall struct {
+	Sequence uint64 `json:"sequence"`
+	RunID    string `json:"run_id"`
+	Name     string `json:"name"`
+	// Summary is the first line of the call's script (or its arguments).
+	Summary  string `json:"summary"`
+	Outcome  string `json:"outcome,omitempty"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+}
+
+// UncommittedToolCalls lists, in order, the tool calls the session made after
+// its latest committed turn — what a failed or killed turn got done before it
+// stopped. Committed turns are read through Transcript instead.
+func (h *Harness) UncommittedToolCalls(id string) ([]ToolCall, error) {
+	s, err := h.Session(id)
+	if err != nil {
+		return nil, err
+	}
+	events, err := event.Replay(h.eventPath)
+	if err != nil {
+		return nil, err
+	}
+	var out []ToolCall
+	for _, call := range sessionStage.UncommittedToolCalls(events, s.ID) {
+		summary := ""
+		if raw, err := h.payloads.Get(call.ArgsRef); err == nil {
+			var args struct {
+				Script string `json:"script"`
+			}
+			if json.Unmarshal(raw, &args) == nil && args.Script != "" {
+				summary = args.Script
+			} else {
+				summary = string(raw)
+			}
+		}
+		summary, _, _ = strings.Cut(strings.TrimSpace(summary), "\n")
+		out = append(out, ToolCall{Sequence: call.Sequence, RunID: call.RunID, Name: call.Name, Summary: summary, Outcome: call.Outcome, ExitCode: call.ExitCode})
+	}
+	return out, nil
 }
 
 // RenameSession records a title for the session.

@@ -12,6 +12,7 @@ import (
 	"github.com/qiangli/ycode/internal/harness/pipeline"
 	"github.com/qiangli/ycode/internal/harness/stages/hitl"
 	"github.com/qiangli/ycode/internal/harness/stages/ioctx"
+	sessionStage "github.com/qiangli/ycode/internal/harness/stages/session"
 )
 
 func (r *Runtime) preflight(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
@@ -63,6 +64,9 @@ func (r *Runtime) execute(ctx context.Context, in pipeline.Invocation) pipeline.
 	if err != nil {
 		return fail(err)
 	}
+	if err := r.recordToolCall(ctx, in.StageID, call, result); err != nil {
+		return fail(err)
+	}
 	// Tool results travel as plain objects carrying the call id, the same
 	// shape as the denied and rejected paths, so the transcript can link them.
 	fields, err := toolResultObject(result)
@@ -71,6 +75,22 @@ func (r *Runtime) execute(ctx context.Context, in pipeline.Invocation) pipeline.
 	}
 	fields["call_id"] = call.ID
 	return pipeline.Success(map[string]any{"result": fields})
+}
+
+// recordToolCall appends the finished call to the event log as it happens,
+// arguments and result by payload reference, so a turn killed before it
+// commits still shows the calls it made.
+func (r *Runtime) recordToolCall(ctx context.Context, stageID string, call hitl.Call, result any) error {
+	argsRef, err := r.payload(call)
+	if err != nil {
+		return err
+	}
+	resultRef, err := r.payload(result)
+	if err != nil {
+		return err
+	}
+	evidence, _ := decodeBashyRunResult(result)
+	return r.append(ctx, stageID, sessionStage.ToolCallCompleted, map[string]any{"call_id": call.ID, "name": call.Name, "args_ref": argsRef, "result_ref": resultRef, "outcome": evidence.outcome, "exit_code": evidence.exitCode})
 }
 
 func (r *Runtime) deny(_ context.Context, in pipeline.Invocation) pipeline.Outcome {

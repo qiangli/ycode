@@ -503,3 +503,44 @@ func cloneMessages(messages []message.Message) []message.Message {
 	_ = json.Unmarshal(raw, &result)
 	return result
 }
+
+// ToolCallCompleted is the event the turn appends as each model tool call
+// finishes, so a turn killed before session.turn-committed stays inspectable.
+const ToolCallCompleted = "tool.call.completed"
+
+// ToolCall is one tool call projected from a ToolCallCompleted event. The
+// arguments and the result live in the payload store.
+type ToolCall struct {
+	Sequence  uint64 `json:"sequence"`
+	RunID     string `json:"run_id"`
+	CallID    string `json:"call_id"`
+	Name      string `json:"name"`
+	ArgsRef   string `json:"args_ref"`
+	ResultRef string `json:"result_ref"`
+	Outcome   string `json:"outcome,omitempty"`
+	ExitCode  *int   `json:"exit_code,omitempty"`
+}
+
+// UncommittedToolCalls returns, in log order, the tool calls the session made
+// after its latest committed turn: the trailing failed, running or killed
+// turns. A committed turn's calls live in its transcript and are not listed.
+func UncommittedToolCalls(events []event.Event, sessionID string) []ToolCall {
+	var calls []ToolCall
+	for _, item := range events {
+		if item.SessionID != sessionID {
+			continue
+		}
+		switch item.Type {
+		case "session.turn-committed":
+			calls = nil
+		case ToolCallCompleted:
+			var call ToolCall
+			if json.Unmarshal(item.Data, &call) != nil {
+				continue
+			}
+			call.Sequence, call.RunID = item.Sequence, item.RunID
+			calls = append(calls, call)
+		}
+	}
+	return calls
+}
