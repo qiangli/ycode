@@ -34,6 +34,7 @@ repo_url() {
         coreutils) echo "https://github.com/qiangli/coreutils.git" ;;
         yoke) echo "https://github.com/qiangli/yoke.git" ;;
         bashy) echo "https://github.com/qiangli/bashy.git" ;;
+        outpost) echo "https://github.com/qiangli/outpost.git" ;;
         bashsharp) echo "https://github.com/bashsharp/bashsharp.git" ;;
         filebrowser) echo "https://github.com/qiangli/filebrowser.git" ;;
         readline) echo "https://github.com/qiangli/readline.git" ;;

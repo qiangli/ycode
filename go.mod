@@ -12,6 +12,10 @@ replace github.com/qiangli/nadir => ../nadir
 
 replace github.com/qiangli/bashy => ../bashy
 
+// Bashy's Outpost SSH server dependency is also non-transitive. Keep Ycode's
+// embedded Bashy build on the same pinned sibling as Bashy itself.
+replace github.com/qiangli/outpost => ../outpost
+
 // genie (its own module in examples/genie) is embedded by bashy as its
 // builtin agent; bashy's replace does not apply here, so restate it.
 replace github.com/qiangli/ycode/examples/genie => ./examples/genie
