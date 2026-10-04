@@ -98,6 +98,51 @@ func TestHarnessLoadValidateRunStreamsDurableEvents(t *testing.T) {
 	}
 }
 
+func TestHarnessStreamWaitsForAppendNotifications(t *testing.T) {
+	isolateHarnessStores(t)
+	backend := newStubProvider(api.ProviderOpenAI)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	backend.streamFunc = func(*api.Request) []*api.StreamEvent {
+		close(started)
+		<-release
+		text, _ := json.Marshal(map[string]string{"type": "text_delta", "text": "idle done"})
+		stop, _ := json.Marshal(map[string]string{"stop_reason": api.StopReasonEndTurn})
+		return []*api.StreamEvent{{Type: "content_block_delta", Delta: text}, {Type: "message_delta", Delta: stop}}
+	}
+	harness, err := Load(filepath.Join("..", "..", "examples", "agent.yaml"), WithHarnessProvider("openai", backend))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer harness.Close()
+
+	var replays atomic.Int64
+	oldReplay := replayEvents
+	replayEvents = func(path string) ([]Event, error) {
+		replays.Add(1)
+		return oldReplay(path)
+	}
+	defer func() { replayEvents = oldReplay }()
+
+	stream, err := harness.Run(context.Background(), RunRequest{SessionID: "idle-session", RunID: "idle-run", TriggerRef: "interactive-input", FrontendRef: "embed", Principal: "tester", IdempotencyKey: "idle", Body: []byte(`{"request":"wait"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("provider did not start")
+	}
+	before := replays.Load()
+	time.Sleep(75 * time.Millisecond)
+	if got := replays.Load() - before; got > 1 {
+		t.Fatalf("idle stream replayed event log %d times without an append", got)
+	}
+	close(release)
+	for range stream {
+	}
+}
+
 func TestHarnessResumeContinuesSuspendedGraphWithoutRestart(t *testing.T) {
 	isolateHarnessStores(t)
 	var calls atomic.Int32

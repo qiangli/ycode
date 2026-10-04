@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/qiangli/ycode/internal/api"
 	harnessbashy "github.com/qiangli/ycode/internal/harness/bashy"
@@ -356,10 +355,10 @@ func (h *Harness) Close() error { return nil }
 
 func (h *Harness) stream(ctx context.Context, sessionID, runID string, next uint64, active *activeRun) <-chan Event {
 	out := make(chan Event, 32)
+	updates, cancelWatch := h.events.Watch()
 	go func() {
 		defer close(out)
-		ticker := time.NewTicker(10 * time.Millisecond)
-		defer ticker.Stop()
+		defer cancelWatch()
 		done := active.done
 		for {
 			next = sendReplay(ctx, out, h.eventPath, sessionID, runID, next)
@@ -371,15 +370,20 @@ func (h *Harness) stream(ctx context.Context, sessionID, runID string, next uint
 				// once more in case the previous read overlapped that append.
 				_ = sendReplay(ctx, out, h.eventPath, sessionID, runID, next)
 				return
-			case <-ticker.C:
+			case _, ok := <-updates:
+				if !ok {
+					return
+				}
 			}
 		}
 	}()
 	return out
 }
 
+var replayEvents = event.Replay
+
 func sendReplay(ctx context.Context, out chan<- Event, path, sessionID, runID string, next uint64) uint64 {
-	events, err := event.Replay(path)
+	events, err := replayEvents(path)
 	if err != nil {
 		return next
 	}

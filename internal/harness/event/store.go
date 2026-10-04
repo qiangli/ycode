@@ -63,6 +63,7 @@ type Store struct {
 	next           uint64
 	previousDigest string
 	now            func() time.Time
+	watchers       map[chan struct{}]struct{}
 }
 
 // Checkpoint is an atomic snapshot tied to an exact event-log position.
@@ -159,7 +160,36 @@ func (s *Store) Append(d Draft) (Event, error) {
 	}
 	s.next++
 	s.previousDigest = e.Digest
+	s.notifyLocked()
 	return e, nil
+}
+
+// Watch returns a channel that receives a coalesced notification after each
+// successful append through this store. The cancel function unregisters the
+// watcher; callers must invoke it when they stop waiting.
+func (s *Store) Watch() (<-chan struct{}, func()) {
+	ch := make(chan struct{}, 1)
+	s.mu.Lock()
+	if s.watchers == nil {
+		s.watchers = make(map[chan struct{}]struct{})
+	}
+	s.watchers[ch] = struct{}{}
+	s.mu.Unlock()
+	return ch, func() {
+		s.mu.Lock()
+		delete(s.watchers, ch)
+		close(ch)
+		s.mu.Unlock()
+	}
+}
+
+func (s *Store) notifyLocked() {
+	for ch := range s.watchers {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // readTail returns the sequence and digest of the log's last event, reading
