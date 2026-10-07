@@ -116,7 +116,12 @@ Configuration, instructions and clearing are declared commands too.
 file is selected whole (`--file`, the env, or `/config FILE`), never merged.
 `/config FILE` and `/init` recompile between turns only (refused mid-turn);
 a failed compile leaves the current configuration, and a changed digest moves
-a session with history to a new session (the old one stays resumable).
+a session with history to a new session. History is bound to the digest it
+was recorded under: a turn on a session whose history belongs to another
+configuration is refused (`ErrSessionConfig`), never replayed under the new
+one; `/resume` in the same terminal restores the configuration compiled when
+it served that session, otherwise it refuses and names the configuration to
+select. A same-file reload recomputes the terminal route from the new document.
 `init` (operation `init`, `sourceRef` + `templateRef`) creates the repo's
 instruction file from the template only when absent (`O_EXCL`), else uses it
 unchanged, and validation requires a context to load that source (a
@@ -124,7 +129,8 @@ unchanged, and validation requires a context to load that source (a
 genie's is `GENIE.md` and no other agent's file is read or written.
 `clear` (session action `clear`, `/clear`) starts a new session carrying only
 the session's model selection under the same configuration; the old session
-is untouched and resumable, and a live turn or pending approval refuses it.
+is untouched and resumable, and a live turn or pending approval refuses it;
+an authored required flag or argument on `clear` refuses the slash.
 
 ## Build and verification
 

@@ -60,6 +60,7 @@ type SlashResult struct {
 	Session string
 	Fresh   bool // Session is new: nothing to replay
 	Clear   bool // a clean conversation: the screen's transcript is cleared too
+	Rebound bool // the configuration changed under the same session
 	Turn    string
 	Start   func(ctx context.Context) (<-chan event.Event, error)
 }
@@ -163,6 +164,9 @@ type model struct {
 	status      Status
 	live        strings.Builder // streamed text of the current model call not yet printed
 	streamed    string          // text already printed from llm.delta this turn
+	// epoch fences asynchronous status reads: a session or configuration
+	// change bumps it, and a read issued before the change is dropped.
+	epoch int
 }
 
 func newModel(ctx context.Context, opts Options) *model {
@@ -197,11 +201,31 @@ type (
 		stream <-chan event.Event
 		err    error
 	}
-	statusMsg Status
+	statusMsg struct {
+		epoch  int
+		status Status
+	}
 )
 
 func (m *model) Init() tea.Cmd {
-	return tea.Println(faint.Render(fmt.Sprintf("%s · session %s — ask in plain words, run a command, or /help. Ctrl-D leaves.", m.opts.Agent, m.session)))
+	banner := tea.Println(faint.Render(fmt.Sprintf("%s · session %s — ask in plain words, run a command, or /help. Ctrl-D leaves.", m.opts.Agent, m.session)))
+	// A terminal opened on a session with history shows its tail first.
+	if entries, err := m.opts.Host.Transcript(m.session); err == nil && len(entries) > 0 {
+		return tea.Sequence(banner, m.replay())
+	}
+	return banner
+}
+
+// reset drops everything transient that belongs to the conversation on
+// screen: streamed text, activity, a waiting approval and the turn
+// generation, so a late event, turn end or status read from before a
+// session or configuration change never lands in the next conversation.
+func (m *model) reset() {
+	m.gen++
+	m.epoch++
+	m.live.Reset()
+	m.streamed, m.activity, m.waiting, m.interrupted = "", "", nil, false
+	m.seen, m.held = map[uint64]bool{}, nil
 }
 
 func wait(gen int, stream <-chan event.Event, main bool) tea.Cmd {
@@ -288,6 +312,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			out = append(out, tea.Println(faint.Render("finish or ESC this turn before switching sessions")))
 		case msg.result.Session != "" && msg.result.Session != m.session:
 			m.session = msg.result.Session
+			m.reset()
 			if msg.result.Clear {
 				// The old transcript leaves the screen with its session;
 				// the slash's own report is reprinted on the clean screen.
@@ -299,6 +324,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !msg.result.Fresh {
 				out = append(out, m.replay())
 			}
+		case msg.result.Rebound && !m.running:
+			// Same session, another configuration: nothing streamed or
+			// read under the previous one carries over.
+			m.reset()
 		case msg.result.Start != nil && m.running:
 			out = append(out, tea.Println(failed.Render("ycode: a turn is running; "+msg.result.Turn+" was not started")))
 		case msg.result.Start != nil:
@@ -313,7 +342,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case statusMsg:
-		m.status = Status(msg)
+		if msg.epoch == m.epoch {
+			m.status = msg.status
+		}
 		return m, nil
 	}
 	var cmd tea.Cmd
@@ -476,6 +507,9 @@ func (m *model) startWith(text string, start func(context.Context) (<-chan event
 		return tea.Sequence(echo, tea.Println(failed.Render("ycode: "+err.Error())))
 	}
 	m.running, m.cancel, m.seen, m.activity, m.started = true, cancel, map[uint64]bool{}, "working", time.Now()
+	// A cancelled turn may have left a partial line; it is not this turn's.
+	m.live.Reset()
+	m.streamed = ""
 	return tea.Sequence(echo, wait(m.gen, stream, true))
 }
 
@@ -540,8 +574,8 @@ func (m *model) slash(s Slash, args []string) tea.Cmd {
 }
 
 func (m *model) refreshStatus() tea.Cmd {
-	session, host := m.session, m.opts.Host
-	return func() tea.Msg { return statusMsg(host.Status(session)) }
+	session, host, epoch := m.session, m.opts.Host, m.epoch
+	return func() tea.Msg { return statusMsg{epoch: epoch, status: host.Status(session)} }
 }
 
 // replay prints the tail of a session the terminal switched to.

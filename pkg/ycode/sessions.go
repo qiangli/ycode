@@ -32,8 +32,53 @@ type SessionSummary struct {
 	Failed    int       `json:"failed"`
 	// Head is the sequence of the latest committed turn — the point a fork
 	// starts from. Zero when no turn has committed yet.
-	Head        uint64 `json:"head,omitempty"`
-	messagesRef string
+	Head uint64 `json:"head,omitempty"`
+	// ConfigDigest is the configuration the session's history was recorded
+	// under (its latest committed turn, history replacement or fork); ""
+	// when it has no history yet.
+	ConfigDigest string `json:"-"`
+	messagesRef  string
+}
+
+// ErrSessionConfig marks a session whose history was recorded under another
+// configuration than the one serving: continuing it would replay that
+// history under a different agent, model or tool set.
+var ErrSessionConfig = errors.New("session history belongs to a different configuration")
+
+// sessionConfig refuses a session whose history was recorded under another
+// configuration. A session without history is bound to nothing yet.
+func (h *Harness) sessionConfig(sessionID string) error {
+	events, err := event.Replay(h.eventPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		item := events[i]
+		if item.SessionID != sessionID || !historyEvent(item.Type) {
+			continue
+		}
+		if item.ConfigDigest != h.doc.ConfigDigest {
+			return fmt.Errorf("%w: session %s was recorded under %s, not the active %s; select the configuration it was recorded under, or start a new session", ErrSessionConfig, sessionID, item.ConfigDigest, h.doc.ConfigDigest)
+		}
+		return nil
+	}
+	return nil
+}
+
+// CheckSessionConfig reports ErrSessionConfig when sessionID's history
+// belongs to another configuration than this harness serves.
+func (h *Harness) CheckSessionConfig(sessionID string) error {
+	if err := h.Validate(); err != nil {
+		return err
+	}
+	return h.sessionConfig(sessionID)
+}
+
+func historyEvent(kind string) bool {
+	return kind == "session.turn-committed" || kind == "session.history-replaced" || kind == "session.forked"
 }
 
 // SessionMatch is one transcript message that contains a search query.
@@ -71,6 +116,9 @@ func (h *Harness) Sessions() ([]SessionSummary, error) {
 			order = append(order, item.SessionID)
 		}
 		s.Updated = item.Time
+		if historyEvent(item.Type) {
+			s.ConfigDigest = item.ConfigDigest
+		}
 		switch item.Type {
 		case "session.history-replaced":
 			var data struct {

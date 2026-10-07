@@ -60,9 +60,13 @@ func runTerminalTUI(ctx context.Context, app *harnessApplication, inv harnesscli
 	}
 	defer func() {
 		// The caller closes the application it opened; /config or /init
-		// may have replaced it with one this terminal owns.
-		if current := host.bound().app; current != app {
-			_ = current.Close()
+		// may have replaced it with ones this terminal owns.
+		host.mu.Lock()
+		defer host.mu.Unlock()
+		for _, b := range append(host.prior, host.binding()) {
+			if b.app != app {
+				_ = b.app.Close()
+			}
 		}
 	}()
 	return tui.Run(ctx, tui.Options{Agent: app.doc.Metadata.Name, Session: session, Host: host, Shell: literalShell{}})
@@ -86,6 +90,10 @@ type tuiHost struct {
 	origin    string // how config was selected, as /config reports it
 	principal string
 	queueRef  string
+	// prior are the bindings /config and /init replaced in this terminal,
+	// most recent last, kept compiled so /resume can return a session to
+	// the configuration its history was recorded under.
+	prior []tuiBinding
 	// mu guards the binding above: /config and /init replace it between
 	// turns while status and transcript reads run concurrently.
 	mu sync.Mutex
@@ -103,7 +111,49 @@ type tuiBinding struct {
 func (h *tuiHost) bound() tuiBinding {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.binding()
+}
+
+func (h *tuiHost) binding() tuiBinding {
 	return tuiBinding{app: h.app, view: h.view, inv: h.inv, config: h.config, origin: h.origin, queueRef: h.queueRef}
+}
+
+// swap makes next the served binding when b is still the one served, and
+// keeps b compiled for /resume. It reports false when b was replaced meanwhile.
+func (h *tuiHost) swap(b, next tuiBinding) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.app != b.app {
+		return false
+	}
+	h.prior = slices.DeleteFunc(h.prior, func(p tuiBinding) bool { return p.app == next.app })
+	h.prior = append(h.prior, b)
+	h.app, h.view, h.inv, h.config, h.origin, h.queueRef = next.app, next.view, next.inv, next.config, next.origin, next.queueRef
+	return true
+}
+
+// resumable finds id under the configuration its history was recorded
+// under: the served one, else one this terminal served before. It returns
+// the binding to serve, or an error that says which configuration to select.
+func (h *tuiHost) resumable(b tuiBinding, id string) (public.SessionSummary, tuiBinding, error) {
+	found, err := b.app.harness.Session(id)
+	if err == nil && b.app.harness.CheckSessionConfig(found.ID) == nil {
+		return found, b, nil
+	}
+	h.mu.Lock()
+	prior := slices.Clone(h.prior)
+	h.mu.Unlock()
+	for i := len(prior) - 1; i >= 0; i-- {
+		p := prior[i]
+		other, lookup := p.app.harness.Session(id)
+		if lookup == nil && p.app.harness.CheckSessionConfig(other.ID) == nil {
+			return other, p, nil
+		}
+	}
+	if err != nil {
+		return public.SessionSummary{}, b, fmt.Errorf("%w (not under %s or any configuration this terminal served; select the configuration that recorded it with /config FILE)", err, b.config)
+	}
+	return public.SessionSummary{}, b, fmt.Errorf("/resume %s refused (%w): it was recorded under %s, not the active %s (%s), and no configuration this terminal served matches; select the configuration that recorded it with /config FILE, then /resume %s", found.ID, public.ErrSessionConfig, found.ConfigDigest, b.app.doc.ConfigDigest, b.config, found.ID)
 }
 
 func (h *tuiHost) Turn(ctx context.Context, session, text string) (<-chan event.Event, error) {
@@ -280,21 +330,33 @@ func (h *tuiHost) Slash(ctx context.Context, session string, s tui.Slash, args [
 		}
 		var found public.SessionSummary
 		var err error
+		target := b
 		if len(args) > 0 {
-			found, err = b.app.harness.Session(args[0])
+			found, target, err = h.resumable(b, args[0])
 		} else {
 			var sessions []public.SessionSummary
 			if sessions, err = b.app.harness.Sessions(); err == nil && len(sessions) == 0 {
 				err = errors.New("no session to resume")
 			} else if err == nil {
-				found = sessions[0]
+				found, target, err = h.resumable(b, sessions[0].ID)
 			}
 		}
 		if err != nil {
 			return tui.SlashResult{}, err
 		}
-		if found.ID == session {
+		if found.ID == session && target.app == b.app {
 			return tui.SlashResult{Output: "already on session " + session}, nil
+		}
+		if target.app != b.app {
+			// The session's own compiled configuration serves it again.
+			if !h.swap(b, target) {
+				return tui.SlashResult{}, errors.New("/resume refused: the configuration was replaced meanwhile")
+			}
+			out := fmt.Sprintf("configuration: %s (%s, %s) restored for session %s, as compiled when it was served here", target.config, target.app.doc.Metadata.Name, target.app.doc.ConfigDigest, found.ID)
+			if found.ID == session {
+				return tui.SlashResult{Output: out, Rebound: true}, nil
+			}
+			return tui.SlashResult{Output: out, Session: found.ID}, nil
 		}
 		return tui.SlashResult{Session: found.ID}, nil
 	case "/model":
@@ -308,8 +370,16 @@ func (h *tuiHost) Slash(ctx context.Context, session string, s tui.Slash, args [
 		if !ok || command.Dispatch == nil || command.Dispatch.Operation != "session" || command.Dispatch.Action != "clear" {
 			return tui.SlashResult{}, errors.New("the agent YAML declares no `clear` session command")
 		}
+		// Like any declared command, an authored required flag or a
+		// required argument cannot be supplied through the slash.
+		if flag, ok := requiredFlag(b.app.doc.Spec.Interfaces.CLI.Root, []string{"clear"}); ok {
+			return tui.SlashResult{}, fmt.Errorf("`clear` requires --%s, which a slash cannot supply; run the command from a terminal", flag)
+		}
 		if len(args) > 0 {
 			return tui.SlashResult{}, errors.New("/clear takes no arguments")
+		}
+		if command.Args.Min > 0 {
+			return tui.SlashResult{}, fmt.Errorf("`clear` requires %d argument(s), which /clear does not take; run the command from a terminal", command.Args.Min)
 		}
 		result, err := sessionControl(ctx, b.app, *command.Dispatch, session, h.principal, nil)
 		if err != nil {
@@ -383,16 +453,14 @@ func (h *tuiHost) rebind(b tuiBinding, session, path, origin, prior string) (tui
 	}
 	inv := b.inv
 	inv.ConfigFile, inv.ConfigOrigin = path, origin
-	if path != b.config {
-		// Another file brings its own route: its root input's terminal
-		// frontend, which must be a tui.
-		root := app.doc.Spec.Interfaces.CLI.Root.Dispatch
-		if root == nil || root.Operation != "input" || root.Input == nil || root.Input.TerminalFrontendRef == "" {
-			_ = app.Close()
-			return tui.SlashResult{Output: out.String()}, fmt.Errorf("configuration unchanged: %s declares no terminal route", path)
-		}
-		inv.Dispatch, inv.FrontendRef = *root, root.Input.TerminalFrontendRef
+	// The new document brings its own route, even from the same file: its
+	// root input's agent, payload and terminal frontend, which must be a tui.
+	root := app.doc.Spec.Interfaces.CLI.Root.Dispatch
+	if root == nil || root.Operation != "input" || root.Input == nil || root.Input.TerminalFrontendRef == "" {
+		_ = app.Close()
+		return tui.SlashResult{Output: out.String()}, fmt.Errorf("configuration unchanged: %s declares no terminal route", path)
 	}
+	inv.Dispatch, inv.FrontendRef = *root, root.Input.TerminalFrontendRef
 	view, err := frontend.NewTUI(app.doc, inv.FrontendRef, cliController{app, inv.Dispatch.AgentRef})
 	if err != nil {
 		_ = app.Close()
@@ -406,24 +474,19 @@ func (h *tuiHost) rebind(b tuiBinding, session, path, origin, prior string) (tui
 	if committed == nil || modelErr != nil || modeErr != nil {
 		next = uuid.NewString()
 	}
-	h.mu.Lock()
-	if h.app != b.app {
-		h.mu.Unlock()
+	if !h.swap(b, tuiBinding{app: app, view: view, inv: inv, config: path, origin: origin, queueRef: queueRef}) {
 		_ = app.Close()
 		return tui.SlashResult{Output: out.String()}, errors.New("configuration unchanged: it was replaced meanwhile")
 	}
-	previous := h.app
-	h.app, h.view, h.inv, h.config, h.origin, h.queueRef = app, view, inv, path, origin, queueRef
-	h.mu.Unlock()
-	if previous != nil {
-		_ = previous.Close()
-	}
 	fmt.Fprintf(&out, "configuration: %s (%s, %s) from the next turn", path, app.doc.Metadata.Name, app.doc.ConfigDigest)
 	if next != session {
-		fmt.Fprintf(&out, "\nnew session %s; session %s keeps its configuration and stays resumable with /resume %s", next, session, session)
+		// The previous compiled configuration stays with this terminal, so
+		// /resume returns the old session to it rather than replaying its
+		// history under this one.
+		fmt.Fprintf(&out, "\nnew session %s; session %s stays on configuration %s and /resume %s in this terminal returns to it", next, session, b.app.doc.ConfigDigest, session)
 		return tui.SlashResult{Output: out.String(), Session: next, Fresh: true}, nil
 	}
-	return tui.SlashResult{Output: out.String()}, nil
+	return tui.SlashResult{Output: out.String(), Rebound: true}, nil
 }
 
 // model projects `model current` and `model list` (no NAME) or

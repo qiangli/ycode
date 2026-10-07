@@ -177,7 +177,7 @@ func TestTUIConfigAndInitOverPTY(t *testing.T) {
 	}
 	first.line("/init")
 	first.expect("/init keeps an existing GENIE.md", "left unchanged")
-	first.expect("a changed configuration moves a session with turns", "stays resumable with /resume "+saved)
+	first.expect("a changed configuration moves a session with turns", "/resume "+saved+" in this terminal returns to it")
 	if got, _ := os.ReadFile(genie); string(got) != authored {
 		t.Fatalf("/init overwrote GENIE.md: %q", got)
 	}
@@ -217,15 +217,17 @@ func TestTUIConfigAndInitOverPTY(t *testing.T) {
 		}
 	}
 
-	// Save/resume compatibility: a second terminal resumes the first
-	// session from the event log and continues it.
+	// Save/resume compatibility: a second terminal opens the first session
+	// from the event log and shows its history, but /init changed the
+	// configuration since it was recorded, so continuing it is refused with
+	// guidance rather than replaying it under the new configuration.
 	second := startTUIOverPTY(t, workdir, home, fixture, "resume "+saved)
 	second.expect("resumed greeting", "session "+saved)
+	second.expect("the saved history is replayed", "resumed session "+saved)
 	second.line("/save")
 	second.expect("/save keeps the resumed session", "saved: session "+saved)
 	second.line("again, the rules?")
-	second.expect("resumed turn", "instructions-in-context=false")
-	second.expectCount("resumed turn end", "turn ended in", 1)
+	second.expect("resumed turn refused", "session history belongs to a different configuration")
 	second.quit()
 
 	app, err := openHarnessApplication(fixture, public.WithHarnessProvider("openai", &tuiProvider{}))
@@ -243,7 +245,8 @@ func TestTUIConfigAndInitOverPTY(t *testing.T) {
 			users = append(users, e.Text)
 		}
 	}
-	if len(users) != 2 || !strings.Contains(users[0], "what are the rules?") || !strings.Contains(users[1], "again, the rules?") {
-		t.Fatalf("resumed session transcript users = %q", users)
+	// The refused turn left the saved history as it was recorded.
+	if len(users) != 1 || !strings.Contains(users[0], "what are the rules?") {
+		t.Fatalf("saved session transcript users = %q", users)
 	}
 }

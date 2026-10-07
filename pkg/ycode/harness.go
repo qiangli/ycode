@@ -311,6 +311,9 @@ func (h *Harness) run(ctx context.Context, request RunRequest, prepare func() er
 	if request.AgentRef != h.doc.Spec.Triggers[request.TriggerRef].Route.AgentRef {
 		return nil, errors.New("agent does not match the authorized trigger")
 	}
+	if err := h.sessionConfig(request.SessionID); err != nil {
+		return nil, err
+	}
 	modelRef, err := h.sessionModel(request.SessionID)
 	if err != nil {
 		return nil, err
