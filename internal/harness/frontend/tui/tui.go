@@ -576,7 +576,23 @@ func (m *model) renderDelta(data map[string]any) tea.Cmd {
 		m.activity = "thinking"
 		return nil
 	}
-	chunk, _ := data["text"].(string)
+	// The event carries only a payload_ref; the text lives in the payload
+	// store, so resolve it (an unreadable delta is reported, never skipped).
+	ref, _ := data["payload_ref"].(string)
+	if ref == "" {
+		return tea.Println(failed.Render("ycode: llm.delta without payload_ref"))
+	}
+	raw, err := m.opts.Host.Payload(ref)
+	if err != nil {
+		return tea.Println(failed.Render("ycode: llm.delta payload: " + err.Error()))
+	}
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return tea.Println(failed.Render("ycode: llm.delta payload: " + err.Error()))
+	}
+	chunk := body.Text
 	m.activity = "answering"
 	m.live.WriteString(chunk)
 	buffered := m.live.String()

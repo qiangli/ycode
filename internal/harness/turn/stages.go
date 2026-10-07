@@ -570,8 +570,10 @@ func providerMessages(messages []message.Message) ([]api.Message, string) {
 const deltaFlushBytes = 80
 
 // deltaSink receives a provider's text as it arrives, coalesced; channel is
-// "text" or "thinking". Nil means no live observer.
-type deltaSink func(channel, text string)
+// "text" or "thinking". Nil means no live observer. An error stops the
+// collection: a delta the observer could not record is a failed attempt, not
+// a silently dropped line.
+type deltaSink func(channel, text string) error
 
 // collectProvider folds a provider stream into one response. Deltas are also
 // forwarded to onDelta (when set) as they arrive, so a frontend can render the
@@ -584,9 +586,10 @@ func collectProvider(ctx context.Context, stream <-chan provider.Event, onDelta 
 		sink = onDelta[0]
 	}
 	pending := map[string]*strings.Builder{"text": {}, "thinking": {}}
+	var sinkErr error
 	flush := func(channel string) {
-		if b := pending[channel]; sink != nil && b.Len() > 0 {
-			sink(channel, b.String())
+		if b := pending[channel]; sink != nil && sinkErr == nil && b.Len() > 0 {
+			sinkErr = sink(channel, b.String())
 			b.Reset()
 		}
 	}
@@ -600,13 +603,25 @@ func collectProvider(ctx context.Context, stream <-chan provider.Event, onDelta 
 			flush(channel)
 		}
 	}
-	defer func() { flush("thinking"); flush("text") }()
+	failed := func() provider.Outcome {
+		return provider.Outcome{Class: provider.OutcomeProtocolError, Error: sinkErr.Error()}
+	}
 	for {
+		if sinkErr != nil {
+			return response, failed()
+		}
 		select {
 		case <-ctx.Done():
+			flush("thinking")
+			flush("text")
 			return response, provider.Outcome{Class: provider.OutcomeCanceled, Error: ctx.Err().Error()}
 		case value, ok := <-stream:
 			if !ok {
+				flush("thinking")
+				flush("text")
+				if sinkErr != nil {
+					return response, failed()
+				}
 				return response, outcome
 			}
 			switch value.Type {
