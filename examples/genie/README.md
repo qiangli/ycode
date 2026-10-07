@@ -3,8 +3,9 @@
 **genie** ("bashy genie" in public contexts) is the SWE agent that grows. It
 was seeded from [`agent-mini`](../agent-mini/) at ycode commit `fcd0e4b` and
 is the only agent the growth work changes; `agent-mini` stays as it was — a
-small reference example and the permanent baseline arm every genie
-improvement is measured against.
+small reference example, frozen and not benchmarked. The baseline every genie
+improvement is measured against is the pinned mini-swe-agent (and the
+previous genie).
 
 Like agent-mini, genie is a ycode YAML declaration (`agent.yaml`) with Bashy
 as the only model-visible tool, plus a small Go adapter (`cmd/genie/`) that

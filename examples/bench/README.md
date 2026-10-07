@@ -1,6 +1,6 @@
-# agent-mini benchmark subsets
+# genie benchmark subsets
 
-Fixed instance lists for the agent-mini growth plan. Tune on `dev`; report
+Fixed instance lists for the genie growth plan. Tune on `dev`; report
 on `test` sets only, never tune on them.
 
 | File | Source | Size | Use |

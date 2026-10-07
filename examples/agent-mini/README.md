@@ -7,10 +7,12 @@ are retained as comparison references; the Python runtime is not on the
 agent-mini execution path. It has not yet been evaluated and makes no score
 claim.
 
-agent-mini is kept unchanged as a small reference example and as the
-permanent baseline arm of the benchmark plan. The agent that grows is
+agent-mini is kept unchanged as a small reference example — a frozen
+integration example, not a benchmarked arm; the baseline is the pinned
+mini-swe-agent under `src/minisweagent/`. The agent that grows is
 [`genie`](../genie/) ("bashy genie"), seeded from this directory; every
-improvement lands there and is measured against agent-mini.
+improvement lands there and is measured against that baseline and the
+previous genie.
 
 ## Included
 
