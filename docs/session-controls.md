@@ -38,9 +38,12 @@ session events, transcript checkpoints and delivery remain durable. Omitting
 the planning declaration rejects Plan. Typed HITL Resume is unchanged;
 Continue releases only a cooperative pause. Pause and Continue work from a
 separate CLI process through the trusted event store. A caller timeout does not
-erase an already durable request; its acknowledgment remains in the log.
+erase an already durable request; the owner may apply it after the caller
+returns, so completion is uncertain until its acknowledgment appears in the log.
 Neither operation approves HITL or kills a process. A crashed owner cannot be
-resumed: the transport rejects an unlocked or completed run.
+resumed: the transport checks the owning session lock throughout the wait and
+returns an explicit owner-lost error if it becomes unlocked before acknowledgment.
+Filesystem errors checking the lock are reported separately from lock contention.
 
 The examples declare a tool-free control graph reusing the normal agent loop
 and context policy. Aside uses the same graph with isolated transcript commit

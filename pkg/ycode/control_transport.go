@@ -7,8 +7,23 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/qiangli/coreutils/pkg/lockfile"
 	"github.com/qiangli/ycode/internal/harness/event"
 )
+
+func (h *Harness) checkControlOwner(sessionID string) error {
+	lock, err := h.lockSession(sessionID)
+	if errors.Is(err, lockfile.ErrHeld) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("control: check owning session lock: %w", err)
+	}
+	if err := lock.Release(); err != nil {
+		return fmt.Errorf("control: release owning session lock probe: %w", err)
+	}
+	return errors.New("control: owner lost before acknowledgment; completion uncertain")
+}
 
 // controlLiveRun uses the trusted, locked event store as a durable mailbox.
 // Requests bind both the configuration and exact run; only its owning process
@@ -49,9 +64,8 @@ func (h *Harness) controlLiveRun(ctx context.Context, sessionID, action string) 
 	}
 	// An unlocked session cannot have a live owning turn (including after a
 	// crash). Never leave a stale command for a future run to pick up.
-	if lock, err := h.lockSession(sessionID); err == nil {
-		_ = lock.Release()
-		return errors.New("control: no live owning turn")
+	if err := h.checkControlOwner(sessionID); err != nil {
+		return err
 	}
 	request, err := h.events.Append(event.Draft{SessionID: sessionID, RunID: runID, StageID: "session.control", Type: "session.control-requested", ConfigDigest: h.doc.ConfigDigest, Data: map[string]any{"action": action}})
 	if err != nil {
@@ -60,6 +74,9 @@ func (h *Harness) controlLiveRun(ctx context.Context, sessionID, action string) 
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		// Probe before replay so an acknowledgment written just before the
+		// owner released its lock still wins over the owner-lost result.
+		ownerErr := h.checkControlOwner(sessionID)
 		items, err := event.Replay(h.eventPath)
 		if err != nil {
 			return err
@@ -83,6 +100,9 @@ func (h *Harness) controlLiveRun(ctx context.Context, sessionID, action string) 
 			if item.Type == "session.run-finished" {
 				return errors.New("control: turn finished before acknowledgment")
 			}
+		}
+		if ownerErr != nil {
+			return ownerErr
 		}
 		select {
 		case <-ctx.Done():
