@@ -78,6 +78,14 @@ func (p *tuiProvider) Send(ctx context.Context, request *api.Request) (<-chan *a
 			events <- &api.StreamEvent{Type: "message_delta", Delta: stop}
 			return
 		}
+		if bytes.Contains(last, []byte("what did I say?")) {
+			// Reports whether anything of a cleared conversation reached
+			// this request, and which model the session's selection chose.
+			text, _ := json.Marshal(map[string]string{"type": "text_delta", "text": fmt.Sprintf("old-in-request=%v model=%s", bytes.Contains(raw, []byte("CLEAR-OLD-387")) || strings.Contains(request.System, "CLEAR-OLD-387"), request.Model)})
+			events <- &api.StreamEvent{Type: "content_block_delta", Delta: text}
+			events <- &api.StreamEvent{Type: "message_delta", Delta: stop}
+			return
+		}
 		if bytes.Contains(last, []byte("approve-me")) {
 			// An exact workspace overwrite matches the compiled destructive
 			// rule: the engine suspends on hitl.waiting until the human answers.

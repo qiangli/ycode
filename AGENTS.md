@@ -109,6 +109,23 @@ only when the llmbudget catalog prices every turn's model. Bashy hosts it via
 `ycodecli.LiteralCommands`. The HTTP chat page's resume selector reads the same
 event-log sessions through `GET /sessions` under the frontend's bearer.
 
+Configuration, instructions and clearing are declared commands too.
+`config source` reports the effective agent YAML and how it was selected
+(flag, bootstrap env, default, or `/config FILE` in this terminal);
+`config use FILE` strictly compiles a candidate and changes nothing. A custom
+file is selected whole (`--file`, the env, or `/config FILE`), never merged.
+`/config FILE` and `/init` recompile between turns only (refused mid-turn);
+a failed compile leaves the current configuration, and a changed digest moves
+a session with history to a new session (the old one stays resumable).
+`init` (operation `init`, `sourceRef` + `templateRef`) creates the repo's
+instruction file from the template only when absent (`O_EXCL`), else uses it
+unchanged, and validation requires a context to load that source (a
+`file.base: workspace` source reads the repository, not the YAML's directory);
+genie's is `GENIE.md` and no other agent's file is read or written.
+`clear` (session action `clear`, `/clear`) starts a new session carrying only
+the session's model selection under the same configuration; the old session
+is untouched and resumable, and a live turn or pending approval refuses it.
+
 ## Build and verification
 
 Go 1.26+ is required. Inside the umbrella, sibling modules already exist.

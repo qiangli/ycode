@@ -38,6 +38,7 @@ type Waiting struct {
 
 // Status is what the status line shows besides the agent and session.
 type Status struct {
+	Agent         string // the configuration now served; "" keeps Options.Agent
 	Model         string // the model last measured answering (or requested, mid-turn)
 	Selected      string // the session's explicit model override; "" = route default
 	Mode          string // the session's durable mode: "plan" shows on the line
@@ -58,6 +59,7 @@ type SlashResult struct {
 	Output  string
 	Session string
 	Fresh   bool // Session is new: nothing to replay
+	Clear   bool // a clean conversation: the screen's transcript is cleared too
 	Turn    string
 	Start   func(ctx context.Context) (<-chan event.Event, error)
 }
@@ -286,6 +288,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			out = append(out, tea.Println(faint.Render("finish or ESC this turn before switching sessions")))
 		case msg.result.Session != "" && msg.result.Session != m.session:
 			m.session = msg.result.Session
+			if msg.result.Clear {
+				// The old transcript leaves the screen with its session;
+				// the slash's own report is reprinted on the clean screen.
+				out = []tea.Cmd{tea.ClearScreen}
+				if text := strings.TrimRight(msg.result.Output, "\n"); text != "" {
+					out = append(out, tea.Println(text))
+				}
+			}
 			if !msg.result.Fresh {
 				out = append(out, m.replay())
 			}
@@ -717,7 +727,11 @@ func (m *model) statusLine() string {
 	if len(id) > 8 {
 		id = id[:8]
 	}
-	parts := []string{m.opts.Agent}
+	agent := m.opts.Agent
+	if m.status.Agent != "" {
+		agent = m.status.Agent
+	}
+	parts := []string{agent}
 	if m.status.Model != "" {
 		parts = append(parts, m.status.Model)
 	}

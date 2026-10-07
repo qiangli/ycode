@@ -29,7 +29,7 @@ func sessionControlCLI(ctx context.Context, app *harnessApplication, inv harness
 			id = sessions[0].ID
 		}
 	}
-	if id == "" && inv.Dispatch.Action != "model-current" {
+	if id == "" && inv.Dispatch.Action != "model-current" && inv.Dispatch.Action != "clear" {
 		return errors.New("session control requires --session or a current session")
 	}
 	action := inv.Dispatch.Action
@@ -38,6 +38,18 @@ func sessionControlCLI(ctx context.Context, app *harnessApplication, inv harness
 	}
 	result, err := sessionControl(ctx, app, inv.Dispatch, id, localPrincipal(), inv.Arguments)
 	if err != nil {
+		return err
+	}
+	if action == "clear" {
+		// The terminal moves to the new session; the cleared one stays
+		// resumable by id.
+		if err := pointSession(result.SessionID); err != nil {
+			return err
+		}
+		if boolFlag(inv, "json") {
+			return writeJSON(out, result.Value)
+		}
+		_, err = fmt.Fprintln(out, result.SessionID)
 		return err
 	}
 	if result.Stream == nil {
@@ -73,9 +85,10 @@ func sessionControlCLI(ctx context.Context, app *harnessApplication, inv harness
 // controlResult is what a session control produced: a stream for the turn
 // controls (plan, retry, btw), else a structured value.
 type controlResult struct {
-	Stream   <-chan public.Event
-	Value    any
-	ModelRef string // model-current
+	Stream    <-chan public.Event
+	Value     any
+	ModelRef  string // model-current, model-use, clear
+	SessionID string // clear: the new session
 }
 
 // sessionControl runs one declared session action on session for principal.
@@ -99,6 +112,12 @@ func sessionControl(ctx context.Context, app *harnessApplication, route harnesss
 			return controlResult{}, err
 		}
 		return controlResult{Value: map[string]any{"session": id, "model_ref": args[0]}, ModelRef: args[0]}, nil
+	case "clear":
+		result, err := app.harness.ClearSession(id)
+		if err != nil {
+			return controlResult{}, err
+		}
+		return controlResult{Value: result, ModelRef: result.ModelRef, SessionID: result.SessionID}, nil
 	case "pause":
 		if err := app.harness.Pause(ctx, id); err != nil {
 			return controlResult{}, err

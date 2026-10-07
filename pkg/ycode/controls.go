@@ -317,6 +317,53 @@ func (h *Harness) SetSessionModel(sessionID, modelRef string) error {
 	return err
 }
 
+// ClearResult is a cleared conversation: the new session and the model
+// selection it carries over ("" when the route's default applies).
+type ClearResult struct {
+	SessionID string `json:"session"`
+	ClearedID string `json:"cleared,omitempty"`
+	ModelRef  string `json:"model_ref,omitempty"`
+}
+
+// ClearSession starts a new, empty session that carries over only
+// sessionID's explicit model selection under this configuration. Nothing of
+// sessionID is changed or deleted: its history stays resumable. Plan mode,
+// queued items and the transcript are per session, so they do not follow.
+// A live turn or pending approval on sessionID refuses the clear; it is
+// never cancelled to make room.
+func (h *Harness) ClearSession(sessionID string) (ClearResult, error) {
+	if err := h.Validate(); err != nil {
+		return ClearResult{}, err
+	}
+	next := ClearResult{SessionID: uuid.NewString(), ClearedID: sessionID}
+	if sessionID == "" {
+		return next, nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.busySession(sessionID) {
+		return ClearResult{}, errors.New("a turn or approval is live on this session; finish or stop it before clearing")
+	}
+	lock, err := h.lockSession(sessionID)
+	if err != nil {
+		return ClearResult{}, fmt.Errorf("session %s is busy in another process: %w", sessionID, err)
+	}
+	defer lock.Release()
+	ref, err := h.sessionModel(sessionID)
+	if err != nil {
+		return ClearResult{}, err
+	}
+	if ref == "" {
+		return next, nil
+	}
+	if err := h.validateSessionModel(h.doc.Spec.Runtime.DefaultAgentRef, ref); err != nil {
+		return ClearResult{}, err
+	}
+	next.ModelRef = ref
+	_, err = h.events.Append(event.Draft{SessionID: next.SessionID, RunID: uuid.NewString(), StageID: "session.model", Type: "session.model-selected", ConfigDigest: h.doc.ConfigDigest, Data: map[string]any{"model_ref": ref}})
+	return next, err
+}
+
 type CompactResult struct {
 	Outcome     string `json:"outcome"`
 	MessagesRef string `json:"messages_ref"`

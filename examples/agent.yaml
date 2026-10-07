@@ -138,6 +138,7 @@ spec:
               - {name: dry-run, type: bool, default: false, usage: Preview without continuing, scope: local}
             dispatch: {operation: session, action: continue}
           - {name: new, short: Start a fresh session (the current one stays resumable) and print its id, args: {min: 0, max: 0}, dispatch: {operation: session, action: new}}
+          - {name: clear, short: Start a clean conversation keeping the model selection (the current session stays resumable) and print its id, args: {min: 0, max: 0}, flags: [{name: json, type: bool, default: "false", usage: Machine-readable JSON, scope: local}], dispatch: {operation: session, action: clear}}
           - name: status
             short: Show the agent, model and the session this terminal is on (else the latest)
             args: {min: 0, max: 0}

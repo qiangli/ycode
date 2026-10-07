@@ -36,7 +36,7 @@ func sessionCLI(ctx context.Context, app *harnessApplication, inv harnesscli.Inv
 		return sessions[0], nil
 	}
 	switch inv.Dispatch.Action {
-	case "pause", "continue", "btw", "retry", "revert", "compact", "plan", "model-use", "model-current":
+	case "pause", "continue", "btw", "retry", "revert", "compact", "plan", "model-use", "model-current", "clear":
 		return sessionControlCLI(ctx, app, inv, out)
 	case "new":
 		// Nothing is written to the log until the first turn commits; the

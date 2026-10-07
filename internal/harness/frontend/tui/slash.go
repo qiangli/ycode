@@ -19,10 +19,11 @@ type Slash struct {
 	Idle bool
 }
 
-// Slashes is the whole set (Sprint 387 A7): /config /init /plan /save
-// /resume /model plus /help and /quit. There is no registry beyond this table.
+// Slashes is the whole set (Sprint 387 A7): /clear /config /init /plan
+// /save /resume /model plus /help and /quit. There is no registry beyond this table.
 var Slashes = []Slash{
 	{Name: "/help", Usage: "/help", Command: "--help", Short: "List the slashes and the subcommands they stand for"},
+	{Name: "/clear", Usage: "/clear", Command: "clear", Short: "Start a clean conversation with this config and model; the old one stays resumable", Idle: true},
 	{Name: "/config", Usage: "/config [FILE]", Command: "config source | config use FILE", Short: "Show the effective config and origin, or use FILE", Idle: true},
 	{Name: "/init", Usage: "/init", Command: "init", Short: "Create or use the repo instruction file", Idle: true},
 	{Name: "/model", Usage: "/model [NAME]", Command: "model current|use NAME", Short: "Show the session model and the declared ones, or select one"},

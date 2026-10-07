@@ -151,7 +151,7 @@ func (h *tuiHost) Payload(ref string) ([]byte, error) {
 
 func (h *tuiHost) Status(session string) tui.Status {
 	b := h.bound()
-	var status tui.Status
+	status := tui.Status{Agent: b.app.doc.Metadata.Name}
 	// Model is what the provider last measured answering; Selected is the
 	// session's explicit override, if any. Neither masks the other, so a
 	// route fallback shows as the model that actually ran.
@@ -301,6 +301,26 @@ func (h *tuiHost) Slash(ctx context.Context, session string, s tui.Slash, args [
 		return h.model(ctx, session, args)
 	case "/plan":
 		return h.command(ctx, session, []string{"plan"}, args)
+	case "/clear":
+		// The declared `clear` starts the new session; the harness refuses
+		// it while a turn or approval is live, so nothing is cancelled.
+		command, ok := declaredCommand(b.app.doc.Spec.Interfaces.CLI.Root, []string{"clear"})
+		if !ok || command.Dispatch == nil || command.Dispatch.Operation != "session" || command.Dispatch.Action != "clear" {
+			return tui.SlashResult{}, errors.New("the agent YAML declares no `clear` session command")
+		}
+		if len(args) > 0 {
+			return tui.SlashResult{}, errors.New("/clear takes no arguments")
+		}
+		result, err := sessionControl(ctx, b.app, *command.Dispatch, session, h.principal, nil)
+		if err != nil {
+			return tui.SlashResult{}, err
+		}
+		model := "the configured default"
+		if result.ModelRef != "" {
+			model = fmt.Sprintf("%s (%s)", result.ModelRef, b.app.doc.Spec.Models[result.ModelRef].ID)
+		}
+		out := fmt.Sprintf("cleared: new session %s on %s, model %s\nsession %s is kept; /resume %s returns to it", result.SessionID, b.config, model, session, session)
+		return tui.SlashResult{Output: out, Session: result.SessionID, Fresh: true, Clear: true}, nil
 	case "/config":
 		if len(args) == 0 {
 			out, err := h.declared(ctx, []string{"config", "source"})
