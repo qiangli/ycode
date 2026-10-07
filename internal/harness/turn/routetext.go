@@ -64,10 +64,18 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 			if attempt.TimeoutMS > 0 {
 				attemptCtx, cancel = context.WithTimeout(ctx, time.Duration(attempt.TimeoutMS)*time.Millisecond)
 			}
-			// llm.delta carries the provider's text live; llm.completed's
-			// payload stays the canonical response.
-			delta := func(channel, chunk string) {
-				_ = r.append(ctx, stageID, "llm.delta", map[string]any{"route_ref": routeRef, "model_ref": attempt.ModelRef, "attempt": transportAttempt, "channel": channel, "text": chunk})
+			// llm.delta announces the provider's text live by payload_ref (raw
+			// text stays in the payload store, never inline in the journal);
+			// llm.completed's payload stays the canonical response.
+			delta := func(channel, chunk string) error {
+				deltaRef, err := r.payload(map[string]any{"channel": channel, "text": chunk})
+				if err != nil {
+					return fmt.Errorf("llm.delta payload: %w", err)
+				}
+				if err := r.append(ctx, stageID, "llm.delta", map[string]any{"route_ref": routeRef, "model_ref": attempt.ModelRef, "attempt": transportAttempt, "channel": channel, "payload_ref": deltaRef}); err != nil {
+					return fmt.Errorf("llm.delta append: %w", err)
+				}
+				return nil
 			}
 			response, outcome := collectProvider(attemptCtx, adapter.Send(attemptCtx, request), delta)
 			cancel()
