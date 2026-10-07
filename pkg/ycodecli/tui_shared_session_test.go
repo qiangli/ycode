@@ -361,6 +361,50 @@ func TestTUIResumeContinuesLivePause(t *testing.T) {
 	}
 }
 
+// A fresh, unpersisted TUI session has no live turn, so /resume falls
+// through to opening the latest saved session instead of failing on the
+// missing session.
+func TestTUIResumeFromFreshSessionOpensLatestSaved(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-secret")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("BASHY_HOME", "")
+	workdir := t.TempDir()
+	canonical, err := os.ReadFile(harnessFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(workdir, "agent.yaml")
+	if err := os.WriteFile(fixture, canonical, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backend := &pausingProvider{started: make(chan struct{}, 1), release: make(chan struct{})}
+	close(backend.release)
+	app, err := openHarnessApplication(fixture, public.WithHarnessProvider("openai", backend))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	view, err := frontend.NewTUI(app.doc, "tui", cliController{app, "coder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := &tuiHost{app: app, view: view, config: fixture, principal: "tui-user",
+		inv: harnesscli.Invocation{FrontendRef: "tui", Dispatch: spec.CLIDispatch{AgentRef: "coder", Input: &spec.CLIInput{PayloadKey: "request"}}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	const saved = "saved-session"
+	stream, err := host.Turn(ctx, saved, "remember me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range stream {
+	}
+	result, err := host.Slash(ctx, "fresh-session", tui.Slash{Name: "/resume"}, nil)
+	if err != nil || result.Session != saved {
+		t.Fatalf("/resume from a fresh session = %+v, %v; want latest saved %s", result, err, saved)
+	}
+}
+
 // The authored dispatch governs a slash, not its name: a document whose
 // `plan` command declares the btw action makes /plan TEXT a transcript-
 // isolated side query admitted under that command's route, never a mode

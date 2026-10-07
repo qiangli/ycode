@@ -16,6 +16,9 @@ import (
 var (
 	ErrNoLiveTurn  = errors.New("control: no live turn")
 	ErrNoPausedRun = errors.New(noPausedRun)
+	// ErrNoSession reports an ID that names no persisted session, such as
+	// a fresh session before its first turn commits.
+	ErrNoSession = errors.New("no session")
 )
 
 const noPausedRun = "continue: no paused live turn"
@@ -45,6 +48,10 @@ func (h *Harness) controlLiveRun(ctx context.Context, sessionID, action string) 
 		return err
 	}
 	s, err := h.Session(sessionID)
+	if errors.Is(err, ErrNoSession) {
+		// An unpersisted session cannot have a live turn; store errors stay real.
+		return fmt.Errorf("%w: %w", ErrNoLiveTurn, err)
+	}
 	if err != nil {
 		return err
 	}
