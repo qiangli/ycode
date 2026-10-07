@@ -79,10 +79,49 @@ func discoverCLI(args []string) (*harnessspec.Document, error) {
 	if err := yaml.Unmarshal(examples.Agent(), &seed); err != nil {
 		return nil, err
 	}
-	bootstrap := seed.Spec.Interfaces.CLI.Bootstrap
 	configurationError := func(err error) error {
 		return &harnesscli.Error{Class: "configuration", Code: seed.Spec.Interfaces.CLI.ExitCodes.Configuration, Prefix: seed.Spec.Interfaces.CLI.Presentation.Errors.Prefix, Err: err}
 	}
+	path, explicit, err := selectedConfig(seed, args)
+	if err != nil {
+		return nil, configurationError(err)
+	}
+	doc, err := harnessspec.Load(path)
+	if err == nil {
+		return doc, nil
+	}
+	if explicit || !errors.Is(err, os.ErrNotExist) {
+		return nil, configurationError(err)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	doc, err = harnessspec.Compile(abs, examples.Agent())
+	if err != nil {
+		return nil, configurationError(err)
+	}
+	return doc, nil
+}
+
+// HasExplicitConfig reports whether discovery must retain the caller's config
+// selection. Embedders use it before supplying a built-in agent. Invalid flags
+// and inaccessible local files remain with discovery so they fail closed.
+func HasExplicitConfig(args []string) bool {
+	var seed harnessspec.Document
+	if err := yaml.Unmarshal(examples.Agent(), &seed); err != nil {
+		return true
+	}
+	path, explicit, err := selectedConfig(seed, args)
+	if err != nil || explicit {
+		return true
+	}
+	_, err = os.Stat(path)
+	return !errors.Is(err, os.ErrNotExist)
+}
+
+func selectedConfig(seed harnessspec.Document, args []string) (string, bool, error) {
+	bootstrap := seed.Spec.Interfaces.CLI.Bootstrap
 	path, explicit := bootstrap.DefaultFile, false
 	if bootstrap.Env != "" {
 		if value, ok := os.LookupEnv(bootstrap.Env); ok && value != "" {
@@ -97,7 +136,7 @@ func discoverCLI(args []string) (*harnessspec.Document, error) {
 		for _, flag := range bootstrap.ConfigFlags {
 			if args[i] == flag {
 				if i+1 == len(args) {
-					return nil, configurationError(fmt.Errorf("%s requires a value", flag))
+					return "", true, fmt.Errorf("%s requires a value", flag)
 				}
 				i++
 				path, explicit, selected = args[i], true, true
@@ -121,22 +160,7 @@ func discoverCLI(args []string) (*harnessspec.Document, error) {
 			i++
 		}
 	}
-	doc, err := harnessspec.Load(path)
-	if err == nil {
-		return doc, nil
-	}
-	if explicit || !errors.Is(err, os.ErrNotExist) {
-		return nil, configurationError(err)
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return nil, err
-	}
-	doc, err = harnessspec.Compile(abs, examples.Agent())
-	if err != nil {
-		return nil, configurationError(err)
-	}
-	return doc, nil
+	return path, explicit, nil
 }
 
 func consumesCLIValue(command harnessspec.CLICommand, arg string) bool {

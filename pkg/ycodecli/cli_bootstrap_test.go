@@ -123,3 +123,28 @@ func TestCLIDiscoveryIgnoresConfigSpellingsInOtherFlagValues(t *testing.T) {
 		}
 	}
 }
+
+func TestHasExplicitConfigPreservesDiscoveryOwnership(t *testing.T) {
+	local := isolatedCLICwd(t)
+	for _, args := range [][]string{nil, {"docs", "--search", "-filter"}, {"docs", "--search", "--file=topic"}, {"prompt", "--", "-fignored"}} {
+		if HasExplicitConfig(args) {
+			t.Fatalf("%q unexpectedly selects caller config", args)
+		}
+	}
+	for _, args := range [][]string{{"-fmissing"}, {"--config=missing"}, {"--file", "missing"}, {"-f"}} {
+		if !HasExplicitConfig(args) {
+			t.Fatalf("%q must retain selection/error in discovery", args)
+		}
+	}
+	t.Setenv("YCODE_CONFIG", "missing-env.yaml")
+	if !HasExplicitConfig(nil) {
+		t.Fatal("explicit environment selection lost")
+	}
+	t.Setenv("YCODE_CONFIG", "")
+	if err := os.WriteFile(local, []byte("invalid yaml retained for discovery"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !HasExplicitConfig(nil) {
+		t.Fatal("local agent must retain selection, including invalid content")
+	}
+}
