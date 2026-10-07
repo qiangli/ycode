@@ -355,6 +355,9 @@ func runCLIInput(ctx context.Context, app *harnessApplication, inv harnesscli.In
 			}
 			return TerminalUI(ctx, TerminalSession{Agent: app.doc.Metadata.Name, Config: config, Session: defaults.SessionID})
 		}
+		if app.doc.Spec.Frontends[ref].Kind == "tui" && interactiveCapable() {
+			return runTerminalTUI(ctx, app, inv, defaults.SessionID, defaults.Principal)
+		}
 		scanner := bufio.NewScanner(streams.In)
 		scanner.Buffer(make([]byte, 4096), app.doc.Spec.Frontends[ref].Limits.MaxInputBytes)
 		for scanner.Scan() {
