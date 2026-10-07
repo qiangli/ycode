@@ -191,13 +191,44 @@ func TestTUIOverPTY(t *testing.T) {
 	expect("/save with a title", "saved: session")
 	expect("/save renamed through the subcommand", "first work")
 
+	// /model goes through the engine's session model API: only resources
+	// in the default agent's declared route are selectable.
 	typeLine("/model")
-	expect("/model", "current: ")
+	expect("/model", "current: primary (")
+	expect("/model lists the route", "/model NAME selects")
 	typeLine("/model other")
-	expect("/model switch is not faked", "never changed")
+	expect("/model rejects an undeclared resource", `undeclared model "other"`)
+	typeLine("/model primary")
+	expect("/model selects a declared resource", "now uses primary")
 
+	// /plan toggles the durable plan mode; /plan TEXT runs a planning turn
+	// that streams like any turn, and a tool call in it fails, never runs.
 	typeLine("/plan")
-	expect("/plan", "declares no `plan` subcommand")
+	expect("/plan enters plan mode", "mode: plan")
+	expect("status line shows plan mode", "plan mode")
+	typeLine("approve-me while planning")
+	expect("plan turn refuses tools", "planning forbids tool calls")
+	if !screen.waitCount("turn ended in", 4, 15*time.Second) {
+		t.Fatalf("the planning turn never ended:\n%s", screen.text())
+	}
+	if n := strings.Count(screen.text(), "approval needed ("); n != 1 {
+		t.Fatalf("a planning turn asked for approval:\n%s", screen.text())
+	}
+	typeLine("/plan")
+	expect("/plan returns to act", "mode: act")
+	typeLine("/plan outline the work")
+	expect("/plan TEXT re-enters plan mode", "› outline the work")
+	if !screen.waitCount("mode: plan", 2, 15*time.Second) {
+		t.Fatalf("/plan TEXT did not enter plan mode:\n%s", screen.text())
+	}
+	if !screen.waitCount("turn ended in", 5, 15*time.Second) {
+		t.Fatalf("the /plan TEXT turn never ended:\n%s", screen.text())
+	}
+	typeLine("/plan")
+	if !screen.waitCount("mode: act", 2, 15*time.Second) {
+		t.Fatalf("/plan did not return to act:\n%s", screen.text())
+	}
+
 	typeLine("/init")
 	expect("/init", "declares no `init` subcommand")
 
@@ -220,7 +251,7 @@ func TestTUIOverPTY(t *testing.T) {
 	}
 	expect("ESC", "interrupted; running what was typed during it")
 	expect("follow-up turn", "› steer me")
-	if !screen.waitCount("turn ended in", 4, 15*time.Second) {
+	if !screen.waitCount("turn ended in", 6, 15*time.Second) {
 		t.Fatalf("the follow-up turn never ended:\n%s", screen.text())
 	}
 

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qiangli/ycode/internal/api"
 	harnesscli "github.com/qiangli/ycode/internal/harness/cli"
 	"github.com/qiangli/ycode/internal/harness/frontend"
 	"github.com/qiangli/ycode/internal/harness/frontend/tui"
@@ -259,5 +260,166 @@ func TestWebAndTUIShareSessions(t *testing.T) {
 		if after[i] != before[i] {
 			t.Fatalf("resumed transcript rewrote entry %d: %+v -> %+v", i, before[i], after[i])
 		}
+	}
+}
+
+// pausingProvider holds its first answer until released.
+type pausingProvider struct {
+	started, release chan struct{}
+}
+
+func (*pausingProvider) Kind() api.ProviderKind { return api.ProviderOpenAI }
+func (p *pausingProvider) Send(ctx context.Context, request *api.Request) (<-chan *api.StreamEvent, <-chan error) {
+	events, errs := make(chan *api.StreamEvent, 3), make(chan error, 1)
+	go func() {
+		defer close(events)
+		defer close(errs)
+		select {
+		case p.started <- struct{}{}:
+		default:
+		}
+		<-p.release
+		text, _ := json.Marshal(map[string]string{"type": "text_delta", "text": "after-pause"})
+		stop, _ := json.Marshal(map[string]string{"stop_reason": api.StopReasonEndTurn})
+		events <- &api.StreamEvent{Type: "content_block_delta", Delta: text}
+		events <- &api.StreamEvent{Type: "message_delta", Delta: stop}
+	}()
+	return events, errs
+}
+
+// /resume on a session whose live turn is cooperatively paused is Continue:
+// the turn completes, and with nothing paused /resume is the session switch.
+func TestTUIResumeContinuesLivePause(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-secret")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("BASHY_HOME", "")
+	workdir := t.TempDir()
+	canonical, err := os.ReadFile(harnessFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(workdir, "agent.yaml")
+	if err := os.WriteFile(fixture, canonical, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backend := &pausingProvider{started: make(chan struct{}, 1), release: make(chan struct{})}
+	app, err := openHarnessApplication(fixture, public.WithHarnessProvider("openai", backend))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	view, err := frontend.NewTUI(app.doc, "tui", cliController{app, "coder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := &tuiHost{app: app, view: view, config: fixture, principal: "tui-user",
+		inv: harnesscli.Invocation{FrontendRef: "tui", Dispatch: spec.CLIDispatch{AgentRef: "coder", Input: &spec.CLIInput{PayloadKey: "request"}}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	const session = "paused-session"
+	resume := tui.Slash{Name: "/resume"}
+	if result, _ := host.Slash(ctx, session, resume, nil); strings.Contains(result.Output, "continued") {
+		t.Fatalf("/resume continued with no live turn: %+v", result)
+	}
+	stream, err := host.Turn(ctx, session, "pause me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-backend.started:
+	case <-ctx.Done():
+		t.Fatal("provider never started")
+	}
+	paused := make(chan error, 1)
+	go func() { paused <- app.harness.Pause(ctx, session) }()
+	time.Sleep(200 * time.Millisecond) // the pause request precedes the stage end
+	close(backend.release)
+	if err := <-paused; err != nil {
+		t.Fatal(err)
+	}
+	result, err := host.Slash(ctx, session, resume, nil)
+	if err != nil || !strings.Contains(result.Output, "continued") || result.Session != "" {
+		t.Fatalf("/resume on a paused turn = %+v, %v", result, err)
+	}
+	var types []string
+	for item := range stream {
+		types = append(types, item.Type)
+	}
+	joined := strings.Join(types, " ")
+	if !strings.Contains(joined, "session.paused session.continued session.turn-committed") || !strings.Contains(joined, "output.emitted") {
+		t.Fatalf("the continued turn did not complete: %v", types)
+	}
+	if result, _ := host.Slash(ctx, session, resume, nil); strings.Contains(result.Output, "continued") {
+		t.Fatalf("/resume continued a finished turn: %+v", result)
+	}
+}
+
+// The authored dispatch governs a slash, not its name: a document whose
+// `plan` command declares the btw action makes /plan TEXT a transcript-
+// isolated side query admitted under that command's route, never a mode
+// switch through Harness.Plan.
+func TestTUISlashFollowsAuthoredDispatch(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-secret")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("BASHY_HOME", "")
+	workdir := t.TempDir()
+	canonical, err := os.ReadFile(harnessFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const planned = `            short: Toggle planning mode or enter it with a request
+            args: {min: 0, max: -1}`
+	const authored = `            short: Ask aside (authored as btw)
+            args: {min: 1, max: -1}`
+	custom := strings.Replace(string(canonical), planned, authored, 1)
+	custom = strings.Replace(custom, "dispatch: {operation: session, action: plan,", "dispatch: {operation: session, action: btw,", 1)
+	if custom == string(canonical) || strings.Count(custom, "action: btw,") != 2 {
+		t.Fatal("fixture no longer carries the canonical plan command")
+	}
+	fixture := filepath.Join(workdir, "agent.yaml")
+	if err := os.WriteFile(fixture, []byte(custom), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app, err := openHarnessApplication(fixture, public.WithHarnessProvider("openai", &tuiProvider{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	view, err := frontend.NewTUI(app.doc, "tui", cliController{app, "coder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := &tuiHost{app: app, view: view, config: fixture, principal: "tui-user",
+		inv: harnesscli.Invocation{FrontendRef: "tui", Dispatch: spec.CLIDispatch{AgentRef: "coder", Input: &spec.CLIInput{PayloadKey: "request"}}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	const session = "authored-session"
+	plan := tui.Slash{Name: "/plan"}
+	if _, err := host.Slash(ctx, session, plan, nil); err == nil || !strings.Contains(err.Error(), "arguments as declared") {
+		t.Fatalf("/plan with no text bypassed the authored args: %v", err)
+	}
+	result, err := host.Slash(ctx, session, plan, []string{"what", "is", "this"})
+	if err != nil || result.Start == nil {
+		t.Fatalf("/plan TEXT = %+v, %v", result, err)
+	}
+	stream, err := result.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var types []string
+	for item := range stream {
+		types = append(types, item.Type)
+		if item.Type == "session.mode-selected" {
+			t.Fatalf("the authored btw command switched modes: %v", types)
+		}
+	}
+	if mode, err := app.harness.SessionMode(session); err != nil || mode != "act" {
+		t.Fatalf("mode after authored btw = %q, %v", mode, err)
+	}
+	if !strings.Contains(strings.Join(types, " "), "output.emitted") {
+		t.Fatalf("the side query did not answer: %v", types)
+	}
+	if messages, _ := app.harness.Transcript(session); len(messages) != 0 {
+		t.Fatalf("btw wrote the transcript: %d messages", len(messages))
 	}
 }

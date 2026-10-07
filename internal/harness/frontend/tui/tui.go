@@ -39,6 +39,7 @@ type Waiting struct {
 // Status is what the status line shows besides the agent and session.
 type Status struct {
 	Model         string
+	Mode          string // the session's durable mode: "plan" shows on the line
 	ContextTokens int
 	SessionTokens int     // input + output across the session's turns
 	CostUSD       float64 // meaningful only when CostKnown
@@ -48,11 +49,15 @@ type Status struct {
 // Entry is one transcript message shown when a session is resumed.
 type Entry struct{ Role, Text string }
 
-// SlashResult is what a slash subcommand printed, and the session the
-// terminal moves to when the slash switched it ("" stays).
+// SlashResult is what a slash subcommand printed, the session the
+// terminal moves to when the slash switched it ("" stays), and a turn the
+// slash admits: Start opens it on the session the slash ran on, and the
+// terminal shows Turn as its echo (nil Start: none).
 type SlashResult struct {
 	Output  string
 	Session string
+	Turn    string
+	Start   func(ctx context.Context) (<-chan event.Event, error)
 }
 
 // Host projects the terminal onto the harness.
@@ -150,6 +155,7 @@ type model struct {
 	interrupted bool
 	held        []string // lines the queue refused; run after the turn
 	busy        string   // a slash in flight
+	pending     []string // lines typed while a slash ran; submitted after it
 	status      Status
 	live        strings.Builder // streamed text of the current model call not yet printed
 	streamed    string          // text already printed from llm.delta this turn
@@ -177,8 +183,9 @@ type (
 		err    error
 	}
 	slashDoneMsg struct {
-		result SlashResult
-		err    error
+		session string // the session the slash ran on
+		result  SlashResult
+		err     error
 	}
 	execDoneMsg   struct{ err error }
 	decideDoneMsg struct {
@@ -268,10 +275,23 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			out = append(out, tea.Println(failed.Render("ycode: "+msg.err.Error())))
 		}
-		if msg.result.Session != "" && msg.result.Session != m.session {
+		switch {
+		case msg.session != m.session:
+			// Lines wait while a slash runs, so this is not reached today;
+			// a result never acts on a session it was not issued for.
+			out = append(out, tea.Println(faint.Render("ignored: "+msg.result.Turn+" was issued on session "+msg.session)))
+		case msg.result.Session != "" && msg.result.Session != m.session && m.running:
+			out = append(out, tea.Println(faint.Render("finish or ESC this turn before switching sessions")))
+		case msg.result.Session != "" && msg.result.Session != m.session:
 			m.session = msg.result.Session
-			out = append(out, m.replay(), m.refreshStatus())
+			out = append(out, m.replay())
+		case msg.result.Start != nil && m.running:
+			out = append(out, tea.Println(failed.Render("ycode: a turn is running; "+msg.result.Turn+" was not started")))
+		case msg.result.Start != nil:
+			out = append(out, m.startWith(msg.result.Turn, msg.result.Start))
 		}
+		out = append(out, m.refreshStatus())
+		out = append(out, m.drainPending()...)
 		return m, tea.Sequence(out...)
 	case execDoneMsg:
 		if msg.err != nil {
@@ -369,11 +389,21 @@ func (m *model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // its subcommand, a command line runs as typed, and free text is a turn.
 func (m *model) submit(line string) tea.Cmd {
 	if m.running {
+		// /resume during a turn releases a live pause; every other line steers.
+		if slash, args, ok := parseSlash(line); ok && slash.Name == "/resume" && len(args) == 0 {
+			return m.slash(slash, args)
+		}
 		if err := m.opts.Host.Steer(m.session, line); err != nil {
 			m.held = append(m.held, line)
 			return tea.Println(faint.Render("↳ held for after this turn: " + line + " (" + err.Error() + ")"))
 		}
 		return tea.Println(faint.Render("↳ steer: " + line))
+	}
+	if m.busy != "" {
+		// A slash may switch sessions or admit a turn; what was typed waits
+		// for it so it lands on the session and turn the slash leaves.
+		m.pending = append(m.pending, line)
+		return tea.Println(faint.Render("↳ held until " + m.busy + " finishes: " + line))
 	}
 	if slash, args, ok := parseSlash(line); ok {
 		return m.slash(slash, args)
@@ -396,10 +426,28 @@ func (m *model) submit(line string) tea.Cmd {
 	return m.startTurn(line)
 }
 
+// drainPending submits the lines held during a slash, in order, until one
+// starts another slash.
+func (m *model) drainPending() []tea.Cmd {
+	var out []tea.Cmd
+	for len(m.pending) > 0 && m.busy == "" {
+		line := m.pending[0]
+		m.pending = m.pending[1:]
+		out = append(out, m.submit(line))
+	}
+	return out
+}
+
 func (m *model) startTurn(text string) tea.Cmd {
+	session, host := m.session, m.opts.Host
+	return m.startWith(text, func(ctx context.Context) (<-chan event.Event, error) { return host.Turn(ctx, session, text) })
+}
+
+// startWith runs start as this terminal's turn, echoing text.
+func (m *model) startWith(text string, start func(context.Context) (<-chan event.Event, error)) tea.Cmd {
 	m.gen++
 	ctx, cancel := context.WithCancel(m.ctx)
-	stream, err := m.opts.Host.Turn(ctx, m.session, text)
+	stream, err := start(ctx)
 	echo := tea.Println(strong.Render("› ") + text)
 	if err != nil {
 		cancel()
@@ -465,7 +513,7 @@ func (m *model) slash(s Slash, args []string) tea.Cmd {
 	session, host, ctx := m.session, m.opts.Host, m.ctx
 	return tea.Sequence(echo, func() tea.Msg {
 		result, err := host.Slash(ctx, session, s, args)
-		return slashDoneMsg{result: result, err: err}
+		return slashDoneMsg{session: session, result: result, err: err}
 	})
 }
 
@@ -662,6 +710,9 @@ func (m *model) statusLine() string {
 		parts = append(parts, m.status.Model)
 	}
 	parts = append(parts, "session "+id)
+	if m.status.Mode == "plan" {
+		parts = append(parts, "plan mode")
+	}
 	if m.status.ContextTokens > 0 {
 		parts = append(parts, fmt.Sprintf("ctx %s tok", humanTokens(m.status.ContextTokens)))
 	}
