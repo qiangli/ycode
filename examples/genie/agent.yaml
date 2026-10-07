@@ -249,7 +249,7 @@ spec:
       endpoint:
         valueFrom:
           env: OPENAI_BASE_URL
-          default: https://api.openai.com/v1
+          default: ""
       credentials:
         apiKey:
           secretRef: {provider: env, name: OPENAI_API_KEY}
