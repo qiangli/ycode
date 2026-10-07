@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -329,6 +330,43 @@ func TestRestoredBindingDispatchesDeclaredActionsOnIt(t *testing.T) {
 		err := b.dispatch(ctx, inv, harnesscli.IO{Out: &strings.Builder{}, Err: &strings.Builder{}})
 		if err == nil || !strings.Contains(err.Error(), "not the bound "+digestA) {
 			t.Fatalf("%s under restored A with B on disk = %v; want a fail-closed refusal", op, err)
+		}
+	}
+}
+
+// TestConfigSlashLiteralPaths: /config FILE selects a path with spaces
+// (what the TUI parses from a quoted FILE) as one literal file, with
+// $(...) and backticks never evaluated, and an ordinary path as before.
+func TestConfigSlashLiteralPaths(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-secret")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("BASHY_HOME", "")
+	dir := t.TempDir()
+	configA := clearFixture(t, dir, "a.yaml", "config-a")
+	spaced := filepath.Join(dir, "my configs")
+	if err := os.Mkdir(spaced, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configB := clearFixture(t, spaced, "b $(touch pwned) `touch pwned`.yaml", "config-b")
+	t.Chdir(dir)
+	ctx := context.Background()
+	host := rebindHost(t, configA, &tuiProvider{})
+
+	for _, step := range []struct{ arg, want string }{
+		{"my configs/b $(touch pwned) `touch pwned`.yaml", configB},
+		{"a.yaml", configA},
+	} {
+		out, err := host.Slash(ctx, "path-session", tui.Slash{Name: "/config"}, []string{step.arg})
+		if err != nil {
+			t.Fatalf("/config %q: %v\n%s", step.arg, err, out.Output)
+		}
+		if got := host.bound().config; got != step.want {
+			t.Fatalf("/config %q serves %q, want %q", step.arg, got, step.want)
+		}
+	}
+	for _, d := range []string{dir, spaced} {
+		if _, err := os.Stat(filepath.Join(d, "pwned")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("a /config path was evaluated: %s/pwned exists (%v)", d, err)
 		}
 	}
 }

@@ -437,13 +437,13 @@ func (m *model) submit(line string) tea.Cmd {
 		// /resume during a turn is never steering text: on this session it
 		// releases a live pause; naming another session is refused, since
 		// switching away mid-turn would orphan the running turn.
-		if slash, args, ok := parseSlash(line); ok && slash.Name == "/resume" {
+		if slash, args, ok, _ := parseSlash(line); ok && slash.Name == "/resume" {
 			if len(args) == 0 || (len(args) == 1 && args[0] == m.session) {
 				return m.slash(slash, args)
 			}
 			return tea.Println(failed.Render("ycode: /resume " + strings.Join(args, " ") + " refused during a turn; stop or finish this turn first"))
 		}
-		if slash, _, ok := parseSlash(line); ok && slash.Idle {
+		if slash, _, ok, _ := parseSlash(line); ok && slash.Idle {
 			return tea.Println(failed.Render("ycode: " + slash.Name + " refused during a turn; stop or finish this turn first"))
 		}
 		if err := m.opts.Host.Steer(m.session, line); err != nil {
@@ -458,7 +458,10 @@ func (m *model) submit(line string) tea.Cmd {
 		m.pending = append(m.pending, line)
 		return tea.Println(faint.Render("↳ held until " + m.busy + " finishes: " + line))
 	}
-	if slash, args, ok := parseSlash(line); ok {
+	if slash, args, ok, err := parseSlash(line); ok {
+		if err != nil {
+			return tea.Println(failed.Render("ycode: " + slash.Name + ": " + err.Error() + "; quote a FILE with spaces as '...' or \"...\""))
+		}
 		return m.slash(slash, args)
 	}
 	if word, _, _ := strings.Cut(strings.TrimSpace(line), " "); strings.HasPrefix(word, "/") && !strings.Contains(word[1:], "/") {
