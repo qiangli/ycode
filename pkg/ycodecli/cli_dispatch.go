@@ -56,24 +56,10 @@ func dispatchCLI(ctx context.Context, inv harnesscli.Invocation, streams harness
 	if err != nil {
 		return err
 	}
+	if handled, err := dispatchDocument(doc, inv, streams); handled {
+		return err
+	}
 	switch inv.Dispatch.Operation {
-	case "validate":
-		_, err := fmt.Fprintf(streams.Out, "valid: %s (%d agents, %d pipelines)\n", doc.Metadata.Name, len(doc.Agents), len(doc.Pipelines))
-		return err
-	case "readiness":
-		message, ready := harnessCredentialStatus(doc)
-		status := "BLOCKED"
-		if ready {
-			status = "READY"
-		}
-		_, err := fmt.Fprintf(streams.Out, "provider\t%s\t%s\nconfig\tREADY\t%s (%s)\n", status, message, doc.Source, doc.ConfigDigest)
-		return err
-	case "inspect":
-		return inspectCLI(doc, inv, streams.Out)
-	case "config":
-		return configCLI(doc, inv, streams.Out)
-	case "init":
-		return initCLI(doc, inv, streams.Out)
 	case "session":
 		app, err := openHarnessApplication(file)
 		if err != nil {
@@ -94,6 +80,31 @@ func dispatchCLI(ctx context.Context, inv harnesscli.Invocation, streams harness
 	default:
 		return fmt.Errorf("unsupported CLI operation %q", inv.Dispatch.Operation)
 	}
+}
+
+// dispatchDocument runs the operations answered from a compiled document
+// alone. It reports false for any other operation.
+func dispatchDocument(doc *harnessspec.Document, inv harnesscli.Invocation, streams harnesscli.IO) (bool, error) {
+	switch inv.Dispatch.Operation {
+	case "validate":
+		_, err := fmt.Fprintf(streams.Out, "valid: %s (%d agents, %d pipelines)\n", doc.Metadata.Name, len(doc.Agents), len(doc.Pipelines))
+		return true, err
+	case "readiness":
+		message, ready := harnessCredentialStatus(doc)
+		status := "BLOCKED"
+		if ready {
+			status = "READY"
+		}
+		_, err := fmt.Fprintf(streams.Out, "provider\t%s\t%s\nconfig\tREADY\t%s (%s)\n", status, message, doc.Source, doc.ConfigDigest)
+		return true, err
+	case "inspect":
+		return true, inspectCLI(doc, inv, streams.Out)
+	case "config":
+		return true, configCLI(doc, inv, streams.Out)
+	case "init":
+		return true, initCLI(doc, inv, streams.Out)
+	}
+	return false, nil
 }
 
 func stringFlag(inv harnesscli.Invocation, name string) string {

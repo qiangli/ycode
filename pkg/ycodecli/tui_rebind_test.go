@@ -217,3 +217,118 @@ func TestClearHonorsAuthoredRequiredFlag(t *testing.T) {
 		t.Fatalf("refused /clear still moved to session %s", result.Session)
 	}
 }
+
+// TestResumeBindsSelectionOnlySessions: a session whose only events are a
+// /model selection or a /plan toggle is bound to the configuration that
+// recorded them. After /config B, /resume returns it to A (not accepted
+// under B, where its next turn would fail the model/mode digest check), and
+// the next turn runs.
+func TestResumeBindsSelectionOnlySessions(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-secret")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("BASHY_HOME", "")
+	for _, c := range []struct {
+		name  string
+		slash tui.Slash
+		args  []string
+	}{
+		{"model", tui.Slash{Name: "/model"}, []string{"secondary"}},
+		{"plan", tui.Slash{Name: "/plan"}, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configA := clearFixture(t, dir, "a.yaml", "config-a")
+			configB := clearFixture(t, dir, "b.yaml", "config-b")
+			t.Chdir(dir)
+			ctx := context.Background()
+			host := rebindHost(t, configA, &tuiProvider{})
+			digestA := host.bound().app.doc.ConfigDigest
+			old := "selection-only-" + c.name
+			if out, err := host.Slash(ctx, old, c.slash, c.args); err != nil {
+				t.Fatalf("%s: %v\n%s", c.slash.Name, err, out.Output)
+			}
+			switched, err := host.Slash(ctx, old, tui.Slash{Name: "/config"}, []string{configB})
+			if err != nil {
+				t.Fatalf("/config B: %v", err)
+			}
+			if err := host.bound().app.harness.CheckSessionConfig(old); !errors.Is(err, public.ErrSessionConfig) {
+				t.Fatalf("B accepts a session whose %s selection was made under A: %v", c.name, err)
+			}
+			resumed, err := host.Slash(ctx, switched.Session, tui.Slash{Name: "/resume"}, []string{old})
+			if err != nil {
+				t.Fatalf("/resume: %v", err)
+			}
+			if resumed.Session != old {
+				t.Fatalf("/resume = %+v", resumed)
+			}
+			if got := host.bound().app.doc.ConfigDigest; got != digestA {
+				t.Fatalf("served digest after /resume = %s, want A %s", got, digestA)
+			}
+			if _, err := answer(t, host, old, "next turn"); err != nil {
+				t.Fatalf("next turn after /resume: %v", err)
+			}
+		})
+	}
+}
+
+// TestRestoredBindingDispatchesDeclaredActionsOnIt: after the file on disk
+// changes (here: rewritten in place) and /resume restores the binding
+// compiled from the original, declared actions answer from that bound
+// document — /config reports its digest — and an action that would reopen
+// the file fails closed instead of silently running the new policy.
+func TestRestoredBindingDispatchesDeclaredActionsOnIt(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-secret")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("BASHY_HOME", "")
+	dir := t.TempDir()
+	config := clearFixture(t, dir, "agent.yaml", "config-a")
+	t.Chdir(dir)
+	ctx := context.Background()
+	host := rebindHost(t, config, &tuiProvider{})
+	digestA := host.bound().app.doc.ConfigDigest
+	const old = "bound-old"
+	if _, err := answer(t, host, old, "remember CLEAR-OLD-387"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(config)
+	if err != nil || !strings.Contains(string(raw), "config-a") {
+		t.Fatalf("fixture name anchor missing: %v", err)
+	}
+	if err := os.WriteFile(config, []byte(strings.Replace(string(raw), "config-a", "config-b-edited", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	switched, err := host.Slash(ctx, old, tui.Slash{Name: "/config"}, []string{config})
+	if err != nil {
+		t.Fatalf("/config same file: %v", err)
+	}
+	digestB := host.bound().app.doc.ConfigDigest
+	if digestB == digestA {
+		t.Fatal("the edit did not change the configuration digest")
+	}
+	if _, err := host.Slash(ctx, switched.Session, tui.Slash{Name: "/resume"}, []string{old}); err != nil {
+		t.Fatalf("/resume old: %v", err)
+	}
+	b := host.bound()
+	if b.app.doc.ConfigDigest != digestA {
+		t.Fatalf("restored digest = %s, want A %s", b.app.doc.ConfigDigest, digestA)
+	}
+	source, err := host.Slash(ctx, old, tui.Slash{Name: "/config"}, nil)
+	if err != nil {
+		t.Fatalf("/config: %v", err)
+	}
+	if !strings.Contains(source.Output, "digest: "+digestA) || strings.Contains(source.Output, digestB) {
+		t.Fatalf("/config after restoring A reports:\n%s\nwant digest %s, never %s", source.Output, digestA, digestB)
+	}
+	if got, err := answer(t, host, old, "what did I say?"); err != nil || !strings.Contains(got, "old-in-request=true") {
+		t.Fatalf("turn on restored A = %q, %v", got, err)
+	}
+	for _, op := range []string{"acp", "shell", "serve"} {
+		inv := b.inv
+		inv.Dispatch.Operation = op
+		inv.Command = []string{"ycode", op}
+		err := b.dispatch(ctx, inv, harnesscli.IO{Out: &strings.Builder{}, Err: &strings.Builder{}})
+		if err == nil || !strings.Contains(err.Error(), "not the bound "+digestA) {
+			t.Fatalf("%s under restored A with B on disk = %v; want a fail-closed refusal", op, err)
+		}
+	}
+}

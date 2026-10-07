@@ -121,7 +121,10 @@ was recorded under: a turn on a session whose history belongs to another
 configuration is refused (`ErrSessionConfig`), never replayed under the new
 one; `/resume` in the same terminal restores the configuration compiled when
 it served that session, otherwise it refuses and names the configuration to
-select. A same-file reload recomputes the terminal route from the new document.
+select. A /model or /plan selection binds a session as history does, and a
+restored binding answers declared commands from its own compiled document;
+one that would reopen a since-changed file is refused. A same-file reload
+recomputes the terminal route from the new document.
 `init` (operation `init`, `sourceRef` + `templateRef`) creates the repo's
 instruction file from the template only when absent (`O_EXCL`), else uses it
 unchanged, and validation requires a context to load that source (a

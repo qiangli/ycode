@@ -68,13 +68,24 @@ func (h *Harness) sessionConfig(sessionID string) error {
 	return nil
 }
 
-// CheckSessionConfig reports ErrSessionConfig when sessionID's history
-// belongs to another configuration than this harness serves.
+// CheckSessionConfig reports ErrSessionConfig when sessionID's history, or
+// its model or mode selection, belongs to another configuration than this
+// harness serves: a session with only a /model or /plan selection is bound
+// as surely as one with committed turns.
 func (h *Harness) CheckSessionConfig(sessionID string) error {
 	if err := h.Validate(); err != nil {
 		return err
 	}
-	return h.sessionConfig(sessionID)
+	if err := h.sessionConfig(sessionID); err != nil {
+		return err
+	}
+	if _, err := h.sessionModel(sessionID); err != nil {
+		return fmt.Errorf("%w: session %s: %v", ErrSessionConfig, sessionID, err)
+	}
+	if _, err := h.SessionMode(sessionID); err != nil {
+		return fmt.Errorf("%w: session %s: %v", ErrSessionConfig, sessionID, err)
+	}
+	return nil
 }
 
 func historyEvent(kind string) bool {

@@ -579,7 +579,7 @@ func (h *tuiHost) declared(ctx context.Context, argv []string) (string, error) {
 	if !declaresCommand(b.app.doc.Spec.Interfaces.CLI.Root, argv) {
 		return "", fmt.Errorf("the agent YAML declares no `%s` subcommand", argv[0])
 	}
-	root, err := harnesscli.New(b.app.doc, dispatchCLI, harnesscli.Options{Version: version, Commit: commit, IsTerminal: false, LookupEnv: os.LookupEnv, ConfigOrigin: b.origin})
+	root, err := harnesscli.New(b.app.doc, b.dispatch, harnesscli.Options{Version: version, Commit: commit, IsTerminal: false, LookupEnv: os.LookupEnv, ConfigOrigin: b.origin})
 	if err != nil {
 		return "", err
 	}
@@ -590,6 +590,33 @@ func (h *tuiHost) declared(ctx context.Context, argv []string) (string, error) {
 	root.SetArgs(append([]string{"--file", b.config}, argv...))
 	err = root.ExecuteContext(ctx)
 	return out.String(), err
+}
+
+// dispatch runs a declared action against the document and application
+// this binding serves — never a recompile of the file on disk, which may
+// have changed since (an /init, an edit) while a /resume restored an older
+// binding. Operations that would reopen the file run only when the file
+// still compiles to the bound configuration.
+func (b tuiBinding) dispatch(ctx context.Context, inv harnesscli.Invocation, streams harnesscli.IO) error {
+	switch inv.Dispatch.Operation {
+	case "version", "schema", "docs", "features":
+		return dispatchCLI(ctx, inv, streams)
+	case "session":
+		return sessionCLI(ctx, b.app, inv, streams.Out)
+	case "input":
+		return runCLIInput(ctx, b.app, inv, streams)
+	}
+	if handled, err := dispatchDocument(b.app.doc, inv, streams); handled {
+		return err
+	}
+	disk, err := loadHarness(inv.ConfigFile)
+	if err != nil {
+		return err
+	}
+	if disk.ConfigDigest != b.app.doc.ConfigDigest {
+		return fmt.Errorf("%s now compiles to %s, not the bound %s; `%s` would run under the new file — select it with /config %s first", inv.ConfigFile, disk.ConfigDigest, b.app.doc.ConfigDigest, strings.Join(inv.Command, " "), inv.ConfigFile)
+	}
+	return dispatchCLI(ctx, inv, streams)
 }
 
 // declaresCommand reports whether argv begins with a declared, dispatchable
