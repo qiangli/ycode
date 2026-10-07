@@ -345,8 +345,15 @@ func TestTUIResumeContinuesLivePause(t *testing.T) {
 	for item := range stream {
 		types = append(types, item.Type)
 	}
-	joined := strings.Join(types, " ")
-	if !strings.Contains(joined, "session.paused session.continued session.turn-committed") || !strings.Contains(joined, "output.emitted") {
+	// Control requests and acknowledgments interleave; the order is what matters.
+	order := []string{"session.paused", "session.continued", "session.turn-committed", "output.emitted"}
+	next := 0
+	for _, typ := range types {
+		if next < len(order) && typ == order[next] {
+			next++
+		}
+	}
+	if next != len(order) {
 		t.Fatalf("the continued turn did not complete: %v", types)
 	}
 	if result, _ := host.Slash(ctx, session, resume, nil); strings.Contains(result.Output, "continued") {

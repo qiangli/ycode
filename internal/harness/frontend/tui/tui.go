@@ -38,7 +38,8 @@ type Waiting struct {
 
 // Status is what the status line shows besides the agent and session.
 type Status struct {
-	Model         string
+	Model         string // the model last measured answering (or requested, mid-turn)
+	Selected      string // the session's explicit model override; "" = route default
 	Mode          string // the session's durable mode: "plan" shows on the line
 	ContextTokens int
 	SessionTokens int     // input + output across the session's turns
@@ -389,9 +390,14 @@ func (m *model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // its subcommand, a command line runs as typed, and free text is a turn.
 func (m *model) submit(line string) tea.Cmd {
 	if m.running {
-		// /resume during a turn releases a live pause; every other line steers.
-		if slash, args, ok := parseSlash(line); ok && slash.Name == "/resume" && len(args) == 0 {
-			return m.slash(slash, args)
+		// /resume during a turn is never steering text: on this session it
+		// releases a live pause; naming another session is refused, since
+		// switching away mid-turn would orphan the running turn.
+		if slash, args, ok := parseSlash(line); ok && slash.Name == "/resume" {
+			if len(args) == 0 || (len(args) == 1 && args[0] == m.session) {
+				return m.slash(slash, args)
+			}
+			return tea.Println(failed.Render("ycode: /resume " + strings.Join(args, " ") + " refused during a turn; stop or finish this turn first"))
 		}
 		if err := m.opts.Host.Steer(m.session, line); err != nil {
 			m.held = append(m.held, line)
@@ -708,6 +714,9 @@ func (m *model) statusLine() string {
 	parts := []string{m.opts.Agent}
 	if m.status.Model != "" {
 		parts = append(parts, m.status.Model)
+	}
+	if m.status.Selected != "" && m.status.Selected != m.status.Model {
+		parts = append(parts, "selected "+m.status.Selected)
 	}
 	parts = append(parts, "session "+id)
 	if m.status.Mode == "plan" {
