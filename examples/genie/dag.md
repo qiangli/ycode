@@ -302,6 +302,8 @@ profile=$(printf '%s' "$model" | tr ':/.' '___')
 GENIE_PROFILE=$profile GENIE_MODEL_ID=$model GENIE_CONTEXT_TOKENS=$context \
   GENIE_REQUEST_TIMEOUT_MS=${GENIE_REQUEST_TIMEOUT_MS:-600000} "$BASHY" dag -f dag.md profile-model > /dev/null
 config=$("$BASHY" cmd/genie/main.go -config "$PWD/dist/profiles/$profile/agent.yaml" -workspace "$caller")
+session_args=()
+if [ -n "${GENIE_YCODE_SESSION:-}" ]; then session_args=(--session "$GENIE_YCODE_SESSION"); fi
 if [ "$mode" = session ]; then
   # A read view over the session log: no model needed.
   args=()
@@ -321,7 +323,7 @@ case $mode in
   web)
     GENIE_WEB_TOKEN=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
     export GENIE_WEB_TOKEN
-    "$BASHY" ycode -f "$config" web
+    "$BASHY" ycode -f "$config" "${session_args[@]}" web
     ;;
   resume)
     # The terminal session runs where the caller is: its commands and the
@@ -329,28 +331,28 @@ case $mode in
     cd "$caller"
     args=()
     while IFS= read -r arg; do args+=("$arg"); done < <(printf '%s' "${BASHY_DAG_ARGS_JSON:-[]}" | jq -r '.[]')
-    "$BASHY" ycode -f "$config" resume "${args[@]}"
+    "$BASHY" ycode -f "$config" "${session_args[@]}" resume "${args[@]}"
     ;;
   repl)
     cd "$caller"
-    "$BASHY" ycode -f "$config" repl
+    "$BASHY" ycode -f "$config" "${session_args[@]}" repl
     ;;
   acp)
     cd "$caller"
-    "$BASHY" ycode -f "$config" acp
+    "$BASHY" ycode -f "$config" "${session_args[@]}" acp
     ;;
   prompt)
     cd "$caller"
-    "$BASHY" ycode -f "$config" prompt "$message"
+    "$BASHY" ycode -f "$config" "${session_args[@]}" prompt -- "$message"
     ;;
   *)
     if [ -n "$message" ]; then
-      "$BASHY" ycode -f "$config" prompt "$message"
+      "$BASHY" ycode -f "$config" "${session_args[@]}" prompt -- "$message"
     else
       # A terminal: the interactive session (bashy's default agent TUI),
       # in the caller's directory.
       cd "$caller"
-      "$BASHY" ycode -f "$config"
+      "$BASHY" ycode -f "$config" "${session_args[@]}"
     fi
     ;;
 esac
