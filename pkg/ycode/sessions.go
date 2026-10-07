@@ -72,6 +72,14 @@ func (h *Harness) Sessions() ([]SessionSummary, error) {
 		}
 		s.Updated = item.Time
 		switch item.Type {
+		case "session.history-replaced":
+			var data struct {
+				MessagesRef string `json:"messages_ref"`
+			}
+			if json.Unmarshal(item.Data, &data) == nil {
+				s.messagesRef = data.MessagesRef
+			}
+			s.Head = item.Sequence
 		case "input.admitted":
 			if !runs[item.SessionID][item.RunID] {
 				runs[item.SessionID][item.RunID] = true

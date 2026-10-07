@@ -343,7 +343,7 @@ func (r *Runtime) appendAssistant(_ context.Context, in pipeline.Invocation) pip
 	if len(blocks) == 0 {
 		return fail(errors.New("messages.append-assistant: provider response has no content"))
 	}
-	assistant := message.Message{Role: message.RoleAssistant, Content: blocks}
+	assistant := message.Message{Role: message.RoleAssistant, Content: blocks, Model: text(response["model"])}
 	if usage, ok := tokenUsage(response["usage"]); ok {
 		assistant.Usage = &usage
 	}

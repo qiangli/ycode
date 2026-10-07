@@ -74,6 +74,11 @@ type Runtime struct {
 }
 
 type Request struct {
+	Aside          bool
+	Boundary       func(context.Context) error
+	EnterStage     func(context.Context) (func(), error)
+	ModelRef       string
+	Plan           bool
 	SessionID      string
 	RunID          string
 	AgentRef       string
@@ -166,7 +171,10 @@ func (r *Runtime) Run(ctx context.Context, request Request) (ioctx.Output, error
 			return ioctx.Output{}, err
 		}
 	}
-	values := context.WithValue(ctx, runKey{}, runContext{sessionID: request.SessionID, runID: request.RunID, agentRef: agentRef, originFrontend: request.OriginFrontend, humanAvailable: request.HumanAvailable})
+	values := context.WithValue(ctx, runKey{}, runContext{sessionID: request.SessionID, runID: request.RunID, agentRef: agentRef, originFrontend: request.OriginFrontend, humanAvailable: request.HumanAvailable, modelRef: request.ModelRef, plan: request.Plan || request.Aside, boundary: request.Boundary, enterStage: request.EnterStage})
+	if request.Plan || request.Aside {
+		return r.plan(values, request, agent)
+	}
 	runner := pipeline.NewRunner(r.registry).WithPipelines(r.doc.Spec.Pipelines).WithHooks(r.doc.Spec.Hooks).WithObserver(r.observer)
 	if err := runner.RunPipeline(values, agent.PipelineRef, state); err != nil {
 		return ioctx.Output{}, err
@@ -191,6 +199,10 @@ func turnRunKey(sessionID, runID string) string { return sessionID + "\x00" + ru
 
 type runKey struct{}
 type runContext struct {
+	boundary                                   func(context.Context) error
+	enterStage                                 func(context.Context) (func(), error)
+	modelRef                                   string
+	plan                                       bool
 	sessionID, runID, agentRef, originFrontend string
 	humanAvailable                             bool
 }
@@ -214,7 +226,16 @@ func (r *Runtime) meta(ctx context.Context, stage string) (ioctx.Meta, error) {
 func fail(err error) pipeline.Outcome { return pipeline.Failure("stage", false, err) }
 
 func (r *Runtime) add(name string, handler pipeline.Handler) error {
-	return r.registry.Register(pipeline.Definition{Name: name, Handler: handler})
+	return r.registry.Register(pipeline.Definition{Name: name, Handler: func(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
+		if run, err := runFrom(ctx); err == nil && run.enterStage != nil {
+			leave, err := run.enterStage(ctx)
+			if err != nil {
+				return fail(err)
+			}
+			defer leave()
+		}
+		return handler(ctx, in)
+	}})
 }
 
 func (r *Runtime) register() error {

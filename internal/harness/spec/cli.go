@@ -480,12 +480,25 @@ func validateCLIDispatch(d *Document, route CLIDispatch, args CLIArgs, flags map
 			return err
 		}
 	case "session":
-		if routed || route.Resource != "" {
+		turnControl := route.Action == "plan" || route.Action == "retry" || route.Action == "btw"
+		if (routed && !turnControl) || route.Resource != "" {
 			return fmt.Errorf("session requires an action and no resource or routing references")
+		}
+		if turnControl {
+			trigger, ok := d.Spec.Triggers[route.TriggerRef]
+			if !ok || route.FrontendRef == "" || route.AgentRef == "" || !stringSliceContains(trigger.FrontendRefs, route.FrontendRef) || trigger.Route.AgentRef != route.AgentRef {
+				return fmt.Errorf("session %s requires frontendRef, triggerRef and agentRef identifying one configured route", route.Action)
+			}
+			if _, ok := d.Spec.Frontends[route.FrontendRef]; !ok {
+				return fmt.Errorf("unknown frontendRef %q", route.FrontendRef)
+			}
+			if _, ok := d.Spec.Agents[route.AgentRef]; !ok {
+				return fmt.Errorf("unknown agentRef %q", route.AgentRef)
+			}
 		}
 		want, ok := sessionActionArgs[route.Action]
 		if !ok {
-			return fmt.Errorf("session.action must be list, show, export, rename, fork, search, new or status")
+			return fmt.Errorf("session.action must be list, show, export, rename, fork, search, new, status, pause, btw, retry, revert, compact, plan, model-use or model-current")
 		}
 		if args.Min != want.Min || args.Max != want.Max {
 			return fmt.Errorf("session action %s requires args {min: %d, max: %d}", route.Action, want.Min, want.Max)
@@ -535,14 +548,23 @@ func validateCLIDispatch(d *Document, route CLIDispatch, args CLIArgs, flags map
 // sessionActionArgs fixes each session action's positional arguments, so a
 // declared command cannot promise arguments the mechanism ignores.
 var sessionActionArgs = map[string]CLIArgs{
-	"list":   {Min: 0, Max: 0},
-	"show":   {Min: 0, Max: 1},  // [SESSION] (default: latest)
-	"export": {Min: 0, Max: 1},  // [SESSION]
-	"fork":   {Min: 0, Max: 1},  // [SESSION]
-	"rename": {Min: 2, Max: -1}, // SESSION TITLE...
-	"search": {Min: 1, Max: -1}, // QUERY...
-	"new":    {Min: 0, Max: 0},  // start a fresh session
-	"status": {Min: 0, Max: 0},  // the terminal's session, else the latest
+	"pause":         {Min: 0, Max: 0},
+	"continue":      {Min: 0, Max: 0},
+	"btw":           {Min: 1, Max: -1},
+	"retry":         {Min: 0, Max: -1},
+	"revert":        {Min: 0, Max: 0},
+	"compact":       {Min: 0, Max: 0},
+	"plan":          {Min: 0, Max: -1},
+	"model-use":     {Min: 1, Max: 1},
+	"model-current": {Min: 0, Max: 0},
+	"list":          {Min: 0, Max: 0},
+	"show":          {Min: 0, Max: 1},  // [SESSION] (default: latest)
+	"export":        {Min: 0, Max: 1},  // [SESSION]
+	"fork":          {Min: 0, Max: 1},  // [SESSION]
+	"rename":        {Min: 2, Max: -1}, // SESSION TITLE...
+	"search":        {Min: 1, Max: -1}, // QUERY...
+	"new":           {Min: 0, Max: 0},  // start a fresh session
+	"status":        {Min: 0, Max: 0},  // the terminal's session, else the latest
 }
 
 func validateCLIInspection(route CLIDispatch, args CLIArgs) error {

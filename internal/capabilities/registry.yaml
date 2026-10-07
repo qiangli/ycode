@@ -24,7 +24,7 @@ capabilities:
   - id: sessions
     summary: durable sessions projected from the canonical event log - list, show, export, search, rename, fork, resume, new, and the status a terminal is on
     audience: [agent, human]
-    cli: [session, resume, new, status]
+    cli: [session, resume, new, status, pause, continue, btw, retry, revert, compact, plan]
     http: []
     config: []
 
@@ -36,7 +36,7 @@ capabilities:
     config: []
 
   - id: resources
-    summary: read-only inspection of models, skills, and memory resources compiled from agent.yaml
+    summary: compiled resource inspection and durable session-scoped selection among declared model routes
     audience: [human]
     cli: [model, skill, memory]
     http: []
