@@ -1221,11 +1221,92 @@ spec:
             stage: lifecycle.transition
             with: {lifecycleRef: turn, from: running, to: completed}
 
+    # Tool-free controls keep context, hooks, loop budgets and delivery in YAML.
+    session-control:
+      exported: true
+      inputs: {request: ycode.input/v1}
+      state:
+        input: {type: ycode.input/v1, writer: single}
+        task: {type: string, writer: single}
+        context: {type: ycode.context/v1, writer: single}
+        history: {type: ycode.session-history/v1, writer: single}
+        loop: {type: ycode.agent-loop/v1, writer: loop-carried}
+        messagesRef: {type: string, writer: single}
+      outputs: {output: ycode.output/v1, messagesRef: string}
+      concurrency: 4
+      failFast: true
+      nodes:
+        - id: running
+          needs: []
+          run:
+            stage: lifecycle.transition
+            with: {lifecycleRef: turn, from: admitted, to: running}
+        - id: input
+          needs: [running]
+          run:
+            stage: input.normalize
+            in: {request: request}
+            out: {input: input, text: task}
+        - id: context
+          needs: [input]
+          run:
+            stage: context.load
+            with: {contextRef: coding}
+            out: {context: context}
+        - id: history
+          needs: [input]
+          run:
+            stage: session.load
+            with: {sessionRef: durable}
+            out: {history: history}
+        - id: assemble
+          needs: [context, history]
+          run:
+            stage: prompt.assemble
+            with: {order: [context, history, input]}
+            in: {input: input, context: context, history: history}
+            out: {state: loop}
+        - id: checkpoint
+          needs: [assemble]
+          run:
+            stage: checkpoint.save
+            with: {sessionRef: durable, reason: before-agent-loop}
+            in: {state: loop}
+            out: {checkpoint: loop.checkpoint}
+        - id: loop
+          needs: [checkpoint]
+          run:
+            repeat:
+              pipelineRef: agent-step
+              maxIterations: 25
+              carry: {state: loop}
+              until: {eq: [{field: loop.finished}, {literal: true}]}
+              out: {state: loop}
+        - id: commit
+          needs: [loop]
+          run:
+            stage: session.commit
+            with: {sessionRef: durable}
+            in: {state: loop}
+            out: {messagesRef: messagesRef}
+        - id: output
+          needs: [commit]
+          run:
+            stage: output.emit
+            with: {sinkRefs: [primary-output]}
+            in: {messages: loop.messages}
+            out: {output: output}
+        - id: completed
+          needs: [output]
+          run:
+            stage: lifecycle.transition
+            with: {lifecycleRef: turn, from: running, to: completed}
+
   agents:
     coder:
       sessionControls:
+        pipelineRef: session-control
         planPrompt: "Produce a plan for the request. Do not execute tools or claim to have changed files."
-        planSinkRefs: [primary-output]
         btwPrompt: "Answer this side question from the available conversation context. Do not execute tools or claim changes."
       displayName: Ycode Coder
       description: General software-engineering agent using one governed Bashy tool.

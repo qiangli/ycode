@@ -22,7 +22,7 @@ func TestHarnessValidateCommand(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if got := output.String(); !strings.Contains(got, "valid: ycode (2 agents, 23 pipelines)") {
+	if got := output.String(); !strings.Contains(got, "valid: ycode (2 agents, 24 pipelines)") {
 		t.Fatalf("output = %q", got)
 	}
 }

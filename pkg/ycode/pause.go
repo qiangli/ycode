@@ -2,8 +2,6 @@ package ycode
 
 import (
 	"context"
-	"errors"
-	"github.com/qiangli/ycode/internal/harness/event"
 	"sync"
 )
 
@@ -13,11 +11,15 @@ type pauseGate struct {
 	reached, resume chan struct{}
 	arrived         bool
 	active          int
+	finished        bool
 }
 
 func (p *pauseGate) request() <-chan struct{} {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.finished {
+		return nil
+	}
 	if p.resume == nil {
 		p.reached = make(chan struct{})
 		p.resume = make(chan struct{})
@@ -85,31 +87,28 @@ func (p *pauseGate) release() bool {
 	return true
 }
 
+// finish closes the pause admission window atomically with the last boundary.
+// A controller cannot receive a successful pause after completion has begun.
+func (p *pauseGate) finish(ctx context.Context) error {
+	for {
+		p.mu.Lock()
+		resume := p.resume
+		if resume == nil {
+			p.finished = true
+			p.mu.Unlock()
+			return ctx.Err()
+		}
+		p.mu.Unlock()
+		select {
+		case <-resume:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
 // Continue releases a cooperative pause. It is distinct from typed HITL
 // Resume and cannot approve a pending tool decision.
 func (h *Harness) Continue(ctx context.Context, sessionID string) error {
-	if err := h.Validate(); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for key, run := range h.active {
-		if sessionOf(key) == sessionID {
-			run.pause.mu.Lock()
-			paused := run.pause.resume != nil
-			run.pause.mu.Unlock()
-			if !paused {
-				continue
-			}
-			if _, err := h.events.Append(event.Draft{SessionID: sessionID, RunID: key[len(sessionID)+1:], StageID: "session.continue", Type: "session.continued", ConfigDigest: h.doc.ConfigDigest, Data: map[string]any{"approval_consumed": false}}); err != nil {
-				return err
-			}
-			run.pause.release()
-			return nil
-		}
-	}
-	return errors.New("continue: no paused live turn")
+	return h.controlLiveRun(ctx, sessionID, "continue")
 }

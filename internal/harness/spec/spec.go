@@ -582,9 +582,9 @@ type Agent struct {
 
 // SessionControls declares the policy for explicit session operations.
 type SessionControls struct {
-	BtwPrompt    string   `yaml:"btwPrompt,omitempty" json:"btwPrompt,omitempty"`
-	PlanPrompt   string   `yaml:"planPrompt,omitempty" json:"planPrompt,omitempty"`
-	PlanSinkRefs []string `yaml:"planSinkRefs,omitempty" json:"planSinkRefs,omitempty"`
+	PipelineRef string `yaml:"pipelineRef,omitempty" json:"pipelineRef,omitempty"`
+	BtwPrompt   string `yaml:"btwPrompt,omitempty" json:"btwPrompt,omitempty"`
+	PlanPrompt  string `yaml:"planPrompt,omitempty" json:"planPrompt,omitempty"`
 }
 type Delegation struct {
 	AgentRef          string            `yaml:"agentRef" json:"agentRef"`

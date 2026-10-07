@@ -161,6 +161,9 @@ func (r *Runtime) assemble(ctx context.Context, in pipeline.Invocation) pipeline
 }
 
 func (r *Runtime) commitSession(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
+	if run, err := runFrom(ctx); err == nil && run.aside {
+		return pipeline.Success(map[string]any{"messagesRef": ""})
+	}
 	state, err := object(in.Inputs["state"])
 	if err != nil {
 		return fail(err)
@@ -210,6 +213,9 @@ func (r *Runtime) drain(ctx context.Context, in pipeline.Invocation) pipeline.Ou
 	run, err := runFrom(ctx)
 	if err != nil {
 		return fail(err)
+	}
+	if run.aside {
+		return pipeline.Success(map[string]any{"items": []QueueItem{}})
 	}
 	items, err := r.queue.Drain(ctx, run.sessionID, text(in.With["queueRef"]), stringList(in.With["classes"]))
 	if err != nil {
@@ -295,7 +301,18 @@ func (r *Runtime) callModel(ctx context.Context, in pipeline.Invocation) pipelin
 	if err != nil {
 		return fail(err)
 	}
-	response, outcome := r.routeProvider(ctx, in.StageID, routeRef, "", messages, in.Inputs["providerSession"])
+	// Apply the selected mode only to conversational inference. Compaction
+	// keeps its own declared summary prompt and route contract.
+	_, system := providerMessages(messages)
+	if run, err := runFrom(ctx); err == nil && run.plan {
+		controls := r.doc.Spec.Agents[run.agentRef].SessionControls
+		instruction := controls.PlanPrompt
+		if run.aside {
+			instruction = controls.BtwPrompt
+		}
+		system += "\n\n" + instruction
+	}
+	response, outcome := r.routeProvider(ctx, in.StageID, routeRef, system, messages, in.Inputs["providerSession"])
 	if outcome.Class == provider.OutcomeCompleted || outcome.Class == provider.OutcomeToolCall || outcome.Class == provider.OutcomeLimit {
 		return pipeline.Success(map[string]any{"response": response, "providerSession": in.Inputs["providerSession"]})
 	}

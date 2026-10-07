@@ -305,13 +305,11 @@ func (h *Harness) run(ctx context.Context, request RunRequest, prepare func() er
 	if h.busySession(request.SessionID) && !request.Aside {
 		return nil, errors.New("session has an active turn")
 	}
-	if prepare != nil {
-		if err := prepare(); err != nil {
-			return nil, err
-		}
-	}
 	if request.AgentRef == "" {
 		request.AgentRef = h.doc.Spec.Triggers[request.TriggerRef].Route.AgentRef
+	}
+	if request.AgentRef != h.doc.Spec.Triggers[request.TriggerRef].Route.AgentRef {
+		return nil, errors.New("agent does not match the authorized trigger")
 	}
 	modelRef, err := h.sessionModel(request.SessionID)
 	if err != nil {
@@ -322,10 +320,19 @@ func (h *Harness) run(ctx context.Context, request RunRequest, prepare func() er
 		return nil, err
 	}
 	request.Plan = request.Plan || mode == "plan"
+	if request.Plan || request.Aside {
+		controls := h.doc.Spec.Agents[request.AgentRef].SessionControls
+		if controls.PipelineRef == "" || controls.PlanPrompt == "" || (request.Aside && controls.BtwPrompt == "") {
+			return nil, errors.New("session control graph is not declared")
+		}
+	}
 	if modelRef != "" {
 		if err := h.validateSessionModel(request.AgentRef, modelRef); err != nil {
 			return nil, err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	start, err := nextSequence(h.eventPath)
 	if err != nil {
@@ -337,6 +344,13 @@ func (h *Harness) run(ctx context.Context, request RunRequest, prepare func() er
 	}
 	if request.AgentRef == "" {
 		request.AgentRef = h.doc.Spec.Triggers[request.TriggerRef].Route.AgentRef
+	}
+	// Admission must succeed before Retry replaces history. Keep the session
+	// lock throughout validation, preparation and the entire replacement turn.
+	if prepare != nil {
+		if err := prepare(); err != nil {
+			return nil, err
+		}
 	}
 	key := runKey(request.SessionID, request.RunID)
 	runCtx, cancel := context.WithCancel(ctx)
@@ -362,8 +376,23 @@ func (h *Harness) run(ctx context.Context, request RunRequest, prepare func() er
 	started = true
 	go func() {
 		defer cancel()
+		controlCtx, stopControls := context.WithCancel(runCtx)
+		controlsDone := make(chan struct{})
+		go func() {
+			defer close(controlsDone)
+			h.monitorControls(controlCtx, request.SessionID, request.RunID, start-1, active)
+		}()
 		var output ioctx.Output
 		output, active.err = h.turn.Run(runCtx, turn.Request{SessionID: request.SessionID, RunID: request.RunID, AgentRef: request.AgentRef, OriginFrontend: request.FrontendRef, HumanAvailable: request.HumanAvailable, Input: input, ModelRef: modelRef, Plan: request.Plan, Aside: request.Aside, Boundary: active.pause.boundary, EnterStage: active.pause.enter})
+		if active.err == nil {
+			active.err = active.pause.finish(runCtx)
+		}
+		stopControls()
+		<-controlsDone
+		_, finishErr := h.events.Append(event.Draft{SessionID: request.SessionID, RunID: request.RunID, StageID: "session.control", Type: "session.run-finished", ConfigDigest: h.doc.ConfigDigest})
+		if active.err == nil {
+			active.err = finishErr
+		}
 		if active.err != nil {
 			_, _ = h.events.Append(event.Draft{SessionID: request.SessionID, RunID: request.RunID, StageID: "turn", Type: "turn.failed", ConfigDigest: h.doc.ConfigDigest, Data: map[string]any{"error": active.err.Error()}})
 		} else {

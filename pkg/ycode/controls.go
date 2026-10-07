@@ -39,35 +39,7 @@ func (h *Harness) busySession(id string) bool {
 // Pause waits for the next graph boundary, leaving the continuation live.
 // It never interrupts a tool execution or consumes a HITL decision.
 func (h *Harness) Pause(ctx context.Context, sessionID string) error {
-	if err := h.Validate(); err != nil {
-		return err
-	}
-	h.mu.Lock()
-	var runID string
-	var active *activeRun
-	for key, run := range h.active {
-		if sessionOf(key) == sessionID && !run.aside {
-			runID = key[len(sessionID)+1:]
-			active = run
-			break
-		}
-	}
-	h.mu.Unlock()
-	if runID == "" {
-		return errors.New("pause: no live turn in this harness")
-	}
-	reached := active.pause.request()
-	select {
-	case <-reached:
-	case <-active.done:
-		active.pause.release()
-		return errors.New("pause: turn finished before a safe boundary")
-	case <-ctx.Done():
-		active.pause.release()
-		return ctx.Err()
-	}
-	_, err := h.events.Append(event.Draft{SessionID: sessionID, RunID: runID, StageID: "session.pause", Type: "session.paused", ConfigDigest: h.doc.ConfigDigest, Data: map[string]any{"tools_undone": false}})
-	return err
+	return h.controlLiveRun(ctx, sessionID, "pause")
 }
 
 // Btw answers a side query without committing it to conversation history.
@@ -92,18 +64,21 @@ func (h *Harness) Plan(ctx context.Context, request RunRequest) (<-chan Event, e
 	} else {
 		mode = "act"
 	}
-	item, err := h.setSessionMode(request.SessionID, mode)
-	if err != nil {
-		return nil, err
-	}
 	if len(request.Body) == 0 {
+		item, err := h.setSessionMode(request.SessionID, mode)
+		if err != nil {
+			return nil, err
+		}
 		out := make(chan Event, 1)
 		out <- item
 		close(out)
 		return out, nil
 	}
 	request.Plan = true
-	return h.Run(ctx, request)
+	return h.run(ctx, request, func() error {
+		_, err := h.events.Append(event.Draft{SessionID: request.SessionID, RunID: request.RunID, StageID: "session.mode", Type: "session.mode-selected", ConfigDigest: h.doc.ConfigDigest, Data: map[string]any{"mode": mode}})
+		return err
+	})
 }
 
 func (h *Harness) SessionMode(sessionID string) (string, error) {
@@ -193,6 +168,7 @@ func (h *Harness) Retry(ctx context.Context, request RunRequest) (<-chan Event, 
 			previous.Body = request.Body
 		}
 		previous.Principal, previous.FrontendRef, previous.TriggerRef = request.Principal, request.FrontendRef, request.TriggerRef
+		previous.AgentRef = h.doc.Spec.Triggers[request.TriggerRef].Route.AgentRef
 		// Human availability is a property of the current caller, not old UI state.
 		previous.HumanAvailable = request.HumanAvailable
 		targetRun := item.RunID
