@@ -19,13 +19,15 @@ import (
 // the authored CLI input route and canonical events, including durable usage.
 // Closing cancels active work and waits for its terminal event; evidence stays.
 type TextAgent struct {
-	app     *harnessApplication
-	route   spec.CLIDispatch
-	session string
-	ctx     context.Context
-	cancel  context.CancelFunc
-	mu      sync.Mutex
-	closed  bool
+	app              *harnessApplication
+	route            spec.CLIDispatch
+	session          string
+	ctx              context.Context
+	cancel           context.CancelFunc
+	mu               sync.Mutex
+	closed           bool
+	settleSession    func(context.Context, string) bool
+	closeApplication func() error
 }
 
 func textAgentDocument(source string, data []byte) (*spec.Document, error) {
@@ -127,9 +129,19 @@ func (a *TextAgent) Close() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if !a.app.harness.Settle(ctx, a.session) {
-		return errors.New("agent session cleanup timed out")
+	settle := a.settleSession
+	if settle == nil {
+		settle = a.app.harness.Settle
 	}
+	settled := settle(ctx, a.session)
 	a.closed = true
-	return a.app.Close()
+	closeApp := a.closeApplication
+	if closeApp == nil {
+		closeApp = a.app.Close
+	}
+	closeErr := closeApp()
+	if !settled {
+		return errors.Join(errors.New("agent session cleanup timed out"), closeErr)
+	}
+	return closeErr
 }

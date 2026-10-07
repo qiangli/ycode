@@ -3,6 +3,7 @@ package ycodecli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -58,17 +59,16 @@ func (p *agentFenceMeter) Send(ctx context.Context, request *ycode.ProviderReque
 		var input, output, cached int64
 		var observed bool
 		var providerErr error
+		var terminalErr error
 		for events != nil || failures != nil {
 			select {
 			case <-ctx.Done():
-				// An interrupted remote request has no proven final usage. Keep
-				// its reservation for the existing reconciliation authority.
-				fail <- ctx.Err()
-				return
+				terminalErr = ctx.Err()
+				goto finished
 			case <-ticker.C:
 				if err := gate.Renew(ctx, id, owner.ID(), 2*time.Minute); err != nil {
-					fail <- err
-					return
+					terminalErr = err
+					goto finished
 				}
 			case err, ok := <-failures:
 				if !ok {
@@ -89,6 +89,7 @@ func (p *agentFenceMeter) Send(ctx context.Context, request *ycode.ProviderReque
 						usage = &item.Message.Usage
 					}
 					if usage != nil {
+						observed = true
 						in := int64(max(usage.InputTokens, usage.PromptTokens))
 						out := int64(max(usage.OutputTokens, usage.CompletionTokens))
 						input = max(input, in)
@@ -97,19 +98,22 @@ func (p *agentFenceMeter) Send(ctx context.Context, request *ycode.ProviderReque
 						if usage.PromptTokensDetails != nil {
 							cached = max(cached, int64(usage.PromptTokensDetails.CachedTokens))
 						}
-						observed = observed || in > 0 || out > 0
 					}
 				}
 				select {
 				case out <- item:
 				case <-ctx.Done():
-					fail <- ctx.Err()
-					return
+					terminalErr = ctx.Err()
+					goto finished
 				}
 			}
 		}
-		if providerErr != nil {
-			fail <- providerErr
+	finished:
+		terminalErr = errors.Join(terminalErr, providerErr)
+		if terminalErr != nil && !observed {
+			// No receipt exists for a failed attempt; reconciliation owns its
+			// reservation until actual provider usage becomes known.
+			fail <- terminalErr
 			return
 		}
 		actual := llmbudget.Actual{InputTokens: input, OutputTokens: output, CachedInputTokens: cached,
@@ -128,7 +132,7 @@ func (p *agentFenceMeter) Send(ctx context.Context, request *ycode.ProviderReque
 		}
 		settleCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := gate.Settle(settleCtx, id, owner.ID(), actual); err != nil {
+		if err := errors.Join(terminalErr, gate.Settle(settleCtx, id, owner.ID(), actual)); err != nil {
 			fail <- err
 		}
 	}()

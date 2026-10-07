@@ -3,6 +3,7 @@ package ycodecli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,6 +130,110 @@ func TestTextAgentBudgetReceiptAndHardCap(t *testing.T) {
 	}
 }
 
+type receiptFailureProvider struct {
+	withReceipt bool
+	cancel      bool
+}
+
+func (*receiptFailureProvider) Kind() api.ProviderKind { return api.ProviderOpenAI }
+func (p *receiptFailureProvider) Send(ctx context.Context, _ *api.Request) (<-chan *api.StreamEvent, <-chan error) {
+	events := make(chan *api.StreamEvent, 1)
+	failures := make(chan error, 1)
+	if p.withReceipt {
+		events <- &api.StreamEvent{Type: "usage", Usage: &api.Usage{InputTokens: 17, OutputTokens: 9}}
+	}
+	close(events)
+	if p.cancel {
+		failures <- context.Canceled
+	} else {
+		failures <- errors.New("provider failed after usage")
+	}
+	close(failures)
+	return events, failures
+}
+
+func TestTextAgentBudgetFailureSettlesObservedUsage(t *testing.T) {
+	for _, tc := range []struct {
+		name, wantError  string
+		receipt, cancel  bool
+		wantTokens       int64
+		wantReservations int
+	}{
+		{"provider error with receipt", "provider failed", true, false, 26, 0},
+		{"cancellation with receipt", "context canceled", true, true, 26, 0},
+		{"unknown usage", "provider failed", false, false, 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "meter.json")
+			defer llmbudget.SetDefault(llmbudget.New(llmbudget.Config{StatePath: path, Models: map[string]llmbudget.Model{"fixture": {Name: "fixture", Kind: "api", Provider: "fixture", CostMicro: 1000}}}))()
+			backend := agentFenceMeterProvider("fixture", &receiptFailureProvider{withReceipt: tc.receipt, cancel: tc.cancel})
+			events, failures := backend.Send(context.Background(), &api.Request{Model: "fixture"})
+			for range events {
+			}
+			var failure error
+			for err := range failures {
+				failure = errors.Join(failure, err)
+			}
+			if failure == nil || !strings.Contains(failure.Error(), tc.wantError) {
+				t.Fatalf("failure=%v", failure)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var state llmbudget.State
+			if err := json.Unmarshal(raw, &state); err != nil {
+				t.Fatal(err)
+			}
+			if got := state.Models["fixture"].DayTokens; got != tc.wantTokens {
+				t.Fatalf("tokens=%d want %d", got, tc.wantTokens)
+			}
+			if got := len(state.Reservations); got != tc.wantReservations {
+				t.Fatalf("reservations=%d want %d", got, tc.wantReservations)
+			}
+		})
+	}
+}
+
+type receiptThenWaitProvider struct{}
+
+func (*receiptThenWaitProvider) Kind() api.ProviderKind { return api.ProviderOpenAI }
+func (*receiptThenWaitProvider) Send(ctx context.Context, _ *api.Request) (<-chan *api.StreamEvent, <-chan error) {
+	events := make(chan *api.StreamEvent, 1)
+	events <- &api.StreamEvent{Type: "usage", Usage: &api.Usage{InputTokens: 17, OutputTokens: 9}}
+	close(events)
+	return events, make(chan error)
+}
+
+func TestTextAgentBudgetCancellationSettlesObservedUsage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meter.json")
+	defer llmbudget.SetDefault(llmbudget.New(llmbudget.Config{StatePath: path, Models: map[string]llmbudget.Model{"fixture": {Name: "fixture", Kind: "api", Provider: "fixture", CostMicro: 1000}}}))()
+	ctx, cancel := context.WithCancel(context.Background())
+	events, failures := agentFenceMeterProvider("fixture", &receiptThenWaitProvider{}).Send(ctx, &api.Request{Model: "fixture"})
+	if _, ok := <-events; !ok {
+		t.Fatal("usage event missing")
+	}
+	cancel()
+	var failure error
+	for err := range failures {
+		failure = errors.Join(failure, err)
+	}
+	if !errors.Is(failure, context.Canceled) {
+		t.Fatalf("failure=%v", failure)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state llmbudget.State
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	if got := state.Models["fixture"].DayTokens; got != 26 || len(state.Reservations) != 0 {
+		t.Fatalf("tokens=%d reservations=%d", got, len(state.Reservations))
+	}
+}
+
 type textAgentBlockingProvider struct {
 	started chan struct{}
 	stopped chan struct{}
@@ -183,6 +288,21 @@ func TestTextAgentCloseCancelsAndSettles(t *testing.T) {
 	}
 	if !a.app.harness.Settle(context.Background(), a.session) {
 		t.Fatal("session not settled")
+	}
+}
+
+func TestTextAgentCloseAttemptsAppCleanupAfterSettleTimeout(t *testing.T) {
+	closeFailure := errors.New("app close failed")
+	_, cancel := context.WithCancel(context.Background())
+	called := 0
+	a := &TextAgent{cancel: cancel, settleSession: func(context.Context, string) bool { return false },
+		closeApplication: func() error { called++; return closeFailure }}
+	err := a.Close()
+	if !errors.Is(err, closeFailure) || !strings.Contains(err.Error(), "cleanup timed out") || called != 1 || !a.closed {
+		t.Fatalf("close err=%v calls=%d closed=%v", err, called, a.closed)
+	}
+	if err := a.Close(); err != nil || called != 1 {
+		t.Fatalf("second close err=%v calls=%d", err, called)
 	}
 }
 
