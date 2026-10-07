@@ -159,8 +159,15 @@ func (r *Runtime) Run(ctx context.Context, request Request) (ioctx.Output, error
 	if !ok {
 		return ioctx.Output{}, fmt.Errorf("turn: undeclared agent %q", agentRef)
 	}
+	pipelineRef := agent.PipelineRef
+	if request.Plan || request.Aside {
+		pipelineRef = agent.SessionControls.PipelineRef
+		if pipelineRef == "" || agent.SessionControls.PlanPrompt == "" || (request.Aside && agent.SessionControls.BtwPrompt == "") {
+			return ioctx.Output{}, errors.New("session control graph is not declared")
+		}
+	}
 	state := pipeline.NewState()
-	entry := r.doc.Spec.Pipelines[agent.PipelineRef]
+	entry := r.doc.Spec.Pipelines[pipelineRef]
 	if err := state.SetTyped("request", entry.Inputs["request"], request.Input); err != nil {
 		return ioctx.Output{}, err
 	}
@@ -171,12 +178,9 @@ func (r *Runtime) Run(ctx context.Context, request Request) (ioctx.Output, error
 			return ioctx.Output{}, err
 		}
 	}
-	values := context.WithValue(ctx, runKey{}, runContext{sessionID: request.SessionID, runID: request.RunID, agentRef: agentRef, originFrontend: request.OriginFrontend, humanAvailable: request.HumanAvailable, modelRef: request.ModelRef, plan: request.Plan || request.Aside, boundary: request.Boundary, enterStage: request.EnterStage})
-	if request.Plan || request.Aside {
-		return r.plan(values, request, agent)
-	}
+	values := context.WithValue(ctx, runKey{}, runContext{sessionID: request.SessionID, runID: request.RunID, agentRef: agentRef, originFrontend: request.OriginFrontend, humanAvailable: request.HumanAvailable, modelRef: request.ModelRef, plan: request.Plan || request.Aside, aside: request.Aside, boundary: request.Boundary, enterStage: request.EnterStage})
 	runner := pipeline.NewRunner(r.registry).WithPipelines(r.doc.Spec.Pipelines).WithHooks(r.doc.Spec.Hooks).WithObserver(r.observer)
-	if err := runner.RunPipeline(values, agent.PipelineRef, state); err != nil {
+	if err := runner.RunPipeline(values, pipelineRef, state); err != nil {
 		return ioctx.Output{}, err
 	}
 	value, _, _, ok := state.Read("output")
@@ -203,6 +207,7 @@ type runContext struct {
 	enterStage                                 func(context.Context) (func(), error)
 	modelRef                                   string
 	plan                                       bool
+	aside                                      bool
 	sessionID, runID, agentRef, originFrontend string
 	humanAvailable                             bool
 }
@@ -227,6 +232,9 @@ func fail(err error) pipeline.Outcome { return pipeline.Failure("stage", false, 
 
 func (r *Runtime) add(name string, handler pipeline.Handler) error {
 	return r.registry.Register(pipeline.Definition{Name: name, Handler: func(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
+		if run, err := runFrom(ctx); err == nil && run.plan && (name == "bashy.run" || name == "bashy.execute" || name == "agent.invoke") {
+			return fail(errors.New("session control graph forbids tool execution and delegation"))
+		}
 		if run, err := runFrom(ctx); err == nil && run.enterStage != nil {
 			leave, err := run.enterStage(ctx)
 			if err != nil {

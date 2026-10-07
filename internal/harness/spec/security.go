@@ -307,16 +307,17 @@ func validateAuthority(d *Document) error {
 	}
 	for name, agent := range d.Spec.Agents {
 		controls := agent.SessionControls
-		if (controls.PlanPrompt == "") != (len(controls.PlanSinkRefs) == 0) {
-			return fmt.Errorf("agent %s planning requires both planPrompt and planSinkRefs", name)
+		if (controls.PlanPrompt != "") != (controls.PipelineRef != "") {
+			return fmt.Errorf("agent %s planning requires a declared pipelineRef", name)
 		}
-		for _, ref := range controls.PlanSinkRefs {
-			if _, ok := d.Spec.Sinks[ref]; !ok {
-				return fmt.Errorf("agent %s planning references unknown sink %q", name, ref)
+		if controls.PipelineRef != "" {
+			p, ok := d.Spec.Pipelines[controls.PipelineRef]
+			if !ok || p.Inputs["request"] != "ycode.input/v1" || p.Outputs["output"] != "ycode.output/v1" {
+				return fmt.Errorf("agent %s session control pipeline requires canonical request and output ports", name)
 			}
 		}
-		if controls.BtwPrompt != "" && len(controls.PlanSinkRefs) == 0 {
-			return fmt.Errorf("agent %s side query requires planSinkRefs", name)
+		if controls.BtwPrompt != "" && controls.PipelineRef == "" {
+			return fmt.Errorf("agent %s side query requires pipelineRef", name)
 		}
 		if err := permissionAtMost("agent "+name, agent.PermissionCeiling, bashy.PermissionCeiling); err != nil {
 			return err
