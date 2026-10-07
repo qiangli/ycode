@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/qiangli/ycode/internal/harness/event"
 )
@@ -52,6 +53,10 @@ func (n *Network) serveUI(writer http.ResponseWriter, request *http.Request) boo
 	if n.config.UI != "chat" || request.Method != http.MethodGet {
 		return false
 	}
+	if request.URL.Path == "/sessions" {
+		n.serveSessions(writer, request)
+		return true
+	}
 	if request.URL.Path != "/" && request.URL.Path != "/index.html" {
 		http.NotFound(writer, request)
 		return true
@@ -64,4 +69,54 @@ func (n *Network) serveUI(writer http.ResponseWriter, request *http.Request) boo
 	header.Set("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
 	_, _ = writer.Write(webChatPage)
 	return true
+}
+
+// SessionInfo is one resumable session as the chat page's selector lists it.
+type SessionInfo struct {
+	ID      string    `json:"id"`
+	Title   string    `json:"title,omitempty"`
+	Updated time.Time `json:"updated"`
+}
+
+// TranscriptEntry is one message of a session shown when the page resumes it.
+type TranscriptEntry struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
+}
+
+// SessionBrowser is the read-only session view a controller may offer: the
+// same event-log sessions every frontend of the agent shares.
+type SessionBrowser interface {
+	Sessions() ([]SessionInfo, error)
+	Transcript(id string) ([]TranscriptEntry, error)
+}
+
+// serveSessions answers the chat page's resume selector: GET /sessions lists
+// sessions, GET /sessions?id=ID returns one transcript. Same bearer as POST.
+func (n *Network) serveSessions(writer http.ResponseWriter, request *http.Request) {
+	if _, err := n.authenticate(request.Context(), request.Header.Get("Authorization")); err != nil {
+		http.Error(writer, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	browser, ok := n.controller.(SessionBrowser)
+	if !ok {
+		http.Error(writer, "sessions are not available", http.StatusNotFound)
+		return
+	}
+	var (
+		body any
+		err  error
+	)
+	if id := request.URL.Query().Get("id"); id != "" {
+		body, err = browser.Transcript(id)
+	} else {
+		body, err = browser.Sessions()
+	}
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusNotFound)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json")
+	writer.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(writer).Encode(body)
 }

@@ -114,6 +114,17 @@ func (s *TUI) Resume(ctx context.Context, request Resume, renderer Renderer) err
 	return s.local.Resume(ctx, request, renderer)
 }
 
+// Stream submits one bounded input and hands the caller the canonical event
+// stream, for a terminal that renders while it keeps reading keys.
+func (s *TUI) Stream(ctx context.Context, body []byte, defaults Defaults) (<-chan event.Event, error) {
+	if err := s.local.validateBody(body); err != nil {
+		return nil, err
+	}
+	input := defaults.input(body)
+	input.FrontendRef = s.local.ref
+	return s.local.controller.Submit(ctx, input)
+}
+
 // EventRenderer is the minimal seam a CLI, REPL, or TUI implements. It keeps
 // event projection outside the controller and makes all local surfaces share
 // exactly the same durable event family.

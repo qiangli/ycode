@@ -85,3 +85,52 @@ func TestNetworkOutputEmittedCarriesDeliveredText(t *testing.T) {
 		t.Fatalf("events: %v / %v", first, last)
 	}
 }
+
+type browsingController struct{ fakeController }
+
+func (browsingController) Sessions() ([]SessionInfo, error) {
+	return []SessionInfo{{ID: "s-1", Title: "first"}}, nil
+}
+func (browsingController) Transcript(id string) ([]TranscriptEntry, error) {
+	if id != "s-1" {
+		return nil, errors.New("no session")
+	}
+	return []TranscriptEntry{{Role: "user", Text: "hi"}, {Role: "assistant", Text: "hello"}}, nil
+}
+
+// The chat page's resume selector reads sessions with the same bearer as POST.
+func TestWebChatSessionsSelectorNeedsTokenAndListsSessions(t *testing.T) {
+	network, err := NewNetwork(webChatDoc("chat"), "web", &browsingController{}, testAuth{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	anonymous := httptest.NewRecorder()
+	network.ServeHTTP(anonymous, httptest.NewRequest(http.MethodGet, "/sessions", nil))
+	if anonymous.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /sessions without token: %d", anonymous.Code)
+	}
+	get := func(target string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		request.Header.Set("Authorization", "Bearer valid")
+		response := httptest.NewRecorder()
+		network.ServeHTTP(response, request)
+		return response
+	}
+	if list := get("/sessions"); list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"id":"s-1"`) {
+		t.Fatalf("list: %d %s", list.Code, list.Body.String())
+	}
+	if one := get("/sessions?id=s-1"); one.Code != http.StatusOK || !strings.Contains(one.Body.String(), `"text":"hello"`) {
+		t.Fatalf("transcript: %d %s", one.Code, one.Body.String())
+	}
+	if missing := get("/sessions?id=nope"); missing.Code != http.StatusNotFound {
+		t.Fatalf("unknown session: %d", missing.Code)
+	}
+	plain, _ := NewNetwork(webChatDoc("chat"), "web", &fakeController{}, testAuth{})
+	request := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	request.Header.Set("Authorization", "Bearer valid")
+	response := httptest.NewRecorder()
+	plain.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("controller without sessions: %d", response.Code)
+	}
+}

@@ -564,9 +564,43 @@ func providerMessages(messages []message.Message) ([]api.Message, string) {
 	return out, strings.Join(systemParts, "\n\n")
 }
 
-func collectProvider(ctx context.Context, stream <-chan provider.Event) (map[string]any, provider.Outcome) {
+// deltaFlushBytes bounds how much provider text a delta event carries before
+// it is journaled: a frontend sees text a line (or this many bytes) at a time
+// without one journal append per provider token.
+const deltaFlushBytes = 80
+
+// deltaSink receives a provider's text as it arrives, coalesced; channel is
+// "text" or "thinking". Nil means no live observer.
+type deltaSink func(channel, text string)
+
+// collectProvider folds a provider stream into one response. Deltas are also
+// forwarded to onDelta (when set) as they arrive, so a frontend can render the
+// answer before the turn completes; the folded response stays canonical.
+func collectProvider(ctx context.Context, stream <-chan provider.Event, onDelta ...deltaSink) (map[string]any, provider.Outcome) {
 	response := map[string]any{"text": "", "thinking": "", "toolCalls": []any{}, "hasToolCalls": false, "finished": false}
 	var outcome provider.Outcome
+	var sink deltaSink
+	if len(onDelta) > 0 {
+		sink = onDelta[0]
+	}
+	pending := map[string]*strings.Builder{"text": {}, "thinking": {}}
+	flush := func(channel string) {
+		if b := pending[channel]; sink != nil && b.Len() > 0 {
+			sink(channel, b.String())
+			b.Reset()
+		}
+	}
+	forward := func(channel, chunk string) {
+		if sink == nil || chunk == "" {
+			return
+		}
+		b := pending[channel]
+		b.WriteString(chunk)
+		if b.Len() >= deltaFlushBytes || strings.Contains(chunk, "\n") {
+			flush(channel)
+		}
+	}
+	defer func() { flush("thinking"); flush("text") }()
 	for {
 		select {
 		case <-ctx.Done():
@@ -578,8 +612,10 @@ func collectProvider(ctx context.Context, stream <-chan provider.Event) (map[str
 			switch value.Type {
 			case provider.EventTextDelta:
 				response["text"] = text(response["text"]) + value.Text
+				forward("text", value.Text)
 			case provider.EventThinkingDelta:
 				response["thinking"] = text(response["thinking"]) + value.Text
+				forward("thinking", value.Text)
 			case provider.EventToolCall:
 				if value.ToolCall != nil {
 					var input any

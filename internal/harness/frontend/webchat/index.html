@@ -33,6 +33,7 @@ textarea { flex: 1; font: inherit; color: var(--fg); background: var(--agent); b
 <header>
   <h1 id="title">Agent chat</h1>
   <span class="session" id="session"></span>
+  <select id="sessions" aria-label="Resume a session"><option value="">Resume…</option></select>
   <button type="button" id="new">New chat</button>
 </header>
 <main id="scroll"><div class="log" id="log"><p class="empty" id="empty">Ask the agent something. Enter sends, Shift+Enter adds a line.</p></div></main>
@@ -145,6 +146,33 @@ textarea { flex: 1; font: inherit; color: var(--fg); background: var(--agent); b
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("form").requestSubmit(); }
   });
+  // The selector lists the agent's sessions — the same ones the terminal UI
+  // resumes — and loads the chosen transcript into the page.
+  const authorized = () => ({ "Authorization": "Bearer " + token });
+  async function listSessions() {
+    const res = await fetch("sessions", { headers: authorized() });
+    if (!res.ok) return;
+    const select = $("sessions");
+    select.replaceChildren(new Option("Resume…", ""));
+    for (const s of (await res.json()) || []) {
+      select.add(new Option((s.title || s.id.slice(0, 8)) + " · " + new Date(s.updated).toLocaleString(), s.id));
+    }
+  }
+  $("sessions").addEventListener("change", async (e) => {
+    const id = e.target.value;
+    if (!id) return;
+    const res = await fetch("sessions?id=" + encodeURIComponent(id), { headers: authorized() });
+    if (!res.ok) { add("error", (await res.text()) || res.statusText); return; }
+    session = id;
+    showSession();
+    log.replaceChildren();
+    for (const m of (await res.json()) || []) if (m.role !== "system") add(m.role === "user" ? "user" : "agent", m.text);
+    e.target.value = "";
+    input.focus();
+  });
+  listSessions();
+  $("form").addEventListener("submit", () => setTimeout(listSessions, 0));
+
   $("new").addEventListener("click", () => {
     session = newSession();
     showSession();

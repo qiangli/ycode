@@ -64,7 +64,12 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 			if attempt.TimeoutMS > 0 {
 				attemptCtx, cancel = context.WithTimeout(ctx, time.Duration(attempt.TimeoutMS)*time.Millisecond)
 			}
-			response, outcome := collectProvider(attemptCtx, adapter.Send(attemptCtx, request))
+			// llm.delta carries the provider's text live; llm.completed's
+			// payload stays the canonical response.
+			delta := func(channel, chunk string) {
+				_ = r.append(ctx, stageID, "llm.delta", map[string]any{"route_ref": routeRef, "model_ref": attempt.ModelRef, "attempt": transportAttempt, "channel": channel, "text": chunk})
+			}
+			response, outcome := collectProvider(attemptCtx, adapter.Send(attemptCtx, request), delta)
 			cancel()
 			// A small thinking model can spend the whole output budget on
 			// reasoning it never shows: that limit is as empty as a completion.
