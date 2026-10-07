@@ -31,8 +31,13 @@ func Load(path string) (*Document, error) {
 
 func Compile(source string, data []byte) (*Document, error) {
 	var node yaml.Node
-	if err := yaml.Unmarshal(data, &node); err != nil {
+	input := yaml.NewDecoder(bytes.NewReader(data))
+	if err := input.Decode(&node); err != nil {
 		return nil, located(source, fmt.Errorf("parse harness: %w", err))
+	}
+	var trailing any
+	if err := input.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, located(source, errors.New("harness must contain exactly one YAML document"))
 	}
 	if err := inspectNode(&node); err != nil {
 		return nil, located(source, err)

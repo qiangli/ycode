@@ -45,6 +45,13 @@ type LoadOption func(*loadOptions) error
 type loadOptions struct {
 	providers map[string]api.Provider
 	tracer    trace.Tracer
+	decorate  func(string, Provider) Provider
+}
+
+// WithHarnessProviderDecorator instruments the transport boundary without
+// changing compiled routes, models, retries, or authorization policy.
+func WithHarnessProviderDecorator(decorate func(string, Provider) Provider) LoadOption {
+	return func(options *loadOptions) error { options.decorate = decorate; return nil }
 }
 
 // WithHarnessProvider overrides one provider resource at the transport seam;
@@ -132,12 +139,53 @@ type turnBoundary struct {
 // Validate strictly compiles an agent.yaml without opening runtime state.
 func Validate(path string) error { _, err := spec.Load(path); return err }
 
+// ValidateSource compiles an in-memory artifact. source names its original
+// location so imports and declared roots retain their normal meaning.
+func ValidateSource(source string, data []byte) error {
+	_, err := spec.Compile(source, data)
+	return err
+}
+
+// LoadSource uses the same compiler and runtime as Load, without materializing
+// a temporary configuration or changing source-relative policy.
+func LoadSource(source string, data []byte, option ...LoadOption) (*Harness, error) {
+	prepared, err := PrepareSource(source, data)
+	if err != nil {
+		return nil, err
+	}
+	return prepared.Load(option...)
+}
+
+// PreparedHarness freezes the strictly compiled document, including imports
+// and resolved sources, until the caller is authorized to open runtime state.
+type PreparedHarness struct{ doc *spec.Document }
+
+func PrepareSource(source string, data []byte) (*PreparedHarness, error) {
+	doc, err := spec.Compile(source, data)
+	if err != nil {
+		return nil, err
+	}
+	return &PreparedHarness{doc: doc}, nil
+}
+
+func (p *PreparedHarness) Digest() string { return p.doc.ConfigDigest }
+func (p *PreparedHarness) Load(options ...LoadOption) (*Harness, error) {
+	if p == nil || p.doc == nil {
+		return nil, errors.New("harness source is not prepared")
+	}
+	return loadDocument(p.doc, options...)
+}
+
 // Load compiles agent.yaml and opens only the mechanisms declared by it.
 func Load(path string, option ...LoadOption) (*Harness, error) {
 	doc, err := spec.Load(path)
 	if err != nil {
 		return nil, err
 	}
+	return loadDocument(doc, option...)
+}
+
+func loadDocument(doc *spec.Document, option ...LoadOption) (*Harness, error) {
 	options := loadOptions{}
 	for _, apply := range option {
 		if apply != nil {
@@ -199,7 +247,7 @@ func Load(path string, option ...LoadOption) (*Harness, error) {
 	if err != nil {
 		return nil, err
 	}
-	providers, err := harnessProviders(doc, options.providers)
+	providers, err := harnessProviders(doc, options.providers, options.decorate)
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +453,7 @@ func harnessControlRoot(doc *spec.Document) (string, error) {
 	return spec.ControlRootPath(doc), nil
 }
 
-func harnessProviders(doc *spec.Document, overrides map[string]api.Provider) (map[string]turn.Provider, error) {
+func harnessProviders(doc *spec.Document, overrides map[string]api.Provider, decorators ...func(string, Provider) Provider) (map[string]turn.Provider, error) {
 	result := make(map[string]turn.Provider, len(doc.Spec.Providers))
 	for ref, configured := range doc.Spec.Providers {
 		backend := overrides[ref]
@@ -423,6 +471,11 @@ func harnessProviders(doc *spec.Document, overrides map[string]api.Provider) (ma
 				return nil, fmt.Errorf("harness provider %q has unsupported protocol %q", ref, configured.Protocol)
 			}
 			backend = api.NewProvider(&api.ProviderConfig{Kind: kind, APIKey: key, BaseURL: configured.Endpoint.Resolved})
+		}
+		for _, decorate := range decorators {
+			if decorate != nil {
+				backend = decorate(ref, backend)
+			}
 		}
 		var adapter *provider.Adapter
 		var err error
