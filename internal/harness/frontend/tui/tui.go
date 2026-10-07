@@ -40,7 +40,9 @@ type Waiting struct {
 type Status struct {
 	Model         string
 	ContextTokens int
-	CostUSD       float64
+	SessionTokens int     // input + output across the session's turns
+	CostUSD       float64 // meaningful only when CostKnown
+	CostKnown     bool    // every turn's model is priced in the catalog
 }
 
 // Entry is one transcript message shown when a session is resumed.
@@ -149,6 +151,8 @@ type model struct {
 	held        []string // lines the queue refused; run after the turn
 	busy        string   // a slash in flight
 	status      Status
+	live        strings.Builder // streamed text of the current model call not yet printed
+	streamed    string          // text already printed from llm.delta this turn
 }
 
 func newModel(ctx context.Context, opts Options) *model {
@@ -507,19 +511,28 @@ func (m *model) render(ev event.Event) tea.Cmd {
 			} `json:"deliveries"`
 		}
 		_ = json.Unmarshal(ev.Data, &body)
-		var cmds []tea.Cmd
+		cmds := []tea.Cmd{m.flushLive()}
+		streamed := strings.TrimSpace(m.streamed)
+		m.streamed = ""
 		for _, delivery := range body.Deliveries {
 			payload, err := m.opts.Host.Payload(delivery.PayloadRef)
 			if err != nil {
 				cmds = append(cmds, tea.Println(failed.Render("ycode: "+err.Error())))
 				continue
 			}
-			if text := strings.TrimRight(string(payload), "\n"); text != "" {
+			if text := strings.TrimRight(string(payload), "\n"); text != "" && strings.TrimSpace(text) != streamed {
 				cmds = append(cmds, tea.Println("● "+text))
 			}
 		}
 		return tea.Sequence(cmds...)
+	case "llm.delta":
+		return m.renderDelta(data)
+	case "llm.completed":
+		// A tool-call round's text was already shown; the final answer
+		// arrives as output.emitted and is not printed twice.
+		return m.flushLive()
 	case "llm.requested":
+		m.streamed = ""
 		if model, _ := data["model_ref"].(string); model != "" {
 			m.status.Model = model
 		}
@@ -554,6 +567,49 @@ func (m *model) render(ev event.Event) tea.Cmd {
 		return tea.Println(failed.Render("✗ " + msg))
 	}
 	return nil
+}
+
+// renderDelta prints streamed answer text a line at a time as the provider
+// produces it; the unfinished line is held until its newline or the call ends.
+func (m *model) renderDelta(data map[string]any) tea.Cmd {
+	if channel, _ := data["channel"].(string); channel != "text" {
+		m.activity = "thinking"
+		return nil
+	}
+	chunk, _ := data["text"].(string)
+	m.activity = "answering"
+	m.live.WriteString(chunk)
+	buffered := m.live.String()
+	cut := strings.LastIndex(buffered, "\n")
+	if cut < 0 {
+		return nil
+	}
+	m.live.Reset()
+	m.live.WriteString(buffered[cut+1:])
+	return m.printStreamed(buffered[:cut])
+}
+
+func (m *model) flushLive() tea.Cmd {
+	rest := m.live.String()
+	m.live.Reset()
+	if rest == "" {
+		return nil
+	}
+	return m.printStreamed(rest)
+}
+
+func (m *model) printStreamed(text string) tea.Cmd {
+	prefix := "  "
+	if m.streamed == "" {
+		prefix = "● "
+	}
+	m.streamed += text + "\n"
+	lines := strings.Split(text, "\n")
+	for i := range lines {
+		lines[i] = prefix + lines[i]
+		prefix = "  "
+	}
+	return tea.Println(strings.Join(lines, "\n"))
 }
 
 func summary(data map[string]any) string {
@@ -593,7 +649,10 @@ func (m *model) statusLine() string {
 	if m.status.ContextTokens > 0 {
 		parts = append(parts, fmt.Sprintf("ctx %s tok", humanTokens(m.status.ContextTokens)))
 	}
-	if m.status.CostUSD > 0 {
+	if m.status.SessionTokens > 0 {
+		parts = append(parts, fmt.Sprintf("Σ %s tok", humanTokens(m.status.SessionTokens)))
+	}
+	if m.status.CostKnown {
 		parts = append(parts, fmt.Sprintf("$%.4f", m.status.CostUSD))
 	}
 	return strings.Join(parts, " · ")

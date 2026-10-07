@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -34,6 +35,10 @@ func (p *tuiProvider) Send(ctx context.Context, request *api.Request) (<-chan *a
 	events := make(chan *api.StreamEvent, 3)
 	errs := make(chan error, 1)
 	raw, _ := json.Marshal(request.Messages)
+	var last []byte
+	if len(request.Messages) > 0 {
+		last, _ = json.Marshal(request.Messages[len(request.Messages)-1])
+	}
 	go func() {
 		defer close(events)
 		defer close(errs)
@@ -42,8 +47,39 @@ func (p *tuiProvider) Send(ctx context.Context, request *api.Request) (<-chan *a
 			errs <- ctx.Err()
 			return
 		}
-		text, _ := json.Marshal(map[string]string{"type": "text_delta", "text": fmt.Sprintf("stub-answer-%d", n)})
 		stop, _ := json.Marshal(map[string]string{"stop_reason": api.StopReasonEndTurn})
+		if bytes.Contains(last, []byte("stream please")) {
+			// The first line must reach the screen while the provider is
+			// still answering: the rest waits for the test to see it.
+			first, _ := json.Marshal(map[string]string{"type": "text_delta", "text": "streamed-line-one\n"})
+			events <- &api.StreamEvent{Type: "content_block_delta", Delta: first}
+			gate := os.Getenv("YCODE_TUI_STREAM_GATE")
+			for gate != "" {
+				if _, err := os.Stat(gate); err == nil {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					errs <- ctx.Err()
+					return
+				case <-time.After(20 * time.Millisecond):
+				}
+			}
+			rest, _ := json.Marshal(map[string]string{"type": "text_delta", "text": "streamed-line-two"})
+			events <- &api.StreamEvent{Type: "content_block_delta", Delta: rest}
+			events <- &api.StreamEvent{Type: "message_delta", Delta: stop}
+			return
+		}
+		if bytes.Contains(last, []byte("approve-me")) {
+			// An exact workspace overwrite matches the compiled destructive
+			// rule: the engine suspends on hitl.waiting until the human answers.
+			toolStop, _ := json.Marshal(map[string]string{"stop_reason": api.StopReasonToolUse})
+			events <- &api.StreamEvent{Type: "content_block_start", ContentBlock: &api.ContentBlock{Type: api.ContentTypeToolUse, ID: "hitl-call", Name: "bashy", Input: json.RawMessage(`{"script":"printf approved-write > hitl.txt"}`)}}
+			events <- &api.StreamEvent{Type: "content_block_stop"}
+			events <- &api.StreamEvent{Type: "message_delta", Delta: toolStop}
+			return
+		}
+		text, _ := json.Marshal(map[string]string{"type": "text_delta", "text": fmt.Sprintf("stub-answer-%d", n)})
 		events <- &api.StreamEvent{Type: "content_block_delta", Delta: text}
 		events <- &api.StreamEvent{Type: "message_delta", Delta: stop}
 		events <- &api.StreamEvent{Type: "message_stop"}
@@ -60,8 +96,21 @@ func TestTUIOverPTY(t *testing.T) {
 		return
 	}
 	home := t.TempDir()
+	workdir := t.TempDir()
+	gate := filepath.Join(t.TempDir(), "release")
 	command := exec.Command(os.Args[0], "-test.run=^TestTUIOverPTY$")
-	command.Env = append(os.Environ(), "YCODE_TUI_PTY_HELPER=1", "HOME="+home, "BASHY_HOME=", "OPENAI_API_KEY=test-secret", "TERM=xterm-256color", SessionFileEnv+"=")
+	command.Dir = workdir
+	// The workspace is the agent file's directory: a copy in a temp dir keeps
+	// the approved write out of the source tree.
+	canonical, err := os.ReadFile(harnessFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(workdir, "agent.yaml")
+	if err := os.WriteFile(fixture, canonical, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command.Env = append(os.Environ(), "YCODE_TUI_PTY_HELPER=1", "YCODE_TUI_FIXTURE="+fixture, "YCODE_TUI_STREAM_GATE="+gate, "HOME="+home, "BASHY_HOME=", "OPENAI_API_KEY=test-secret", "TERM=xterm-256color", SessionFileEnv+"=")
 	terminal, err := pty.StartWithSize(command, &pty.Winsize{Rows: 40, Cols: 140})
 	if err != nil {
 		t.Fatal(err)
@@ -102,6 +151,42 @@ func TestTUIOverPTY(t *testing.T) {
 	typeLine("echo literal-$((40+2))")
 	expect("literal command line", "literal-42")
 
+	// Streaming: the provider's first line is on screen while the turn is
+	// still running; the rest follows once released.
+	typeLine("stream please")
+	expect("streamed first line", "● streamed-line-one")
+	if strings.Contains(screen.text(), "streamed-line-two") {
+		t.Fatalf("second line rendered before the provider sent it:\n%s", screen.text())
+	}
+	if err := os.WriteFile(gate, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expect("streamed rest", "streamed-line-two")
+	if !screen.waitCount("turn ended in", 2, 15*time.Second) {
+		t.Fatalf("the streamed turn never ended:\n%s", screen.text())
+	}
+	if n := strings.Count(screen.text(), "streamed-line-one"); n != 1 {
+		t.Fatalf("streamed answer printed %d times, want once:\n%s", n, screen.text())
+	}
+
+	// In-turn confirm: a destructive write waits for y; nothing is written
+	// before the human approves, and the approved write lands.
+	typeLine("approve-me please")
+	expect("hitl prompt", "approval needed (")
+	expect("hitl status", "approve? y/n")
+	if _, err := os.Stat(filepath.Join(workdir, "hitl.txt")); err == nil {
+		t.Fatalf("destructive write ran before approval")
+	}
+	if _, err := io.WriteString(terminal, "y"); err != nil {
+		t.Fatal(err)
+	}
+	if !screen.waitCount("turn ended in", 3, 15*time.Second) {
+		t.Fatalf("the approved turn never ended:\n%s", screen.text())
+	}
+	if got, err := os.ReadFile(filepath.Join(workdir, "hitl.txt")); err != nil || string(got) != "approved-write" {
+		t.Fatalf("approved write = %q, %v; screen:\n%s", got, err, screen.text())
+	}
+
 	typeLine("/save first work")
 	expect("/save with a title", "saved: session")
 	expect("/save renamed through the subcommand", "first work")
@@ -135,7 +220,7 @@ func TestTUIOverPTY(t *testing.T) {
 	}
 	expect("ESC", "interrupted; running what was typed during it")
 	expect("follow-up turn", "› steer me")
-	if !screen.waitCount("turn ended in", 2, 15*time.Second) {
+	if !screen.waitCount("turn ended in", 4, 15*time.Second) {
 		t.Fatalf("the follow-up turn never ended:\n%s", screen.text())
 	}
 
@@ -156,7 +241,8 @@ func TestTUIOverPTY(t *testing.T) {
 
 func tuiPTYHelper(t *testing.T) {
 	provider := &tuiProvider{}
-	app, err := openHarnessApplication(harnessFixture(t), public.WithHarnessProvider("openai", provider))
+	fixture := os.Getenv("YCODE_TUI_FIXTURE")
+	app, err := openHarnessApplication(fixture, public.WithHarnessProvider("openai", provider))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +256,7 @@ func tuiPTYHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root.SetArgs([]string{"--file", harnessFixture(t)})
+	root.SetArgs([]string{"--file", fixture})
 	err = root.ExecuteContext(context.Background())
 	status := "ok"
 	if err != nil {

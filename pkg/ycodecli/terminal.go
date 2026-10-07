@@ -1,7 +1,6 @@
 package ycodecli
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -14,17 +13,6 @@ import (
 // continues the pointed session, `new` and `resume` move the pointer, and
 // `status` reports it. Unset, every command picks its session as before.
 const SessionFileEnv = "BASHY_YCODE_SESSION_FILE"
-
-// TerminalSession is what a terminal front end needs to host a session.
-type TerminalSession struct {
-	Agent   string // the document's metadata name
-	Config  string // absolute path of the agent YAML
-	Session string // the session the terminal starts on
-}
-
-// TerminalUI, when set, hosts the `tui` frontend on a terminal; bashy installs
-// its default TUI here. Nil keeps the line reader.
-var TerminalUI func(ctx context.Context, s TerminalSession) error
 
 // pointedSession returns the session the enclosing terminal is on, or "" when
 // no terminal front end exported a pointer.

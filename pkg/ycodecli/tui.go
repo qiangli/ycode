@@ -14,11 +14,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/qiangli/yoke/pkg/llmbudget"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	harnesscli "github.com/qiangli/ycode/internal/harness/cli"
@@ -35,6 +37,10 @@ import (
 // ladder's rung 0/1); bashy installs itself here so a line runs exactly as
 // at its own prompt. Nil runs the line on the in-process shell interpreter.
 var LiteralShell func(line string) *exec.Cmd
+
+// LiteralCommands, when set, names the commands LiteralShell serves without
+// PATH (bashy's in-process userland), so the ladder treats them as literal.
+var LiteralCommands func() []string
 
 func runTerminalTUI(ctx context.Context, app *harnessApplication, inv harnesscli.Invocation, session, principal string) error {
 	view, err := frontend.NewTUI(app.doc, inv.FrontendRef, cliController{app, inv.Dispatch.AgentRef})
@@ -113,24 +119,65 @@ func (h *tuiHost) Status(session string) tui.Status {
 	if err != nil {
 		return status
 	}
+	// Cost comes only from the llmbudget catalog: a session with any turn on
+	// an unpriced model shows its tokens and no cost, never a guessed price.
+	priced, latest := true, true
 	for i := len(messages) - 1; i >= 0; i-- {
-		if usage := messages[i].Usage; usage != nil {
+		usage := messages[i].Usage
+		if usage == nil {
+			continue
+		}
+		if latest {
 			status.ContextTokens = usage.InputTokens + usage.CacheReadInput + usage.CacheCreationInput + usage.OutputTokens
 			if messages[i].Model != "" {
 				status.Model = messages[i].Model
 			}
-			break
+			latest = false
 		}
+		status.SessionTokens += usage.InputTokens + usage.OutputTokens
+		cost, known := llmbudget.EstimatedCostUSD(messages[i].Model, int64(usage.InputTokens+usage.OutputTokens))
+		priced = priced && known && messages[i].Model != ""
+		status.CostUSD += cost
+	}
+	status.CostKnown = priced && status.SessionTokens > 0
+	if !status.CostKnown {
+		status.CostUSD = 0
 	}
 	return status
 }
 
 func (h *tuiHost) Transcript(session string) ([]tui.Entry, error) {
-	messages, err := h.app.harness.Transcript(session)
+	entries, err := h.app.Transcript(session)
 	if err != nil {
 		return nil, err
 	}
-	var entries []tui.Entry
+	out := make([]tui.Entry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, tui.Entry{Role: e.Role, Text: e.Text})
+	}
+	return out, nil
+}
+
+// Sessions and Transcript make the application a frontend.SessionBrowser:
+// the web chat's resume selector reads the very sessions the TUI resumes.
+func (a *harnessApplication) Sessions() ([]frontend.SessionInfo, error) {
+	sessions, err := a.harness.Sessions()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]frontend.SessionInfo, 0, len(sessions))
+	for i := len(sessions) - 1; i >= 0; i-- {
+		out = append(out, frontend.SessionInfo{ID: sessions[i].ID, Title: sessions[i].Title, Updated: sessions[i].Updated})
+	}
+	return out, nil
+}
+
+func (a *harnessApplication) Transcript(session string) ([]frontend.TranscriptEntry, error) {
+	messages, err := a.harness.Transcript(session)
+	if err != nil {
+		return nil, err
+	}
+	var entries []frontend.TranscriptEntry
 	for _, m := range messages {
 		var text []string
 		for _, block := range m.Content {
@@ -139,7 +186,7 @@ func (h *tuiHost) Transcript(session string) ([]tui.Entry, error) {
 			}
 		}
 		if len(text) > 0 {
-			entries = append(entries, tui.Entry{Role: string(m.Role), Text: strings.Join(text, "\n")})
+			entries = append(entries, frontend.TranscriptEntry{Role: string(m.Role), Text: strings.Join(text, "\n")})
 		}
 	}
 	return entries, nil
@@ -269,11 +316,17 @@ func (literalShell) Known(name string) bool {
 		info, err := os.Stat(name)
 		return err == nil && !info.IsDir()
 	}
+	if LiteralCommands != nil && slices.Contains(LiteralCommands(), name) {
+		return true
+	}
 	return onPathExact(name)
 }
 
 func (literalShell) Names() []string {
 	names := interp.BuiltinNames()
+	if LiteralCommands != nil {
+		names = append(names, LiteralCommands()...)
+	}
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		entries, err := os.ReadDir(dir)
 		if err != nil {

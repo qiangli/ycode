@@ -90,6 +90,17 @@ compiled document. There is no `config set/unset`, `model use`, wildcard tool
 selection, mutable settings merge, `yc` built-in registry, or permission-bypass
 flag. `ycode --help` is authoritative.
 
+The terminal frontend (`internal/harness/frontend/tui`, hosted by
+`pkg/ycodecli/tui.go`) is a projection like any other: it renders canonical
+events (`llm.delta` streams provider text as it arrives; `output.emitted`
+stays the answer of record), answers `hitl.waiting` with a typed
+`Harness.Resume`, and maps its bare slash set onto declared subcommands only —
+a slash with no declared subcommand is refused, never emulated. Cost is shown
+only when the llmbudget catalog prices every turn's model. Bashy hosts it via
+`ycodecli.LiteralShell` (a literal line runs as `bashy -c LINE`, unchanged) and
+`ycodecli.LiteralCommands`. The HTTP chat page's resume selector reads the same
+event-log sessions through `GET /sessions` under the frontend's bearer.
+
 ## Build and verification
 
 Go 1.26+ is required. Inside the umbrella, sibling modules already exist.

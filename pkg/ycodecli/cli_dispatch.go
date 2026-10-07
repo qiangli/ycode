@@ -348,13 +348,6 @@ func runCLIInput(ctx context.Context, app *harnessApplication, inv harnesscli.In
 			_, err := fmt.Fprintf(streams.Out, "session %s\n", defaults.SessionID)
 			return err
 		}
-		if TerminalUI != nil && app.doc.Spec.Frontends[ref].Kind == "tui" && stdinIsTerminal() {
-			config, err := absSource(app.doc.Source)
-			if err != nil {
-				return err
-			}
-			return TerminalUI(ctx, TerminalSession{Agent: app.doc.Metadata.Name, Config: config, Session: defaults.SessionID})
-		}
 		if app.doc.Spec.Frontends[ref].Kind == "tui" && interactiveCapable() {
 			return runTerminalTUI(ctx, app, inv, defaults.SessionID, defaults.Principal)
 		}
