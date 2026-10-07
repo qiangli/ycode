@@ -1,6 +1,6 @@
 # ycode
 
-ycode is a YAML-native agent harness for software work. One strict
+ycode is the YAML-native agent engine that bashy links, and `bashy ycode` is the TUI and web chat UI over bashy's genie backend; it is not a separately installed product. As an engine, ycode is a YAML-native agent harness for software work. One strict
 `agent.yaml` declares the agents, models, provider routes, prompt context,
 memory, typed stage graph, frontends, policy, observability, and runtime
 limits. The same compiled graph drives the CLI, network adapters, ACP, and the
