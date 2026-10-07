@@ -90,11 +90,17 @@ type Harness struct {
 }
 
 type activeRun struct {
-	done chan struct{}
-	err  error
+	aside  bool
+	pause  pauseGate
+	cancel context.CancelFunc
+	done   chan struct{}
+	err    error
 }
 
 type RunRequest struct {
+	Aside bool
+	// Plan selects the agent's declared tool-free planning behavior.
+	Plan           bool
 	SessionID      string
 	RunID          string
 	TriggerRef     string
@@ -129,6 +135,7 @@ type ForkRequest struct {
 }
 
 type turnBoundary struct {
+	ModelRef     string       `json:"model_ref,omitempty"`
 	ConfigDigest string       `json:"config_digest"`
 	SessionID    string       `json:"session_id"`
 	RunID        string       `json:"run_id"`
@@ -251,7 +258,7 @@ func loadDocument(doc *spec.Document, option ...LoadOption) (*Harness, error) {
 	if err != nil {
 		return nil, err
 	}
-	queue := newSessionQueue(doc, events, payloads)
+	queue := newSessionQueue(doc, events, payloads, eventPath)
 	runtime, err := turn.New(turn.Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashyExecutor, Providers: providers, Queue: queue, Observer: observe.New(doc.Spec.Observability, options.tracer), EventPath: eventPath, Tokens: harnessTokens{}})
 	if err != nil {
 		return nil, err
@@ -268,11 +275,64 @@ func (h *Harness) Validate() error {
 }
 
 func (h *Harness) Run(ctx context.Context, request RunRequest) (<-chan Event, error) {
+	return h.run(ctx, request, nil)
+}
+
+func (h *Harness) run(ctx context.Context, request RunRequest, prepare func() error) (<-chan Event, error) {
 	if err := h.Validate(); err != nil {
 		return nil, err
 	}
 	if request.SessionID == "" || request.RunID == "" || request.TriggerRef == "" || request.FrontendRef == "" || request.Principal == "" || request.IdempotencyKey == "" {
 		return nil, errors.New("harness run requires session, run, trigger, frontend, principal and idempotency key")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var releaseLock = func() {}
+	var err error
+	if !request.Aside {
+		lock, err := h.lockSession(request.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		releaseLock = func() { _ = lock.Release() }
+	}
+	started := false
+	defer func() {
+		if !started {
+			releaseLock()
+		}
+	}()
+	if h.busySession(request.SessionID) && !request.Aside {
+		return nil, errors.New("session has an active turn")
+	}
+	if request.AgentRef == "" {
+		request.AgentRef = h.doc.Spec.Triggers[request.TriggerRef].Route.AgentRef
+	}
+	if request.AgentRef != h.doc.Spec.Triggers[request.TriggerRef].Route.AgentRef {
+		return nil, errors.New("agent does not match the authorized trigger")
+	}
+	modelRef, err := h.sessionModel(request.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	mode, err := h.SessionMode(request.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	request.Plan = request.Plan || mode == "plan"
+	if request.Plan || request.Aside {
+		controls := h.doc.Spec.Agents[request.AgentRef].SessionControls
+		if controls.PipelineRef == "" || controls.PlanPrompt == "" || (request.Aside && controls.BtwPrompt == "") {
+			return nil, errors.New("session control graph is not declared")
+		}
+	}
+	if modelRef != "" {
+		if err := h.validateSessionModel(request.AgentRef, modelRef); err != nil {
+			return nil, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	start, err := nextSequence(h.eventPath)
 	if err != nil {
@@ -285,29 +345,66 @@ func (h *Harness) Run(ctx context.Context, request RunRequest) (<-chan Event, er
 	if request.AgentRef == "" {
 		request.AgentRef = h.doc.Spec.Triggers[request.TriggerRef].Route.AgentRef
 	}
+	// Admission must succeed before Retry replaces history. Keep the session
+	// lock throughout validation, preparation and the entire replacement turn.
+	if prepare != nil {
+		if err := prepare(); err != nil {
+			return nil, err
+		}
+	}
 	key := runKey(request.SessionID, request.RunID)
-	active := &activeRun{done: make(chan struct{})}
-	h.mu.Lock()
+	runCtx, cancel := context.WithCancel(ctx)
+	active := &activeRun{done: make(chan struct{}), cancel: cancel, aside: request.Aside}
 	if _, exists := h.active[key]; exists {
-		h.mu.Unlock()
+		cancel()
 		return nil, errors.New("harness run is already active")
 	}
+	requestRef, err := h.payloads.Put(mustJSON(request))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	requestType := "session.requested"
+	if request.Aside {
+		requestType = "session.aside-requested"
+	}
+	if _, err = h.events.Append(event.Draft{SessionID: request.SessionID, RunID: request.RunID, StageID: "session.request", Type: requestType, ConfigDigest: h.doc.ConfigDigest, Data: map[string]any{"request_ref": requestRef}}); err != nil {
+		cancel()
+		return nil, err
+	}
 	h.active[key] = active
-	h.mu.Unlock()
+	started = true
 	go func() {
+		defer cancel()
+		controlCtx, stopControls := context.WithCancel(runCtx)
+		controlsDone := make(chan struct{})
+		go func() {
+			defer close(controlsDone)
+			h.monitorControls(controlCtx, request.SessionID, request.RunID, start-1, active)
+		}()
 		var output ioctx.Output
-		output, active.err = h.turn.Run(ctx, turn.Request{SessionID: request.SessionID, RunID: request.RunID, AgentRef: request.AgentRef, OriginFrontend: request.FrontendRef, HumanAvailable: request.HumanAvailable, Input: input})
+		output, active.err = h.turn.Run(runCtx, turn.Request{SessionID: request.SessionID, RunID: request.RunID, AgentRef: request.AgentRef, OriginFrontend: request.FrontendRef, HumanAvailable: request.HumanAvailable, Input: input, ModelRef: modelRef, Plan: request.Plan, Aside: request.Aside, Boundary: active.pause.boundary, EnterStage: active.pause.enter})
+		if active.err == nil {
+			active.err = active.pause.finish(runCtx)
+		}
+		stopControls()
+		<-controlsDone
+		_, finishErr := h.events.Append(event.Draft{SessionID: request.SessionID, RunID: request.RunID, StageID: "session.control", Type: "session.run-finished", ConfigDigest: h.doc.ConfigDigest})
+		if active.err == nil {
+			active.err = finishErr
+		}
 		if active.err != nil {
 			_, _ = h.events.Append(event.Draft{SessionID: request.SessionID, RunID: request.RunID, StageID: "turn", Type: "turn.failed", ConfigDigest: h.doc.ConfigDigest, Data: map[string]any{"error": active.err.Error()}})
 		} else {
-			_, active.err = h.events.SaveCheckpoint(h.boundaryPath(request.SessionID, request.RunID), request.SessionID, request.RunID, turnBoundary{ConfigDigest: h.doc.ConfigDigest, SessionID: request.SessionID, RunID: request.RunID, MessagesRef: output.MessagesRef, Output: output})
+			_, active.err = h.events.SaveCheckpoint(h.boundaryPath(request.SessionID, request.RunID), request.SessionID, request.RunID, turnBoundary{ConfigDigest: h.doc.ConfigDigest, SessionID: request.SessionID, RunID: request.RunID, MessagesRef: output.MessagesRef, Output: output, ModelRef: modelRef})
 			if active.err != nil {
 				_, _ = h.events.Append(event.Draft{SessionID: request.SessionID, RunID: request.RunID, StageID: "turn", Type: "turn.failed", ConfigDigest: h.doc.ConfigDigest, Data: map[string]any{"error": active.err.Error()}})
 			}
 		}
-		close(active.done)
 		h.mu.Lock()
+		releaseLock()
 		delete(h.active, key)
+		close(active.done)
 		h.mu.Unlock()
 	}()
 	return h.stream(ctx, request.SessionID, request.RunID, start, active), nil
@@ -358,7 +455,7 @@ func (h *Harness) Fork(ctx context.Context, request ForkRequest) (<-chan Event, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	item, err := h.events.Append(event.Draft{SessionID: request.SessionID, RunID: request.RunID, StageID: "session.fork", Type: "session.forked", ConfigDigest: h.doc.ConfigDigest, CausationID: boundaryEvent.Digest, CorrelationID: request.ParentSessionID, Data: map[string]any{"parent_session_id": request.ParentSessionID, "parent_run_id": boundaryEvent.RunID, "at_sequence": request.AtSequence, "parent_event_digest": boundaryEvent.Digest, "parent_messages_ref": state.MessagesRef, "parent_checkpoint": json.RawMessage(parent.State)}})
+	item, err := h.events.Append(event.Draft{SessionID: request.SessionID, RunID: request.RunID, StageID: "session.fork", Type: "session.forked", ConfigDigest: h.doc.ConfigDigest, CausationID: boundaryEvent.Digest, CorrelationID: request.ParentSessionID, Data: map[string]any{"parent_session_id": request.ParentSessionID, "parent_run_id": boundaryEvent.RunID, "at_sequence": request.AtSequence, "parent_event_digest": boundaryEvent.Digest, "parent_messages_ref": state.MessagesRef, "parent_checkpoint": json.RawMessage(parent.State), "model_ref": state.ModelRef}})
 	if err != nil {
 		return nil, err
 	}

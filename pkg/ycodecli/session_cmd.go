@@ -36,6 +36,8 @@ func sessionCLI(ctx context.Context, app *harnessApplication, inv harnesscli.Inv
 		return sessions[0], nil
 	}
 	switch inv.Dispatch.Action {
+	case "pause", "continue", "btw", "retry", "revert", "compact", "plan", "model-use", "model-current":
+		return sessionControlCLI(ctx, app, inv, out)
 	case "new":
 		// Nothing is written to the log until the first turn commits; the
 		// old session stays resumable.
@@ -178,6 +180,10 @@ func sessionStatus(app *harnessApplication, asJSON bool, out io.Writer) error {
 		}
 	}
 	var summary *public.SessionSummary
+	if ref, err := h.SessionModel(id); err == nil {
+		model = app.doc.Spec.Models[ref].ID
+		status["model"] = model
+	}
 	if id != "" {
 		status["session"] = id
 		if s, err := h.Session(id); err == nil {

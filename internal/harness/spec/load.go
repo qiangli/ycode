@@ -263,6 +263,7 @@ func validateTypedReferences(d *Document) error {
 	register("providerRef", "spec.providers", d.Spec.Providers)
 	register("modelRef", "spec.models", d.Spec.Models)
 	register("modelRouteRef", "spec.routes", d.Spec.Routes)
+	register("planSinkRef", "spec.sinks", d.Spec.Sinks)
 	register("routeRef", "spec.routes", d.Spec.Routes)
 	register("pipelineRef", "spec.pipelines", d.Spec.Pipelines)
 	register("defaultPipelineRef", "spec.pipelines", d.Spec.Pipelines)

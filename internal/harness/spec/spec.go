@@ -559,24 +559,32 @@ type ForEach struct {
 }
 
 type Agent struct {
-	DisplayName       string         `yaml:"displayName" json:"displayName"`
-	Description       string         `yaml:"description" json:"description"`
-	InputSchema       map[string]any `yaml:"inputSchema" json:"inputSchema"`
-	OutputSchema      map[string]any `yaml:"outputSchema" json:"outputSchema"`
-	ContextRef        string         `yaml:"contextRef" json:"contextRef"`
-	ModelRouteRef     string         `yaml:"modelRouteRef" json:"modelRouteRef"`
-	PipelineRef       string         `yaml:"pipelineRef" json:"pipelineRef"`
-	MemoryRef         string         `yaml:"memoryRef" json:"memoryRef"`
-	QueueRef          string         `yaml:"queueRef" json:"queueRef"`
-	SessionRef        string         `yaml:"sessionRef" json:"sessionRef"`
-	PolicyRef         string         `yaml:"policyRef" json:"policyRef"`
-	PlacementRef      string         `yaml:"placementRef" json:"placementRef"`
-	LifecycleRef      string         `yaml:"lifecycleRef" json:"lifecycleRef"`
-	HookRefs          []string       `yaml:"hookRefs" json:"hookRefs"`
-	PermissionCeiling string         `yaml:"permissionCeiling" json:"permissionCeiling"`
-	EffectsCeiling    []string       `yaml:"effectsCeiling" json:"effectsCeiling"`
-	Delegations       []Delegation   `yaml:"delegations" json:"delegations"`
-	Presentation      Presentation   `yaml:"presentation" json:"presentation"`
+	SessionControls   SessionControls `yaml:"sessionControls,omitempty" json:"sessionControls,omitempty"`
+	DisplayName       string          `yaml:"displayName" json:"displayName"`
+	Description       string          `yaml:"description" json:"description"`
+	InputSchema       map[string]any  `yaml:"inputSchema" json:"inputSchema"`
+	OutputSchema      map[string]any  `yaml:"outputSchema" json:"outputSchema"`
+	ContextRef        string          `yaml:"contextRef" json:"contextRef"`
+	ModelRouteRef     string          `yaml:"modelRouteRef" json:"modelRouteRef"`
+	PipelineRef       string          `yaml:"pipelineRef" json:"pipelineRef"`
+	MemoryRef         string          `yaml:"memoryRef" json:"memoryRef"`
+	QueueRef          string          `yaml:"queueRef" json:"queueRef"`
+	SessionRef        string          `yaml:"sessionRef" json:"sessionRef"`
+	PolicyRef         string          `yaml:"policyRef" json:"policyRef"`
+	PlacementRef      string          `yaml:"placementRef" json:"placementRef"`
+	LifecycleRef      string          `yaml:"lifecycleRef" json:"lifecycleRef"`
+	HookRefs          []string        `yaml:"hookRefs" json:"hookRefs"`
+	PermissionCeiling string          `yaml:"permissionCeiling" json:"permissionCeiling"`
+	EffectsCeiling    []string        `yaml:"effectsCeiling" json:"effectsCeiling"`
+	Delegations       []Delegation    `yaml:"delegations" json:"delegations"`
+	Presentation      Presentation    `yaml:"presentation" json:"presentation"`
+}
+
+// SessionControls declares the policy for explicit session operations.
+type SessionControls struct {
+	PipelineRef string `yaml:"pipelineRef,omitempty" json:"pipelineRef,omitempty"`
+	BtwPrompt   string `yaml:"btwPrompt,omitempty" json:"btwPrompt,omitempty"`
+	PlanPrompt  string `yaml:"planPrompt,omitempty" json:"planPrompt,omitempty"`
 }
 type Delegation struct {
 	AgentRef          string            `yaml:"agentRef" json:"agentRef"`

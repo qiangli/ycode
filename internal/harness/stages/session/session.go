@@ -174,7 +174,7 @@ func (e *Engine) historyRef(sessionID string, events []event.Event) (string, str
 			continue
 		}
 		switch item.Type {
-		case "session.turn-committed":
+		case "session.turn-committed", "session.history-replaced":
 			var data struct {
 				MessagesRef string `json:"messages_ref"`
 			}

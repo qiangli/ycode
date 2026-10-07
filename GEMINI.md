@@ -85,10 +85,16 @@ ycode acp --config agent.yaml
 ycode shell --file agent.yaml -c 'pwd'   # governed Bashy boundary
 ```
 
-`config`, `model`, `tools`, `memory` and `skill` are read-only views of the
-compiled document. There is no `config set/unset`, `model use`, wildcard tool
-selection, mutable settings merge, `yc` built-in registry, or permission-bypass
-flag. `ycode --help` is authoritative.
+`config`, `tools`, `memory` and `skill` are read-only compiled views.
+Sprint 387 A7 amends the model policy: declared `model use MODEL_REF`
+selects a model resource from the agent's declared route for one session.
+The selection is durable session state; it never changes compiled YAML.
+Declared pause, btw, retry, revert, compact and plan commands use the same
+public engine APIs as frontends. Plan is tool-free; revert reports filesystem
+restoration as unsupported when the execution boundary has no undo capability.
+There is no `config set/unset`, wildcard tool selection, mutable settings
+merge, `yc` built-in registry, or permission-bypass flag. `ycode --help`
+is authoritative.
 
 The terminal frontend (`internal/harness/frontend/tui`, hosted by
 `pkg/ycodecli/tui.go`) is a projection like any other: it renders canonical

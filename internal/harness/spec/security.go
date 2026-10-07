@@ -178,7 +178,7 @@ func resourceKindForRef(name string) string {
 		return "frontends"
 	case "trigger":
 		return "triggers"
-	case "sink":
+	case "sink", "planSink":
 		return "sinks"
 	default:
 		return ""
@@ -306,6 +306,19 @@ func validateAuthority(d *Document) error {
 		return err
 	}
 	for name, agent := range d.Spec.Agents {
+		controls := agent.SessionControls
+		if (controls.PlanPrompt != "") != (controls.PipelineRef != "") {
+			return fmt.Errorf("agent %s planning requires a declared pipelineRef", name)
+		}
+		if controls.PipelineRef != "" {
+			p, ok := d.Spec.Pipelines[controls.PipelineRef]
+			if !ok || p.Inputs["request"] != "ycode.input/v1" || p.Outputs["output"] != "ycode.output/v1" {
+				return fmt.Errorf("agent %s session control pipeline requires canonical request and output ports", name)
+			}
+		}
+		if controls.BtwPrompt != "" && controls.PipelineRef == "" {
+			return fmt.Errorf("agent %s side query requires pipelineRef", name)
+		}
 		if err := permissionAtMost("agent "+name, agent.PermissionCeiling, bashy.PermissionCeiling); err != nil {
 			return err
 		}
