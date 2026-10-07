@@ -12,20 +12,15 @@ There is no second hidden tool registry or settings layer.
 
 ## Install
 
-Download the archive for your platform from the
-[latest release](https://github.com/qiangli/ycode/releases/latest):
+ycode is not distributed as a standalone download. Install bashy and put it
+on your user `PATH`; the engine and `bashy ycode` come with it:
 
-- `ycode-linux-amd64.tar.gz`
-- `ycode-linux-arm64.tar.gz`
-- `ycode-darwin-amd64.tar.gz`
-- `ycode-darwin-arm64.tar.gz`
-- `ycode-windows-amd64.tar.gz`
+```bash
+bashy version
+bashy ycode
+```
 
-Verify the selected archive against the release's `SHA256SUMS` before
-extracting it. Unix archives contain `ycode`; the Windows archive contains
-`ycode.exe`.
-
-To build from source:
+To build the engine from source for development:
 
 ```bash
 git clone https://github.com/qiangli/ycode.git
@@ -34,11 +29,16 @@ cd ycode
 bashy dag build
 ```
 
-This requires Go 1.26 or newer and a current Bashy executable.
+This requires Go 1.26 or newer and a current Bashy executable. The resulting
+`cmd/ycode` binary is for development only; examples below that call
+`ycode` directly are dev-only source-built examples, not an installation
+path.
 
 ## Quick start
 
-Start from the canonical, fully annotated harness:
+Dev-only: these examples call the source-built `cmd/ycode` binary (see
+Install), not an installed product. Start from the canonical, fully annotated
+harness:
 
 ```bash
 cp examples/agent.yaml ./agent.yaml
@@ -106,7 +106,7 @@ The public surface is `Validate`, `Load`, `Harness.Run`, `Harness.Resume`,
 `Harness.Fork`, `Harness.Payload`, and `Harness.Close`. See
 [usage](docs/usage.md#go-embedding) for request details.
 
-## Verification and releases
+## Verification and historical releases
 
 ```bash
 ./scripts/harness-conformance.sh
@@ -115,7 +115,8 @@ bashy dag release-check
 bashy dag release-plan
 ```
 
-Release candidates are built once from `vX.Y.Z-dev`, tested as exact bytes on
+Historical: standalone `ycode` release tags are no longer the distribution
+path (bashy is). Release candidates were built once from `vX.Y.Z-dev`, tested as exact bytes on
 Linux, macOS, and Windows with `bashy dag qa`, then byte-promoted under the
 bare `vX.Y.Z` tag. See [the release process](docs/release.md).
 
