@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -125,14 +126,39 @@ func Run(ctx context.Context, opts Options) error {
 	if opts.Output != nil {
 		programOptions = append(programOptions, tea.WithOutput(opts.Output))
 	}
-	final, err := tea.NewProgram(m, programOptions...).Run()
-	if fm, ok := final.(*model); ok && fm.cancel != nil {
-		fm.cancel()
+	defer func() {
+		if m.cancel != nil {
+			m.cancel()
+		}
+	}()
+	for {
+		_, err := tea.NewProgram(m, programOptions...).Run()
+		if errors.Is(err, tea.ErrProgramKilled) && ctx.Err() != nil {
+			return nil
+		}
+		if err != nil || m.handoff == nil || ctx.Err() != nil {
+			return err
+		}
+		// Bubble Tea 2.0.9's Exec restores the same renderer ticker before
+		// its old goroutine has necessarily stopped it. A fast command can
+		// therefore permanently stop future frames. Finish that Program,
+		// run with the terminal restored, then use a fresh renderer while
+		// retaining this model (session, history and queued input).
+		command := m.handoff
+		m.handoff = nil
+		input, output := opts.Input, opts.Output
+		if input == nil {
+			input = os.Stdin
+		}
+		if output == nil {
+			output = os.Stdout
+		}
+		command.SetStdin(input)
+		command.SetStdout(output)
+		command.SetStderr(os.Stderr)
+		m.handoffErr = command.Run()
+		m.returning = true
 	}
-	if errors.Is(err, tea.ErrProgramKilled) && ctx.Err() != nil {
-		return nil
-	}
-	return err
 }
 
 var (
@@ -166,7 +192,10 @@ type model struct {
 	streamed    string          // text already printed from llm.delta this turn
 	// epoch fences asynchronous status reads: a session or configuration
 	// change bumps it, and a read issued before the change is dropped.
-	epoch int
+	epoch      int
+	handoff    ExecCommand // literal command run only after the Program releases the terminal
+	handoffErr error
+	returning  bool
 }
 
 func newModel(ctx context.Context, opts Options) *model {
@@ -195,7 +224,6 @@ type (
 		result  SlashResult
 		err     error
 	}
-	execDoneMsg   struct{ err error }
 	decideDoneMsg struct {
 		gen    int
 		stream <-chan event.Event
@@ -208,6 +236,17 @@ type (
 )
 
 func (m *model) Init() tea.Cmd {
+	if m.returning {
+		m.returning, m.busy = false, ""
+		var commands []tea.Cmd
+		if m.handoffErr != nil {
+			commands = append(commands, tea.Println(faint.Render(m.handoffErr.Error())))
+			m.handoffErr = nil
+		}
+		commands = append(commands, m.refreshStatus())
+		commands = append(commands, m.drainPending()...)
+		return tea.Sequence(commands...)
+	}
 	banner := tea.Println(faint.Render(fmt.Sprintf("%s · session %s — ask in plain words, run a command, or /help. Ctrl-D leaves.", m.opts.Agent, m.session)))
 	// A terminal opened on a session with history shows its tail first.
 	if entries, err := m.opts.Host.Transcript(m.session); err == nil && len(entries) > 0 {
@@ -336,11 +375,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		out = append(out, m.refreshStatus())
 		out = append(out, m.drainPending()...)
 		return m, tea.Sequence(out...)
-	case execDoneMsg:
-		if msg.err != nil {
-			return m, tea.Println(faint.Render(msg.err.Error()))
-		}
-		return m, nil
 	case statusMsg:
 		if msg.epoch == m.epoch {
 			m.status = msg.status
@@ -475,7 +509,9 @@ func (m *model) submit(line string) tea.Cmd {
 			if d.Rung == ladder.Repair {
 				echo += "  (" + d.Note + ")"
 			}
-			return tea.Sequence(tea.Println(strong.Render(echo)), tea.Exec(m.opts.Shell.Command(d.Line), func(err error) tea.Msg { return execDoneMsg{err} }))
+			m.handoff = m.opts.Shell.Command(d.Line)
+			m.busy = "command"
+			return tea.Sequence(tea.Println(strong.Render(echo)), tea.Quit)
 		}
 		line = d.Line
 	}

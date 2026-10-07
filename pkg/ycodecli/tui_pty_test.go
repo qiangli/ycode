@@ -286,6 +286,82 @@ func TestTUIOverPTY(t *testing.T) {
 	}
 }
 
+// Fast terminal handoffs must leave the frame renderer alive, not merely
+// Println scrollback. The plan footer and HITL footer come only from View.
+func TestTUILiteralHandoffOverPTY(t *testing.T) {
+	if os.Getenv("YCODE_TUI_PTY_HELPER") == "1" {
+		tuiPTYHelper(t)
+		return
+	}
+	workdir := t.TempDir()
+	canonical, err := os.ReadFile(harnessFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(workdir, "agent.yaml")
+	if err := os.WriteFile(fixture, canonical, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(os.Args[0], "-test.run=^TestTUILiteralHandoffOverPTY$")
+	command.Dir = workdir
+	command.Env = append(os.Environ(), "YCODE_TUI_PTY_HELPER=1", "YCODE_TUI_FIXTURE="+fixture, "HOME="+t.TempDir(), "BASHY_HOME=", "OPENAI_API_KEY=test-secret", "TERM=xterm-256color", SessionFileEnv+"=")
+	terminal, err := pty.StartWithSize(command, &pty.Winsize{Rows: 40, Cols: 140})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = terminal.Close()
+		_ = command.Process.Kill()
+	})
+	screen := &ptyScreen{}
+	go func() { _, _ = io.Copy(screen, terminal) }()
+	expect := func(want string, count int) {
+		t.Helper()
+		if !screen.waitCount(want, count, 15*time.Second) {
+			t.Fatalf("%q did not appear %d times; screen:\n%s", want, count, screen.text())
+		}
+	}
+	send := func(line string) {
+		t.Helper()
+		if _, err := io.WriteString(terminal, line+"\r"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expect("/help. Ctrl-D leaves.", 1)
+	for i := 1; i <= 6; i++ {
+		send(fmt.Sprintf("echo handoff-$((100+%d))", i))
+		expect(fmt.Sprintf("handoff-%d", 100+i), 1)
+		// The response "mode: plan" is scrollback; "plan mode" is a
+		// dynamic frame and cannot pass with the dead ticker regression.
+		n := strings.Count(screen.text(), "plan mode")
+		send("/plan")
+		expect("plan mode", n+1)
+		send("/plan")
+		expect("mode: act", i)
+	}
+	send("approve-me please")
+	expect("approval needed (", 1)
+	expect("approve? y/n", 1)
+	if _, err := os.Stat(filepath.Join(workdir, "hitl.txt")); !os.IsNotExist(err) {
+		t.Fatalf("write before approval: %v", err)
+	}
+	if _, err := io.WriteString(terminal, "y"); err != nil {
+		t.Fatal(err)
+	}
+	expect("turn ended in", 1)
+	if got, err := os.ReadFile(filepath.Join(workdir, "hitl.txt")); err != nil || string(got) != "approved-write" {
+		t.Fatalf("approved write = %q, %v", got, err)
+	}
+	if n := strings.Count(screen.text(), "/help. Ctrl-D leaves."); n != 1 {
+		t.Fatalf("handoff repeated the greeting %d times", n)
+	}
+	send("/quit")
+	expect("TUI-EXIT ok", 1)
+	if err := command.Wait(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func tuiPTYHelper(t *testing.T) {
 	provider := &tuiProvider{}
 	fixture := os.Getenv("YCODE_TUI_FIXTURE")
