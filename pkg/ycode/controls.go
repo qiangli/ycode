@@ -260,6 +260,15 @@ func (h *Harness) sessionModel(sessionID string) (string, error) {
 	return "", nil
 }
 
+// SessionModelOverride returns the session's explicit model selection
+// resource key, or "" when the session follows its route default.
+func (h *Harness) SessionModelOverride(sessionID string) (string, error) {
+	if err := h.Validate(); err != nil {
+		return "", err
+	}
+	return h.sessionModel(sessionID)
+}
+
 // SessionModel returns the effective model resource key, not provider ID.
 func (h *Harness) SessionModel(sessionID string) (string, error) {
 	if err := h.Validate(); err != nil {

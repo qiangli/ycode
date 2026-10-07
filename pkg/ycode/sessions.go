@@ -145,7 +145,7 @@ func (h *Harness) Session(id string) (SessionSummary, error) {
 	}
 	switch len(found) {
 	case 0:
-		return SessionSummary{}, fmt.Errorf("no session %q", id)
+		return SessionSummary{}, fmt.Errorf("%w %q", ErrNoSession, id)
 	case 1:
 		return found[0], nil
 	}

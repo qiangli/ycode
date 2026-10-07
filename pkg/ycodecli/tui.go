@@ -114,11 +114,13 @@ func (h *tuiHost) Payload(ref string) ([]byte, error) { return h.app.harness.Pay
 
 func (h *tuiHost) Status(session string) tui.Status {
 	var status tui.Status
+	// Model is what the provider last measured answering; Selected is the
+	// session's explicit override, if any. Neither masks the other, so a
+	// route fallback shows as the model that actually ran.
 	status.Model, _ = defaultHarnessModel(h.app.doc)
-	selected := false
-	if ref, err := h.app.harness.SessionModel(session); err == nil {
+	if ref, err := h.app.harness.SessionModelOverride(session); err == nil && ref != "" {
 		if m, ok := h.app.doc.Spec.Models[ref]; ok {
-			status.Model, selected = m.ID, true
+			status.Selected = m.ID
 		}
 	}
 	status.Mode, _ = h.app.harness.SessionMode(session)
@@ -136,7 +138,7 @@ func (h *tuiHost) Status(session string) tui.Status {
 		}
 		if latest {
 			status.ContextTokens = usage.InputTokens + usage.CacheReadInput + usage.CacheCreationInput + usage.OutputTokens
-			if messages[i].Model != "" && !selected {
+			if messages[i].Model != "" {
 				status.Model = messages[i].Model
 			}
 			latest = false
@@ -223,8 +225,17 @@ func (h *tuiHost) Slash(ctx context.Context, session string, s tui.Slash, args [
 		// a typed HITL approval is never answered here, it stays y/n.
 		continued, declared := declaredCommand(h.app.doc.Spec.Interfaces.CLI.Root, []string{"continue"})
 		if declared && continued.Dispatch.Operation == "session" && continued.Dispatch.Action == "continue" && (len(args) == 0 || args[0] == session) {
-			if _, err := sessionControl(ctx, h.app, *continued.Dispatch, session, h.principal, nil); err == nil {
+			if flag, ok := requiredFlag(h.app.doc.Spec.Interfaces.CLI.Root, []string{"continue"}); ok {
+				return tui.SlashResult{}, fmt.Errorf("`continue` requires --%s, which a slash cannot supply; run the command from a terminal", flag)
+			}
+			_, err := sessionControl(ctx, h.app, *continued.Dispatch, session, h.principal, nil)
+			switch {
+			case err == nil:
 				return tui.SlashResult{Output: "continued: the paused turn resumes at its next step (a pending approval still waits for y/n)"}, nil
+			case !errors.Is(err, public.ErrNoLiveTurn) && !errors.Is(err, public.ErrNoPausedRun):
+				// A real control or persistence failure is never hidden
+				// behind session navigation.
+				return tui.SlashResult{}, err
 			}
 		}
 		var found public.SessionSummary
@@ -287,6 +298,11 @@ func (h *tuiHost) command(ctx context.Context, session string, path, args []stri
 	if route.Operation != "session" {
 		out, err := h.declared(ctx, append(slices.Clone(path), args...))
 		return tui.SlashResult{Output: out}, err
+	}
+	// The shortcut carries positional arguments only; a required authored
+	// flag cannot be supplied through it, so it is refused, never bypassed.
+	if flag, ok := requiredFlag(h.app.doc.Spec.Interfaces.CLI.Root, path); ok {
+		return tui.SlashResult{}, fmt.Errorf("`%s` requires --%s, which a slash cannot supply; run the command from a terminal", strings.Join(path, " "), flag)
 	}
 	if len(args) < command.Args.Min || (command.Args.Max >= 0 && len(args) > command.Args.Max) {
 		return tui.SlashResult{}, fmt.Errorf("`%s` takes %d to %d arguments as declared", strings.Join(path, " "), command.Args.Min, command.Args.Max)
@@ -379,6 +395,27 @@ func declaredCommand(root harnessspec.CLICommand, path []string) (harnessspec.CL
 		command = next
 	}
 	return command, len(path) > 0 && command.Dispatch != nil
+}
+
+// requiredFlag names a required flag the command at path declares or
+// inherits from an ancestor.
+func requiredFlag(root harnessspec.CLICommand, path []string) (string, bool) {
+	command := root
+	for i := 0; ; i++ {
+		for _, flag := range command.Flags {
+			if flag.Required && (i == len(path) || flag.Scope == "inherited") {
+				return flag.Name, true
+			}
+		}
+		if i == len(path) {
+			return "", false
+		}
+		next, ok := childCommand(command, path[i])
+		if !ok {
+			return "", false
+		}
+		command = next
+	}
 }
 
 func childCommand(parent harnessspec.CLICommand, name string) (harnessspec.CLICommand, bool) {

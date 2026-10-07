@@ -11,6 +11,18 @@ import (
 	"github.com/qiangli/ycode/internal/harness/event"
 )
 
+// ErrNoLiveTurn and ErrNoPausedRun are the expected outcomes of a control
+// that finds nothing to act on; any other error is a real control failure.
+var (
+	ErrNoLiveTurn  = errors.New("control: no live turn")
+	ErrNoPausedRun = errors.New(noPausedRun)
+	// ErrNoSession reports an ID that names no persisted session, such as
+	// a fresh session before its first turn commits.
+	ErrNoSession = errors.New("no session")
+)
+
+const noPausedRun = "continue: no paused live turn"
+
 func (h *Harness) checkControlOwner(sessionID string) error {
 	lock, err := h.lockSession(sessionID)
 	if errors.Is(err, lockfile.ErrHeld) {
@@ -36,6 +48,10 @@ func (h *Harness) controlLiveRun(ctx context.Context, sessionID, action string) 
 		return err
 	}
 	s, err := h.Session(sessionID)
+	if errors.Is(err, ErrNoSession) {
+		// An unpersisted session cannot have a live turn; store errors stay real.
+		return fmt.Errorf("%w: %w", ErrNoLiveTurn, err)
+	}
 	if err != nil {
 		return err
 	}
@@ -60,7 +76,7 @@ func (h *Harness) controlLiveRun(ctx context.Context, sessionID, action string) 
 		}
 	}
 	if runID == "" {
-		return errors.New("control: no live turn")
+		return ErrNoLiveTurn
 	}
 	// An unlocked session cannot have a live owning turn (including after a
 	// crash). Never leave a stale command for a future run to pick up.
@@ -92,13 +108,16 @@ func (h *Harness) controlLiveRun(ctx context.Context, sessionID, action string) 
 				if err := json.Unmarshal(item.Data, &data); err != nil {
 					return err
 				}
+				if data.Error == noPausedRun {
+					return ErrNoPausedRun
+				}
 				if data.Error != "" {
 					return errors.New(data.Error)
 				}
 				return nil
 			}
 			if item.Type == "session.run-finished" {
-				return errors.New("control: turn finished before acknowledgment")
+				return fmt.Errorf("%w: turn finished before acknowledgment", ErrNoLiveTurn)
 			}
 		}
 		if ownerErr != nil {
@@ -162,7 +181,7 @@ func (h *Harness) monitorControls(ctx context.Context, sessionID, runID string, 
 				}
 				pending, reached = nil, nil
 				if !active.pause.release() {
-					ack(item, "continue: no paused live turn")
+					ack(item, noPausedRun)
 					continue
 				}
 				_, err := h.events.Append(event.Draft{SessionID: sessionID, RunID: runID, StageID: "session.continue", Type: "session.continued", ConfigDigest: h.doc.ConfigDigest, Data: map[string]any{"approval_consumed": false}})
