@@ -46,7 +46,9 @@ func TestModelToolsMemoryAndSkillsReadCompiledHarness(t *testing.T) {
 	fixture := harnessFixture(t)
 
 	model := testRoot(t)
-	for _, forbidden := range []string{"use", "p2p"} {
+	// Session-scoped model use is declared by YAML; shared configuration
+	// mutation and the retired p2p model registry remain unavailable.
+	for _, forbidden := range []string{"p2p"} {
 		if child, _, err := model.Find([]string{"model", forbidden}); err == nil && child.Name() == forbidden {
 			t.Fatalf("imperative model command %q is still registered", forbidden)
 		}

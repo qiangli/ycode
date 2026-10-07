@@ -178,7 +178,7 @@ func resourceKindForRef(name string) string {
 		return "frontends"
 	case "trigger":
 		return "triggers"
-	case "sink":
+	case "sink", "planSink":
 		return "sinks"
 	default:
 		return ""
@@ -306,6 +306,18 @@ func validateAuthority(d *Document) error {
 		return err
 	}
 	for name, agent := range d.Spec.Agents {
+		controls := agent.SessionControls
+		if (controls.PlanPrompt == "") != (len(controls.PlanSinkRefs) == 0) {
+			return fmt.Errorf("agent %s planning requires both planPrompt and planSinkRefs", name)
+		}
+		for _, ref := range controls.PlanSinkRefs {
+			if _, ok := d.Spec.Sinks[ref]; !ok {
+				return fmt.Errorf("agent %s planning references unknown sink %q", name, ref)
+			}
+		}
+		if controls.BtwPrompt != "" && len(controls.PlanSinkRefs) == 0 {
+			return fmt.Errorf("agent %s side query requires planSinkRefs", name)
+		}
 		if err := permissionAtMost("agent "+name, agent.PermissionCeiling, bashy.PermissionCeiling); err != nil {
 			return err
 		}

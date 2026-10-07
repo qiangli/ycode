@@ -9,6 +9,7 @@ import (
 
 	"github.com/qiangli/ycode/internal/harness/message"
 	"github.com/qiangli/ycode/internal/harness/provider"
+	"github.com/qiangli/ycode/internal/harness/spec"
 )
 
 func (r *Runtime) RouteText(ctx context.Context, routeRef, system string, messages []message.Message) (string, error) {
@@ -31,6 +32,22 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 		return nil, provider.Outcome{Class: provider.OutcomeProtocolError, Error: fmt.Sprintf("invalid route %q", routeRef)}
 	}
 	requestMessages, extractedSystem := providerMessages(messages)
+	run, _ := runFrom(ctx)
+	// Select only a declared attempt, preserving its timeout/retry/budget.
+	// Summary routes retain their own YAML model selection.
+	if run.modelRef != "" && routeRef == r.doc.Spec.Agents[run.agentRef].ModelRouteRef {
+		found := false
+		for _, attempt := range route.Attempts {
+			if attempt.ModelRef == run.modelRef {
+				route.Attempts = []spec.RouteAttempt{attempt}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, provider.Outcome{Class: provider.OutcomeProtocolError, Error: "session model is not in the declared route"}
+		}
+	}
 	if system == "" {
 		system = extractedSystem
 	}
@@ -54,6 +71,9 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 				maxTokens = model.Limits.MaxOutputTokens
 			}
 			request := provider.Request{Model: model.ID, System: system, Messages: requestMessages, MaxTokens: maxTokens, Stream: model.Capabilities.Streaming, BashyTool: model.Capabilities.ToolCalls}
+			if run.plan {
+				request.BashyTool = false
+			}
 			requestRef, err := r.payload(request)
 			if err != nil {
 				return nil, provider.Outcome{Class: provider.OutcomeProtocolError, Error: err.Error()}
@@ -78,6 +98,9 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 				return nil
 			}
 			response, outcome := collectProvider(attemptCtx, adapter.Send(attemptCtx, request), delta)
+			if run.plan && (outcome.Class == provider.OutcomeToolCall || len(anyList(response["toolCalls"])) != 0) {
+				outcome = provider.Outcome{Class: provider.OutcomeProtocolError, Error: "planning forbids tool calls"}
+			}
 			cancel()
 			// A small thinking model can spend the whole output budget on
 			// reasoning it never shows: that limit is as empty as a completion.
@@ -91,6 +114,7 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 			_ = r.append(ctx, stageID, "llm.completed", map[string]any{"route_ref": routeRef, "model_ref": attempt.ModelRef, "attempt": transportAttempt, "payload_ref": responseRef, "outcome": outcome.Class})
 			last = outcome
 			if outcome.Class == provider.OutcomeCompleted || outcome.Class == provider.OutcomeToolCall || outcome.Class == provider.OutcomeLimit {
+				response["model"] = model.ID
 				if outcome.Class == provider.OutcomeLimit {
 					response["finished"] = true
 				}

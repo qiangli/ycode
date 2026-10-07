@@ -14,14 +14,17 @@ package ycode
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/qiangli/coreutils/pkg/lockfile"
 
 	"github.com/qiangli/ycode/internal/harness/event"
 	"github.com/qiangli/ycode/internal/harness/spec"
@@ -57,6 +60,7 @@ type queueKey struct{ queueRef, sessionID string }
 // happen in the process that runs the session's turn; each transition is an
 // event in the session's durable log.
 type sessionQueue struct {
+	path     string
 	doc      *spec.Document
 	events   *event.Store
 	payloads *event.PayloadStore
@@ -66,8 +70,55 @@ type sessionQueue struct {
 	items map[queueKey][]queuedItem
 }
 
-func newSessionQueue(doc *spec.Document, events *event.Store, payloads *event.PayloadStore) *sessionQueue {
-	return &sessionQueue{doc: doc, events: events, payloads: payloads, items: make(map[queueKey][]queuedItem)}
+func newSessionQueue(doc *spec.Document, events *event.Store, payloads *event.PayloadStore, path string) *sessionQueue {
+	return &sessionQueue{doc: doc, events: events, payloads: payloads, path: path, items: make(map[queueKey][]queuedItem)}
+}
+
+// replayLocked reconstructs only versioned durable queue entries. Older
+// queue events lacked consumption identities and cannot safely be replayed.
+func (q *sessionQueue) replayLocked() error {
+	events, err := event.Replay(q.path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	q.items = make(map[queueKey][]queuedItem)
+	for _, item := range events {
+		if item.ConfigDigest != q.doc.ConfigDigest {
+			continue
+		}
+		var data struct {
+			QueueRef  string   `json:"queue_ref"`
+			Class     string   `json:"class"`
+			Ref       string   `json:"payload_ref"`
+			Key       string   `json:"idempotency_key"`
+			Durable   bool     `json:"durable"`
+			Sequences []uint64 `json:"sequences"`
+		}
+		if item.Type != "queue.enqueued" && item.Type != "queue.consumed" {
+			continue
+		}
+		if err := json.Unmarshal(item.Data, &data); err != nil {
+			return err
+		}
+		key := queueKey{data.QueueRef, item.SessionID}
+		if item.Type == "queue.enqueued" && data.Durable {
+			raw, err := q.payloads.Get(data.Ref)
+			if err != nil {
+				return err
+			}
+			q.items[key] = append(q.items[key], queuedItem{seq: item.Sequence, class: data.Class, priority: q.doc.Spec.Queues[data.QueueRef].Priorities[data.Class], text: string(raw), key: data.Key})
+		}
+		if item.Type == "queue.consumed" {
+			kept := q.items[key][:0]
+			for _, entry := range q.items[key] {
+				if !slices.Contains(data.Sequences, entry.seq) {
+					kept = append(kept, entry)
+				}
+			}
+			q.items[key] = kept
+		}
+	}
+	return nil
 }
 
 func (q *sessionQueue) enqueue(request QueueRequest, runID string) error {
@@ -87,6 +138,14 @@ func (q *sessionQueue) enqueue(request QueueRequest, runID string) error {
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	lock, err := lockfile.Acquire(q.path+".queue.lock", lockfile.Holder{Intent: "session queue admission"})
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	if err := q.replayLocked(); err != nil {
+		return err
+	}
 	key := queueKey{request.QueueRef, request.SessionID}
 	if configured.DeduplicateBy == "idempotency-key" && request.IdempotencyKey != "" {
 		for _, item := range q.items[key] {
@@ -112,7 +171,7 @@ func (q *sessionQueue) enqueue(request QueueRequest, runID string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := q.events.Append(event.Draft{SessionID: request.SessionID, RunID: runID, StageID: "queue.enqueue", Type: "queue.enqueued", ConfigDigest: q.doc.ConfigDigest, Data: map[string]any{"queue_ref": request.QueueRef, "class": request.Class, "payload_ref": ref}}); err != nil {
+	if _, err := q.events.Append(event.Draft{SessionID: request.SessionID, RunID: runID, StageID: "queue.enqueue", Type: "queue.enqueued", ConfigDigest: q.doc.ConfigDigest, Data: map[string]any{"queue_ref": request.QueueRef, "class": request.Class, "payload_ref": ref, "durable": true, "idempotency_key": request.IdempotencyKey}}); err != nil {
 		return err
 	}
 	q.seq++
@@ -123,9 +182,17 @@ func (q *sessionQueue) enqueue(request QueueRequest, runID string) error {
 // take removes the session's items of the given classes (all classes when
 // none are named) in priority-fifo order: higher priority first, arrival
 // order within a priority.
-func (q *sessionQueue) take(sessionID, queueRef string, classes []string) []queuedItem {
+func (q *sessionQueue) take(sessionID, queueRef string, classes []string) ([]queuedItem, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	lock, err := lockfile.Acquire(q.path+".queue.lock", lockfile.Holder{Intent: "session queue consumption"})
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Release()
+	if err := q.replayLocked(); err != nil {
+		return nil, err
+	}
 	key := queueKey{queueRef, sessionID}
 	var taken, kept []queuedItem
 	for _, item := range q.items[key] {
@@ -133,6 +200,15 @@ func (q *sessionQueue) take(sessionID, queueRef string, classes []string) []queu
 			taken = append(taken, item)
 		} else {
 			kept = append(kept, item)
+		}
+	}
+	if len(taken) > 0 {
+		sequences := make([]uint64, len(taken))
+		for i, item := range taken {
+			sequences[i] = item.seq
+		}
+		if _, err := q.events.Append(event.Draft{SessionID: sessionID, RunID: uuid.NewString(), StageID: "queue.consume", Type: "queue.consumed", ConfigDigest: q.doc.ConfigDigest, Data: map[string]any{"queue_ref": queueRef, "sequences": sequences}}); err != nil {
+			return nil, err
 		}
 	}
 	if len(kept) == 0 {
@@ -146,7 +222,7 @@ func (q *sessionQueue) take(sessionID, queueRef string, classes []string) []queu
 		}
 		return taken[i].seq < taken[j].seq
 	})
-	return taken
+	return taken, nil
 }
 
 // Drain implements turn.Queue: the queue.drain stage records the drained
@@ -155,7 +231,10 @@ func (q *sessionQueue) Drain(_ context.Context, sessionID, queueRef string, clas
 	if _, ok := q.doc.Spec.Queues[queueRef]; !ok {
 		return nil, fmt.Errorf("queue %q is not declared", queueRef)
 	}
-	taken := q.take(sessionID, queueRef, classes)
+	taken, err := q.take(sessionID, queueRef, classes)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]turn.QueueItem, 0, len(taken))
 	for _, item := range taken {
 		items = append(items, turn.QueueItem{Text: item.text})
@@ -197,7 +276,10 @@ func (h *Harness) TakeQueued(sessionID, queueRef string) ([]QueuedItem, error) {
 	if _, ok := h.doc.Spec.Queues[queueRef]; !ok {
 		return nil, fmt.Errorf("queue %q is not declared", queueRef)
 	}
-	taken := h.queue.take(sessionID, queueRef, nil)
+	taken, err := h.queue.take(sessionID, queueRef, nil)
+	if err != nil {
+		return nil, err
+	}
 	if len(taken) == 0 {
 		return nil, nil
 	}

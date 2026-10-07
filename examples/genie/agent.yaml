@@ -88,6 +88,55 @@ spec:
               triggerRef: interactive-input
               agentRef: coder
               input: {mode: repl, stdin: true, empty: reject, payloadKey: request, sessionFlag: session, sessionDefault: latest}
+          - name: pause
+            short: Pause the live turn at its next safe graph boundary
+            args: {min: 0, max: 0}
+            flags:
+              - {name: json, type: bool, default: false, usage: Structured output, scope: local}
+              - {name: dry-run, type: bool, default: false, usage: Preview without running the operation, scope: local}
+            dispatch: {operation: session, action: pause}
+          - name: btw
+            short: Answer a tool-free side query outside the transcript
+            args: {min: 1, max: -1}
+            flags:
+              - {name: json, type: bool, default: false, usage: Structured output, scope: local}
+              - {name: dry-run, type: bool, default: false, usage: Preview without running the operation, scope: local}
+            dispatch: {operation: session, action: btw, frontendRef: one-shot, triggerRef: interactive-input, agentRef: coder}
+          - name: retry
+            short: Replace the last turn and retry its input or a new request
+            args: {min: 0, max: -1}
+            flags:
+              - {name: json, type: bool, default: false, usage: Structured output, scope: local}
+              - {name: dry-run, type: bool, default: false, usage: Preview without running the operation, scope: local}
+            dispatch: {operation: session, action: retry, frontendRef: one-shot, triggerRef: interactive-input, agentRef: coder}
+          - name: revert
+            short: Rewind conversation history; file restoration is unsupported
+            args: {min: 0, max: 0}
+            flags:
+              - {name: json, type: bool, default: false, usage: Structured output, scope: local}
+              - {name: dry-run, type: bool, default: false, usage: Preview without running the operation, scope: local}
+            dispatch: {operation: session, action: revert}
+          - name: compact
+            short: Compact session history using the declared memory policy
+            args: {min: 0, max: 0}
+            flags:
+              - {name: json, type: bool, default: false, usage: Structured output, scope: local}
+              - {name: dry-run, type: bool, default: false, usage: Preview without running the operation, scope: local}
+            dispatch: {operation: session, action: compact}
+          - name: plan
+            short: Toggle planning mode or enter it with a request
+            args: {min: 0, max: -1}
+            flags:
+              - {name: json, type: bool, default: false, usage: Structured output, scope: local}
+              - {name: dry-run, type: bool, default: false, usage: Preview without running the operation, scope: local}
+            dispatch: {operation: session, action: plan, frontendRef: one-shot, triggerRef: interactive-input, agentRef: coder}
+          - name: continue
+            short: Continue a paused live turn without approving HITL
+            args: {min: 0, max: 0}
+            flags:
+              - {name: json, type: bool, default: false, usage: Structured output, scope: local}
+              - {name: dry-run, type: bool, default: false, usage: Preview without continuing, scope: local}
+            dispatch: {operation: session, action: continue}
           - {name: new, short: Start a fresh session (the current one stays resumable) and print its id, args: {min: 0, max: 0}, dispatch: {operation: session, action: new}}
           - name: status
             short: Show the agent, model and the session this terminal is on (else the latest)
@@ -124,7 +173,14 @@ spec:
             short: Inspect models compiled from agent.yaml
             args: {min: 0, max: 0}
             commands:
-              - {name: current, short: Print the default agent's first configured model, args: {min: 0, max: 0}, dispatch: {operation: inspect, resource: models, action: current}}
+              - {name: current, short: Print the session model resource, args: {min: 0, max: 0}, dispatch: {operation: session, action: model-current}}
+              - name: use
+                short: Select a declared model resource for this session
+                args: {min: 1, max: 1}
+                flags:
+                  - {name: json, type: bool, default: false, usage: Structured output, scope: local}
+                  - {name: dry-run, type: bool, default: false, usage: Preview without selecting, scope: local}
+                dispatch: {operation: session, action: model-use}
               - name: list
                 short: List configured model resources
                 args: {min: 0, max: 0}
@@ -1233,6 +1289,10 @@ spec:
 
   agents:
     coder:
+      sessionControls:
+        planPrompt: "Produce a plan for the request. Do not execute tools or claim to have changed files."
+        planSinkRefs: [primary-output]
+        btwPrompt: "Answer this side question from the available conversation context. Do not execute tools or claim changes."
       displayName: Ycode Coder
       description: SWE-bench software-engineering agent using one governed Bashy tool.
       inputSchema:
