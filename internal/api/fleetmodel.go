@@ -12,6 +12,12 @@ import (
 // bandRE matches a capability-band selector: L3, l3, b3, band:3, band=3, band 3.
 var bandRE = regexp.MustCompile(`(?i)^(?:l|b|band)[\s:=]*([1-9])$`)
 
+// genie is the canonical in-process backend; ycode remains its fleet alias.
+// Both use the ycode provider-facing model IDs, not another CLI's spelling.
+func isYcodeBackendTool(tool string) bool {
+	return tool == "genie" || tool == "ycode"
+}
+
 // ResolveFleetModel maps a fleet SELECTOR to the concrete model id ycode accepts,
 // so the model can be named the way the fleet is named instead of only by a raw
 // provider id:
@@ -45,7 +51,7 @@ func ResolveFleetModel(sel string) (string, string) {
 	}
 
 	// 2. An agent name or nickname bound to ycode → its model's ycode id.
-	if a, ok := cat.Agent(raw); ok && a.Tool == "ycode" {
+	if a, ok := cat.Agent(raw); ok && isYcodeBackendTool(a.Tool) {
 		if _, _, m, err := cat.Binding(a.Name); err == nil {
 			id := m.TargetFor("ycode")
 			return id, fmt.Sprintf("%s → %s (%s)", raw, m.Name, id)
@@ -113,7 +119,7 @@ func ycodeModelForAgent(cat *fleet.Catalog, name string) string {
 		return ""
 	}
 	a, _, m, err := cat.Binding(name)
-	if err != nil || a.Tool != "ycode" {
+	if err != nil || !isYcodeBackendTool(a.Tool) {
 		return ""
 	}
 	return m.TargetFor("ycode")
@@ -126,7 +132,7 @@ func bestYcodeModel(cat *fleet.Catalog, minBand int) (id, name string) {
 	var best fleet.Model
 	found := false
 	for _, a := range agents {
-		if a.Tool != "ycode" {
+		if !isYcodeBackendTool(a.Tool) {
 			continue
 		}
 		_, _, m, err := cat.Binding(a.Name)
@@ -148,7 +154,7 @@ func bestYcodeModel(cat *fleet.Catalog, minBand int) (id, name string) {
 func ycodeRuns(cat *fleet.Catalog, modelName string) bool {
 	agents, _ := cat.Agents()
 	for _, a := range agents {
-		if a.Tool == "ycode" && a.Model == modelName {
+		if isYcodeBackendTool(a.Tool) && a.Model == modelName {
 			return true
 		}
 	}

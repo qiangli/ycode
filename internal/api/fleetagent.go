@@ -98,7 +98,7 @@ func YcodeAgentForModel(modelID string) (FleetAgent, bool) {
 	cat := fleet.New()
 	agents, _ := cat.Agents()
 	for _, a := range agents {
-		if a.Tool != "ycode" {
+		if !isYcodeBackendTool(a.Tool) {
 			continue
 		}
 		_, _, m, err := cat.Binding(a.Name)
@@ -161,8 +161,8 @@ func bestAgentAtBand(cat *fleet.Catalog, minBand int) (FleetAgent, bool) {
 }
 
 func betterAgent(cand, best FleetAgent) bool {
-	candLeaves := cand.Tool != "ycode"
-	bestLeaves := best.Tool != "ycode"
+	candLeaves := !isYcodeBackendTool(cand.Tool)
+	bestLeaves := !isYcodeBackendTool(best.Tool)
 	if candLeaves != bestLeaves {
 		return candLeaves
 	}

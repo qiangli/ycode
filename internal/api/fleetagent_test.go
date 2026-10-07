@@ -68,7 +68,7 @@ func TestResolveFleetAgentByBandPrefersLeavingYcode(t *testing.T) {
 		if a.Band < 4 {
 			t.Errorf("%q resolved to band %d, want >= 4", sel, a.Band)
 		}
-		if a.Tool == "ycode" {
+		if a.Tool == "ycode" || a.Tool == "genie" {
 			t.Errorf("%q resolved to a ycode agent (%s) — switching should leave ycode", sel, a.Name)
 		}
 	}
@@ -138,7 +138,7 @@ func TestResolveFleetTool(t *testing.T) {
 func TestYcodeAgentForModelRoundTrips(t *testing.T) {
 	var ycodeAgent FleetAgent
 	for _, a := range ListFleetAgents() {
-		if a.Tool == "ycode" && !a.Cascade {
+		if (a.Tool == "ycode" || a.Tool == "genie") && !a.Cascade {
 			ycodeAgent = a
 			break
 		}
@@ -151,7 +151,7 @@ func TestYcodeAgentForModelRoundTrips(t *testing.T) {
 	if !ok {
 		t.Fatalf("no ycode agent found for model %q", ycodeAgent.Model)
 	}
-	if got.Tool != "ycode" {
+	if got.Tool != "ycode" && got.Tool != "genie" {
 		t.Errorf("reverse lookup returned tool %q, want ycode", got.Tool)
 	}
 
