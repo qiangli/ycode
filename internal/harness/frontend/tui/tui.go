@@ -39,6 +39,7 @@ type Waiting struct {
 // Status is what the status line shows besides the agent and session.
 type Status struct {
 	Model         string
+	Mode          string // the session's durable mode: "plan" shows on the line
 	ContextTokens int
 	SessionTokens int     // input + output across the session's turns
 	CostUSD       float64 // meaningful only when CostKnown
@@ -48,11 +49,13 @@ type Status struct {
 // Entry is one transcript message shown when a session is resumed.
 type Entry struct{ Role, Text string }
 
-// SlashResult is what a slash subcommand printed, and the session the
-// terminal moves to when the slash switched it ("" stays).
+// SlashResult is what a slash subcommand printed, the session the
+// terminal moves to when the slash switched it ("" stays), and text the
+// terminal then submits as a turn ("" none).
 type SlashResult struct {
 	Output  string
 	Session string
+	Turn    string
 }
 
 // Host projects the terminal onto the harness.
@@ -268,9 +271,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			out = append(out, tea.Println(failed.Render("ycode: "+msg.err.Error())))
 		}
-		if msg.result.Session != "" && msg.result.Session != m.session {
+		switch {
+		case msg.result.Session != "" && msg.result.Session != m.session && m.running:
+			out = append(out, tea.Println(faint.Render("finish or ESC this turn before switching sessions")))
+		case msg.result.Session != "" && msg.result.Session != m.session:
 			m.session = msg.result.Session
-			out = append(out, m.replay(), m.refreshStatus())
+			out = append(out, m.replay())
+		}
+		out = append(out, m.refreshStatus())
+		if msg.result.Turn != "" && !m.running {
+			out = append(out, m.startTurn(msg.result.Turn))
 		}
 		return m, tea.Sequence(out...)
 	case execDoneMsg:
@@ -369,6 +379,10 @@ func (m *model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // its subcommand, a command line runs as typed, and free text is a turn.
 func (m *model) submit(line string) tea.Cmd {
 	if m.running {
+		// /resume during a turn releases a live pause; every other line steers.
+		if slash, args, ok := parseSlash(line); ok && slash.Name == "/resume" && len(args) == 0 {
+			return m.slash(slash, args)
+		}
 		if err := m.opts.Host.Steer(m.session, line); err != nil {
 			m.held = append(m.held, line)
 			return tea.Println(faint.Render("↳ held for after this turn: " + line + " (" + err.Error() + ")"))
@@ -662,6 +676,9 @@ func (m *model) statusLine() string {
 		parts = append(parts, m.status.Model)
 	}
 	parts = append(parts, "session "+id)
+	if m.status.Mode == "plan" {
+		parts = append(parts, "plan mode")
+	}
 	if m.status.ContextTokens > 0 {
 		parts = append(parts, fmt.Sprintf("ctx %s tok", humanTokens(m.status.ContextTokens)))
 	}

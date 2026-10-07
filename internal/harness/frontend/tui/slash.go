@@ -21,10 +21,10 @@ type Slash struct {
 var Slashes = []Slash{
 	{Name: "/help", Usage: "/help", Command: "--help", Short: "List the slashes and the subcommands they stand for"},
 	{Name: "/init", Usage: "/init", Command: "init", Short: "Set up the agent YAML and model for this repository"},
-	{Name: "/model", Usage: "/model [NAME]", Command: "model current|list", Short: "Show the current model and the declared ones"},
-	{Name: "/plan", Usage: "/plan [TEXT]", Command: "plan", Short: "Plan before acting"},
+	{Name: "/model", Usage: "/model [NAME]", Command: "model current|use NAME", Short: "Show the session model and the declared ones, or select one"},
+	{Name: "/plan", Usage: "/plan [TEXT]", Command: "plan [TEXT]", Short: "Toggle plan mode (no tools), or plan TEXT"},
 	{Name: "/quit", Usage: "/quit", Command: "(leave the terminal)", Short: "Leave; the session stays resumable"},
-	{Name: "/resume", Usage: "/resume [SESSION]", Command: "resume [SESSION]", Short: "Switch this terminal to SESSION (default: the latest)"},
+	{Name: "/resume", Usage: "/resume [SESSION]", Command: "continue | resume [SESSION]", Short: "Release a paused turn, else switch to SESSION (default: the latest)"},
 	{Name: "/save", Usage: "/save [TITLE]", Command: "session rename SESSION TITLE", Short: "Keep the current session (optionally titled) and print how to resume it"},
 }
 

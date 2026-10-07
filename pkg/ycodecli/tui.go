@@ -115,6 +115,13 @@ func (h *tuiHost) Payload(ref string) ([]byte, error) { return h.app.harness.Pay
 func (h *tuiHost) Status(session string) tui.Status {
 	var status tui.Status
 	status.Model, _ = defaultHarnessModel(h.app.doc)
+	selected := false
+	if ref, err := h.app.harness.SessionModel(session); err == nil {
+		if m, ok := h.app.doc.Spec.Models[ref]; ok {
+			status.Model, selected = m.ID, true
+		}
+	}
+	status.Mode, _ = h.app.harness.SessionMode(session)
 	messages, err := h.app.harness.Transcript(session)
 	if err != nil {
 		return status
@@ -129,7 +136,7 @@ func (h *tuiHost) Status(session string) tui.Status {
 		}
 		if latest {
 			status.ContextTokens = usage.InputTokens + usage.CacheReadInput + usage.CacheCreationInput + usage.OutputTokens
-			if messages[i].Model != "" {
+			if messages[i].Model != "" && !selected {
 				status.Model = messages[i].Model
 			}
 			latest = false
@@ -212,6 +219,13 @@ func (h *tuiHost) Slash(ctx context.Context, session string, s tui.Slash, args [
 		fmt.Fprintf(&out, "saved: session %s is durable; /resume %s here or `resume %s` from a terminal continues it", found.ID, found.ID, found.ID)
 		return tui.SlashResult{Output: out.String()}, nil
 	case "/resume":
+		// A live cooperative pause on this session is released by Continue;
+		// a typed HITL approval is never answered here, it stays y/n.
+		if len(args) == 0 || args[0] == session {
+			if err := h.app.harness.Continue(ctx, session); err == nil {
+				return tui.SlashResult{Output: "continued: the paused turn resumes at its next step (a pending approval still waits for y/n)"}, nil
+			}
+		}
 		var found public.SessionSummary
 		var err error
 		if len(args) > 0 {
@@ -232,23 +246,78 @@ func (h *tuiHost) Slash(ctx context.Context, session string, s tui.Slash, args [
 		}
 		return tui.SlashResult{Session: found.ID}, nil
 	case "/model":
-		if len(args) > 0 {
-			return tui.SlashResult{}, errors.New("switching the model for this session needs an engine route override that is not built yet; the compiled YAML is never changed")
-		}
-		current, err := h.declared(ctx, []string{"model", "current"})
-		if err != nil {
-			return tui.SlashResult{Output: current}, err
-		}
-		list, err := h.declared(ctx, []string{"model", "list"})
-		return tui.SlashResult{Output: "current: " + current + list}, err
+		return h.model(session, args)
 	case "/plan":
-		out, err := h.declared(ctx, append([]string{"plan"}, args...))
-		return tui.SlashResult{Output: out}, err
+		return h.plan(ctx, session, args)
 	case "/init":
 		out, err := h.declared(ctx, append([]string{"init"}, args...))
 		return tui.SlashResult{Output: out}, err
 	}
 	return tui.SlashResult{}, fmt.Errorf("%s is not a slash", s.Name)
+}
+
+// model shows or selects the session model among the default agent's
+// declared route through the engine's session model API; the compiled YAML
+// is never changed and provider IDs are not accepted.
+func (h *tuiHost) model(session string, args []string) (tui.SlashResult, error) {
+	agent := h.app.doc.Spec.Agents[h.app.doc.Spec.Runtime.DefaultAgentRef]
+	route := h.app.doc.Spec.Routes[agent.ModelRouteRef]
+	if len(args) > 0 {
+		if !declaresCommand(h.app.doc.Spec.Interfaces.CLI.Root, []string{"model", "use"}) {
+			return tui.SlashResult{}, errors.New("the agent YAML declares no `model use` subcommand")
+		}
+		if err := h.app.harness.SetSessionModel(session, args[0]); err != nil {
+			return tui.SlashResult{}, err
+		}
+		return tui.SlashResult{Output: fmt.Sprintf("model: session %s now uses %s (%s)", session, args[0], h.app.doc.Spec.Models[args[0]].ID)}, nil
+	}
+	current, err := h.app.harness.SessionModel(session)
+	if err != nil {
+		return tui.SlashResult{}, err
+	}
+	var out strings.Builder
+	fmt.Fprintf(&out, "current: %s (%s)\n", current, h.app.doc.Spec.Models[current].ID)
+	for _, attempt := range route.Attempts {
+		mark := " "
+		if attempt.ModelRef == current {
+			mark = "*"
+		}
+		fmt.Fprintf(&out, "%s %s (%s)\n", mark, attempt.ModelRef, h.app.doc.Spec.Models[attempt.ModelRef].ID)
+	}
+	out.WriteString("/model NAME selects one of these for this session")
+	return tui.SlashResult{Output: out.String()}, nil
+}
+
+// plan toggles the session's durable plan/act mode through the engine; with
+// text it enters plan mode and hands the text back as a turn, so the planning
+// turn streams, steers and stops like any other (the engine runs it tool-free).
+func (h *tuiHost) plan(ctx context.Context, session string, args []string) (tui.SlashResult, error) {
+	if !declaresCommand(h.app.doc.Spec.Interfaces.CLI.Root, []string{"plan"}) {
+		return tui.SlashResult{}, errors.New("the agent YAML declares no `plan` subcommand")
+	}
+	mode, err := h.app.harness.SessionMode(session)
+	if err != nil {
+		return tui.SlashResult{}, err
+	}
+	if len(args) == 0 || mode != "plan" {
+		stream, err := h.app.harness.Plan(ctx, public.RunRequest{SessionID: session})
+		if err != nil {
+			return tui.SlashResult{}, err
+		}
+		for range stream {
+		}
+		if mode, err = h.app.harness.SessionMode(session); err != nil {
+			return tui.SlashResult{}, err
+		}
+	}
+	result := tui.SlashResult{Output: "mode: act — turns run tools again"}
+	if mode == "plan" {
+		result.Output = "mode: plan — turns plan without running tools; /plan again returns to act"
+	}
+	if len(args) > 0 {
+		result.Turn = strings.Join(args, " ")
+	}
+	return result, nil
 }
 
 // declared runs path (a subcommand path plus its arguments) through the

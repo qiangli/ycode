@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qiangli/ycode/internal/api"
 	harnesscli "github.com/qiangli/ycode/internal/harness/cli"
 	"github.com/qiangli/ycode/internal/harness/frontend"
 	"github.com/qiangli/ycode/internal/harness/frontend/tui"
@@ -259,5 +260,96 @@ func TestWebAndTUIShareSessions(t *testing.T) {
 		if after[i] != before[i] {
 			t.Fatalf("resumed transcript rewrote entry %d: %+v -> %+v", i, before[i], after[i])
 		}
+	}
+}
+
+// pausingProvider holds its first answer until released.
+type pausingProvider struct {
+	started, release chan struct{}
+}
+
+func (*pausingProvider) Kind() api.ProviderKind { return api.ProviderOpenAI }
+func (p *pausingProvider) Send(ctx context.Context, request *api.Request) (<-chan *api.StreamEvent, <-chan error) {
+	events, errs := make(chan *api.StreamEvent, 3), make(chan error, 1)
+	go func() {
+		defer close(events)
+		defer close(errs)
+		select {
+		case p.started <- struct{}{}:
+		default:
+		}
+		<-p.release
+		text, _ := json.Marshal(map[string]string{"type": "text_delta", "text": "after-pause"})
+		stop, _ := json.Marshal(map[string]string{"stop_reason": api.StopReasonEndTurn})
+		events <- &api.StreamEvent{Type: "content_block_delta", Delta: text}
+		events <- &api.StreamEvent{Type: "message_delta", Delta: stop}
+	}()
+	return events, errs
+}
+
+// /resume on a session whose live turn is cooperatively paused is Continue:
+// the turn completes, and with nothing paused /resume is the session switch.
+func TestTUIResumeContinuesLivePause(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-secret")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("BASHY_HOME", "")
+	workdir := t.TempDir()
+	canonical, err := os.ReadFile(harnessFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(workdir, "agent.yaml")
+	if err := os.WriteFile(fixture, canonical, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backend := &pausingProvider{started: make(chan struct{}, 1), release: make(chan struct{})}
+	app, err := openHarnessApplication(fixture, public.WithHarnessProvider("openai", backend))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	view, err := frontend.NewTUI(app.doc, "tui", cliController{app, "coder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := &tuiHost{app: app, view: view, config: fixture, principal: "tui-user",
+		inv: harnesscli.Invocation{FrontendRef: "tui", Dispatch: spec.CLIDispatch{AgentRef: "coder", Input: &spec.CLIInput{PayloadKey: "request"}}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	const session = "paused-session"
+	resume := tui.Slash{Name: "/resume"}
+	if result, _ := host.Slash(ctx, session, resume, nil); strings.Contains(result.Output, "continued") {
+		t.Fatalf("/resume continued with no live turn: %+v", result)
+	}
+	stream, err := host.Turn(ctx, session, "pause me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-backend.started:
+	case <-ctx.Done():
+		t.Fatal("provider never started")
+	}
+	paused := make(chan error, 1)
+	go func() { paused <- app.harness.Pause(ctx, session) }()
+	time.Sleep(200 * time.Millisecond) // the pause request precedes the stage end
+	close(backend.release)
+	if err := <-paused; err != nil {
+		t.Fatal(err)
+	}
+	result, err := host.Slash(ctx, session, resume, nil)
+	if err != nil || !strings.Contains(result.Output, "continued") || result.Session != "" {
+		t.Fatalf("/resume on a paused turn = %+v, %v", result, err)
+	}
+	var types []string
+	for item := range stream {
+		types = append(types, item.Type)
+	}
+	joined := strings.Join(types, " ")
+	if !strings.Contains(joined, "session.paused session.continued session.turn-committed") || !strings.Contains(joined, "output.emitted") {
+		t.Fatalf("the continued turn did not complete: %v", types)
+	}
+	if result, _ := host.Slash(ctx, session, resume, nil); strings.Contains(result.Output, "continued") {
+		t.Fatalf("/resume continued a finished turn: %+v", result)
 	}
 }
