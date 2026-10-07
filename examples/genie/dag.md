@@ -264,19 +264,20 @@ printf 'genie: done; the change is in %s (git diff), the run record in %s\n' "$r
 Requires: pick-model
 Effects: read, write, exec, net, spend
 
-The front door (`bashy genie` runs this target): genie as a coding assistant
+The job recipe (`bashy genie` or model-selected `bashy ycode` runs this target): genie as a coding assistant
 in the directory the caller is in, on a local model picked for this host
 (`GENIE_MODEL_ID`, or `bashy genie -m MODEL`, overrides). The mode follows the
 input:
 
 - a message (the arguments), or a message piped on stdin: one turn, answer on
   stdout — the one-off mode;
-- no message on a terminal: the interactive session (`bashy ycode`'s terminal
-  frontend);
-- `GENIE_MODE=web` (`bashy genie web`): the browser chat page on a free
+- no message on a terminal: `bashy ycode -m MODEL` prepares the selected
+  model and opens ycode's terminal frontend;
+- `GENIE_MODE=web` (`bashy ycode web`, also `bashy genie web` during the
+  transition): the browser chat page on a free
   loopback port; the URL to open, with its one-time token, goes to stderr;
-- `GENIE_MODE=resume` / `session` (`bashy genie resume`, `bashy genie session
-  list`): continue the latest session, or the session views.
+- `GENIE_MODE=resume` / `repl` / `prompt` / `acp` / `session`:
+  the matching terminal, one-shot, client-protocol, or session entry.
 
 Unlike `solve`, the working tree may be dirty and nothing is recorded beyond
 the engine's own session log. The model is served by the host's model door
@@ -326,7 +327,21 @@ case $mode in
     # The terminal session runs where the caller is: its commands and the
     # agent's work both land in the caller's tree.
     cd "$caller"
-    "$BASHY" ycode -f "$config" resume
+    args=()
+    while IFS= read -r arg; do args+=("$arg"); done < <(printf '%s' "${BASHY_DAG_ARGS_JSON:-[]}" | jq -r '.[]')
+    "$BASHY" ycode -f "$config" resume "${args[@]}"
+    ;;
+  repl)
+    cd "$caller"
+    "$BASHY" ycode -f "$config" repl
+    ;;
+  acp)
+    cd "$caller"
+    "$BASHY" ycode -f "$config" acp
+    ;;
+  prompt)
+    cd "$caller"
+    "$BASHY" ycode -f "$config" prompt "$message"
     ;;
   *)
     if [ -n "$message" ]; then
