@@ -244,6 +244,9 @@ func (d *Document) mergeImported(export, namespace string, fragment *Document, s
 		}
 		value := fragment.Spec.Sources[name]
 		if value.File != nil {
+			if value.File.Base != "" && value.File.Base != "document" {
+				return fmt.Errorf("source %q: an imported file source is read at import and cannot use base %q", export, value.File.Base)
+			}
 			path := value.File.Path
 			if !filepath.IsAbs(path) {
 				path = filepath.Join(importDir, path)

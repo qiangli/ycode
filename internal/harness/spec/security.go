@@ -152,7 +152,7 @@ func resourceKindForRef(name string) string {
 		return "routes"
 	case "pipeline", "defaultPipeline":
 		return "pipelines"
-	case "source", "instruction":
+	case "source", "instruction", "template":
 		return "sources"
 	case "context":
 		return "contexts"

@@ -163,12 +163,14 @@ spec:
           - {name: schema, short: Print the agent.yaml JSON Schema, args: {min: 0, max: 0}, dispatch: {operation: schema}}
           - name: config
             short: Inspect the compiled agent.yaml harness
-            long: "agent.yaml is the sole source of truth. This view is read-only."
+            long: "agent.yaml is the sole source of truth. These views are read-only; a custom file is selected with --file, never merged."
             args: {min: 0, max: 0}
             commands:
               - {name: show, short: Print the compiled harness as JSON, args: {min: 0, max: 0}, dispatch: {operation: inspect, resource: document, action: show}}
               - {name: path, short: Print the compiled harness path, args: {min: 0, max: 0}, dispatch: {operation: inspect, resource: document, action: path}}
               - {name: get, usage: "get <key>", short: Print one dot-separated compiled field, args: {min: 1, max: 1}, dispatch: {operation: inspect, resource: document, action: get}}
+              - {name: source, short: Print the effective configuration file and how it was selected, args: {min: 0, max: 0}, dispatch: {operation: config, action: source}}
+              - {name: use, usage: "use FILE", short: Validate a custom configuration file to select with --file, args: {min: 1, max: 1}, dispatch: {operation: config, action: use}}
           - name: model
             short: Inspect models compiled from agent.yaml
             args: {min: 0, max: 0}

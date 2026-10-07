@@ -78,6 +78,9 @@
         "queueRef": {
           "type": "string"
         },
+        "sessionControls": {
+          "$ref": "#/$defs/SessionControls"
+        },
         "sessionRef": {
           "type": "string"
         }
@@ -312,6 +315,15 @@
         "resource": {
           "type": "string"
         },
+        "scope": {
+          "type": "string"
+        },
+        "sourceRef": {
+          "type": "string"
+        },
+        "templateRef": {
+          "type": "string"
+        },
         "triggerRef": {
           "type": "string"
         }
@@ -448,6 +460,9 @@
           "type": "string"
         },
         "payloadKey": {
+          "type": "string"
+        },
+        "sessionDefault": {
           "type": "string"
         },
         "sessionFlag": {
@@ -910,6 +925,9 @@
           "type": "string"
         },
         "trust": {
+          "type": "string"
+        },
+        "ui": {
           "type": "string"
         }
       },
@@ -1722,6 +1740,21 @@
       },
       "type": "object"
     },
+    "SessionControls": {
+      "additionalProperties": false,
+      "properties": {
+        "btwPrompt": {
+          "type": "string"
+        },
+        "pipelineRef": {
+          "type": "string"
+        },
+        "planPrompt": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "SessionEvents": {
       "additionalProperties": false,
       "properties": {
@@ -1881,6 +1914,9 @@
     "SourceFile": {
       "additionalProperties": false,
       "properties": {
+        "base": {
+          "type": "string"
+        },
         "path": {
           "type": "string"
         },

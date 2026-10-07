@@ -44,6 +44,13 @@ func dispatchCLI(ctx context.Context, inv harnesscli.Invocation, streams harness
 		return runACPInvocation(file, inv.Dispatch, streams)
 	case "shell":
 		return runHarnessShellInvocation(ctx, inv, streams)
+	case "config":
+		if _, err := os.Stat(file); errors.Is(err, os.ErrNotExist) && inv.ConfigOrigin == "default" && inv.Dispatch.Action == "source" {
+			// Discovery found no file and showed the built-in command
+			// surface; nothing is configured to run yet.
+			_, err := fmt.Fprintf(streams.Out, "config: none (no %s)\norigin: built-in command surface only; execution requires a configuration file\n", file)
+			return err
+		}
 	}
 	doc, err := loadHarness(file)
 	if err != nil {
@@ -63,6 +70,10 @@ func dispatchCLI(ctx context.Context, inv harnesscli.Invocation, streams harness
 		return err
 	case "inspect":
 		return inspectCLI(doc, inv, streams.Out)
+	case "config":
+		return configCLI(doc, inv, streams.Out)
+	case "init":
+		return initCLI(doc, inv, streams.Out)
 	case "session":
 		app, err := openHarnessApplication(file)
 		if err != nil {

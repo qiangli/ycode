@@ -27,6 +27,7 @@ import (
 type harnessApplication struct {
 	doc     *spec.Document
 	harness *public.Harness
+	options []public.LoadOption // reused when a frontend reopens another configuration
 }
 
 func openHarnessApplication(path string, options ...public.LoadOption) (*harnessApplication, error) {
@@ -38,7 +39,7 @@ func openHarnessApplication(path string, options ...public.LoadOption) (*harness
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
-	return &harnessApplication{doc: doc, harness: harness}, nil
+	return &harnessApplication{doc: doc, harness: harness, options: options}, nil
 }
 
 func (a *harnessApplication) Close() error { return a.harness.Close() }

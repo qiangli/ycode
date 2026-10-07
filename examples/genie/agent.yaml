@@ -157,18 +157,25 @@ spec:
               - {name: search, usage: "search QUERY...", short: Find transcript text across sessions, args: {min: 1, max: -1}, dispatch: {operation: session, action: search}}
               - {name: rename, usage: "rename SESSION TITLE...", short: Record a session title, args: {min: 2, max: -1}, dispatch: {operation: session, action: rename}}
               - {name: fork, usage: "fork [SESSION]", short: Start a child session from the latest committed turn and print its id, args: {min: 0, max: 1}, dispatch: {operation: session, action: fork}}
+          - name: init
+            short: Create this repository's GENIE.md instructions, or use the existing file unchanged
+            long: "GENIE.md in the workspace is genie's own instruction file, loaded into every turn's context. init never overwrites it and never reads or changes other agents' files (AGENTS.md, CLAUDE.md, ...)."
+            args: {min: 0, max: 0}
+            dispatch: {operation: init, sourceRef: repository-instructions, templateRef: repository-instructions-template}
           - {name: version, short: Print version information, args: {min: 0, max: 0}, dispatch: {operation: version}}
           - {name: doctor, short: Compile the harness and report provider readiness, args: {min: 0, max: 0}, dispatch: {operation: readiness, agentRef: coder}}
           - {name: validate, short: Validate and compile an agent.yaml harness, args: {min: 0, max: 0}, dispatch: {operation: validate}}
           - {name: schema, short: Print the agent.yaml JSON Schema, args: {min: 0, max: 0}, dispatch: {operation: schema}}
           - name: config
             short: Inspect the compiled agent.yaml harness
-            long: "agent.yaml is the sole source of truth. This view is read-only."
+            long: "agent.yaml is the sole source of truth. These views are read-only; a custom file is selected with --file, never merged."
             args: {min: 0, max: 0}
             commands:
               - {name: show, short: Print the compiled harness as JSON, args: {min: 0, max: 0}, dispatch: {operation: inspect, resource: document, action: show}}
               - {name: path, short: Print the compiled harness path, args: {min: 0, max: 0}, dispatch: {operation: inspect, resource: document, action: path}}
               - {name: get, usage: "get <key>", short: Print one dot-separated compiled field, args: {min: 1, max: 1}, dispatch: {operation: inspect, resource: document, action: get}}
+              - {name: source, short: Print the effective configuration file and how it was selected, args: {min: 0, max: 0}, dispatch: {operation: config, action: source}}
+              - {name: use, usage: "use FILE", short: Validate a custom configuration file to select with --file, args: {min: 1, max: 1}, dispatch: {operation: config, action: use}}
           - name: model
             short: Inspect models compiled from agent.yaml
             args: {min: 0, max: 0}
@@ -287,6 +294,32 @@ spec:
       file: {path: AGENTS.md, required: false}
       limits: {maxBytes: 65536}
       snapshot: before-run
+    # GENIE.md is genie's own repository instruction file, read from the
+    # workspace (not this file's directory); `init` seeds it from the
+    # template below and never overwrites an existing one.
+    repository-instructions:
+      file: {path: GENIE.md, base: workspace, required: false}
+      limits: {maxBytes: 65536}
+      snapshot: before-run
+    repository-instructions-template:
+      text: |
+        # GENIE.md
+
+        Instructions for genie in this repository. genie reads this file into
+        every turn; edit it freely — `init` never overwrites it.
+
+        ## Project
+
+        - What this repository is and how it is laid out.
+
+        ## Build and test
+
+        - The commands that build and test it.
+
+        ## Conventions
+
+        - Style, review and commit rules genie must follow.
+      limits: {maxBytes: 4096}
     final-step:
       text: This is the final permitted model step. Return the best complete answer now.
       limits: {maxBytes: 4096}
@@ -393,6 +426,10 @@ spec:
           cache: {scope: stable, breakAfter: true}
         - id: project
           sourceRef: project-instructions
+          role: system
+          cache: {scope: workspace, breakAfter: true}
+        - id: repository
+          sourceRef: repository-instructions
           role: system
           cache: {scope: workspace, breakAfter: true}
       budget: {maxTokens: 100000, overflow: fail}

@@ -70,6 +70,14 @@ func (p *tuiProvider) Send(ctx context.Context, request *api.Request) (<-chan *a
 			events <- &api.StreamEvent{Type: "message_delta", Delta: stop}
 			return
 		}
+		if bytes.Contains(last, []byte("rules?")) {
+			// Reports whether the compiled context carried the repository
+			// instruction file /init seeds (its template holds the marker).
+			text, _ := json.Marshal(map[string]string{"type": "text_delta", "text": fmt.Sprintf("instructions-in-context=%v", strings.Contains(request.System, "GENIE-MARKER-387") || bytes.Contains(raw, []byte("GENIE-MARKER-387")))})
+			events <- &api.StreamEvent{Type: "content_block_delta", Delta: text}
+			events <- &api.StreamEvent{Type: "message_delta", Delta: stop}
+			return
+		}
 		if bytes.Contains(last, []byte("approve-me")) {
 			// An exact workspace overwrite matches the compiled destructive
 			// rule: the engine suspends on hitl.waiting until the human answers.
@@ -287,7 +295,7 @@ func tuiPTYHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root.SetArgs([]string{"--file", fixture})
+	root.SetArgs(append([]string{"--file", fixture}, strings.Fields(os.Getenv("YCODE_TUI_ARGS"))...))
 	err = root.ExecuteContext(context.Background())
 	status := "ok"
 	if err != nil {

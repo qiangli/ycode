@@ -57,6 +57,7 @@ type Entry struct{ Role, Text string }
 type SlashResult struct {
 	Output  string
 	Session string
+	Fresh   bool // Session is new: nothing to replay
 	Turn    string
 	Start   func(ctx context.Context) (<-chan event.Event, error)
 }
@@ -285,7 +286,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			out = append(out, tea.Println(faint.Render("finish or ESC this turn before switching sessions")))
 		case msg.result.Session != "" && msg.result.Session != m.session:
 			m.session = msg.result.Session
-			out = append(out, m.replay())
+			if !msg.result.Fresh {
+				out = append(out, m.replay())
+			}
 		case msg.result.Start != nil && m.running:
 			out = append(out, tea.Println(failed.Render("ycode: a turn is running; "+msg.result.Turn+" was not started")))
 		case msg.result.Start != nil:
@@ -398,6 +401,9 @@ func (m *model) submit(line string) tea.Cmd {
 				return m.slash(slash, args)
 			}
 			return tea.Println(failed.Render("ycode: /resume " + strings.Join(args, " ") + " refused during a turn; stop or finish this turn first"))
+		}
+		if slash, _, ok := parseSlash(line); ok && slash.Idle {
+			return tea.Println(failed.Render("ycode: " + slash.Name + " refused during a turn; stop or finish this turn first"))
 		}
 		if err := m.opts.Host.Steer(m.session, line); err != nil {
 			m.held = append(m.held, line)

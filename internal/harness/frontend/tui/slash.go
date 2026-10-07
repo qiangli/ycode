@@ -14,13 +14,17 @@ type Slash struct {
 	Usage   string // "/save [TITLE]"
 	Command string // the subcommand it is shorthand for
 	Short   string
+	// Idle slashes change the configuration a turn runs on, so they run
+	// only between turns; typed during one they are refused, never steered.
+	Idle bool
 }
 
-// Slashes is the whole set (Sprint 387 A7): /init /plan /save /resume /model
-// plus /help and /quit. There is no registry beyond this table.
+// Slashes is the whole set (Sprint 387 A7): /config /init /plan /save
+// /resume /model plus /help and /quit. There is no registry beyond this table.
 var Slashes = []Slash{
 	{Name: "/help", Usage: "/help", Command: "--help", Short: "List the slashes and the subcommands they stand for"},
-	{Name: "/init", Usage: "/init", Command: "init", Short: "Set up the agent YAML and model for this repository"},
+	{Name: "/config", Usage: "/config [FILE]", Command: "config source | config use FILE", Short: "Show the effective config and origin, or use FILE", Idle: true},
+	{Name: "/init", Usage: "/init", Command: "init", Short: "Create or use the repo instruction file", Idle: true},
 	{Name: "/model", Usage: "/model [NAME]", Command: "model current|use NAME", Short: "Show the session model and the declared ones, or select one"},
 	{Name: "/plan", Usage: "/plan [TEXT]", Command: "plan [TEXT]", Short: "Toggle plan mode (no tools), or plan TEXT"},
 	{Name: "/quit", Usage: "/quit", Command: "(leave the terminal)", Short: "Leave; the session stays resumable"},

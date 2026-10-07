@@ -22,6 +22,9 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
+
+	"github.com/google/uuid"
 
 	harnesscli "github.com/qiangli/ycode/internal/harness/cli"
 	"github.com/qiangli/ycode/internal/harness/event"
@@ -51,10 +54,17 @@ func runTerminalTUI(ctx context.Context, app *harnessApplication, inv harnesscli
 	if err != nil {
 		return err
 	}
-	host := &tuiHost{app: app, view: view, inv: inv, config: config, principal: principal}
+	host := &tuiHost{app: app, view: view, inv: inv, config: config, origin: inv.ConfigOrigin, principal: principal}
 	if queueRef, ok := steeringQueue(app, inv.Dispatch.AgentRef, inv.FrontendRef); ok {
 		host.queueRef = queueRef
 	}
+	defer func() {
+		// The caller closes the application it opened; /config or /init
+		// may have replaced it with one this terminal owns.
+		if current := host.bound().app; current != app {
+			_ = current.Close()
+		}
+	}()
 	return tui.Run(ctx, tui.Options{Agent: app.doc.Metadata.Name, Session: session, Host: host, Shell: literalShell{}})
 }
 
@@ -73,58 +83,86 @@ type tuiHost struct {
 	view      *frontend.TUI
 	inv       harnesscli.Invocation
 	config    string
+	origin    string // how config was selected, as /config reports it
 	principal string
 	queueRef  string
+	// mu guards the binding above: /config and /init replace it between
+	// turns while status and transcript reads run concurrently.
+	mu sync.Mutex
+}
+
+// tuiBinding is one consistent view of the configuration a host serves.
+type tuiBinding struct {
+	app            *harnessApplication
+	view           *frontend.TUI
+	inv            harnesscli.Invocation
+	config, origin string
+	queueRef       string
+}
+
+func (h *tuiHost) bound() tuiBinding {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return tuiBinding{app: h.app, view: h.view, inv: h.inv, config: h.config, origin: h.origin, queueRef: h.queueRef}
 }
 
 func (h *tuiHost) Turn(ctx context.Context, session, text string) (<-chan event.Event, error) {
-	body, err := json.Marshal(map[string]string{h.inv.Dispatch.Input.PayloadKey: text})
+	b := h.bound()
+	body, err := json.Marshal(map[string]string{b.inv.Dispatch.Input.PayloadKey: text})
 	if err != nil {
 		return nil, err
 	}
-	return h.view.Stream(ctx, body, frontend.Defaults{SessionID: session, Principal: h.principal})
+	return b.view.Stream(ctx, body, frontend.Defaults{SessionID: session, Principal: h.principal})
 }
 
 func (h *tuiHost) Steer(session, text string) error {
-	if h.queueRef == "" {
+	b := h.bound()
+	if b.queueRef == "" {
 		return errors.New("the agent has no compiled steering queue")
 	}
-	return h.app.harness.Enqueue(public.QueueRequest{SessionID: session, QueueRef: h.queueRef, Class: "steering", Text: text})
+	return b.app.harness.Enqueue(public.QueueRequest{SessionID: session, QueueRef: b.queueRef, Class: "steering", Text: text})
 }
 
 func (h *tuiHost) TakeQueued(session string) ([]string, error) {
-	if h.queueRef == "" {
+	b := h.bound()
+	if b.queueRef == "" {
 		return nil, nil
 	}
-	return ownedTurnHost{app: h.app, session: session, queueRef: h.queueRef}.TakeQueued()
+	return ownedTurnHost{app: b.app, session: session, queueRef: b.queueRef}.TakeQueued()
 }
 
 func (h *tuiHost) Settle(ctx context.Context, session string) bool {
-	return h.app.harness.Settle(ctx, session)
+	b := h.bound()
+	return b.app.harness.Settle(ctx, session)
 }
 
 func (h *tuiHost) Decide(ctx context.Context, session string, w tui.Waiting, action string) (<-chan event.Event, error) {
-	return h.app.harness.Resume(ctx, public.ResumeRequest{
+	b := h.bound()
+	return b.app.harness.Resume(ctx, public.ResumeRequest{
 		SessionID: session, RunID: w.RunID, DecisionID: w.DecisionID, ExpectedVersion: w.Version,
 		ReviewDigest: w.ReviewDigest, ReportDigest: w.ReportDigest, Action: action, Actor: h.principal,
 	})
 }
 
-func (h *tuiHost) Payload(ref string) ([]byte, error) { return h.app.harness.Payload(ref) }
+func (h *tuiHost) Payload(ref string) ([]byte, error) {
+	b := h.bound()
+	return b.app.harness.Payload(ref)
+}
 
 func (h *tuiHost) Status(session string) tui.Status {
+	b := h.bound()
 	var status tui.Status
 	// Model is what the provider last measured answering; Selected is the
 	// session's explicit override, if any. Neither masks the other, so a
 	// route fallback shows as the model that actually ran.
-	status.Model, _ = defaultHarnessModel(h.app.doc)
-	if ref, err := h.app.harness.SessionModelOverride(session); err == nil && ref != "" {
-		if m, ok := h.app.doc.Spec.Models[ref]; ok {
+	status.Model, _ = defaultHarnessModel(b.app.doc)
+	if ref, err := b.app.harness.SessionModelOverride(session); err == nil && ref != "" {
+		if m, ok := b.app.doc.Spec.Models[ref]; ok {
 			status.Selected = m.ID
 		}
 	}
-	status.Mode, _ = h.app.harness.SessionMode(session)
-	messages, err := h.app.harness.Transcript(session)
+	status.Mode, _ = b.app.harness.SessionMode(session)
+	messages, err := b.app.harness.Transcript(session)
 	if err != nil {
 		return status
 	}
@@ -156,7 +194,8 @@ func (h *tuiHost) Status(session string) tui.Status {
 }
 
 func (h *tuiHost) Transcript(session string) ([]tui.Entry, error) {
-	entries, err := h.app.Transcript(session)
+	b := h.bound()
+	entries, err := b.app.Transcript(session)
 	if err != nil {
 		return nil, err
 	}
@@ -204,9 +243,10 @@ func (a *harnessApplication) Transcript(session string) ([]frontend.TranscriptEn
 // Slash runs the declared subcommand a slash stands for. A slash whose
 // subcommand the agent YAML does not declare fails; nothing is emulated.
 func (h *tuiHost) Slash(ctx context.Context, session string, s tui.Slash, args []string) (tui.SlashResult, error) {
+	b := h.bound()
 	switch s.Name {
 	case "/save":
-		found, err := h.app.harness.Session(session)
+		found, err := b.app.harness.Session(session)
 		if err != nil {
 			return tui.SlashResult{}, fmt.Errorf("nothing to save yet: session %s has no committed turn", session)
 		}
@@ -223,12 +263,12 @@ func (h *tuiHost) Slash(ctx context.Context, session string, s tui.Slash, args [
 	case "/resume":
 		// A live cooperative pause on this session is released by Continue;
 		// a typed HITL approval is never answered here, it stays y/n.
-		continued, declared := declaredCommand(h.app.doc.Spec.Interfaces.CLI.Root, []string{"continue"})
+		continued, declared := declaredCommand(b.app.doc.Spec.Interfaces.CLI.Root, []string{"continue"})
 		if declared && continued.Dispatch.Operation == "session" && continued.Dispatch.Action == "continue" && (len(args) == 0 || args[0] == session) {
-			if flag, ok := requiredFlag(h.app.doc.Spec.Interfaces.CLI.Root, []string{"continue"}); ok {
+			if flag, ok := requiredFlag(b.app.doc.Spec.Interfaces.CLI.Root, []string{"continue"}); ok {
 				return tui.SlashResult{}, fmt.Errorf("`continue` requires --%s, which a slash cannot supply; run the command from a terminal", flag)
 			}
-			_, err := sessionControl(ctx, h.app, *continued.Dispatch, session, h.principal, nil)
+			_, err := sessionControl(ctx, b.app, *continued.Dispatch, session, h.principal, nil)
 			switch {
 			case err == nil:
 				return tui.SlashResult{Output: "continued: the paused turn resumes at its next step (a pending approval still waits for y/n)"}, nil
@@ -241,10 +281,10 @@ func (h *tuiHost) Slash(ctx context.Context, session string, s tui.Slash, args [
 		var found public.SessionSummary
 		var err error
 		if len(args) > 0 {
-			found, err = h.app.harness.Session(args[0])
+			found, err = b.app.harness.Session(args[0])
 		} else {
 			var sessions []public.SessionSummary
-			if sessions, err = h.app.harness.Sessions(); err == nil && len(sessions) == 0 {
+			if sessions, err = b.app.harness.Sessions(); err == nil && len(sessions) == 0 {
 				err = errors.New("no session to resume")
 			} else if err == nil {
 				found = sessions[0]
@@ -261,11 +301,109 @@ func (h *tuiHost) Slash(ctx context.Context, session string, s tui.Slash, args [
 		return h.model(ctx, session, args)
 	case "/plan":
 		return h.command(ctx, session, []string{"plan"}, args)
+	case "/config":
+		if len(args) == 0 {
+			out, err := h.declared(ctx, []string{"config", "source"})
+			return tui.SlashResult{Output: out}, err
+		}
+		if len(args) > 1 {
+			return tui.SlashResult{}, errors.New("/config takes one FILE")
+		}
+		if b.app.harness.Busy() {
+			return tui.SlashResult{}, errors.New("a turn is running; /config FILE switches only between turns")
+		}
+		// The declared `config use` validates the candidate; a failure
+		// keeps the effective configuration as it was.
+		out, err := h.declared(ctx, []string{"config", "use", args[0]})
+		if err != nil {
+			return tui.SlashResult{Output: out}, err
+		}
+		path, err := filepath.Abs(args[0])
+		if err != nil {
+			return tui.SlashResult{Output: out}, err
+		}
+		return h.rebind(b, session, path, "/config in this terminal", out)
 	case "/init":
-		out, err := h.declared(ctx, append([]string{"init"}, args...))
-		return tui.SlashResult{Output: out}, err
+		if len(args) > 0 {
+			return tui.SlashResult{}, errors.New("/init takes no arguments")
+		}
+		if b.app.harness.Busy() {
+			return tui.SlashResult{}, errors.New("a turn is running; /init runs only between turns")
+		}
+		out, err := h.declared(ctx, []string{"init"})
+		if err != nil {
+			return tui.SlashResult{Output: out}, err
+		}
+		// Recompile so the instructions reach the next turn's context.
+		return h.rebind(b, session, b.config, b.origin, out)
 	}
 	return tui.SlashResult{}, fmt.Errorf("%s is not a slash", s.Name)
+}
+
+// rebind serves the configuration at path from the next turn on. It
+// compiles path afresh (an unchanged digest keeps everything as it is),
+// requires the same terminal route, and keeps a session only when nothing
+// in it is bound to the previous configuration: a session with committed
+// turns, a model selection or a mode moves to a new session, and stays
+// resumable with /resume.
+func (h *tuiHost) rebind(b tuiBinding, session, path, origin, prior string) (tui.SlashResult, error) {
+	var out strings.Builder
+	out.WriteString(strings.TrimRight(prior, "\n"))
+	if out.Len() > 0 {
+		out.WriteString("\n")
+	}
+	app, err := openHarnessApplication(path, b.app.options...)
+	if err != nil {
+		return tui.SlashResult{Output: out.String()}, fmt.Errorf("configuration unchanged: %w", err)
+	}
+	if path == b.config && app.doc.ConfigDigest == b.app.doc.ConfigDigest {
+		_ = app.Close()
+		fmt.Fprintf(&out, "configuration unchanged: %s (%s)", path, b.app.doc.ConfigDigest)
+		return tui.SlashResult{Output: out.String()}, nil
+	}
+	inv := b.inv
+	inv.ConfigFile, inv.ConfigOrigin = path, origin
+	if path != b.config {
+		// Another file brings its own route: its root input's terminal
+		// frontend, which must be a tui.
+		root := app.doc.Spec.Interfaces.CLI.Root.Dispatch
+		if root == nil || root.Operation != "input" || root.Input == nil || root.Input.TerminalFrontendRef == "" {
+			_ = app.Close()
+			return tui.SlashResult{Output: out.String()}, fmt.Errorf("configuration unchanged: %s declares no terminal route", path)
+		}
+		inv.Dispatch, inv.FrontendRef = *root, root.Input.TerminalFrontendRef
+	}
+	view, err := frontend.NewTUI(app.doc, inv.FrontendRef, cliController{app, inv.Dispatch.AgentRef})
+	if err != nil {
+		_ = app.Close()
+		return tui.SlashResult{Output: out.String()}, fmt.Errorf("configuration unchanged: %w", err)
+	}
+	queueRef, _ := steeringQueue(app, inv.Dispatch.AgentRef, inv.FrontendRef)
+	next := session
+	_, committed := b.app.harness.Session(session)
+	_, modelErr := app.harness.SessionModelOverride(session)
+	_, modeErr := app.harness.SessionMode(session)
+	if committed == nil || modelErr != nil || modeErr != nil {
+		next = uuid.NewString()
+	}
+	h.mu.Lock()
+	if h.app != b.app {
+		h.mu.Unlock()
+		_ = app.Close()
+		return tui.SlashResult{Output: out.String()}, errors.New("configuration unchanged: it was replaced meanwhile")
+	}
+	previous := h.app
+	h.app, h.view, h.inv, h.config, h.origin, h.queueRef = app, view, inv, path, origin, queueRef
+	h.mu.Unlock()
+	if previous != nil {
+		_ = previous.Close()
+	}
+	fmt.Fprintf(&out, "configuration: %s (%s, %s) from the next turn", path, app.doc.Metadata.Name, app.doc.ConfigDigest)
+	if next != session {
+		fmt.Fprintf(&out, "\nnew session %s; session %s keeps its configuration and stays resumable with /resume %s", next, session, session)
+		return tui.SlashResult{Output: out.String(), Session: next, Fresh: true}, nil
+	}
+	return tui.SlashResult{Output: out.String()}, nil
 }
 
 // model projects `model current` and `model list` (no NAME) or
@@ -290,7 +428,8 @@ func (h *tuiHost) model(ctx context.Context, session string, args []string) (tui
 // terminal streams, steers and stops like any other. Any other operation
 // runs through the compiled CLI.
 func (h *tuiHost) command(ctx context.Context, session string, path, args []string) (tui.SlashResult, error) {
-	command, ok := declaredCommand(h.app.doc.Spec.Interfaces.CLI.Root, path)
+	b := h.bound()
+	command, ok := declaredCommand(b.app.doc.Spec.Interfaces.CLI.Root, path)
 	if !ok {
 		return tui.SlashResult{}, fmt.Errorf("the agent YAML declares no `%s` subcommand", strings.Join(path, " "))
 	}
@@ -301,7 +440,7 @@ func (h *tuiHost) command(ctx context.Context, session string, path, args []stri
 	}
 	// The shortcut carries positional arguments only; a required authored
 	// flag cannot be supplied through it, so it is refused, never bypassed.
-	if flag, ok := requiredFlag(h.app.doc.Spec.Interfaces.CLI.Root, path); ok {
+	if flag, ok := requiredFlag(b.app.doc.Spec.Interfaces.CLI.Root, path); ok {
 		return tui.SlashResult{}, fmt.Errorf("`%s` requires --%s, which a slash cannot supply; run the command from a terminal", strings.Join(path, " "), flag)
 	}
 	if len(args) < command.Args.Min || (command.Args.Max >= 0 && len(args) > command.Args.Max) {
@@ -318,12 +457,12 @@ func (h *tuiHost) command(ctx context.Context, session string, path, args []stri
 			result.Output = "mode: plan — this turn plans without running tools; /plan again returns to act"
 		}
 		result.Start = func(ctx context.Context) (<-chan event.Event, error) {
-			result, err := sessionControl(ctx, h.app, route, session, h.principal, args)
+			result, err := sessionControl(ctx, b.app, route, session, h.principal, args)
 			return result.Stream, err
 		}
 		return result, nil
 	}
-	result, err := sessionControl(ctx, h.app, route, session, h.principal, args)
+	result, err := sessionControl(ctx, b.app, route, session, h.principal, args)
 	if err != nil {
 		return tui.SlashResult{}, err
 	}
@@ -333,11 +472,11 @@ func (h *tuiHost) command(ctx context.Context, session string, path, args []stri
 	}
 	switch route.Action {
 	case "model-current":
-		return tui.SlashResult{Output: fmt.Sprintf("current: %s (%s)", result.ModelRef, h.app.doc.Spec.Models[result.ModelRef].ID)}, nil
+		return tui.SlashResult{Output: fmt.Sprintf("current: %s (%s)", result.ModelRef, b.app.doc.Spec.Models[result.ModelRef].ID)}, nil
 	case "model-use":
-		return tui.SlashResult{Output: fmt.Sprintf("model: session %s now uses %s (%s)", session, result.ModelRef, h.app.doc.Spec.Models[result.ModelRef].ID)}, nil
+		return tui.SlashResult{Output: fmt.Sprintf("model: session %s now uses %s (%s)", session, result.ModelRef, b.app.doc.Spec.Models[result.ModelRef].ID)}, nil
 	case "plan":
-		mode, err := h.app.harness.SessionMode(session)
+		mode, err := b.app.harness.SessionMode(session)
 		if err != nil {
 			return tui.SlashResult{}, err
 		}
@@ -353,10 +492,11 @@ func (h *tuiHost) command(ctx context.Context, session string, path, args []stri
 // declared runs path (a subcommand path plus its arguments) through the
 // compiled CLI in-process, after checking that the agent YAML declares it.
 func (h *tuiHost) declared(ctx context.Context, argv []string) (string, error) {
-	if !declaresCommand(h.app.doc.Spec.Interfaces.CLI.Root, argv) {
+	b := h.bound()
+	if !declaresCommand(b.app.doc.Spec.Interfaces.CLI.Root, argv) {
 		return "", fmt.Errorf("the agent YAML declares no `%s` subcommand", argv[0])
 	}
-	root, err := harnesscli.New(h.app.doc, dispatchCLI, harnesscli.Options{Version: version, Commit: commit, IsTerminal: false, LookupEnv: os.LookupEnv})
+	root, err := harnesscli.New(b.app.doc, dispatchCLI, harnesscli.Options{Version: version, Commit: commit, IsTerminal: false, LookupEnv: os.LookupEnv, ConfigOrigin: b.origin})
 	if err != nil {
 		return "", err
 	}
@@ -364,7 +504,7 @@ func (h *tuiHost) declared(ctx context.Context, argv []string) (string, error) {
 	root.SetIn(strings.NewReader(""))
 	root.SetOut(&out)
 	root.SetErr(&out)
-	root.SetArgs(append([]string{"--file", h.config}, argv...))
+	root.SetArgs(append([]string{"--file", b.config}, argv...))
 	err = root.ExecuteContext(ctx)
 	return out.String(), err
 }

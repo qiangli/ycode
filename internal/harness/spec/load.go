@@ -538,7 +538,7 @@ func (d *Document) resolveSources() error {
 			d.Spec.Sources[name] = source
 			continue
 		}
-		resolved, err := d.resolvePath(source.File.Path)
+		resolved, err := d.SourcePath(name)
 		if err != nil {
 			return fmt.Errorf("harness: source %q: %w", name, err)
 		}
@@ -558,6 +558,52 @@ func (d *Document) resolveSources() error {
 		d.Spec.Sources[name] = source
 	}
 	return nil
+}
+
+// WorkspaceDir is runtime.workspace as an absolute directory.
+func (d *Document) WorkspaceDir() string {
+	workspace := d.Spec.Runtime.Workspace
+	if !filepath.IsAbs(workspace) {
+		workspace = filepath.Join(d.BaseDir, workspace)
+	}
+	return filepath.Clean(workspace)
+}
+
+// SourcePath is the readable path of the named file source, anchored at
+// its declared base.
+func (d *Document) SourcePath(name string) (string, error) {
+	source, ok := d.Spec.Sources[name]
+	if !ok || source.File == nil {
+		return "", fmt.Errorf("no file source %q", name)
+	}
+	path := source.File.Path
+	switch source.File.Base {
+	case "", "document":
+	case "workspace":
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(d.WorkspaceDir(), path)
+		}
+	default:
+		return "", fmt.Errorf("file.base must be document or workspace")
+	}
+	return d.resolvePath(path)
+}
+
+// WritablePath reports an error unless path lies within writableRoots.
+func (d *Document) WritablePath(path string) error {
+	for _, root := range d.Spec.Runtime.WritableRoots {
+		if !filepath.IsAbs(root) {
+			root = filepath.Join(d.BaseDir, root)
+		}
+		root = filepath.Clean(root)
+		if pathWithin(root, path) {
+			return nil
+		}
+		if real, err := filepath.EvalSymlinks(root); err == nil && pathWithin(real, path) {
+			return nil
+		}
+	}
+	return fmt.Errorf("file %q is outside writableRoots", path)
 }
 
 func (d *Document) resolvePath(path string) (string, error) {

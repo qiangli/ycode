@@ -18,13 +18,16 @@ import (
 )
 
 type Invocation struct {
-	ConfigFile  string
-	Command     []string
-	Arguments   []string
-	Flags       map[string]any
-	Dispatch    spec.CLIDispatch
-	Mode        string
-	FrontendRef string
+	ConfigFile string
+	// ConfigOrigin says how ConfigFile was selected: "flag", "env NAME",
+	// "default", or what Options.ConfigOrigin names.
+	ConfigOrigin string
+	Command      []string
+	Arguments    []string
+	Flags        map[string]any
+	Dispatch     spec.CLIDispatch
+	Mode         string
+	FrontendRef  string
 }
 type IO struct {
 	In       io.Reader
@@ -35,6 +38,9 @@ type Options struct {
 	Version, Commit string
 	IsTerminal      bool
 	LookupEnv       func(string) (string, bool)
+	// ConfigOrigin, when set, is reported as the configuration's origin
+	// (an embedding frontend that already selected the file says how).
+	ConfigOrigin string
 }
 
 // Error preserves the policy class and authored process exit code.
@@ -199,8 +205,8 @@ func (b *builder) command(def spec.CLICommand, prefix []string, inherited map[st
 		}
 		route := *def.Dispatch
 		invocation := Invocation{
-			ConfigFile: b.document.Source,
-			Command:    append([]string(nil), path...), Arguments: append([]string(nil), args...),
+			ConfigFile: b.document.Source, ConfigOrigin: b.configOrigin(command),
+			Command: append([]string(nil), path...), Arguments: append([]string(nil), args...),
 			Flags: values, Dispatch: route, FrontendRef: route.FrontendRef,
 		}
 		switch route.Operation {
@@ -285,6 +291,29 @@ func addFlag(command *cobra.Command, flag spec.CLIFlag) error {
 		})
 	}
 	return nil
+}
+
+func (b *builder) configOrigin(command *cobra.Command) string {
+	if b.options.ConfigOrigin != "" {
+		return b.options.ConfigOrigin
+	}
+	for _, spelling := range b.contract.Bootstrap.ConfigFlags {
+		var flag *pflag.Flag
+		if name, ok := strings.CutPrefix(spelling, "--"); ok {
+			flag = command.Flags().Lookup(name)
+		} else {
+			flag = command.Flags().ShorthandLookup(strings.TrimPrefix(spelling, "-"))
+		}
+		if flag != nil && flag.Changed {
+			return "flag"
+		}
+	}
+	if env := b.contract.Bootstrap.Env; env != "" {
+		if value, ok := b.lookupEnv(env); ok && value != "" {
+			return "env " + env
+		}
+	}
+	return "default"
 }
 
 func (b *builder) flagValues(command *cobra.Command, definitions map[string]spec.CLIFlag) (map[string]any, error) {

@@ -108,6 +108,10 @@ type Source struct {
 type SourceFile struct {
 	Path     string `yaml:"path" json:"path"`
 	Required bool   `yaml:"required" json:"required"`
+	// Base anchors a relative path: "document" (the default) is the YAML
+	// file's directory, "workspace" is runtime.workspace, so a generated
+	// configuration can still read the repository it serves.
+	Base string `yaml:"base,omitempty" json:"base,omitempty"`
 }
 type SourceLimits struct {
 	MaxBytes int `yaml:"maxBytes" json:"maxBytes"`

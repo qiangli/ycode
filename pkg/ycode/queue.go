@@ -252,6 +252,14 @@ func (h *Harness) Enqueue(request QueueRequest) error {
 	return h.queue.enqueue(request, h.activeRun(request.SessionID))
 }
 
+// Busy reports whether any turn runs in this process; a frontend replaces
+// its harness (a new configuration) only when none does.
+func (h *Harness) Busy() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.active) > 0
+}
+
 // activeRun names the session's running turn, which a mid-turn item is
 // recorded against; with none running the item gets a run id of its own.
 func (h *Harness) activeRun(sessionID string) string {

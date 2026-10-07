@@ -75,6 +75,10 @@ type CLIDispatch struct {
 	AgentRef    string    `yaml:"agentRef,omitempty" json:"agentRef,omitempty"`
 	PipelineRef string    `yaml:"pipelineRef,omitempty" json:"pipelineRef,omitempty"`
 	Input       *CLIInput `yaml:"input,omitempty" json:"input,omitempty"`
+	// SourceRef and TemplateRef serve operation init: the file source it
+	// creates (never overwrites) and the source whose text seeds it.
+	SourceRef   string `yaml:"sourceRef,omitempty" json:"sourceRef,omitempty"`
+	TemplateRef string `yaml:"templateRef,omitempty" json:"templateRef,omitempty"`
 	// Scope bounds serve: "all" (the default) serves every network frontend,
 	// "frontend" serves only frontendRef.
 	Scope string `yaml:"scope,omitempty" json:"scope,omitempty"`
@@ -372,8 +376,11 @@ func validateCLIDispatch(d *Document, route CLIDispatch, args CLIArgs, flags map
 		}
 	}
 	routed := route.FrontendRef != "" || route.TriggerRef != "" || route.AgentRef != ""
-	if route.Operation != "inspect" && route.Operation != "docs" && route.Operation != "features" && route.Operation != "session" && (route.Resource != "" || route.Action != "") {
+	if route.Operation != "inspect" && route.Operation != "docs" && route.Operation != "features" && route.Operation != "session" && route.Operation != "config" && (route.Resource != "" || route.Action != "") {
 		return fmt.Errorf("operation %s does not accept resource or action", route.Operation)
+	}
+	if route.Operation != "init" && (route.SourceRef != "" || route.TemplateRef != "") {
+		return fmt.Errorf("sourceRef and templateRef are init-only")
 	}
 	if len(route.Columns) > 0 {
 		if route.Operation != "inspect" || route.Action != "list" {
@@ -502,6 +509,44 @@ func validateCLIDispatch(d *Document, route CLIDispatch, args CLIArgs, flags map
 		}
 		if args.Min != want.Min || args.Max != want.Max {
 			return fmt.Errorf("session action %s requires args {min: %d, max: %d}", route.Action, want.Min, want.Max)
+		}
+	case "config":
+		// source reports the effective configuration; use validates a
+		// candidate file. Neither writes settings anywhere.
+		if routed || route.Resource != "" {
+			return fmt.Errorf("config requires an action and no resource or routing references")
+		}
+		want, ok := map[string]int{"source": 0, "use": 1}[route.Action]
+		if !ok {
+			return fmt.Errorf("config.action must be source or use")
+		}
+		if args.Min != want || args.Max != want {
+			return fmt.Errorf("config %s requires exactly %d argument(s)", route.Action, want)
+		}
+	case "init":
+		if routed || route.SourceRef == "" || route.TemplateRef == "" {
+			return fmt.Errorf("init requires sourceRef and templateRef and no routing references")
+		}
+		if args.Min != 0 || args.Max != 0 {
+			return fmt.Errorf("init does not accept positional arguments")
+		}
+		source, ok := d.Spec.Sources[route.SourceRef]
+		if !ok || source.File == nil || source.File.Required {
+			return fmt.Errorf("init.sourceRef must name an optional file source")
+		}
+		if _, ok := d.Spec.Sources[route.TemplateRef]; !ok || route.TemplateRef == route.SourceRef {
+			return fmt.Errorf("init.templateRef must name another source")
+		}
+		// The file init writes must reach the model: an instruction file no
+		// context loads would be generated and unused.
+		used := false
+		for _, context := range d.Spec.Contexts {
+			for _, fragment := range context.Fragments {
+				used = used || fragment.SourceRef == route.SourceRef
+			}
+		}
+		if !used {
+			return fmt.Errorf("init.sourceRef %q is not loaded by any context", route.SourceRef)
 		}
 	case "readiness":
 		if route.FrontendRef != "" || route.TriggerRef != "" {
