@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	harnesscli "github.com/qiangli/ycode/internal/harness/cli"
+	harnessspec "github.com/qiangli/ycode/internal/harness/spec"
 	public "github.com/qiangli/ycode/pkg/ycode"
 )
 
@@ -35,90 +36,107 @@ func sessionControlCLI(ctx context.Context, app *harnessApplication, inv harness
 	if boolFlag(inv, "dry-run") {
 		return writeJSON(out, map[string]any{"action": action, "session": id, "dry_run": true, "arguments": inv.Arguments})
 	}
-	switch action {
+	result, err := sessionControl(ctx, app, inv.Dispatch, id, localPrincipal(), inv.Arguments)
+	if err != nil {
+		return err
+	}
+	if result.Stream == nil {
+		if action == "model-current" && !boolFlag(inv, "json") {
+			_, err = fmt.Fprintln(out, app.doc.Spec.Models[result.ModelRef].ID)
+			return err
+		}
+		return writeJSON(out, result.Value)
+	}
+	renderer := app.renderer(out)
+	for item := range result.Stream {
+		if item.Type == "session.mode-selected" {
+			if err := writeJSON(out, item); err != nil {
+				return err
+			}
+			continue
+		}
+		if boolFlag(inv, "json") {
+			if err := writeJSON(out, item); err != nil {
+				return err
+			}
+			if item.Type != "turn.failed" {
+				continue
+			}
+		}
+		if err := renderer.Render(item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// controlResult is what a session control produced: a stream for the turn
+// controls (plan, retry, btw), else a structured value.
+type controlResult struct {
+	Stream   <-chan public.Event
+	Value    any
+	ModelRef string // model-current
+}
+
+// sessionControl runs one declared session action on session for principal.
+// Every frontend that projects a declared session command calls it with
+// that command's dispatch, so the authored action and route govern: a turn
+// control is admitted under the command's own frontendRef, triggerRef and
+// agentRef, never the caller's.
+func sessionControl(ctx context.Context, app *harnessApplication, route harnessspec.CLIDispatch, id, principal string, args []string) (controlResult, error) {
+	switch route.Action {
 	case "model-current":
 		ref, err := app.harness.SessionModel(id)
 		if err != nil {
-			return err
+			return controlResult{}, err
 		}
-		if boolFlag(inv, "json") {
-			return writeJSON(out, map[string]any{"session": id, "model_ref": ref})
-		}
-		_, err = fmt.Fprintln(out, app.doc.Spec.Models[ref].ID)
-		return err
+		return controlResult{Value: map[string]any{"session": id, "model_ref": ref}, ModelRef: ref}, nil
 	case "model-use":
-		if err := app.harness.SetSessionModel(id, inv.Arguments[0]); err != nil {
-			return err
+		if len(args) != 1 {
+			return controlResult{}, errors.New("model-use takes exactly one model resource")
 		}
-		return writeJSON(out, map[string]any{"session": id, "model_ref": inv.Arguments[0]})
+		if err := app.harness.SetSessionModel(id, args[0]); err != nil {
+			return controlResult{}, err
+		}
+		return controlResult{Value: map[string]any{"session": id, "model_ref": args[0]}, ModelRef: args[0]}, nil
 	case "pause":
 		if err := app.harness.Pause(ctx, id); err != nil {
-			return err
+			return controlResult{}, err
 		}
-		return writeJSON(out, map[string]any{"session": id, "paused": true})
+		return controlResult{Value: map[string]any{"session": id, "paused": true}}, nil
 	case "continue":
 		if err := app.harness.Continue(ctx, id); err != nil {
-			return err
+			return controlResult{}, err
 		}
-		return writeJSON(out, map[string]any{"session": id, "continued": true})
+		return controlResult{Value: map[string]any{"session": id, "continued": true}}, nil
 	case "compact":
 		result, err := app.harness.Compact(ctx, id)
-		if err != nil {
-			return err
-		}
-		return writeJSON(out, result)
+		return controlResult{Value: result}, err
 	case "revert":
 		result, err := app.harness.Revert(ctx, id)
-		if err != nil {
-			return err
-		}
-		return writeJSON(out, result)
+		return controlResult{Value: result}, err
 	case "plan", "retry", "btw":
 		run := uuid.NewString()
 		request := public.RunRequest{SessionID: id, RunID: run, IdempotencyKey: run}
-		route := inv.Dispatch
 		request.FrontendRef, request.TriggerRef, request.AgentRef = route.FrontendRef, route.TriggerRef, route.AgentRef
-		request.Principal = localPrincipal()
+		request.Principal = principal
 		var stream <-chan public.Event
 		var err error
-		if len(inv.Arguments) > 0 {
-			request.Body, err = encodePrompt(strings.Join(inv.Arguments, " "))
+		if len(args) > 0 {
+			request.Body, err = encodePrompt(strings.Join(args, " "))
 			if err != nil {
-				return err
+				return controlResult{}, err
 			}
 		}
-		if action == "retry" {
+		if route.Action == "retry" {
 			stream, err = app.harness.Retry(ctx, request)
-		} else if action == "btw" {
+		} else if route.Action == "btw" {
 			stream, err = app.harness.Btw(ctx, request)
 		} else {
 			// Admission authority comes from this command's declared route.
 			stream, err = app.harness.Plan(ctx, request)
 		}
-		if err != nil {
-			return err
-		}
-		renderer := app.renderer(out)
-		for item := range stream {
-			if item.Type == "session.mode-selected" {
-				if err := writeJSON(out, item); err != nil {
-					return err
-				}
-				continue
-			}
-			if boolFlag(inv, "json") {
-				if err := writeJSON(out, item); err != nil {
-					return err
-				}
-				if item.Type != "turn.failed" {
-					continue
-				}
-			}
-			if err := renderer.Render(item); err != nil {
-				return err
-			}
-		}
-		return nil
+		return controlResult{Stream: stream}, err
 	}
-	return errors.New("unsupported session control")
+	return controlResult{}, errors.New("unsupported session control")
 }

@@ -221,8 +221,9 @@ func (h *tuiHost) Slash(ctx context.Context, session string, s tui.Slash, args [
 	case "/resume":
 		// A live cooperative pause on this session is released by Continue;
 		// a typed HITL approval is never answered here, it stays y/n.
-		if len(args) == 0 || args[0] == session {
-			if err := h.app.harness.Continue(ctx, session); err == nil {
+		continued, declared := declaredCommand(h.app.doc.Spec.Interfaces.CLI.Root, []string{"continue"})
+		if declared && continued.Dispatch.Operation == "session" && continued.Dispatch.Action == "continue" && (len(args) == 0 || args[0] == session) {
+			if _, err := sessionControl(ctx, h.app, *continued.Dispatch, session, h.principal, nil); err == nil {
 				return tui.SlashResult{Output: "continued: the paused turn resumes at its next step (a pending approval still waits for y/n)"}, nil
 			}
 		}
@@ -246,9 +247,9 @@ func (h *tuiHost) Slash(ctx context.Context, session string, s tui.Slash, args [
 		}
 		return tui.SlashResult{Session: found.ID}, nil
 	case "/model":
-		return h.model(session, args)
+		return h.model(ctx, session, args)
 	case "/plan":
-		return h.plan(ctx, session, args)
+		return h.command(ctx, session, []string{"plan"}, args)
 	case "/init":
 		out, err := h.declared(ctx, append([]string{"init"}, args...))
 		return tui.SlashResult{Output: out}, err
@@ -256,68 +257,81 @@ func (h *tuiHost) Slash(ctx context.Context, session string, s tui.Slash, args [
 	return tui.SlashResult{}, fmt.Errorf("%s is not a slash", s.Name)
 }
 
-// model shows or selects the session model among the default agent's
-// declared route through the engine's session model API; the compiled YAML
-// is never changed and provider IDs are not accepted.
-func (h *tuiHost) model(session string, args []string) (tui.SlashResult, error) {
-	agent := h.app.doc.Spec.Agents[h.app.doc.Spec.Runtime.DefaultAgentRef]
-	route := h.app.doc.Spec.Routes[agent.ModelRouteRef]
+// model projects `model current` and `model list` (no NAME) or
+// `model use NAME` as the agent YAML declares them.
+func (h *tuiHost) model(ctx context.Context, session string, args []string) (tui.SlashResult, error) {
 	if len(args) > 0 {
-		if !declaresCommand(h.app.doc.Spec.Interfaces.CLI.Root, []string{"model", "use"}) {
-			return tui.SlashResult{}, errors.New("the agent YAML declares no `model use` subcommand")
-		}
-		if err := h.app.harness.SetSessionModel(session, args[0]); err != nil {
-			return tui.SlashResult{}, err
-		}
-		return tui.SlashResult{Output: fmt.Sprintf("model: session %s now uses %s (%s)", session, args[0], h.app.doc.Spec.Models[args[0]].ID)}, nil
+		return h.command(ctx, session, []string{"model", "use"}, args)
 	}
-	current, err := h.app.harness.SessionModel(session)
+	current, err := h.command(ctx, session, []string{"model", "current"}, nil)
 	if err != nil {
-		return tui.SlashResult{}, err
+		return current, err
 	}
-	var out strings.Builder
-	fmt.Fprintf(&out, "current: %s (%s)\n", current, h.app.doc.Spec.Models[current].ID)
-	for _, attempt := range route.Attempts {
-		mark := " "
-		if attempt.ModelRef == current {
-			mark = "*"
-		}
-		fmt.Fprintf(&out, "%s %s (%s)\n", mark, attempt.ModelRef, h.app.doc.Spec.Models[attempt.ModelRef].ID)
-	}
-	out.WriteString("/model NAME selects one of these for this session")
-	return tui.SlashResult{Output: out.String()}, nil
+	list, err := h.command(ctx, session, []string{"model", "list"}, nil)
+	list.Output = strings.TrimRight(current.Output, "\n") + "\n" + strings.TrimRight(list.Output, "\n") + "\n/model NAME selects one of the agent's declared route for this session"
+	return list, err
 }
 
-// plan toggles the session's durable plan/act mode through the engine; with
-// text it enters plan mode and hands the text back as a turn, so the planning
-// turn streams, steers and stops like any other (the engine runs it tool-free).
-func (h *tuiHost) plan(ctx context.Context, session string, args []string) (tui.SlashResult, error) {
-	if !declaresCommand(h.app.doc.Spec.Interfaces.CLI.Root, []string{"plan"}) {
-		return tui.SlashResult{}, errors.New("the agent YAML declares no `plan` subcommand")
+// command runs the declared command at path as its authored dispatch says.
+// A session action goes through sessionControl, the same resolution and
+// admission the CLI command uses, on this terminal's session and principal;
+// a turn control comes back as a turn bound to that session, which the
+// terminal streams, steers and stops like any other. Any other operation
+// runs through the compiled CLI.
+func (h *tuiHost) command(ctx context.Context, session string, path, args []string) (tui.SlashResult, error) {
+	command, ok := declaredCommand(h.app.doc.Spec.Interfaces.CLI.Root, path)
+	if !ok {
+		return tui.SlashResult{}, fmt.Errorf("the agent YAML declares no `%s` subcommand", strings.Join(path, " "))
 	}
-	mode, err := h.app.harness.SessionMode(session)
+	route := *command.Dispatch
+	if route.Operation != "session" {
+		out, err := h.declared(ctx, append(slices.Clone(path), args...))
+		return tui.SlashResult{Output: out}, err
+	}
+	if len(args) < command.Args.Min || (command.Args.Max >= 0 && len(args) > command.Args.Max) {
+		return tui.SlashResult{}, fmt.Errorf("`%s` takes %d to %d arguments as declared", strings.Join(path, " "), command.Args.Min, command.Args.Max)
+	}
+	turn := route.Action == "retry" || route.Action == "btw" || (route.Action == "plan" && len(args) > 0)
+	if turn {
+		text := strings.Join(args, " ")
+		if text == "" {
+			text = "(" + strings.Join(path, " ") + ")"
+		}
+		result := tui.SlashResult{Turn: text}
+		if route.Action == "plan" {
+			result.Output = "mode: plan — this turn plans without running tools; /plan again returns to act"
+		}
+		result.Start = func(ctx context.Context) (<-chan event.Event, error) {
+			result, err := sessionControl(ctx, h.app, route, session, h.principal, args)
+			return result.Stream, err
+		}
+		return result, nil
+	}
+	result, err := sessionControl(ctx, h.app, route, session, h.principal, args)
 	if err != nil {
 		return tui.SlashResult{}, err
 	}
-	if len(args) == 0 || mode != "plan" {
-		stream, err := h.app.harness.Plan(ctx, public.RunRequest{SessionID: session})
+	if result.Stream != nil {
+		for range result.Stream {
+		}
+	}
+	switch route.Action {
+	case "model-current":
+		return tui.SlashResult{Output: fmt.Sprintf("current: %s (%s)", result.ModelRef, h.app.doc.Spec.Models[result.ModelRef].ID)}, nil
+	case "model-use":
+		return tui.SlashResult{Output: fmt.Sprintf("model: session %s now uses %s (%s)", session, result.ModelRef, h.app.doc.Spec.Models[result.ModelRef].ID)}, nil
+	case "plan":
+		mode, err := h.app.harness.SessionMode(session)
 		if err != nil {
 			return tui.SlashResult{}, err
 		}
-		for range stream {
+		if mode == "plan" {
+			return tui.SlashResult{Output: "mode: plan — turns plan without running tools; /plan again returns to act"}, nil
 		}
-		if mode, err = h.app.harness.SessionMode(session); err != nil {
-			return tui.SlashResult{}, err
-		}
+		return tui.SlashResult{Output: "mode: act — turns run tools again"}, nil
 	}
-	result := tui.SlashResult{Output: "mode: act — turns run tools again"}
-	if mode == "plan" {
-		result.Output = "mode: plan — turns plan without running tools; /plan again returns to act"
-	}
-	if len(args) > 0 {
-		result.Turn = strings.Join(args, " ")
-	}
-	return result, nil
+	data, err := json.Marshal(result.Value)
+	return tui.SlashResult{Output: string(data)}, err
 }
 
 // declared runs path (a subcommand path plus its arguments) through the
@@ -352,6 +366,19 @@ func declaresCommand(root harnessspec.CLICommand, argv []string) bool {
 		command, matched = next, true
 	}
 	return matched && command.Dispatch != nil
+}
+
+// declaredCommand is the dispatchable command at exactly path.
+func declaredCommand(root harnessspec.CLICommand, path []string) (harnessspec.CLICommand, bool) {
+	command := root
+	for _, word := range path {
+		next, ok := childCommand(command, word)
+		if !ok {
+			return harnessspec.CLICommand{}, false
+		}
+		command = next
+	}
+	return command, len(path) > 0 && command.Dispatch != nil
 }
 
 func childCommand(parent harnessspec.CLICommand, name string) (harnessspec.CLICommand, bool) {
