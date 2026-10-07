@@ -42,6 +42,7 @@ func TestFleetBackendSelectors(t *testing.T) {
     tool: %s
     model: small
     band: 4
+    band_source: cascade
     base: backend-small
     escalation: [backend-large]
   - name: external-large
