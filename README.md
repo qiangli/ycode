@@ -133,9 +133,11 @@ bare `vX.Y.Z` tag. See [the release process](docs/release.md).
 ## Prior art
 
 ycode is an original Go implementation informed by the permissively licensed
-agent harnesses retained under `priorart/`, including Aider, Cline, Codex,
-Continue, Gemini CLI, OpenClaw, OpenCode, and OpenHands. See that directory and
-the repository's license checks for attribution details.
+agent harnesses including Aider, Cline, Codex, Continue, Gemini CLI, OpenClaw,
+OpenCode, and OpenHands. [Prior-art references](docs/prior-art-references.md)
+records their GitHub links and instructions for cloning them on demand into
+the ignored `priorart/` directory. See the repository's license checks for
+attribution details.
 
 ## License
 
