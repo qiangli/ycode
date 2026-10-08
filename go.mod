@@ -4,10 +4,6 @@ go 1.26.5
 
 replace mvdan.cc/sh/v3 => github.com/qiangli/sh/v3 v3.0.0-20261007045242-f6589660f589
 
-// genie (its own module in examples/genie) is embedded by bashy as its
-// builtin agent; bashy's replace does not apply here, so restate it.
-replace github.com/qiangli/ycode/examples/genie => ./examples/genie
-
 // Bashy's filebrowser replacement does not propagate to embedding modules.
 replace github.com/filebrowser/filebrowser/v2 => github.com/qiangli/filebrowser/v2 v2.0.0-20261002203458-0b059ae20b79
 
@@ -468,3 +464,5 @@ exclude (
 )
 
 replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20260622175928-b703f567277d
+
+replace github.com/qiangli/ycode/examples/genie v0.0.0 => ./examples/genie
