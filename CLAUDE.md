@@ -137,9 +137,12 @@ an authored required flag or argument on `clear` refuses the slash.
 
 ## Build and verification
 
-Go 1.26+ is required. Inside the umbrella, sibling modules already exist.
-Standalone clones must run `scripts/bootstrap-siblings.sh`; `.sibling-pins`
-pins `sh`, `nadir`, `coreutils`, `bashy`, `filebrowser` and `readline`.
+Go 1.26+ is required. go.mod pins every sibling at a real version (bashy,
+outpost, yoke, coreutils, nadir, bashsharp, bonsai, gfy; the sh, readline,
+filebrowser, goawk, gotreesitter, ollama and podman forks as versioned
+replaces), so a standalone clone builds with stock go; inside the dhnt
+umbrella the root go.work builds the live trees. bashy and ycode require each
+other: that edge always trails and is bumped by hand.
 
 ```bash
 bashy dag compile          # build bin/ycode, one binary and no product variants

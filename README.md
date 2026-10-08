@@ -25,7 +25,6 @@ To build the engine from source for development:
 ```bash
 git clone https://github.com/qiangli/ycode.git
 cd ycode
-./scripts/bootstrap-siblings.sh
 bashy dag build
 ```
 
