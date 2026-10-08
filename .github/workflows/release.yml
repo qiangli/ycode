@@ -80,8 +80,6 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Bootstrap pinned sibling dependencies
-        run: ./scripts/bootstrap-siblings.sh
 
       - uses: actions/setup-go@v6
         with:

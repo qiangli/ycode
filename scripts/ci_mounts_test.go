@@ -5,10 +5,9 @@
 // topology, where .git is a file pointing at ../.git/modules/ycode — mounts a
 // worktree whose .git pointer dangles inside the container, and every
 // git-derived gate step dies with "fatal: not a git repository". The fix is to
-// mount the worktree, its sibling modules, and (when it lives elsewhere) the
-// resolved git-common-dir at their real host paths so both the git pointer and
-// go.mod's ../<sibling> replacements resolve identically inside and outside
-// the container.
+// mount the worktree and (when it lives elsewhere) the resolved
+// git-common-dir at their real host paths so the git pointer resolves
+// identically inside and outside the container.
 //
 // These tests rebuild both topologies with real git in temp dirs and assert on
 // `ci-run.sh --print-mounts`, so they need git and bash but no container
@@ -83,37 +82,14 @@ func canonical(t *testing.T, path string) string {
 	return resolved
 }
 
-var ciSiblings = []string{"sh", "nadir", "coreutils"}
-
-func createSiblingFixture(t *testing.T, parent string) []string {
-	t.Helper()
-	pins := make([]string, 0, len(ciSiblings))
-	paths := make([]string, 0, len(ciSiblings))
-	for _, name := range ciSiblings {
-		path := filepath.Join(parent, name)
-		if err := os.MkdirAll(path, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		pins = append(pins, name+"=fixture-sha")
-		paths = append(paths, path+":"+path)
-	}
-	return append([]string{strings.Join(pins, "\n") + "\n"}, paths...)
-}
-
 // Standalone clone: the git dir is worktree/.git, inside the tree, so the plan
-// needs no separate git mount. Its three sibling module mounts are still
-// required for go.mod's local replacements.
+// needs no separate git mount.
 func TestCIMountsStandaloneClone(t *testing.T) {
 	requireTools(t)
 	repo := canonical(t, t.TempDir())
 	hermeticGit(t, repo, "init", "-q")
-	fixture := createSiblingFixture(t, filepath.Dir(repo))
-	if err := os.WriteFile(filepath.Join(repo, ".sibling-pins"), []byte(fixture[0]), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
 	mounts := printMounts(t, repo)
-	want := append([]string{repo + ":" + repo}, fixture[1:]...)
+	want := []string{repo + ":" + repo}
 	if strings.Join(mounts, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("standalone clone: got mounts %q, want %q", mounts, want)
 	}
@@ -144,10 +120,6 @@ func TestCIMountsUmbrellaSubmodule(t *testing.T) {
 
 	worktree := filepath.Join(umbrella, "ycode")
 	gitCommonDir := filepath.Join(umbrella, ".git", "modules", "ycode")
-	fixture := createSiblingFixture(t, umbrella)
-	if err := os.WriteFile(filepath.Join(worktree, ".sibling-pins"), []byte(fixture[0]), 0o644); err != nil {
-		t.Fatal(err)
-	}
 
 	// Guard the fixture itself: this test is only meaningful if git really
 	// produced the file-pointer topology the bug depends on.
@@ -167,67 +139,8 @@ func TestCIMountsUmbrellaSubmodule(t *testing.T) {
 		// dies in-container on "error obtaining VCS status".
 		umbrella + "/.git:" + umbrella + "/.git",
 	}
-	want = append(want, fixture[1:]...)
 	if strings.Join(mounts, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("umbrella submodule: got mounts %q, want %q", mounts, want)
-	}
-}
-
-// Sibling submodules: inside the umbrella the siblings have the same
-// file-pointer topology as ycode, and their gitdirs live in the UMBRELLA's
-// .git/modules/<name> — not under any mounted worktree. The plan must mount
-// each sibling's external git-common-dir too, or git-derived steps touching a
-// sibling (go's VCS stamping across the go.work workspace) fail inside the
-// container with "not a git repository" while passing outside it.
-func TestCIMountsSiblingSubmoduleGitdirs(t *testing.T) {
-	requireTools(t)
-	tmp := canonical(t, t.TempDir())
-
-	origin := filepath.Join(tmp, "origin")
-	if err := os.Mkdir(origin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	hermeticGit(t, origin, "init", "-q")
-	hermeticGit(t, origin, "commit", "-q", "--allow-empty", "-m", "seed")
-
-	umbrella := filepath.Join(tmp, "umbrella")
-	if err := os.Mkdir(umbrella, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	hermeticGit(t, umbrella, "init", "-q")
-	hermeticGit(t, umbrella, "-c", "protocol.file.allow=always",
-		"submodule", "add", "-q", origin, "ycode")
-	// Make the FIRST pinned sibling (sh) a real submodule; the rest stay
-	// plain directories, exercising both arms of the sibling-gitdir logic.
-	hermeticGit(t, umbrella, "-c", "protocol.file.allow=always",
-		"submodule", "add", "-q", origin, "sh")
-
-	worktree := filepath.Join(umbrella, "ycode")
-	ycodeCommon := filepath.Join(umbrella, ".git", "modules", "ycode")
-	shCommon := filepath.Join(umbrella, ".git", "modules", "sh")
-	fixture := createSiblingFixture(t, umbrella)
-	if err := os.WriteFile(filepath.Join(worktree, ".sibling-pins"), []byte(fixture[0]), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if info, err := os.Lstat(filepath.Join(umbrella, "sh", ".git")); err != nil || info.IsDir() {
-		t.Fatalf("fixture: expected sibling .git to be a gitdir pointer file, got err=%v isDir=%v", err, info != nil && info.IsDir())
-	}
-
-	mounts := printMounts(t, worktree)
-	shDir := filepath.Join(umbrella, "sh")
-	want := []string{
-		worktree + ":" + worktree,
-		ycodeCommon + ":" + ycodeCommon,
-		umbrella + "/.git:" + umbrella + "/.git", // go's VCS root for the submodule
-		shDir + ":" + shDir,
-		shCommon + ":" + shCommon,
-	}
-	// nadir and coreutils remain plain dirs: worktree mount only, no gitdir.
-	want = append(want,
-		filepath.Join(umbrella, "nadir")+":"+filepath.Join(umbrella, "nadir"),
-		filepath.Join(umbrella, "coreutils")+":"+filepath.Join(umbrella, "coreutils"))
-	if strings.Join(mounts, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("sibling submodules: got mounts %q, want %q", mounts, want)
 	}
 }
 
@@ -235,10 +148,6 @@ func TestCIRunRestoresGoWorkSum(t *testing.T) {
 	requireTools(t)
 	repo := canonical(t, t.TempDir())
 	hermeticGit(t, repo, "init", "-q")
-	fixture := createSiblingFixture(t, filepath.Dir(repo))
-	if err := os.WriteFile(filepath.Join(repo, ".sibling-pins"), []byte(fixture[0]), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	const original = "original workspace sums\n"
 	if err := os.WriteFile(filepath.Join(repo, "go.work.sum"), []byte(original), 0o644); err != nil {
 		t.Fatal(err)

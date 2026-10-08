@@ -14,29 +14,17 @@
 # Standalone clones never hit this because their git-common-dir (worktree/.git)
 # is already nested inside the mounted tree.
 #
-# THE FIX. Don't remap the worktree to a made-up path at all: mount it, the
-# sibling modules named by .sibling-pins, and (only when it lives elsewhere)
-# the resolved git-common-dir at their real host absolute paths. Git's relative
-# ".git" pointer and go.mod's ../<sibling> replacements then resolve inside the
-# container exactly as they do on the host, for both topologies:
+# THE FIX. Don't remap the worktree to a made-up path at all: mount it and
+# (only when it lives elsewhere) the resolved git-common-dir at their real
+# host absolute paths. Git's relative ".git" pointer then resolves inside the
+# container exactly as it does on the host, for both topologies:
 #   - standalone clone: git-common-dir is worktree/.git, already covered by
 #     the worktree mount — no second mount needed.
 #   - umbrella submodule: git-common-dir lives outside the worktree (in the
 #     umbrella's .git/modules/<name>) — mount it too, source == target, so
 #     the relative lookup still lands on it.
-# In both cases the ycode module's replace directives resolve to adjacent sh,
-# nadir, and coreutils checkouts. Mounting only ycode and its git-common-dir is
-# insufficient: Go then fails while opening ../<sibling>/go.mod.
-#
-# SIBLING GITDIRS. Inside the umbrella the siblings are submodules too, so
-# their .git files point at ../.git/modules/<name> — the umbrella's git dir,
-# not ycode's mounted git-common-dir. Mounting the sibling worktrees without
-# their gitdirs leaves every git-derived step that touches them (go's VCS
-# stamping spans the go.work workspace, so `go list`/`go vet` query each
-# module's repo) dying with
-#   fatal: not a git repository: <sibling>/../.git/modules/<name>
-# INSIDE the container while passing outside it. So each sibling gets the same
-# treatment as ycode: its external git-common-dir mounted at the same path.
+# Siblings are go.mod pins: the container builds the pinned modules (no
+# workspace is mounted), exactly as CI does, so no sibling checkout is mounted.
 set -euo pipefail
 
 worktree="$(git rev-parse --path-format=absolute --show-toplevel)"
@@ -70,45 +58,6 @@ while [ "$vcswalk" != "/" ]; do
 	vcswalk="$(dirname "$vcswalk")"
 done
 
-pins="$worktree/.sibling-pins"
-if [ ! -f "$pins" ]; then
-	echo "ci-run: missing sibling pin manifest: $pins" >&2
-	exit 1
-fi
-while IFS='=' read -r name _sha; do
-	case "$name" in
-	''|'#'*) continue ;;
-	*[!A-Za-z0-9._-]*)
-		echo "ci-run: invalid sibling name in $pins: $name" >&2
-		exit 1
-		;;
-	esac
-	sibling="$worktree/../$name"
-	if [ ! -d "$sibling" ]; then
-		echo "ci-run: missing sibling checkout $sibling; run scripts/bootstrap-siblings.sh" >&2
-		exit 1
-	fi
-	sibling="$(cd "$sibling" && pwd -P)"
-	specs+=("$sibling:$sibling")
-	# A sibling that is itself an umbrella submodule keeps its gitdir outside
-	# its worktree — mount that too (same reasoning as ycode's above). Only a
-	# real checkout (.git present) counts: a plain directory under the
-	# umbrella would resolve git-common-dir to the UMBRELLA's .git by
-	# walk-up, mounting the superproject's repo when the sibling needs
-	# nothing of the sort. Unset GIT_DIR/GIT_WORK_TREE first: when this
-	# script runs from a git hook those are exported, and `git -C <sibling>`
-	# would then resolve the CALLER's repo instead of the sibling's (every
-	# sibling would report one SHA).
-	if [ -e "$sibling/.git" ]; then
-		sibling_common="$(unset GIT_DIR GIT_WORK_TREE
-			git -C "$sibling" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-		case "$sibling_common" in
-		"$sibling"/*) ;; # nested under the sibling worktree — already mounted
-		"") ;;           # git present but unresolvable — leave as-is
-		*) specs+=("$sibling_common:$sibling_common") ;;
-		esac
-	fi
-done < "$pins"
 
 # --print-mounts: emit the computed "src:dst" bind-mount specs, one per line,
 # without running anything. Used by the hermetic regression test
