@@ -3,7 +3,7 @@ id: b258935b16d2
 kind: bug
 title: 'genie turn stalls before the model: harness re-decodes the whole shared events.jsonl on every 50ms control tick and every stage'
 seq: 50
-status: todo
+status: doing
 priority: p0
 labels:
     - genie

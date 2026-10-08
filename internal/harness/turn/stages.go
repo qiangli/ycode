@@ -76,7 +76,7 @@ func (r *Runtime) loadSession(ctx context.Context, in pipeline.Invocation) pipel
 	if err != nil {
 		return fail(err)
 	}
-	events, err := event.Replay(r.eventPath)
+	events, err := r.history.Replay()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fail(err)
 	}

@@ -64,6 +64,7 @@ type Runtime struct {
 	queue      Queue
 	session    *sessionStage.Engine
 	eventPath  string
+	history    *event.Reader
 	registry   *pipeline.Registry
 	observer   pipeline.Observer
 	bashyRuns  map[string]spec.BashyRunNode
@@ -95,7 +96,7 @@ func New(config Config) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	runtime := &Runtime{doc: config.Document, events: config.Events, payloads: config.Payloads, io: config.IO, memory: config.Memory, hitl: config.HITL, bashy: config.Bashy, providers: config.Providers, queue: config.Queue, session: sessionEngine, eventPath: config.EventPath, registry: pipeline.NewRegistry(), observer: config.Observer, resumes: make(map[string]chan hitl.Resolution), early: make(map[string]hitl.Resolution), activeRuns: make(map[string]struct{})}
+	runtime := &Runtime{doc: config.Document, events: config.Events, payloads: config.Payloads, io: config.IO, memory: config.Memory, hitl: config.HITL, bashy: config.Bashy, providers: config.Providers, queue: config.Queue, session: sessionEngine, eventPath: config.EventPath, history: event.NewReader(config.EventPath), registry: pipeline.NewRegistry(), observer: config.Observer, resumes: make(map[string]chan hitl.Resolution), early: make(map[string]hitl.Resolution), activeRuns: make(map[string]struct{})}
 	bashyRuns, err := compileBashyRunIndex(config.Document)
 	if err != nil {
 		return nil, err

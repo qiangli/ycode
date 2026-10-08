@@ -375,6 +375,11 @@ func (h *Harness) run(ctx context.Context, request RunRequest, prepare func() er
 		cancel()
 		return nil, err
 	}
+	controlCursor, err := h.events.Cursor()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("event log cursor: %w", err)
+	}
 	h.active[key] = active
 	started = true
 	go func() {
@@ -383,7 +388,7 @@ func (h *Harness) run(ctx context.Context, request RunRequest, prepare func() er
 		controlsDone := make(chan struct{})
 		go func() {
 			defer close(controlsDone)
-			h.monitorControls(controlCtx, request.SessionID, request.RunID, start-1, active)
+			h.monitorControls(controlCtx, request.SessionID, request.RunID, controlCursor, active)
 		}()
 		var output ioctx.Output
 		output, active.err = h.turn.Run(runCtx, turn.Request{SessionID: request.SessionID, RunID: request.RunID, AgentRef: request.AgentRef, OriginFrontend: request.FrontendRef, HumanAvailable: request.HumanAvailable, Input: input, ModelRef: modelRef, Plan: request.Plan, Aside: request.Aside, Boundary: active.pause.boundary, EnterStage: active.pause.enter})

@@ -1,6 +1,8 @@
 package event
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +10,55 @@ import (
 	"testing"
 	"time"
 )
+
+func TestIncrementalReaderDecodesOnlyAppendedTail(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	var log bytes.Buffer
+	previous := ""
+	for sequence := uint64(1); sequence <= 50_000; sequence++ {
+		data := json.RawMessage(`{}`)
+		e := Event{SchemaVersion: SchemaVersion, Sequence: sequence, Time: time.Unix(42, 0).UTC(), SessionID: "old", RunID: "run", Type: "synthetic", Data: data, PayloadDigest: digestBytes(data), PreviousDigest: previous}
+		var err error
+		e.Digest, err = eventDigest(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		log.Write(raw)
+		log.WriteByte('\n')
+		previous = e.Digest
+	}
+	if err := os.WriteFile(path, log.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reader := NewReader(path)
+	if events, err := reader.Replay(); err != nil || len(events) != 50_000 {
+		t.Fatalf("initial replay = %d events, %v", len(events), err)
+	}
+	if _, err := reader.Replay(); err != nil {
+		t.Fatal(err)
+	}
+	if got := reader.tail.BytesRead(); got != 0 {
+		t.Fatalf("unchanged log decoded %d old bytes", got)
+	}
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appended, err := store.Append(Draft{SessionID: "new", RunID: "run", Type: "session.control-requested", Data: map[string]string{"action": "pause"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events, err := reader.Replay(); err != nil || len(events) != 50_001 || events[len(events)-1].Sequence != appended.Sequence {
+		t.Fatalf("tail replay = %d events, last=%d, err=%v", len(events), events[len(events)-1].Sequence, err)
+	}
+	if got := reader.tail.BytesRead(); got <= 0 || got >= int64(log.Len()) {
+		t.Fatalf("decoded %d bytes; expected only the appended tail, not %d-byte history", got, log.Len())
+	}
+}
 
 func TestStoreAppendAndReplay(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "events.jsonl")

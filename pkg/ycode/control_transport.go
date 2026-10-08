@@ -133,9 +133,10 @@ func (h *Harness) controlLiveRun(ctx context.Context, sessionID, action string) 
 
 // monitorControls is owned and joined by the turn goroutine. It can request a
 // pause during a long stage, but acknowledges only when all stages have left.
-func (h *Harness) monitorControls(ctx context.Context, sessionID, runID string, after uint64, active *activeRun) {
+func (h *Harness) monitorControls(ctx context.Context, sessionID, runID string, cursor event.Cursor, active *activeRun) {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
+	tail := event.NewTailReader(h.eventPath, cursor)
 	var pending []Event
 	var reached <-chan struct{}
 	ack := func(request Event, failure string) bool {
@@ -143,16 +144,12 @@ func (h *Harness) monitorControls(ctx context.Context, sessionID, runID string, 
 		return err == nil
 	}
 	for {
-		items, err := event.Replay(h.eventPath)
+		items, err := tail.Read()
 		if err != nil {
 			active.cancel()
 			return
 		}
 		for _, item := range items {
-			if item.Sequence <= after {
-				continue
-			}
-			after = item.Sequence
 			if item.SessionID != sessionID || item.RunID != runID || item.Type != "session.control-requested" {
 				continue
 			}

@@ -3,6 +3,7 @@ package event
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -64,6 +65,36 @@ type Store struct {
 	previousDigest string
 	now            func() time.Time
 	watchers       map[chan struct{}]struct{}
+}
+
+// Cursor identifies a verified position in an event log. It is suitable for
+// constructing a TailReader after an append made through the same Store.
+type Cursor struct {
+	Offset   int64
+	Sequence uint64
+	Digest   string
+}
+
+// TailReader verifies and returns only events appended after its cursor. It
+// never rereads the verified prefix of an append-only log.
+type TailReader struct {
+	mu       sync.Mutex
+	path     string
+	offset   int64
+	next     uint64
+	previous string
+	bytes    int64
+}
+
+// Reader retains a verified event stream and extends it from an incremental
+// tail. It is for consumers (such as session stages) that need the complete
+// history without validating it again at every stage boundary.
+type Reader struct {
+	mu     sync.Mutex
+	path   string
+	loaded bool
+	events []Event
+	tail   *TailReader
 }
 
 // Checkpoint is an atomic snapshot tied to an exact event-log position.
@@ -148,8 +179,11 @@ func (s *Store) Append(d Draft) (Event, error) {
 	if err != nil {
 		return Event{}, fmt.Errorf("open event log: %w", err)
 	}
-	if _, err = f.Write(append(line, '\n')); err == nil {
+	_, writeErr := f.Write(append(line, '\n'))
+	if writeErr == nil {
 		err = f.Sync()
+	} else {
+		err = writeErr
 	}
 	closeErr := f.Close()
 	if err != nil {
@@ -162,6 +196,114 @@ func (s *Store) Append(d Draft) (Event, error) {
 	s.previousDigest = e.Digest
 	s.notifyLocked()
 	return e, nil
+}
+
+// Cursor returns the current verified tail. Callers that only need events
+// written after this point can avoid replaying the shared history.
+func (s *Store) Cursor() (Cursor, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	info, err := os.Stat(s.path)
+	if err != nil {
+		return Cursor{}, err
+	}
+	return Cursor{Offset: info.Size(), Sequence: s.next - 1, Digest: s.previousDigest}, nil
+}
+
+// NewTailReader starts at cursor. The cursor must come from a verified Store
+// position; subsequent reads validate sequence and digest continuity.
+func NewTailReader(path string, cursor Cursor) *TailReader {
+	return &TailReader{path: path, offset: cursor.Offset, next: cursor.Sequence + 1, previous: cursor.Digest}
+}
+
+// NewReader creates a lazy incremental reader. Its first Replay validates the
+// whole stream; later calls decode only newly appended records.
+func NewReader(path string) *Reader { return &Reader{path: path} }
+
+// Replay returns the complete verified stream, incrementally extending the
+// cached prefix after the first call.
+func (r *Reader) Replay() ([]Event, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.loaded {
+		events, err := Replay(r.path)
+		if err != nil {
+			return nil, err
+		}
+		info, err := os.Stat(r.path)
+		if err != nil {
+			return nil, err
+		}
+		cursor := Cursor{Offset: info.Size()}
+		if len(events) > 0 {
+			cursor.Sequence = events[len(events)-1].Sequence
+			cursor.Digest = events[len(events)-1].Digest
+		}
+		r.events, r.tail, r.loaded = events, NewTailReader(r.path, cursor), true
+	} else {
+		appended, err := r.tail.Read()
+		if err != nil {
+			return nil, err
+		}
+		r.events = append(r.events, appended...)
+	}
+	return append([]Event(nil), r.events...), nil
+}
+
+// Read returns the newly appended, fully verified event tail.
+func (r *TailReader) Read() ([]Event, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	f, err := os.Open(r.path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() < r.offset {
+		return nil, errors.New("event log shrank after verified cursor")
+	}
+	if info.Size() == r.offset {
+		return nil, nil
+	}
+	if _, err := f.Seek(r.offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	// Another process can be between its write and fsync while we poll. Leave
+	// an incomplete final record for the next read instead of treating it as a
+	// corrupt verified tail.
+	complete := data
+	if end := bytes.LastIndexByte(data, '\n'); end >= 0 {
+		complete = data[:end+1]
+	} else {
+		return nil, nil
+	}
+	decoded, err := decodeTail(complete, r.next, r.previous)
+	if err != nil {
+		return nil, err
+	}
+	r.offset += int64(len(complete))
+	r.bytes += int64(len(complete))
+	if len(decoded) > 0 {
+		r.next = decoded[len(decoded)-1].Sequence + 1
+		r.previous = decoded[len(decoded)-1].Digest
+	}
+	return decoded, nil
+}
+
+// BytesRead reports bytes decoded from appended tails. It is primarily useful
+// to verify that polling callers are not rereading an unchanged history.
+func (r *TailReader) BytesRead() int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.bytes
 }
 
 // Watch returns a channel that receives a coalesced notification after each
@@ -385,6 +527,46 @@ func Decode(r io.Reader) ([]Event, error) {
 				return nil, fmt.Errorf("event line %d: Bashy result has no request for call_id %q", line, e.CallID)
 			}
 			delete(openCalls, e.CallID)
+		}
+		events = append(events, e)
+		previousDigest = e.Digest
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read event log: %w", err)
+	}
+	return events, nil
+}
+
+// decodeTail applies the same validation as Decode, starting immediately
+// after a previously verified sequence and digest.
+func decodeTail(data []byte, next uint64, previousDigest string) ([]Event, error) {
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	var events []Event
+	for line := 1; scanner.Scan(); line++ {
+		var e Event
+		if err := json.Unmarshal(scanner.Bytes(), &e); err != nil {
+			return nil, fmt.Errorf("decode event line %d: %w", line, err)
+		}
+		if e.SchemaVersion != SchemaVersion {
+			return nil, fmt.Errorf("event line %d: unsupported schema version %d", line, e.SchemaVersion)
+		}
+		expected := next + uint64(len(events))
+		if e.Sequence != expected {
+			return nil, fmt.Errorf("event line %d: sequence %d, expected %d", line, e.Sequence, expected)
+		}
+		if e.SessionID == "" || e.RunID == "" || e.Type == "" || e.Time.IsZero() {
+			return nil, fmt.Errorf("event line %d: missing required metadata", line)
+		}
+		if e.PreviousDigest != previousDigest {
+			return nil, fmt.Errorf("event line %d: previous digest %q, expected %q", line, e.PreviousDigest, previousDigest)
+		}
+		if got := digestBytes(e.Data); e.PayloadDigest != got {
+			return nil, fmt.Errorf("event line %d: payload digest mismatch", line)
+		}
+		wantDigest, err := eventDigest(e)
+		if err != nil || e.Digest != wantDigest {
+			return nil, fmt.Errorf("event line %d: event digest mismatch", line)
 		}
 		events = append(events, e)
 		previousDigest = e.Digest

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/qiangli/ycode/internal/harness/event"
 	memoryStage "github.com/qiangli/ycode/internal/harness/stages/memory"
 	sessionStage "github.com/qiangli/ycode/internal/harness/stages/session"
 )
@@ -18,7 +17,7 @@ func (r *Runtime) CompactSession(ctx context.Context, sessionID, runID, agentRef
 	}
 	ctx = context.WithValue(ctx, runKey{}, runContext{sessionID: sessionID, runID: runID, agentRef: agentRef})
 	meta, _ := r.meta(ctx, "session.compact")
-	events, err := event.Replay(r.eventPath)
+	events, err := r.history.Replay()
 	if err != nil {
 		return memoryStage.CompactionResult{}, err
 	}
