@@ -230,3 +230,42 @@ func TestTwoStoresShareOneLog(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCursorFollowsAppendsFromAnotherStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	a, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Append(Draft{SessionID: "s", RunID: "r", Type: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	// A second process appends after a's last append: a's in-memory tail is stale.
+	b, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := b.Append(Draft{SessionID: "s", RunID: "r", Type: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cursor, err := a.Cursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cursor.Sequence != 4 {
+		t.Fatalf("cursor sequence = %d, want 4", cursor.Sequence)
+	}
+	tail := NewTailReader(path, cursor)
+	if _, err := b.Append(Draft{SessionID: "s", RunID: "r", Type: "control"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := tail.Read()
+	if err != nil {
+		t.Fatalf("tail read after a stale-store cursor: %v", err)
+	}
+	if len(got) != 1 || got[0].Sequence != 5 || got[0].Type != "control" {
+		t.Fatalf("tail = %+v, want the one control event at sequence 5", got)
+	}
+}

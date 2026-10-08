@@ -200,14 +200,36 @@ func (s *Store) Append(d Draft) (Event, error) {
 
 // Cursor returns the current verified tail. Callers that only need events
 // written after this point can avoid replaying the shared history.
+//
+// The log is shared by every harness process on the host, so the position is
+// read from the file itself under the append lock: this Store's own
+// next/previousDigest go stale as soon as another process appends, and a
+// cursor pairing a fresh size with a stale sequence would fail the first tail
+// read (and cancel the run watching it).
 func (s *Store) Cursor() (Cursor, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := lockfile.AcquireWithin(s.path+".lock", 30*time.Second,
+		lockfile.Holder{Name: "ycode event log", PID: os.Getpid(), Intent: "cursor", Since: s.now().UTC()})
+	if err != nil {
+		return Cursor{}, fmt.Errorf("lock event log: %w", err)
+	}
+	defer lock.Release()
 	info, err := os.Stat(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return Cursor{}, nil
+	}
 	if err != nil {
 		return Cursor{}, err
 	}
-	return Cursor{Offset: info.Size(), Sequence: s.next - 1, Digest: s.previousDigest}, nil
+	seq, digest, ok, err := readTail(s.path)
+	if err != nil {
+		return Cursor{}, fmt.Errorf("read event log tail: %w", err)
+	}
+	if !ok {
+		return Cursor{Offset: info.Size()}, nil
+	}
+	return Cursor{Offset: info.Size(), Sequence: seq, Digest: digest}, nil
 }
 
 // NewTailReader starts at cursor. The cursor must come from a verified Store
