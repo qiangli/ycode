@@ -1,0 +1,8 @@
+# This tree is embedded byte-for-byte (source.go's //go:embed) and its
+# dag.md recipe greps/seds exact-anchored lines (e.g. profile-model's
+# `^      id: gpt-5\.6$`). A Windows checkout with core.autocrlf=true turns
+# every LF into CRLF, so the trailing \r breaks those anchors and the bundle
+# consumers (bashy's dag runner, sed, grep) see different bytes than the
+# repository does. Keep every file in this tree LF regardless of checkout
+# settings.
+* text eol=lf
