@@ -308,6 +308,29 @@ func TestClassifyError(t *testing.T) {
 			wantReason: ReasonUnknown,
 			wantAction: ActionRetry,
 		},
+		{
+			// Sprint: #379; Story: #1528; Story-ID: 145f0ee22c3a
+			//
+			// A 409 Conflict answers the identical request the same way every
+			// time: the request itself is refused, so backoff retries can only
+			// burn the budget. Terminal (Abort), never Retry.
+			name:       "409 conflict is terminal",
+			statusCode: 409,
+			body:       `{"error":"request conflicts with current state"}`,
+			wantReason: ReasonConflict,
+			wantAction: ActionAbort,
+		},
+		{
+			// Sprint: #379; Story: #1528; Story-ID: 145f0ee22c3a
+			//
+			// The sticky refusal: status wins over body keywords, so even a
+			// refusal that mentions overload or timeout does not retry.
+			name:       "409 sticky refusal is terminal despite body keywords",
+			statusCode: 409,
+			body:       `{"error":"refusal is sticky: overloaded worker timed out, retry will not help"}`,
+			wantReason: ReasonConflict,
+			wantAction: ActionAbort,
+		},
 	}
 
 	for _, tt := range tests {

@@ -14,13 +14,16 @@ import (
 )
 
 func TestIsRetryableStatus(t *testing.T) {
-	retryable := []int{408, 409, 429, 500, 502, 503, 504}
+	retryable := []int{408, 429, 500, 502, 503, 504}
 	for _, code := range retryable {
 		if !isRetryableStatus(code) {
 			t.Errorf("expected %d to be retryable", code)
 		}
 	}
-	nonRetryable := []int{200, 400, 401, 403, 404, 422}
+	// 409 is NOT retryable (Sprint #379, Story #1528): a conflict refuses
+	// the request itself, so the identical retry gets the identical
+	// refusal — retrying it burned the whole backoff budget.
+	nonRetryable := []int{200, 400, 401, 403, 404, 409, 422}
 	for _, code := range nonRetryable {
 		if isRetryableStatus(code) {
 			t.Errorf("expected %d to NOT be retryable", code)
@@ -181,6 +184,54 @@ func TestDoWithRetry_CancelledInFlightIsNotRetried(t *testing.T) {
 	}
 	if strings.Contains(logged.String(), "retrying") {
 		t.Fatalf("a cancelled request was reported as a retry: %s", logged.String())
+	}
+}
+
+// Sprint: #379; Story: #1528; Story-ID: 145f0ee22c3a
+//
+// A 409 sticky refusal is terminal: the identical request would be refused
+// the same way on every attempt, so the loop must return after ONE attempt
+// instead of burning the whole exponential-backoff budget. It must also
+// return fast (well under the ~1-2s first backoff) and carry the abort
+// classification so the fallback chain stops instead of failing over.
+func TestDoWithRetry_409StickyRefusalIsTerminal(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(409)
+		w.Write([]byte(`{"error":"refusal is sticky: request conflicts with current state"}`))
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	started := time.Now()
+	_, err := doWithRetry(ctx, srv.Client(), func() (*http.Request, error) {
+		return http.NewRequest("GET", srv.URL, nil)
+	})
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatal("expected an error for a 409 sticky refusal")
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Errorf("expected exactly 1 attempt for a terminal 409, got %d", got)
+	}
+	if elapsed > time.Second {
+		t.Errorf("slept a backoff before returning a terminal 409: took %v", elapsed)
+	}
+	classified, ok := err.(*ClassifiedError)
+	if !ok {
+		t.Fatalf("expected *ClassifiedError, got %T: %v", err, err)
+	}
+	if classified.StatusCode != 409 {
+		t.Errorf("expected status 409, got %d", classified.StatusCode)
+	}
+	if classified.Action != ActionAbort {
+		t.Errorf("expected ActionAbort, got %v", classified.Action)
+	}
+	if IsTransientError(err) {
+		t.Error("IsTransientError should be false for a terminal 409")
 	}
 }
 

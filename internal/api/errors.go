@@ -142,6 +142,7 @@ const (
 	ReasonModelNotFound                  // requested model does not exist
 	ReasonPolicyBlocked                  // content policy violation
 	ReasonFormatError                    // malformed request
+	ReasonConflict                       // 409: the request itself is refused; retrying it cannot succeed
 )
 
 var failoverReasonNames = [...]string{
@@ -158,6 +159,7 @@ var failoverReasonNames = [...]string{
 	"ModelNotFound",
 	"PolicyBlocked",
 	"FormatError",
+	"Conflict",
 }
 
 func (r FailoverReason) String() string {
@@ -222,6 +224,12 @@ func ClassifyError(statusCode int, body string) FailoverReason {
 	case statusCode == 408:
 		return ReasonTimeout
 
+	case statusCode == 409:
+		// A conflict refuses THIS request: the identical retry gets the
+		// identical refusal, so status wins over any body keywords (a
+		// refusal that mentions overload or timeout is still terminal).
+		return ReasonConflict
+
 	case (statusCode == 400 || statusCode == 413) && hasTokenLimitKeywords(bodyLower):
 		return ReasonContextOverflow
 
@@ -259,7 +267,7 @@ func (r FailoverReason) RecommendedAction() RecoveryAction {
 	switch r {
 	case ReasonAuth:
 		return ActionRotateKey
-	case ReasonAuthPermanent, ReasonBilling:
+	case ReasonAuthPermanent, ReasonBilling, ReasonConflict:
 		return ActionAbort
 	case ReasonRateLimit, ReasonOverloaded, ReasonServerError, ReasonTimeout:
 		return ActionRetry

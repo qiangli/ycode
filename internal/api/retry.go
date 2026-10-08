@@ -40,9 +40,11 @@ func (e *APIError) Error() string {
 }
 
 // isRetryableStatus returns true for HTTP status codes that warrant a retry.
+// 409 is deliberately absent: a conflict refuses the request itself, so the
+// identical retry would get the identical refusal.
 func isRetryableStatus(code int) bool {
 	switch code {
-	case 408, 409, 429, 500, 502, 503, 504:
+	case 408, 429, 500, 502, 503, 504:
 		return true
 	}
 	return false
