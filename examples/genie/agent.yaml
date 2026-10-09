@@ -301,7 +301,7 @@ spec:
     # The umbrella convention: AGENTS.md first, CLAUDE.md as the fallback
     # name, both read from the workspace genie is operating in.
     project-instructions:
-      file: {paths: [AGENTS.md, CLAUDE.md], required: false}
+      file: {paths: [AGENTS.md, CLAUDE.md], base: workspace, required: false}
       limits: {maxBytes: 65536}
       snapshot: before-run
     # GENIE.md is genie's own repository instruction file, read from the

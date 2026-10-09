@@ -581,9 +581,24 @@ func (d *Document) resolveSources() error {
 func (d *Document) WorkspaceDir() string {
 	workspace := d.Spec.Runtime.Workspace
 	if !filepath.IsAbs(workspace) {
-		workspace = filepath.Join(d.BaseDir, workspace)
+		workspace = filepath.Join(d.absoluteBaseDir(), workspace)
 	}
 	return filepath.Clean(workspace)
+}
+
+// absoluteBaseDir is BaseDir guaranteed absolute. BaseDir is normally already
+// absolute (Load and the CLI both resolve the document path before compiling),
+// but a caller that compiles from a relative source leaves it relative; a
+// workspace-anchored path built on top of that would otherwise get BaseDir
+// prefixed twice once resolvePath anchors it again.
+func (d *Document) absoluteBaseDir() string {
+	if filepath.IsAbs(d.BaseDir) {
+		return d.BaseDir
+	}
+	if abs, err := filepath.Abs(d.BaseDir); err == nil {
+		return abs
+	}
+	return d.BaseDir
 }
 
 // SourcePath is the readable path of the named file source, anchored at
@@ -617,7 +632,7 @@ func (d *Document) anchoredPath(path, base string) (string, error) {
 func (d *Document) WritablePath(path string) error {
 	for _, root := range d.Spec.Runtime.WritableRoots {
 		if !filepath.IsAbs(root) {
-			root = filepath.Join(d.BaseDir, root)
+			root = filepath.Join(d.absoluteBaseDir(), root)
 		}
 		root = filepath.Clean(root)
 		if pathWithin(root, path) {
@@ -632,7 +647,7 @@ func (d *Document) WritablePath(path string) error {
 
 func (d *Document) resolvePath(path string) (string, error) {
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(d.BaseDir, path)
+		path = filepath.Join(d.absoluteBaseDir(), path)
 	}
 	path = filepath.Clean(path)
 	real, err := filepath.EvalSymlinks(path)
@@ -645,7 +660,7 @@ func (d *Document) resolvePath(path string) (string, error) {
 	}
 	for _, root := range d.Spec.Runtime.ReadableRoots {
 		if !filepath.IsAbs(root) {
-			root = filepath.Join(d.BaseDir, root)
+			root = filepath.Join(d.absoluteBaseDir(), root)
 		}
 		cleanRoot := filepath.Clean(root)
 		if pathWithin(cleanRoot, real) {

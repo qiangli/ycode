@@ -196,7 +196,7 @@ spec:
     # The umbrella convention: AGENTS.md first, CLAUDE.md as the fallback
     # name, both read from the workspace this agent is operating in.
     project-instructions:
-      file: {paths: [AGENTS.md, CLAUDE.md], required: false}
+      file: {paths: [AGENTS.md, CLAUDE.md], base: workspace, required: false}
       limits: {maxBytes: 65536}
       snapshot: before-run
     final-step:
