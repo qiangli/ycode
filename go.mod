@@ -4,16 +4,16 @@ go 1.27
 
 toolchain go1.27.1
 
-replace mvdan.cc/sh/v3 => github.com/qiangli/sh/v3 v3.0.0-20261007045242-f6589660f589
+replace mvdan.cc/sh/v3 => github.com/qiangli/sh/v3 v3.0.0-20261009065157-d3d7766e8a47
 
 // Bashy's filebrowser replacement does not propagate to embedding modules.
-replace github.com/filebrowser/filebrowser/v2 => github.com/qiangli/filebrowser/v2 v2.0.0-20261002203458-0b059ae20b79
+replace github.com/filebrowser/filebrowser/v2 => github.com/qiangli/filebrowser/v2 v2.0.0-20261009064700-9c1237190cff
 
-replace github.com/ergochat/readline => github.com/qiangli/readline v0.1.4-0.20260919214158-38ad08e83676
+replace github.com/ergochat/readline => github.com/qiangli/readline v0.1.4-0.20261009064530-fb482a5af0cb
 
-replace github.com/ollama/ollama => github.com/qiangli/ollama v0.0.0-20260426003157-db9cd0a2004b
+replace github.com/ollama/ollama => github.com/qiangli/ollama v0.0.0-20261009064157-78765bf2b70b
 
-replace go.podman.io/podman/v6 => github.com/qiangli/podman/v6 v6.0.0-20260723062102-d454baa0afec
+replace go.podman.io/podman/v6 => github.com/qiangli/podman/v6 v6.0.0-20261009064533-4a9784029284
 
 replace github.com/jaegertracing/jaeger => github.com/qiangli/jaeger v0.0.0-20260426223533-5aaa7eb1f040
 
@@ -35,9 +35,9 @@ require (
 	github.com/philippgille/chromem-go v0.7.0
 	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
 	github.com/qiangli/bashy v0.32.1-0.20261008103348-6d910d38bdf4
-	github.com/qiangli/bonsai v0.0.0-20261008104209-40c954478b70
-	github.com/qiangli/coreutils v0.0.0-20261008110135-6a81627c0a11
-	github.com/qiangli/yoke v0.0.0-20261008110551-df03a095f180
+	github.com/qiangli/bonsai v0.0.0-20261009071550-a766d550ff2a
+	github.com/qiangli/coreutils v0.0.0-20261009071524-54a8fb26235e
+	github.com/qiangli/yoke v0.0.0-20261009071820-0975af122eb6
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	go.etcd.io/bbolt v1.4.3
@@ -99,7 +99,7 @@ require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-pty v0.2.3 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/bashsharp/bashsharp v0.0.0-20261008102615-e2495567594a // indirect
+	github.com/bashsharp/bashsharp v0.0.0-20261009071830-bbf9eeee733a // indirect
 	github.com/benhoyt/goawk v1.31.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.6 // indirect
@@ -333,11 +333,11 @@ require (
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/prometheus/statsd_exporter v0.29.0 // indirect
-	github.com/qiangli/gfy v0.0.0-20260920194528-5f76a171a47d // indirect
+	github.com/qiangli/gfy v0.0.0-20261009070616-1a9d12418c8d // indirect
 	github.com/qiangli/ycode/examples/genie v0.0.0 // indirect
-	github.com/qiangli/yoke/external/otel v0.0.0-20261008110551-df03a095f180 // indirect
-	github.com/qiangli/yoke/pkg/llmgw v0.0.0-20261008110551-df03a095f180 // indirect
-	github.com/qiangli/yoke/pkg/oci v0.0.0-20261008110551-df03a095f180 // indirect
+	github.com/qiangli/yoke/external/otel v0.0.0-20261009071820-0975af122eb6 // indirect
+	github.com/qiangli/yoke/pkg/llmgw v0.0.0-20261009071820-0975af122eb6 // indirect
+	github.com/qiangli/yoke/pkg/oci v0.0.0-20261009071820-0975af122eb6 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/redis/go-redis/v9 v9.20.1 // indirect
@@ -452,7 +452,7 @@ require (
 
 // coreutils' own goawk replace does not propagate across modules, and
 // upstream goawk v1.31.0 has no `regex` package — cmds/awk needs the fork.
-replace github.com/benhoyt/goawk => github.com/qiangli/coreutils/third_party/goawk v0.0.0-20261008110135-6a81627c0a11
+replace github.com/benhoyt/goawk => github.com/qiangli/coreutils/third_party/goawk v0.0.0-20261009071524-54a8fb26235e
 
 exclude (
 	google.golang.org/genproto v0.0.0-20200804131852-c06518451d9c
