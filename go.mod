@@ -11,7 +11,7 @@ replace github.com/filebrowser/filebrowser/v2 => github.com/qiangli/filebrowser/
 
 replace github.com/ergochat/readline => github.com/qiangli/readline v0.1.4-0.20261009064530-fb482a5af0cb
 
-replace github.com/ollama/ollama => github.com/qiangli/ollama v0.0.0-20261009064157-78765bf2b70b
+replace github.com/ollama/ollama => github.com/qiangli/ollama v0.0.0-20261009073819-83ce2ea49b53
 
 replace go.podman.io/podman/v6 => github.com/qiangli/podman/v6 v6.0.0-20261009064533-4a9784029284
 
@@ -34,10 +34,10 @@ require (
 	github.com/nats-io/nats.go v1.50.0
 	github.com/philippgille/chromem-go v0.7.0
 	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
-	github.com/qiangli/bashy v0.32.1-0.20261009072752-8d994c5e955e
+	github.com/qiangli/bashy v0.32.1-0.20261009074003-e70a3fbf045a
 	github.com/qiangli/bonsai v0.0.0-20261009071550-a766d550ff2a
 	github.com/qiangli/coreutils v0.0.0-20261009071524-54a8fb26235e
-	github.com/qiangli/yoke v0.0.0-20261009071820-0975af122eb6
+	github.com/qiangli/yoke v0.0.0-20261009073833-dddfffe1f47b
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	go.etcd.io/bbolt v1.4.3
@@ -335,9 +335,9 @@ require (
 	github.com/prometheus/statsd_exporter v0.29.0 // indirect
 	github.com/qiangli/gfy v0.0.0-20261009070616-1a9d12418c8d // indirect
 	github.com/qiangli/ycode/examples/genie v0.0.0 // indirect
-	github.com/qiangli/yoke/external/otel v0.0.0-20261009071820-0975af122eb6 // indirect
-	github.com/qiangli/yoke/pkg/llmgw v0.0.0-20261009071820-0975af122eb6 // indirect
-	github.com/qiangli/yoke/pkg/oci v0.0.0-20261009071820-0975af122eb6 // indirect
+	github.com/qiangli/yoke/external/otel v0.0.0-20261009073833-dddfffe1f47b // indirect
+	github.com/qiangli/yoke/pkg/llmgw v0.0.0-20261009073833-dddfffe1f47b // indirect
+	github.com/qiangli/yoke/pkg/oci v0.0.0-20261009073833-dddfffe1f47b // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/redis/go-redis/v9 v9.20.1 // indirect
