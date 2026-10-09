@@ -71,7 +71,13 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 				maxTokens = model.Limits.MaxOutputTokens
 			}
 			request := provider.Request{Model: model.ID, System: system, Messages: requestMessages, MaxTokens: maxTokens, Stream: model.Capabilities.Streaming, BashyTool: model.Capabilities.ToolCalls}
-			if run.plan {
+			// A plan turn and a memory.compact summarization both ask the model
+			// for plain text, never a command: offering the tool lets a
+			// tool-capable model answer with a bashy call instead of text, which
+			// RouteText (and the plan gate below) treats as a failed turn. For
+			// compaction that meant the deterministic fallback firing on almost
+			// every compaction instead of the rare real failure it exists for.
+			if run.plan || stageID == "memory.compact" {
 				request.BashyTool = false
 			}
 			requestRef, err := r.payload(request)

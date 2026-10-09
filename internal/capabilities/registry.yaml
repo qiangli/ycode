@@ -22,9 +22,9 @@ capabilities:
       - network addresses, authentication, routing, triggers, and sinks are declared by agent.yaml
 
   - id: sessions
-    summary: durable sessions projected from the canonical event log - list, show, export, search, rename, fork, resume, new, clear (a clean conversation keeping the model selection), and the status a terminal is on
+    summary: durable sessions projected from the canonical event log - list, show, export, search, rename, fork, resume, new, clear (a clean conversation keeping the model selection), the status a terminal is on, and say (admitting text as steering input at the next turn boundary)
     audience: [agent, human]
-    cli: [session, resume, new, clear, status, pause, continue, btw, retry, revert, compact, plan]
+    cli: [session, resume, new, clear, status, pause, continue, btw, retry, revert, compact, plan, say]
     http: []
     config: []
 

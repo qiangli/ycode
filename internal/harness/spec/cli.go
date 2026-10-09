@@ -505,7 +505,7 @@ func validateCLIDispatch(d *Document, route CLIDispatch, args CLIArgs, flags map
 		}
 		want, ok := sessionActionArgs[route.Action]
 		if !ok {
-			return fmt.Errorf("session.action must be list, show, export, rename, fork, search, new, clear, status, pause, btw, retry, revert, compact, plan, model-use or model-current")
+			return fmt.Errorf("session.action must be list, show, export, rename, fork, search, new, clear, status, pause, btw, retry, revert, compact, plan, say, model-use or model-current")
 		}
 		if args.Min != want.Min || args.Max != want.Max {
 			return fmt.Errorf("session action %s requires args {min: %d, max: %d}", route.Action, want.Min, want.Max)
@@ -600,6 +600,7 @@ var sessionActionArgs = map[string]CLIArgs{
 	"revert":        {Min: 0, Max: 0},
 	"compact":       {Min: 0, Max: 0},
 	"plan":          {Min: 0, Max: -1},
+	"say":           {Min: 1, Max: -1}, // TEXT... admitted as steering at the next turn boundary
 	"model-use":     {Min: 1, Max: 1},
 	"model-current": {Min: 0, Max: 0},
 	"list":          {Min: 0, Max: 0},

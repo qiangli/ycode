@@ -328,8 +328,65 @@ func (r *Runtime) normalize(_ context.Context, in pipeline.Invocation) pipeline.
 	if err != nil {
 		return fail(err)
 	}
+	response, err = normalizeProviderResponse(response, in.With)
+	if err != nil {
+		return fail(err)
+	}
 	state["response"] = response
 	return pipeline.Success(map[string]any{"state": state})
+}
+
+// normalizeProviderResponse applies the compiled messages.normalize-provider-response
+// policy to one provider turn, before any call is dispatched:
+//
+//   - deterministicCallIds assigns every call an id derived from its own name
+//     and input, so two calls the model (or a flaky provider echo) emitted
+//     with the exact same script resolve to the same id instead of two
+//     distinct ones racing the Bashy tool.
+//   - duplicateCalls "drop-identical" then collapses same-signature calls to
+//     their first occurrence, so the compiled execute-tool-calls forEach
+//     dispatches an identical bashy call once per step, not twice.
+//   - malformedToolResult "repair-explicitly" gives a call with no input an
+//     explicit empty object instead of a nil that would otherwise reach the
+//     dispatcher as a JSON "null".
+func normalizeProviderResponse(response map[string]any, with map[string]any) (map[string]any, error) {
+	calls := anyList(response["toolCalls"])
+	if len(calls) == 0 {
+		return response, nil
+	}
+	deterministic, _ := with["deterministicCallIds"].(bool)
+	dropIdentical := text(with["duplicateCalls"]) == "drop-identical"
+	repairMalformed := text(with["malformedToolResult"]) == "repair-explicitly"
+	seen := make(map[string]bool, len(calls))
+	kept := make([]any, 0, len(calls))
+	for _, raw := range calls {
+		call, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("messages.normalize-provider-response: invalid tool call %T", raw)
+		}
+		input := call["input"]
+		if repairMalformed && input == nil {
+			input = map[string]any{}
+			call["input"] = input
+		}
+		encodedInput, err := json.Marshal(input)
+		if err != nil {
+			return nil, fmt.Errorf("messages.normalize-provider-response: encode tool call input: %w", err)
+		}
+		signature := text(call["name"]) + "\x00" + string(encodedInput)
+		if deterministic {
+			call["id"] = stableID("tool-call", signature)
+		}
+		if dropIdentical {
+			if seen[signature] {
+				continue
+			}
+			seen[signature] = true
+		}
+		kept = append(kept, call)
+	}
+	response["toolCalls"] = kept
+	return response, nil
 }
 
 func (r *Runtime) appendAssistant(_ context.Context, in pipeline.Invocation) pipeline.Outcome {

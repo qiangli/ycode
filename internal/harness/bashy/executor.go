@@ -336,6 +336,17 @@ func placementID(meta Meta, fallback string) string {
 	return fallback
 }
 
+// quietDefaults are the advisory/telemetry controls a compiled environment
+// allowlist may declare. The model-visible Bashy call is never a human at a
+// terminal, so when the host process does not carry one of these, it still
+// defaults to its quiet setting instead of going unset and leaving the
+// executed command to Bashy's own (human-facing, on-by-default) behavior —
+// the same default genie's own process wrapper already applies
+// (examples/genie/cmd/genie/main.go's isolatedEnvironment), now applied by
+// the harness itself so it holds for every caller of this executor, not only
+// one that happened to set it before launching ycode.
+var quietDefaults = map[string]string{"BASHY_HINTS": "off", "BASHY_ADVISOR": "off", "BASHY_TELEMETRY_QUIET": "1"}
+
 func (e *Executor) environment() []harnessrunner.EnvironmentVariable {
 	names := append([]string(nil), e.config.Environment.Names...)
 	sort.Strings(names)
@@ -348,6 +359,8 @@ func (e *Executor) environment() []harnessrunner.EnvironmentVariable {
 		seen[name] = true
 		if value, ok := os.LookupEnv(name); ok {
 			result = append(result, harnessrunner.EnvironmentVariable{Name: name, ValueRef: "environment://" + name, Value: value})
+		} else if quiet, ok := quietDefaults[name]; ok {
+			result = append(result, harnessrunner.EnvironmentVariable{Name: name, ValueRef: "harness://quiet-default", Value: quiet})
 		}
 	}
 	result = append(result, harnessrunner.EnvironmentVariable{Name: "BASHY_AGENTIC", ValueRef: "harness://agentic", Value: "1"})

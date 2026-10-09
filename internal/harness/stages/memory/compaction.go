@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/qiangli/ycode/internal/harness/message"
@@ -270,8 +271,15 @@ func hasToolResult(item message.Message) bool {
 }
 
 func deterministicSummary(messages []message.Message) string {
-	var lines []string
-	lines = append(lines, "Deterministic excerpt summary:")
+	lines := []string{"Deterministic excerpt summary:"}
+	if files := filesRead(messages); len(files) > 0 {
+		lines = append(lines, "Files already read (do not re-read unless they may have changed):")
+		for _, file := range files {
+			lines = append(lines, "- "+file)
+		}
+	}
+	lines = append(lines, "Recent turns:")
+	excerpts := 0
 	for _, item := range messages {
 		text := messageText(item)
 		if text == "" {
@@ -281,11 +289,51 @@ func deterministicSummary(messages []message.Message) string {
 			text = text[:240]
 		}
 		lines = append(lines, "- "+string(item.Role)+": "+text)
-		if len(lines) == 13 {
+		excerpts++
+		if excerpts == 13 {
 			break
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// readCommand matches a shell line that reads a file without changing it
+// (cat, sed, head, tail, grep, less, awk, bat), so the files it names can be
+// listed once instead of re-read turn after turn once the model-based
+// summarizer is unavailable and this excerpt is all the next turn sees.
+var readCommand = regexp.MustCompile(`(?:^|[\s|;&])(?:cat|sed|head|tail|grep|less|bat|awk)\b.*`)
+
+// filePathToken matches a path-shaped argument (a dotted extension or a
+// slash) inside a matched read command.
+var filePathToken = regexp.MustCompile(`[.\w/-]*[\w-]\.[A-Za-z0-9]+\b|[.\w-]*/[.\w/-]+`)
+
+// filesRead extracts the de-duplicated, order-preserving list of files a
+// discarded range of tool_use scripts read.
+func filesRead(messages []message.Message) []string {
+	seen := map[string]bool{}
+	var files []string
+	for _, item := range messages {
+		for _, block := range item.Content {
+			if block.Type != message.ContentTypeToolUse || block.Name != "bashy" {
+				continue
+			}
+			var input struct {
+				Script string `json:"script"`
+			}
+			if json.Unmarshal(block.Input, &input) != nil || input.Script == "" {
+				continue
+			}
+			for _, line := range readCommand.FindAllString(input.Script, -1) {
+				for _, path := range filePathToken.FindAllString(line, -1) {
+					if !seen[path] {
+						seen[path] = true
+						files = append(files, path)
+					}
+				}
+			}
+		}
+	}
+	return files
 }
 
 func messageText(item message.Message) string {

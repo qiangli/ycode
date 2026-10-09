@@ -111,6 +111,44 @@ func TestCompactionUsesCompiledTriggerRoutePreservationAndFailure(t *testing.T) 
 			t.Fatalf("summarizer calls = %d", summarizer.calls)
 		}
 	})
+
+	// Sprint 379 Story #51 (a87716307f79): a headless genie worker re-ran the
+	// same `sed`/`cat`/`grep` reads after every compaction because the
+	// deterministic fallback dropped which files had already been read. The
+	// fallback summary must list them explicitly so the next turn does not
+	// repeat the read.
+	t.Run("fallback deterministic lists files already read", func(t *testing.T) {
+		summarizer := &fakeSummarizer{err: errors.New("route down")}
+		engine, _, _ := testEngine(t, "fallback-deterministic", summarizer)
+		messages := []message.Message{
+			{Role: message.RoleAssistant, Content: []message.ContentBlock{{Type: message.ContentTypeToolUse, ID: "call-1", Name: "bashy", Input: []byte(`{"script":"sed -n '1,50p' pkg/chat/chat.go"}`)}}},
+			{Role: message.RoleUser, Content: []message.ContentBlock{{Type: message.ContentTypeToolResult, ToolUseID: "call-1", Content: "package chat"}}},
+			{Role: message.RoleAssistant, Content: []message.ContentBlock{{Type: message.ContentTypeToolUse, ID: "call-2", Name: "bashy", Input: []byte(`{"script":"cat shell_shim_unix_test.go"}`)}}},
+			{Role: message.RoleUser, Content: []message.ContentBlock{{Type: message.ContentTypeToolResult, ToolUseID: "call-2", Content: "package shell"}}},
+		}
+		messages = append(messages, testMessages(5)...)
+		result, err := engine.Compact(context.Background(), testMeta(), CompactionRequest{MemoryRef: "main", Messages: messages})
+		if err != nil || result.Outcome != "fallback-deterministic" {
+			t.Fatalf("result = %#v, %v", result, err)
+		}
+		summary := result.Messages[0].Content[0].Text
+		if !strings.Contains(summary, "Files already read") || !strings.Contains(summary, "pkg/chat/chat.go") || !strings.Contains(summary, "shell_shim_unix_test.go") {
+			t.Fatalf("summary does not list the files already read: %s", summary)
+		}
+	})
+}
+
+func TestFilesReadExtractsReadOnlyCommandTargetsOnce(t *testing.T) {
+	messages := []message.Message{
+		{Role: message.RoleAssistant, Content: []message.ContentBlock{{Type: message.ContentTypeToolUse, Name: "bashy", Input: []byte(`{"script":"sed -n '1,50p' pkg/chat/chat.go"}`)}}},
+		{Role: message.RoleAssistant, Content: []message.ContentBlock{{Type: message.ContentTypeToolUse, Name: "bashy", Input: []byte(`{"script":"cat shell_shim_unix_test.go && sed -n '1,10p' pkg/chat/chat.go"}`)}}},
+		{Role: message.RoleAssistant, Content: []message.ContentBlock{{Type: message.ContentTypeToolUse, Name: "bashy", Input: []byte(`{"script":"printf hello"}`)}}},
+	}
+	got := filesRead(messages)
+	want := []string{"pkg/chat/chat.go", "shell_shim_unix_test.go"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("filesRead = %#v, want %#v", got, want)
+	}
 }
 
 func TestMeasureUsesProviderUsageAndComputedBudget(t *testing.T) {

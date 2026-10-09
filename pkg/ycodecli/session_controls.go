@@ -131,6 +131,30 @@ func sessionControl(ctx context.Context, app *harnessApplication, route harnesss
 	case "compact":
 		result, err := app.harness.Compact(ctx, id)
 		return controlResult{Value: result}, err
+	// say admits text as steering input for a session's own running turn,
+	// regardless of which process is running it: it reaches the session's
+	// durable, lock-protected queue (pkg/ycode/queue.go) the same way a live
+	// TUI's own enqueue does, so it works for a headless one-shot run with no
+	// attached terminal or control socket to write into. The compiled loop
+	// drains the steering class at its own turn boundaries (before every
+	// model call and after every tool batch); this command only admits the
+	// text, it never blocks on the turn or prompts a human.
+	case "say":
+		if len(args) == 0 {
+			return controlResult{}, errors.New("say requires text")
+		}
+		agentRef := app.doc.Spec.Runtime.DefaultAgentRef
+		queueRef := app.doc.Spec.Agents[agentRef].QueueRef
+		if queueRef == "" {
+			return controlResult{}, errors.New("session say: the default agent has no compiled queue")
+		}
+		if _, ok := app.doc.Spec.Queues[queueRef].Priorities["steering"]; !ok {
+			return controlResult{}, fmt.Errorf("session say: queue %q declares no steering class", queueRef)
+		}
+		if err := app.harness.Enqueue(public.QueueRequest{SessionID: id, QueueRef: queueRef, Class: "steering", Text: strings.Join(args, " ")}); err != nil {
+			return controlResult{}, err
+		}
+		return controlResult{Value: map[string]any{"session": id, "queue_ref": queueRef, "queued": true}}, nil
 	case "revert":
 		result, err := app.harness.Revert(ctx, id)
 		return controlResult{Value: result}, err
