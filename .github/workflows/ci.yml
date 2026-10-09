@@ -10,7 +10,7 @@ name: CI
 # every push.
 #
 # Why native (no docker) on the runner?
-#   - Docker Hub rate-limits anonymous pulls of golang:1.26-bookworm. That's
+#   - Docker Hub rate-limits anonymous pulls of golang:1.27.1-bookworm. That's
 #     the source of the 47-min outlier builds.
 #   - actions/setup-go's module cache survives across runs. A clean docker
 #     build re-downloads the entire dep tree (including external/) every job.

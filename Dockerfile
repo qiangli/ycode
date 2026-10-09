@@ -4,7 +4,7 @@
 #   podman compose run --rm build        # full quality gate
 #   podman compose run --rm compile      # quick compile only
 #   podman compose run --rm test         # unit tests only
-FROM docker.io/library/golang:1.26-bookworm
+FROM docker.io/library/golang:1.27.1-bookworm
 
 # System dependencies: git for toolexec host-exec tier, CGO libs for podman/sqlite.
 RUN apt-get update && apt-get install -y --no-install-recommends \
