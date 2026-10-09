@@ -1757,8 +1757,8 @@ github.com/prometheus/statsd_exporter v0.29.0 h1:2iaiBLpAg/WcdW4nF0UTQfjCE2DXD+1
 github.com/prometheus/statsd_exporter v0.29.0/go.mod h1:3t+fT5ESGc0KBUfadCp43KOnVPFmbAF4c58Osotz3Zk=
 github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c h1:0i8kMRJRlyFkFfHWc+dcQ8L87XqKjGBgAviATJYrNB8=
 github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c/go.mod h1:BSEpPui6tXCLsLoEoSCqCKodQvXkGkEMQDUc+JqAGfU=
-github.com/qiangli/bashy v0.32.1-0.20261008103348-6d910d38bdf4 h1:/0KZo65h137XQhfC8sNTrgDp3JF+8p+VdqRHJthG2EM=
-github.com/qiangli/bashy v0.32.1-0.20261008103348-6d910d38bdf4/go.mod h1:vNdxVXqVEf45davZYfrSg3rhpHusKgfvIhCBFy5C8wg=
+github.com/qiangli/bashy v0.32.1-0.20261009072420-f1780d4e1d45 h1:B1Vb7Twlxn0ZVS691crmhbAjmUlRy8kxFeetze6mrZ8=
+github.com/qiangli/bashy v0.32.1-0.20261009072420-f1780d4e1d45/go.mod h1:TgqANHVntXv0wmLy4PToX121klKP6FTt6PvMGkPuxq0=
 github.com/qiangli/bonsai v0.0.0-20261009071550-a766d550ff2a h1:zJW0+z5HCL5701Ak3Vj5q2OwyyXonX/HrQBUbX0C0eI=
 github.com/qiangli/bonsai v0.0.0-20261009071550-a766d550ff2a/go.mod h1:L7GE/5i5Y1D494nRJ8czb4+3u7/Nznu1as43PhDKLuE=
 github.com/qiangli/coreutils v0.0.0-20261009071524-54a8fb26235e h1:mK/Pz400sWXr5uY8n+UTmLbZYe/bL0WFmhmnDykkGp0=
