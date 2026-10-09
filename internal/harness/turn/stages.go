@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -431,13 +432,87 @@ func (r *Runtime) appendAssistant(_ context.Context, in pipeline.Invocation) pip
 	return pipeline.Success(map[string]any{"state": state})
 }
 
-func (r *Runtime) finish(_ context.Context, in pipeline.Invocation) pipeline.Outcome {
+// finish ends the agent loop, unless a headless one-shot turn with no human
+// to answer just ended on a question or menu instead of acting (docs/todo/
+// 1d4096a6c973): with.maxContinuations and with.sourceRef opt a pipeline into
+// a bounded nudge instead — an interactive finish-step that declares neither
+// is unaffected.
+func (r *Runtime) finish(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
 	state, err := object(in.Inputs["state"])
 	if err != nil {
 		return fail(err)
 	}
+	maxContinuations, _ := number(in.With["maxContinuations"])
+	sourceRef := text(in.With["sourceRef"])
+	if maxContinuations > 0 && sourceRef != "" {
+		count, _ := number(state["continuations"])
+		if count < maxContinuations && r.wantsHeadlessContinuation(ctx, state) {
+			source, ok := r.doc.Spec.Sources[sourceRef]
+			if !ok {
+				return fail(fmt.Errorf("loop.finish: undeclared source %q", sourceRef))
+			}
+			messages, err := messagesFrom(state["messages"])
+			if err != nil {
+				return fail(err)
+			}
+			state["messages"] = append(messages, textMessage(message.RoleUser, source.Resolved))
+			state["continuations"] = count + 1
+			if err := r.append(ctx, in.StageID, "loop.continued", map[string]any{"count": count + 1, "max": maxContinuations}); err != nil {
+				return fail(err)
+			}
+			return pipeline.Success(map[string]any{"state": state})
+		}
+	}
 	state["finished"] = true
 	return pipeline.Success(map[string]any{"state": state})
+}
+
+// wantsHeadlessContinuation reports a turn with no human available to answer
+// (a one-shot frontend run without HITL) whose last assistant message reads
+// as a question or menu rather than a completed action — the live failure
+// this nudge exists for: the model analyzes correctly, then ends the turn
+// asking which option to take instead of taking one.
+func (r *Runtime) wantsHeadlessContinuation(ctx context.Context, state map[string]any) bool {
+	run, err := runFrom(ctx)
+	if err != nil || run.humanAvailable {
+		return false
+	}
+	if r.doc.Spec.Frontends[run.originFrontend].Kind != "one-shot" {
+		return false
+	}
+	messages, err := messagesFrom(state["messages"])
+	if err != nil || len(messages) == 0 {
+		return false
+	}
+	last := messages[len(messages)-1]
+	if last.Role != message.RoleAssistant {
+		return false
+	}
+	var parts []string
+	for _, block := range last.Content {
+		if block.Type == message.ContentTypeToolUse {
+			return false
+		}
+		if block.Type == message.ContentTypeText && block.Text != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	return readsAsQuestionOrMenu(strings.Join(parts, ""))
+}
+
+// menuOptionLine matches one bulleted or numbered option line; two or more
+// of them read as a menu even without a trailing question mark.
+var menuOptionLine = regexp.MustCompile(`(?m)^\s*(?:[-*•]|\d+[.)])\s+\S`)
+
+func readsAsQuestionOrMenu(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	if strings.HasSuffix(trimmed, "?") {
+		return true
+	}
+	return len(menuOptionLine.FindAllString(trimmed, 2)) >= 2
 }
 
 func (r *Runtime) compact(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {

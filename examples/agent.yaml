@@ -298,6 +298,11 @@ spec:
     final-step:
       text: This is the final permitted model step. Return the best complete answer now.
       limits: {maxBytes: 4096}
+    # S379 1d4096a6c973: a headless one-shot turn has no human to answer a
+    # question, so a turn that ends on one gets nudged to act instead.
+    headless-continuation:
+      text: No human is available. Proceed with the approach the request names, or the first option you listed; make the change, verify it, and report.
+      limits: {maxBytes: 4096}
     compaction-checkpoint:
       file: {path: prompts/compaction-checkpoint.md, required: false}
       limits: {maxBytes: 8192}
@@ -609,6 +614,7 @@ spec:
           needs: []
           run:
             stage: loop.finish
+            with: {maxContinuations: 2, sourceRef: headless-continuation}
             in: {state: state}
             out: {state: state}
 
