@@ -313,8 +313,13 @@ func (n *normalizer) accept(event *api.StreamEvent) []Event {
 			return nil
 		}
 		if !json.Valid(state.call.Input) {
-			n.protocolErr = errors.New("provider returned invalid bashy tool input")
-			return nil
+			// Malformed JSON from the provider is not a transport failure
+			// that should kill the turn: clear the input so it reaches
+			// messages.normalize-provider-response as the "no input" case
+			// (malformedToolResult: repair-explicitly), which repairs it to
+			// an explicit {} and lets bashy's own validation error come back
+			// as a tool_result the model can read and correct.
+			state.call.Input = nil
 		}
 		if state.call.ID == "" {
 			state.call.ID = deterministicCallID(n.requestSeed, n.ordinal, state.call)

@@ -266,7 +266,9 @@ func (r *Runtime) measure(ctx context.Context, in pipeline.Invocation) pipeline.
 	if !ok {
 		margin = 1
 	}
-	result, err := r.memory.Measure(ctx, memoryMeta(meta), memoryStage.MeasureRequest{MemoryRef: text(in.With["memoryRef"]), RouteRef: text(in.With["routeRef"]), SafetyMargin: margin, Messages: messages})
+	routeRef := text(in.With["routeRef"])
+	run, _ := runFrom(ctx)
+	result, err := r.memory.Measure(ctx, memoryMeta(meta), memoryStage.MeasureRequest{MemoryRef: text(in.With["memoryRef"]), RouteRef: routeRef, ModelRef: sessionModelRef(run, r.doc, routeRef), SafetyMargin: margin, Messages: messages})
 	if err != nil {
 		return fail(err)
 	}
@@ -485,7 +487,11 @@ func (r *Runtime) clearToolResults(_ context.Context, in pipeline.Invocation) pi
 	}
 	userSeen := 0
 	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == message.RoleUser {
+		// A turn boundary is a genuine user message, not a tool_result
+		// synthesized under the same RoleUser: one real turn's agent loop
+		// can carry dozens of those, and counting each as its own turn
+		// cleared almost everything after only a handful of tool calls.
+		if messages[i].Role == message.RoleUser && !isToolResultMessage(messages[i]) {
 			userSeen++
 		}
 		if userSeen <= olderThanTurns {
@@ -600,6 +606,21 @@ func cloneMessages(messages []message.Message) []message.Message {
 
 func textMessage(role message.Role, value string) message.Message {
 	return message.Message{Role: role, Content: []message.ContentBlock{{Type: message.ContentTypeText, Text: value}}}
+}
+
+// isToolResultMessage reports a message synthesized to carry one or more
+// tool_result blocks back to the model: it has RoleUser like a genuine user
+// turn, but is not one.
+func isToolResultMessage(item message.Message) bool {
+	if item.Role != message.RoleUser || len(item.Content) == 0 {
+		return false
+	}
+	for _, block := range item.Content {
+		if block.Type != message.ContentTypeToolResult {
+			return false
+		}
+	}
+	return true
 }
 
 func messageText(item message.Message) string {

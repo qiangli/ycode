@@ -87,8 +87,13 @@ type MeasurementProvenance struct {
 }
 
 type MeasureRequest struct {
-	MemoryRef    string
-	RouteRef     string
+	MemoryRef string
+	RouteRef  string
+	// ModelRef overrides the route's first attempt when a session has
+	// selected a different declared model (ycode model use / turn.Request
+	// ModelRef): the budget must reflect the model actually serving the
+	// turn, not whichever attempt happens to come first in the route.
+	ModelRef     string
 	SafetyMargin float64
 	Messages     []message.Message
 }
@@ -108,9 +113,23 @@ func (e *Engine) Measure(_ context.Context, meta Meta, request MeasureRequest) (
 	if !ok || len(route.Attempts) == 0 {
 		return Measurement{}, fmt.Errorf("context measure: undeclared route %q", request.RouteRef)
 	}
-	model, ok := e.models[route.Attempts[0].ModelRef]
+	modelRef := route.Attempts[0].ModelRef
+	if request.ModelRef != "" {
+		found := false
+		for _, attempt := range route.Attempts {
+			if attempt.ModelRef == request.ModelRef {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return Measurement{}, fmt.Errorf("context measure: session model %q is not in route %q", request.ModelRef, request.RouteRef)
+		}
+		modelRef = request.ModelRef
+	}
+	model, ok := e.models[modelRef]
 	if !ok {
-		return Measurement{}, fmt.Errorf("context measure: undeclared model %q", route.Attempts[0].ModelRef)
+		return Measurement{}, fmt.Errorf("context measure: undeclared model %q", modelRef)
 	}
 	encoded, err := json.Marshal(request.Messages)
 	if err != nil {

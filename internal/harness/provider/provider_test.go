@@ -61,6 +61,38 @@ func TestMissingCallIDIsDeterministic(t *testing.T) {
 	}
 }
 
+// Sprint 379 Story #53 (c88f66baf976): a glm-5.3 headless run hit a tool
+// call whose streamed input never assembled into valid JSON and the whole
+// turn died with llm.completed outcome protocol_error "provider returned
+// invalid bashy tool input" -> turn.failed, instead of giving the model a
+// tool_result it could read and correct. Invalid JSON is a malformed call,
+// not a transport failure: it must reach normalize-provider-response
+// (malformedToolResult: repair-explicitly) like a call with no input at all.
+func TestMalformedToolInputBecomesRepairableToolCallNotProtocolError(t *testing.T) {
+	t.Parallel()
+	partial, _ := json.Marshal(map[string]string{"type": "input_json_delta", "partial_json": `{"script": not valid json`})
+	backend := &MockBackend{Events: []*api.StreamEvent{
+		{Type: "content_block_start", Index: 1, ContentBlock: &api.ContentBlock{Type: api.ContentTypeToolUse, ID: "bad-call", Name: ToolName, Input: json.RawMessage(`{}`)}},
+		{Type: "content_block_delta", Index: 1, Delta: partial},
+		{Type: "content_block_stop", Index: 1},
+		{Type: "message_stop"},
+	}}
+	adapter, _ := NewMock(backend)
+	events := collect(adapter.Send(context.Background(), testRequest()))
+	if got := events[len(events)-1].Outcome; got == nil || got.Class != OutcomeToolCall {
+		t.Fatalf("outcome = %#v, want tool_call so the turn continues", got)
+	}
+	var call *ToolCall
+	for _, event := range events {
+		if event.ToolCall != nil {
+			call = event.ToolCall
+		}
+	}
+	if call == nil || call.ID != "bad-call" || len(call.Input) != 0 {
+		t.Fatalf("tool call = %#v, want the malformed call to reach normalization with no usable input", call)
+	}
+}
+
 func TestForbiddenProviderToolBecomesProtocolOutcome(t *testing.T) {
 	t.Parallel()
 	backend := &MockBackend{Events: []*api.StreamEvent{

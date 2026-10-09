@@ -165,6 +165,35 @@ func TestMeasureUsesProviderUsageAndComputedBudget(t *testing.T) {
 	}
 }
 
+// Sprint 379 Story #53 (c88f66baf976): a live glm-5.3 session (selected via
+// `ycode model use`, a declared fallback attempt in the route) measured
+// context against route.Attempts[0]'s model instead of the one actually
+// serving the turn, so a model with a far larger window still got the
+// default attempt's tiny budget and started truncating tool results after a
+// handful of turns. ModelRef must steer the measurement to the session's
+// chosen attempt, the same way routeProvider already steers inference.
+func TestMeasureUsesSessionSelectedModelNotRouteDefault(t *testing.T) {
+	doc := testDocument("preserve-original")
+	route := doc.Spec.Routes["main-route"]
+	route.Attempts = append(route.Attempts, spec.RouteAttempt{ModelRef: "big-model", TimeoutMS: 100})
+	doc.Spec.Routes["main-route"] = route
+	doc.Spec.Models["big-model"] = spec.Model{Limits: spec.ModelLimits{ContextTokens: 100000, MaxOutputTokens: 20}}
+	engine, _, _ := testEngineWithDocument(t, doc, &fakeSummarizer{summary: "x"})
+
+	measurement, err := engine.Measure(context.Background(), testMeta(), MeasureRequest{MemoryRef: "main", RouteRef: "main-route", ModelRef: "big-model", SafetyMargin: 1, Messages: nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 100000 - 8 (route's output reserve, capped by big-model's own 20) - 8 (compaction reserveTokens).
+	if measurement.ContextBudget != 99984 {
+		t.Fatalf("contextBudget = %d, want the selected model's window (99984), not the route default's", measurement.ContextBudget)
+	}
+
+	if _, err := engine.Measure(context.Background(), testMeta(), MeasureRequest{MemoryRef: "main", RouteRef: "main-route", ModelRef: "not-in-route", SafetyMargin: 1, Messages: nil}); err == nil {
+		t.Fatal("a model ref outside the declared route's attempts was accepted")
+	}
+}
+
 func TestPreserveBoundaryKeepsToolPairsTogether(t *testing.T) {
 	engine, _, _ := testEngine(t, "preserve-original", &fakeSummarizer{summary: "summary"})
 	messages := []message.Message{

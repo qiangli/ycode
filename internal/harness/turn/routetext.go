@@ -35,10 +35,10 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 	run, _ := runFrom(ctx)
 	// Select only a declared attempt, preserving its timeout/retry/budget.
 	// Summary routes retain their own YAML model selection.
-	if run.modelRef != "" && routeRef == r.doc.Spec.Agents[run.agentRef].ModelRouteRef {
+	if modelRef := sessionModelRef(run, r.doc, routeRef); modelRef != "" {
 		found := false
 		for _, attempt := range route.Attempts {
-			if attempt.ModelRef == run.modelRef {
+			if attempt.ModelRef == modelRef {
 				route.Attempts = []spec.RouteAttempt{attempt}
 				found = true
 				break
@@ -139,6 +139,21 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 	}
 	_ = providerSession
 	return nil, last
+}
+
+// sessionModelRef reports the model ref a session selected for routeRef
+// (ycode model use / turn.Request.ModelRef), or "" when the turn uses the
+// route's declared default. It applies only to the agent's own model route:
+// a summary route (memory.compact) keeps its own YAML model selection
+// regardless of what the session picked for conversation turns. Every
+// consumer of route.Attempts[0] as "the model for this turn" (inference in
+// routeProvider, context budgeting in the measure stage) must resolve
+// through this instead, or a session override silently stops applying to it.
+func sessionModelRef(run runContext, doc *spec.Document, routeRef string) string {
+	if run.modelRef == "" || routeRef != doc.Spec.Agents[run.agentRef].ModelRouteRef {
+		return ""
+	}
+	return run.modelRef
 }
 
 // emptyResponse reports a completed response that carries nothing to act on:
