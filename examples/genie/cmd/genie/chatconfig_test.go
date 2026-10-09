@@ -59,7 +59,10 @@ func TestChatConfigPutsTheWorkspaceInTheCallersDirectory(t *testing.T) {
 		t.Fatalf("prompts not copied beside the config: %v", err)
 	}
 	// Without -instance-dir the config goes under ~/.bashy/genie/chat.
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("BASHY_HOME", "")
 	path, err = chatConfig(filepath.Join(profile, "agent.yaml"), workspace, "")
 	if err != nil || !strings.Contains(path, filepath.Join(".bashy", "genie", "chat")) {
 		t.Fatalf("default instance dir: %q %v", path, err)

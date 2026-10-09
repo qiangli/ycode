@@ -258,7 +258,7 @@ func instanceConfig(config, repo, dir string) (string, error) {
 
 // chatConfig is the instance config for the chat modes: the caller's
 // directory is the workspace, written under dir (default: a per-workspace
-// directory under ~/.bashy/genie/chat).
+// directory under $BASHY_HOME/genie/chat, or ~/.bashy/genie/chat).
 func chatConfig(config, workspace, dir string) (string, error) {
 	config, err := resolveConfig(config)
 	if err != nil {
@@ -269,11 +269,15 @@ func chatConfig(config, workspace, dir string) (string, error) {
 		return "", err
 	}
 	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
+		state := nativePath(strings.TrimSpace(os.Getenv("BASHY_HOME")))
+		if state == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", err
+			}
+			state = filepath.Join(home, ".bashy")
 		}
-		dir = filepath.Join(home, ".bashy", "genie", "chat", safePathComponent(filepath.Base(workspace)+"_"+workspace))
+		dir = filepath.Join(state, "genie", "chat", safePathComponent(filepath.Base(workspace)+"_"+workspace))
 	}
 	return instanceConfig(config, workspace, dir)
 }
