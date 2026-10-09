@@ -3,11 +3,12 @@ id: a87716307f79
 kind: bug
 title: 'genie stalls in a re-read loop: deterministic memory compaction fires every turn, the model forgets what it read, and a weave say steer never reaches the session'
 seq: 51
-status: todo
+status: assigned
 priority: p1
 labels:
     - genie
 created: 2026-10-09T09:29:56.486598Z
+assignee: claude-sonnet5
 sprint: 379
 sprint_id: 908c2ac2-e7bc-55fe-86bd-d25046ac4684
 sprint_title: 'bashy 1.0.0 feature list: bash + Bash# + Yoke'
