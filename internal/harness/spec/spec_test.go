@@ -139,6 +139,68 @@ func TestResolveSourceRejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
+// Sprint 379 Story #52 (46f03f676946): a headless genie run's project
+// context fragment only ever named AGENTS.md, so a workspace carrying just
+// CLAUDE.md (the umbrella convention's other accepted name) loaded 0 bytes
+// of project instructions even though the file was right there.
+func TestResolveSourcePathsFallsBackToSecondCandidateWhenFirstIsMissing(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("repo conventions"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doc := Document{BaseDir: dir, Spec: Spec{Runtime: Runtime{ReadableRoots: []string{"."}}, Sources: map[string]Source{
+		"project-instructions": {File: &SourceFile{Paths: []string{"AGENTS.md", "CLAUDE.md"}, Required: false}, Limits: SourceLimits{MaxBytes: 65536}},
+	}}}
+	if err := doc.resolveSources(); err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.Spec.Sources["project-instructions"].Resolved; got != "repo conventions" {
+		t.Fatalf("resolved = %q, want the CLAUDE.md fallback content", got)
+	}
+}
+
+func TestResolveSourcePathsPrefersFirstCandidateWhenBothExist(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("agents"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("claude"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doc := Document{BaseDir: dir, Spec: Spec{Runtime: Runtime{ReadableRoots: []string{"."}}, Sources: map[string]Source{
+		"project-instructions": {File: &SourceFile{Paths: []string{"AGENTS.md", "CLAUDE.md"}, Required: false}, Limits: SourceLimits{MaxBytes: 65536}},
+	}}}
+	if err := doc.resolveSources(); err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.Spec.Sources["project-instructions"].Resolved; got != "agents" {
+		t.Fatalf("resolved = %q, want AGENTS.md to win over CLAUDE.md", got)
+	}
+}
+
+func TestResolveSourcePathsLeavesSourceUnresolvedWhenNoCandidateExistsAndNotRequired(t *testing.T) {
+	dir := t.TempDir()
+	doc := Document{BaseDir: dir, Spec: Spec{Runtime: Runtime{ReadableRoots: []string{"."}}, Sources: map[string]Source{
+		"project-instructions": {File: &SourceFile{Paths: []string{"AGENTS.md", "CLAUDE.md"}, Required: false}, Limits: SourceLimits{MaxBytes: 65536}},
+	}}}
+	if err := doc.resolveSources(); err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.Spec.Sources["project-instructions"].Resolved; got != "" {
+		t.Fatalf("resolved = %q, want empty when neither candidate exists", got)
+	}
+}
+
+func TestResolveSourceRejectsFileWithBothPathAndPaths(t *testing.T) {
+	dir := t.TempDir()
+	doc := Document{BaseDir: dir, Spec: Spec{Runtime: Runtime{ReadableRoots: []string{"."}}, Sources: map[string]Source{
+		"bad": {File: &SourceFile{Path: "AGENTS.md", Paths: []string{"AGENTS.md", "CLAUDE.md"}}, Limits: SourceLimits{MaxBytes: 8}},
+	}}}
+	if err := doc.resolveSources(); err == nil || !strings.Contains(err.Error(), "exactly one of path or paths") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestCompileRejectsUnknownStage(t *testing.T) {
 	assertFixtureRejects(t, "stage: input.normalize", "stage: product.magic", `unknown stage "product.magic"`)
 }

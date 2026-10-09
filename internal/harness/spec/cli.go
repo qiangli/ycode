@@ -531,8 +531,8 @@ func validateCLIDispatch(d *Document, route CLIDispatch, args CLIArgs, flags map
 			return fmt.Errorf("init does not accept positional arguments")
 		}
 		source, ok := d.Spec.Sources[route.SourceRef]
-		if !ok || source.File == nil || source.File.Required {
-			return fmt.Errorf("init.sourceRef must name an optional file source")
+		if !ok || source.File == nil || source.File.Required || source.File.Path == "" {
+			return fmt.Errorf("init.sourceRef must name an optional single-path file source")
 		}
 		if _, ok := d.Spec.Sources[route.TemplateRef]; !ok || route.TemplateRef == route.SourceRef {
 			return fmt.Errorf("init.templateRef must name another source")

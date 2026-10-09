@@ -193,8 +193,10 @@ spec:
     identity:
       file: {path: prompts/system.md, required: true}
       limits: {maxBytes: 4096}
+    # The umbrella convention: AGENTS.md first, CLAUDE.md as the fallback
+    # name, both read from the workspace this agent is operating in.
     project-instructions:
-      file: {path: AGENTS.md, required: false}
+      file: {paths: [AGENTS.md, CLAUDE.md], required: false}
       limits: {maxBytes: 65536}
       snapshot: before-run
     final-step:

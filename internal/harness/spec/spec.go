@@ -106,8 +106,14 @@ type Source struct {
 	Digest   string       `yaml:"-" json:"digest,omitempty"`
 }
 type SourceFile struct {
-	Path     string `yaml:"path" json:"path"`
-	Required bool   `yaml:"required" json:"required"`
+	Path string `yaml:"path,omitempty" json:"path,omitempty"`
+	// Paths is a fallback chain tried in order (first existing file wins),
+	// for a convention with more than one accepted name, e.g. the AGENTS.md
+	// then CLAUDE.md umbrella convention. Exactly one of Path or Paths is
+	// set; a source with Paths cannot be an init.sourceRef (init writes one
+	// named file, never picks among several).
+	Paths    []string `yaml:"paths,omitempty" json:"paths,omitempty"`
+	Required bool     `yaml:"required" json:"required"`
 	// Base anchors a relative path: "document" (the default) is the YAML
 	// file's directory, "workspace" is runtime.workspace, so a generated
 	// configuration can still read the repository it serves.

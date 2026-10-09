@@ -538,16 +538,33 @@ func (d *Document) resolveSources() error {
 			d.Spec.Sources[name] = source
 			continue
 		}
-		resolved, err := d.SourcePath(name)
-		if err != nil {
-			return fmt.Errorf("harness: source %q: %w", name, err)
+		if (source.File.Path == "") == (len(source.File.Paths) == 0) {
+			return fmt.Errorf("harness: source %q file must set exactly one of path or paths", name)
 		}
-		data, err := os.ReadFile(resolved)
-		if err != nil {
-			if !source.File.Required && errors.Is(err, os.ErrNotExist) {
-				continue
+		candidates := source.File.Paths
+		if source.File.Path != "" {
+			candidates = []string{source.File.Path}
+		}
+		var data []byte
+		for _, candidate := range candidates {
+			resolved, err := d.anchoredPath(candidate, source.File.Base)
+			if err != nil {
+				return fmt.Errorf("harness: source %q: %w", name, err)
 			}
-			return fmt.Errorf("harness: source %q: %w", name, err)
+			read, err := os.ReadFile(resolved)
+			if err == nil {
+				data = read
+				break
+			}
+			if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("harness: source %q: %w", name, err)
+			}
+		}
+		if data == nil {
+			if source.File.Required {
+				return fmt.Errorf("harness: source %q: none of %v exist", name, candidates)
+			}
+			continue
 		}
 		if len(data) > source.Limits.MaxBytes {
 			return fmt.Errorf("harness: source %q exceeds maxBytes", name)
@@ -570,14 +587,21 @@ func (d *Document) WorkspaceDir() string {
 }
 
 // SourcePath is the readable path of the named file source, anchored at
-// its declared base.
+// its declared base. It requires a single-path file source (init writes one
+// named file, never picks among a Paths fallback chain).
 func (d *Document) SourcePath(name string) (string, error) {
 	source, ok := d.Spec.Sources[name]
-	if !ok || source.File == nil {
-		return "", fmt.Errorf("no file source %q", name)
+	if !ok || source.File == nil || source.File.Path == "" {
+		return "", fmt.Errorf("no single-path file source %q", name)
 	}
-	path := source.File.Path
-	switch source.File.Base {
+	return d.anchoredPath(source.File.Path, source.File.Base)
+}
+
+// anchoredPath resolves a file source's path against its declared base
+// ("document", the default, is the YAML file's directory; "workspace" is
+// runtime.workspace) and then within the compiled readableRoots.
+func (d *Document) anchoredPath(path, base string) (string, error) {
+	switch base {
 	case "", "document":
 	case "workspace":
 		if !filepath.IsAbs(path) {

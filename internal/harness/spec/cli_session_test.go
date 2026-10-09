@@ -28,6 +28,23 @@ func TestSessionDispatchValidation(t *testing.T) {
 	}
 }
 
+// init writes one named file; a source with a Paths fallback chain (used by
+// the project-instructions AGENTS.md/CLAUDE.md convention) has no single
+// file to create, so init.sourceRef must reject it (46f03f676946).
+func TestInitSourceRefRejectsPathsFallbackChain(t *testing.T) {
+	d := &Document{Spec: Spec{
+		Sources: map[string]Source{
+			"repository-instructions": {File: &SourceFile{Paths: []string{"AGENTS.md", "CLAUDE.md"}, Required: false}, Limits: SourceLimits{MaxBytes: 8}},
+			"template":                {Text: "seed", Limits: SourceLimits{MaxBytes: 8}},
+		},
+		Contexts: map[string]Context{"main": {Fragments: []ContextFragment{{ID: "repo", SourceRef: "repository-instructions", Role: "system"}}}},
+	}}
+	route := CLIDispatch{Operation: "init", SourceRef: "repository-instructions", TemplateRef: "template"}
+	if err := validateCLIDispatch(d, route, CLIArgs{}, nil); err == nil || !strings.Contains(err.Error(), "single-path file source") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestServeScopeValidation(t *testing.T) {
 	d := &Document{}
 	for _, c := range []struct {
