@@ -448,9 +448,12 @@ func (r *Runtime) appendAssistant(_ context.Context, in pipeline.Invocation) pip
 // question/menu budget on a finished run (a summary without DONE re-verifying
 // until maxContinuations ran out), so with.maxTextOnlyContinuations (default
 // 1) bounds it via its own state counter, textOnlyContinuations, and a
-// second text-only reply after the nudge finishes the turn. A reply that
-// declares completion (contains DONE, which the nudge text itself instructs)
-// still finishes, as does a text-only reply before any tool call ran.
+// second text-only reply after the nudge finishes the turn. A text-only
+// reply before any tool call ran still finishes.
+//
+// A reply that declares completion — DONE as a standalone word, which the
+// nudge text itself instructs — finishes before either nudge is considered,
+// on both paths: a finished run says so once and is believed.
 func (r *Runtime) finish(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
 	state, err := object(in.Inputs["state"])
 	if err != nil {
@@ -463,17 +466,21 @@ func (r *Runtime) finish(ctx context.Context, in pipeline.Invocation) pipeline.O
 	if !ok {
 		maxTextOnly = 1
 	}
-	if maxContinuations > 0 && sourceRef != "" {
-		if count, _ := number(state["continuations"]); count < maxContinuations {
-			if r.wantsHeadlessContinuation(ctx, state) {
-				return r.continueLoop(ctx, in.StageID, state, sourceRef, "continuations", count, maxContinuations)
+	questionPath := maxContinuations > 0 && sourceRef != ""
+	textOnlyPath := maxTextOnly > 0 && onTextOnly != ""
+	if (questionPath || textOnlyPath) && !declaresCompletion(state) {
+		if questionPath {
+			if count, _ := number(state["continuations"]); count < maxContinuations {
+				if r.wantsHeadlessContinuation(ctx, state) {
+					return r.continueLoop(ctx, in.StageID, state, sourceRef, "continuations", count, maxContinuations)
+				}
 			}
 		}
-	}
-	if maxTextOnly > 0 && onTextOnly != "" {
-		if count, _ := number(state["textOnlyContinuations"]); count < maxTextOnly {
-			if r.wantsTextOnlyContinuation(ctx, state) {
-				return r.continueLoop(ctx, in.StageID, state, onTextOnly, "textOnlyContinuations", count, maxTextOnly)
+		if textOnlyPath {
+			if count, _ := number(state["textOnlyContinuations"]); count < maxTextOnly {
+				if r.wantsTextOnlyContinuation(ctx, state) {
+					return r.continueLoop(ctx, in.StageID, state, onTextOnly, "textOnlyContinuations", count, maxTextOnly)
+				}
 			}
 		}
 	}
@@ -521,30 +528,31 @@ func (r *Runtime) wantsHeadlessContinuation(ctx context.Context, state map[strin
 	if !r.headlessOneShot(ctx) {
 		return false
 	}
-	messages, err := messagesFrom(state["messages"])
-	if err != nil || len(messages) == 0 {
+	reply, _, ok := finalAssistantReply(state)
+	if !ok {
 		return false
 	}
-	last := messages[len(messages)-1]
-	if last.Role != message.RoleAssistant {
-		return false
-	}
-	var parts []string
-	for _, block := range last.Content {
-		if block.Type == message.ContentTypeToolUse {
-			return false
-		}
-		if block.Type == message.ContentTypeText && block.Text != "" {
-			parts = append(parts, block.Text)
-		}
-	}
-	return readsAsQuestionOrMenu(strings.Join(parts, ""))
+	return readsAsQuestionOrMenu(reply)
 }
 
-// menuOptionLine matches one bulleted or numbered option line; two or more
-// of them read as a menu even without a trailing question mark.
-var menuOptionLine = regexp.MustCompile(`(?m)^\s*(?:[-*•]|\d+[.)])\s+\S`)
+// menuOptionLine matches one numbered or lettered option line ("1.", "2)",
+// "A)", "b." or "Option A"). Plain bullet lines ("- ", "* ") are excluded on
+// purpose (Sprint 412 story 7dcd4d1c follow-up 2): declarative final
+// summaries are routinely bulleted, and counting those as a menu nudged
+// every finished instance of the Sprint 412 r3 slice twice.
+var menuOptionLine = regexp.MustCompile(`(?m)^\s*(?:(?:\d{1,2}|[A-Za-z])[.)]\s+\S|[Oo]ption\s+[A-Za-z0-9]+\b)`)
 
+// askingCue matches the phrasing that turns a list into a request for a
+// decision rather than a report of one.
+var askingCue = regexp.MustCompile(`(?i)\b(which|would you like|should i|do you want|prefer|choose)\b`)
+
+// blankLine splits paragraphs.
+var blankLine = regexp.MustCompile(`\n[ \t]*\n`)
+
+// readsAsQuestionOrMenu reports a reply that hands the decision back to a
+// human: it either ends on a question mark, or lays out two or more numbered
+// or lettered options and asks for a pick in its closing paragraph. A
+// declarative summary — bulleted or not — is neither.
 func readsAsQuestionOrMenu(value string) bool {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -553,41 +561,70 @@ func readsAsQuestionOrMenu(value string) bool {
 	if strings.HasSuffix(trimmed, "?") {
 		return true
 	}
-	return len(menuOptionLine.FindAllString(trimmed, 2)) >= 2
-}
-
-// wantsTextOnlyContinuation reports a headless one-shot turn that already
-// executed at least one tool call but whose last assistant message carries
-// no tool call: the task is mid-flight yet nothing will run, so ending here
-// silently drops the work (Sprint 322 django-15280 ended with no diff).
-// A reply that declares completion still finishes — the rule is a simple
-// case-sensitive DONE substring, which the format-error nudge text itself
-// instructs, so DONE as a standalone word on any line (including a bare
-// "DONE" reply) finishes; casual lowercase "done" does not. A text-only
-// reply before any tool call ran also finishes, so pure Q&A turns never loop.
-func (r *Runtime) wantsTextOnlyContinuation(ctx context.Context, state map[string]any) bool {
-	if !r.headlessOneShot(ctx) {
+	if len(menuOptionLine.FindAllString(trimmed, 2)) < 2 {
 		return false
 	}
+	return askingCue.MatchString(lastParagraph(trimmed))
+}
+
+// lastParagraph returns the reply's closing paragraph: the text after its
+// final blank line, or the whole reply when it has none.
+func lastParagraph(value string) string {
+	parts := blankLine.Split(value, -1)
+	return strings.TrimSpace(parts[len(parts)-1])
+}
+
+// doneWord matches the completion marker as a standalone, case-sensitive
+// word, so "DONE", "DONE:" and a bare "DONE" line all declare completion
+// while "ABANDONED" (which contains those letters) and a casual lowercase
+// "done" do not.
+var doneWord = regexp.MustCompile(`\bDONE\b`)
+
+// declaresCompletion reports a final text-only assistant reply that declares
+// the work finished. Both nudges are skipped for such a reply.
+func declaresCompletion(state map[string]any) bool {
+	reply, _, ok := finalAssistantReply(state)
+	return ok && doneWord.MatchString(reply)
+}
+
+// finalAssistantReply returns the concatenated text of the turn's last
+// message together with the turn's messages, reporting false unless that
+// message is a text-only assistant reply — a trailing tool call is the loop
+// running normally, never something to nudge or to finish on.
+func finalAssistantReply(state map[string]any) (string, []message.Message, bool) {
 	messages, err := messagesFrom(state["messages"])
 	if err != nil || len(messages) == 0 {
-		return false
+		return "", nil, false
 	}
 	last := messages[len(messages)-1]
 	if last.Role != message.RoleAssistant {
-		return false
+		return "", nil, false
 	}
 	var parts []string
 	for _, block := range last.Content {
 		if block.Type == message.ContentTypeToolUse {
-			return false
+			return "", nil, false
 		}
 		if block.Type == message.ContentTypeText && block.Text != "" {
 			parts = append(parts, block.Text)
 		}
 	}
-	trimmed := strings.TrimSpace(strings.Join(parts, ""))
-	if trimmed == "" || strings.Contains(trimmed, "DONE") {
+	return strings.Join(parts, ""), messages, true
+}
+
+// wantsTextOnlyContinuation reports a headless one-shot turn that already
+// executed at least one tool call but whose last assistant message carries
+// no tool call: the task is mid-flight yet nothing will run, so ending here
+// silently drops the work (Sprint 322 django-15280 ended with no diff). A
+// reply that declares completion never reaches here — finish checks that
+// first. A text-only reply before any tool call ran also finishes, so pure
+// Q&A turns never loop.
+func (r *Runtime) wantsTextOnlyContinuation(ctx context.Context, state map[string]any) bool {
+	if !r.headlessOneShot(ctx) {
+		return false
+	}
+	reply, messages, ok := finalAssistantReply(state)
+	if !ok || strings.TrimSpace(reply) == "" {
 		return false
 	}
 	return turnExecutedToolCall(messages)

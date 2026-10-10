@@ -717,3 +717,164 @@ func TestGenieDeclaresFormatErrorNudge(t *testing.T) {
 		t.Fatalf("finish-step with.maxTextOnlyContinuations = %v, want 1 (text-only path alone)", max)
 	}
 }
+
+// compileFixture compiles the canonical fixture unchanged: its finish-step
+// declares the question/menu nudge alone (sourceRef plus maxContinuations),
+// so a run over it isolates that path from the text-only one.
+func compileFixture(t *testing.T, root string) *spec.Document {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "examples", "agent.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := spec.Compile(filepath.Join(root, "agent.yaml"), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return doc
+}
+
+// TestHeadlessBulletedSummaryFinishesWithoutANudge reproduces Sprint 412
+// story 7dcd4d1c follow-up 2 as measured on the r3 slice: every finished
+// instance got two question/menu nudges because genie's final summary is a
+// bold heading plus bullet lines, and the old rule read any two bullets as a
+// menu. That declarative shape must finish with no loop.continued at all —
+// each misfire cost a re-verify plus another summary, about a quarter of the
+// instance's tokens.
+func TestHeadlessBulletedSummaryFinishesWithoutANudge(t *testing.T) {
+	scratchStores(t)
+	root, err := os.MkdirTemp(".", ".turn-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	doc := compileFixture(t, root)
+
+	summary := "**Fix**\n\n- Added the missing guard in the caller.\n- Updated the regression test to cover it.\n- Verified with the short race suite."
+	fake, delivery, eventPath := runScriptedHeadlessTurn(t, doc, root, "bulleted-summary", [][]provider.Event{
+		toolCallEvents("call-1", "printf one > change.txt"),
+		completedText(summary),
+	})
+	if got := fake.callCount(); got != 2 {
+		t.Fatalf("model calls = %d, want tool then the final summary", got)
+	}
+	if delivery.last != summary {
+		t.Fatalf("delivered %q, want the bulleted summary", delivery.last)
+	}
+	if got := countContinued(t, eventPath); got != 0 {
+		t.Fatalf("loop.continued events = %d, want none: a bulleted summary is not a menu", got)
+	}
+}
+
+// TestHeadlessNumberedMenuStillNudges proves the tightened rule still catches
+// the live failure it exists for: numbered options plus an asking cue in the
+// closing paragraph reads as a menu even without a trailing question mark.
+func TestHeadlessNumberedMenuStillNudges(t *testing.T) {
+	scratchStores(t)
+	root, err := os.MkdirTemp(".", ".turn-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	doc := compileFixture(t, root)
+
+	menu := "I found two ways to fix this.\n\nWhich option should I take.\n1. Patch the caller.\n2. Patch the callee."
+	final := "Patched the caller and verified it."
+	fake, delivery, eventPath := runScriptedHeadlessTurn(t, doc, root, "numbered-menu", [][]provider.Event{
+		completedText(menu),
+		completedText(final),
+	})
+	if got := fake.callCount(); got != 2 {
+		t.Fatalf("model calls = %d, want the menu then the nudged answer", got)
+	}
+	if delivery.last != final {
+		t.Fatalf("delivered %q, want the answer, not the menu", delivery.last)
+	}
+	if got := countContinued(t, eventPath); got != 1 {
+		t.Fatalf("loop.continued events = %d, want exactly one nudge for the menu", got)
+	}
+}
+
+// TestHeadlessQuestionMarkEndingStillNudges pins the other half of the
+// tightened rule: a reply that simply ends on a question mark nudges with no
+// option lines or cue needed.
+func TestHeadlessQuestionMarkEndingStillNudges(t *testing.T) {
+	scratchStores(t)
+	root, err := os.MkdirTemp(".", ".turn-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	doc := compileFixture(t, root)
+
+	question := "The guard belongs in either the caller or the callee - where should it go?"
+	final := "Put the guard in the caller and verified it."
+	fake, delivery, eventPath := runScriptedHeadlessTurn(t, doc, root, "question-mark", [][]provider.Event{
+		completedText(question),
+		completedText(final),
+	})
+	if got := fake.callCount(); got != 2 {
+		t.Fatalf("model calls = %d, want the question then the nudged answer", got)
+	}
+	if delivery.last != final {
+		t.Fatalf("delivered %q, want the answer, not the question", delivery.last)
+	}
+	if got := countContinued(t, eventPath); got != 1 {
+		t.Fatalf("loop.continued events = %d, want exactly one nudge for the question", got)
+	}
+}
+
+// TestHeadlessDoneFinishesBeforeTheQuestionNudge proves the completion
+// marker short-circuits both paths: a reply that declares DONE finishes even
+// though it ends on a question mark, which the question/menu path would
+// otherwise nudge.
+func TestHeadlessDoneFinishesBeforeTheQuestionNudge(t *testing.T) {
+	scratchStores(t)
+	root, err := os.MkdirTemp(".", ".turn-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	doc, _ := compileWithFormatErrorNudge(t, root)
+
+	final := "**Fix** applied and verified.\n\nDONE\n\nWant me to look at anything else?"
+	fake, delivery, eventPath := runScriptedHeadlessTurn(t, doc, root, "done-before-question", [][]provider.Event{
+		toolCallEvents("call-1", "printf one > change.txt"),
+		completedText(final),
+	})
+	if got := fake.callCount(); got != 2 {
+		t.Fatalf("model calls = %d, want tool then the DONE reply", got)
+	}
+	if delivery.last != final {
+		t.Fatalf("delivered %q, want the DONE reply", delivery.last)
+	}
+	if got := countContinued(t, eventPath); got != 0 {
+		t.Fatalf("loop.continued events = %d, want none: DONE finishes before any nudge check", got)
+	}
+}
+
+// TestHeadlessCompletionMarkerIsAStandaloneWord proves DONE is matched as a
+// word, not a substring: "ABANDONED" contains those letters, yet a mid-task
+// reply that abandons the work is exactly what the text-only nudge must
+// still catch.
+func TestHeadlessCompletionMarkerIsAStandaloneWord(t *testing.T) {
+	scratchStores(t)
+	root, err := os.MkdirTemp(".", ".turn-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	doc, _ := compileWithFormatErrorNudge(t, root)
+
+	stalled := "I ABANDONED that approach and stopped there."
+	fake, _, eventPath := runScriptedHeadlessTurn(t, doc, root, "abandoned", [][]provider.Event{
+		toolCallEvents("call-1", "printf one > change.txt"),
+		completedText(stalled),
+	})
+	if got := fake.callCount(); got != 3 {
+		t.Fatalf("model calls = %d, want tool, stalled reply, nudge, stalled reply", got)
+	}
+	if got := countContinued(t, eventPath); got != 1 {
+		t.Fatalf("loop.continued events = %d, want one text-only nudge: ABANDONED is not DONE", got)
+	}
+}
