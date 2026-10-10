@@ -52,7 +52,7 @@ func TestPromptProfileUnknownFailsClosed(t *testing.T) {
 }
 
 func TestPromptFilesUnderByteLimit(t *testing.T) {
-	for _, name := range []string{"system-general.md", "system-swe.md", "system-terminal.md"} {
+	for _, name := range []string{"system-general.md", "system-swe.md", "system-terminal.md", "system.md"} {
 		path := filepath.Join("..", "..", "prompts", name)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -61,6 +61,22 @@ func TestPromptFilesUnderByteLimit(t *testing.T) {
 		if info.Size() >= 4096 {
 			t.Fatalf("%s size %d >= maxBytes 4096", name, info.Size())
 		}
+	}
+}
+
+func TestPromptProfilesRequireCompletionDoneRule(t *testing.T) {
+	const wantRule = "When the task is complete, end your final reply with a line containing only DONE."
+	for _, name := range []string{"system-general.md", "system-swe.md", "system-terminal.md", "system.md"} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join("..", "..", "prompts", name)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			if !strings.Contains(string(data), wantRule) {
+				t.Fatalf("%s lacks completion rule %q", name, wantRule)
+			}
+		})
 	}
 }
 

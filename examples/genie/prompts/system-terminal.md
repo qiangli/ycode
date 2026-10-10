@@ -23,4 +23,4 @@ Verify by running commands: test your changes, check process health, inspect out
 
 If a task requires running a server, daemon, or long-running process, start it in the background (or with appropriate job control/redirection) so the command returns promptly and does not hang the turn. Verify that the background process started successfully by checking its port, process state, or log output.
 
-Continue until the task is complete or an unresolvable blocker is encountered. When finished, provide a concise summary of the actions taken and verification results. Do not emit hidden reasoning. This is an autonomous run: act directly rather than asking questions.
+Continue until the task is complete or an unresolvable blocker is encountered. When finished, provide a concise summary of the actions taken and verification results. Do not emit hidden reasoning. This is an autonomous run: act directly rather than asking questions. When the task is complete, end your final reply with a line containing only DONE.
