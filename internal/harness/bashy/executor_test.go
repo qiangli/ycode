@@ -62,7 +62,10 @@ func TestPreflightProjectsTypedEvidenceWithoutExecution(t *testing.T) {
 	if !report.Complete || report.Digest == "" || report.AtlasDigest == "" || len(report.EffectFacts) == 0 {
 		t.Fatalf("preflight = %#v", report)
 	}
-	if !contains(report.Effects, "write") || !contains(report.Effects, "destroy") || !contains(report.Paths, "workspace") {
+	// A workspace truncation is a plain write: the typed contract keeps the
+	// possible destroy only for redirect targets outside the workspace, so a
+	// routine workspace step does not escalate to human approval.
+	if !contains(report.Effects, "write") || contains(report.Effects, "destroy") || !contains(report.Paths, "workspace") {
 		t.Fatalf("policy indexes = effects %v paths %v", report.Effects, report.Paths)
 	}
 	foundTarget := false
@@ -77,6 +80,45 @@ func TestPreflightProjectsTypedEvidenceWithoutExecution(t *testing.T) {
 		t.Fatalf("typed target missing: %#v", report.EffectFacts)
 	}
 	if _, err := os.Stat(filepath.Join(cwd, "output.bin")); !os.IsNotExist(err) {
+		t.Fatalf("preflight mutated workspace: %v", err)
+	}
+}
+
+func TestPreflightProjectsDestructiveEvidenceWithoutExecution(t *testing.T) {
+	executor, cwd := testExecutor(t, nil, 0)
+	call := hitl.Call{ID: "call-destroy", Name: "bashy", Script: "printf evidence > ../outside.bin"}
+	report, err := executor.Preflight(context.Background(), testMeta(), call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Complete || report.Digest == "" || report.AtlasDigest == "" || len(report.EffectFacts) == 0 {
+		t.Fatalf("preflight = %#v", report)
+	}
+	// Outside the workspace the same truncating redirect keeps its possible
+	// destroy, so policy still sees the destructive effect.
+	if !contains(report.Effects, "write") || !contains(report.Effects, "destroy") || !contains(report.Paths, "userland") {
+		t.Fatalf("policy indexes = effects %v paths %v", report.Effects, report.Paths)
+	}
+	canonicalCWD, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTarget := filepath.Join(filepath.Dir(canonicalCWD), "outside.bin")
+	foundWrite, foundDestroy := false, false
+	for _, fact := range report.EffectFacts {
+		if fact.Target != wantTarget {
+			continue
+		}
+		foundWrite = foundWrite || fact.Kind == "write"
+		foundDestroy = foundDestroy || fact.Kind == "destroy"
+	}
+	if !foundWrite || !foundDestroy {
+		t.Fatalf("destructive target missing write+destroy for %q: %#v", wantTarget, report.EffectFacts)
+	}
+	if _, err := os.Stat(wantTarget); !os.IsNotExist(err) {
+		t.Fatalf("preflight mutated filesystem: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "outside.bin")); !os.IsNotExist(err) {
 		t.Fatalf("preflight mutated workspace: %v", err)
 	}
 }
