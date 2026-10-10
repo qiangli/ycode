@@ -33,6 +33,10 @@ type ContentBlock struct {
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   string          `json:"content,omitempty"`
 	IsError   bool            `json:"is_error,omitempty"`
+	// CacheBreak marks the end of a declared cache segment (a context
+	// fragment with cache.breakAfter). It is provider-independent intent: a
+	// protocol that places cache breakpoints uses it, the rest ignore it.
+	CacheBreak bool `json:"cache_break,omitempty"`
 }
 
 type Message struct {

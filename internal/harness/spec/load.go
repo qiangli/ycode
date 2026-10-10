@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -150,6 +151,9 @@ func (d *Document) validate() error {
 	if err := validatePlatformCompatibility(d); err != nil {
 		return err
 	}
+	if err := validateModels(d.Spec.Models); err != nil {
+		return err
+	}
 	if err := validateMemories(d.Spec.Memories); err != nil {
 		return err
 	}
@@ -180,6 +184,36 @@ func validateResourceNames(specValue reflect.Value) error {
 			if !resourceNamePattern.MatchString(name) {
 				return fmt.Errorf("harness: spec.%s has invalid resource name %q", field.Tag.Get("yaml"), name)
 			}
+		}
+	}
+	return nil
+}
+
+// ModelEfforts is the closed set of declared reasoning-effort values, from
+// no reasoning at all to the deepest a provider offers. The set is closed so a
+// typo fails compilation instead of reaching a provider as an unknown value.
+var ModelEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh"}
+
+func validateModels(models map[string]Model) error {
+	names := make([]string, 0, len(models))
+	for name := range models {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		effort := models[name].Effort
+		if effort == "" {
+			continue
+		}
+		valid := false
+		for _, candidate := range ModelEfforts {
+			if effort == candidate {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("harness: spec.models.%s.effort %q must be one of %s", name, effort, strings.Join(ModelEfforts, "|"))
 		}
 	}
 	return nil

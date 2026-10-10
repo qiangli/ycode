@@ -49,8 +49,21 @@ for value in "${GENIE_CONTEXT_TOKENS:-}" "${GENIE_REQUEST_TIMEOUT_MS:-}"; do
       ;;
   esac
 done
+# ycode's schema closes the effort set: reject a typo here rather than write a
+# profile that fails to compile.
+case ${GENIE_EFFORT:-} in
+  '' | none | minimal | low | medium | high | xhigh) ;;
+  *)
+    printf '%s\n' 'GENIE_EFFORT must be none, minimal, low, medium, high or xhigh' >&2
+    exit 1
+    ;;
+esac
 if [ "$(grep -c '^      id: gpt-5\.6$' agent.yaml)" != 1 ]; then
   printf '%s\n' 'expected exactly one default model id in agent.yaml' >&2
+  exit 1
+fi
+if [ -n "${GENIE_EFFORT:-}" ] && [ "$(grep -c '^      effort: high$' agent.yaml)" != 1 ]; then
+  printf '%s\n' 'expected exactly one declared model effort in agent.yaml' >&2
   exit 1
 fi
 # The model id goes in as a JSON string (valid YAML); escape it for sed.
@@ -80,6 +93,9 @@ if [ -n "${GENIE_CONTEXT_TOKENS:-}" ]; then
     edits+=(-e "s|^\( *preserveUserMessagesTokens:\) 4000\$|\1 $(scaled 4000 16)|")
     edits+=(-e "s|^\( *maxTokens:\) 3000\$|\1 $(scaled 3000 8)|")
   fi
+fi
+if [ -n "${GENIE_EFFORT:-}" ]; then
+  edits+=(-e "s|^\( *effort:\) high\$|\1 $GENIE_EFFORT|")
 fi
 if [ -n "${GENIE_REQUEST_TIMEOUT_MS:-}" ]; then
   edits+=(-e "s|^\( *requestTimeoutMs:\) 120000\$|\1 $GENIE_REQUEST_TIMEOUT_MS|")

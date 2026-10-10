@@ -58,6 +58,7 @@ func cloneAPIRequest(request *api.Request) *api.Request {
 	}
 	cloned := *request
 	cloned.Messages = cloneMessages(request.Messages)
+	cloned.SystemBlocks = append([]api.SystemBlock(nil), request.SystemBlocks...)
 	cloned.Tools = append([]api.ToolDefinition(nil), request.Tools...)
 	for i := range cloned.Tools {
 		cloned.Tools[i].InputSchema = append([]byte(nil), cloned.Tools[i].InputSchema...)

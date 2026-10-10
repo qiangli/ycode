@@ -1,6 +1,9 @@
 package api
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // MessageRole represents the role of a message participant.
 type MessageRole string
@@ -80,6 +83,12 @@ type SystemBlock struct {
 	Type         string        `json:"type"`                    // "text"
 	Text         string        `json:"text"`                    //
 	CacheControl *CacheControl `json:"cache_control,omitempty"` //
+
+	// CacheBreak marks a block that ends a declared cache segment (a YAML
+	// context fragment with cache.breakAfter). It is harness intent, not an
+	// API field: the Anthropic client turns it into cache_control, every
+	// other protocol ignores it, and it never reaches the wire.
+	CacheBreak bool `json:"-"`
 }
 
 // Request is the API request to send to a provider.
@@ -173,6 +182,24 @@ func (r Request) MarshalJSON() ([]byte, error) {
 		m["tool_choice"] = choice
 	}
 	return json.Marshal(m)
+}
+
+// systemText flattens the system prompt to the plain string form. The
+// segmented form is authoritative when present (it carries the declared cache
+// breaks); joining it with the same separator the harness used to build the
+// segments reproduces the prompt byte for byte, so a protocol that cannot
+// place cache breakpoints sends exactly what it sent before segmentation.
+func (r *Request) systemText() string {
+	if r.System != "" || len(r.SystemBlocks) == 0 {
+		return r.System
+	}
+	parts := make([]string, 0, len(r.SystemBlocks))
+	for _, block := range r.SystemBlocks {
+		if block.Text != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // Response is the full API response.

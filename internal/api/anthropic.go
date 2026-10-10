@@ -104,12 +104,28 @@ func applyResponseFormatShim(req *Request) {
 	req.AnthropicToolChoiceName = toolName
 }
 
+// Anthropic accepts at most maxCacheBreakpoints cache_control blocks in one
+// request. recentMessageMarks of them are always spent on the tail of the
+// conversation (the growing part), which leaves the rest for the system
+// prompt.
+const (
+	maxCacheBreakpoints = 4
+	recentMessageMarks  = 2
+)
+
 // applyCacheMarks adds Anthropic prompt caching annotations to the request.
 // It marks:
-//   - The system prompt with cache_control on its last block
-//   - The last 2 non-system messages' final content blocks
+//   - Every declared system cache break (a YAML context fragment with
+//     cache.breakAfter), plus the end of the system prompt
+//   - The last recentMessageMarks non-system messages' final content blocks
 //
-// This follows the same strategy as opencode's applyCaching in transform.ts.
+// A cached prefix ends at a cache_control marker, so a declared break is only
+// a real cache boundary once it carries one: with the stable fragments first,
+// a workspace-scoped fragment changing underneath still leaves the stable
+// prefix before it reusable.
+//
+// This follows the same strategy as opencode's applyCaching in transform.ts,
+// extended with the YAML-declared breaks.
 func applyCacheMarks(req *Request) {
 	ephemeral := &CacheControl{Type: "ephemeral"}
 
@@ -119,13 +135,30 @@ func applyCacheMarks(req *Request) {
 			{Type: "text", Text: req.System, CacheControl: ephemeral},
 		}
 	} else if len(req.SystemBlocks) > 0 {
-		// Mark the last system block.
-		req.SystemBlocks[len(req.SystemBlocks)-1].CacheControl = ephemeral
+		last := len(req.SystemBlocks) - 1
+		wanted := make([]int, 0, len(req.SystemBlocks))
+		for i := range req.SystemBlocks {
+			if req.SystemBlocks[i].CacheBreak && i != last {
+				wanted = append(wanted, i)
+			}
+		}
+		// The end of the system prompt is always a boundary: everything
+		// before the first conversation message is a stable prefix.
+		wanted = append(wanted, last)
+		// Over budget, keep the deepest prefixes — a longer cached prefix is
+		// worth more than an earlier one, and the end of the system prompt is
+		// the deepest of all.
+		if budget := maxCacheBreakpoints - recentMessageMarks; len(wanted) > budget {
+			wanted = wanted[len(wanted)-budget:]
+		}
+		for _, i := range wanted {
+			req.SystemBlocks[i].CacheControl = ephemeral
+		}
 	}
 
-	// Mark the last content block of the last 2 messages.
+	// Mark the last content block of the last recentMessageMarks messages.
 	marked := 0
-	for i := len(req.Messages) - 1; i >= 0 && marked < 2; i-- {
+	for i := len(req.Messages) - 1; i >= 0 && marked < recentMessageMarks; i-- {
 		blocks := req.Messages[i].Content
 		if len(blocks) == 0 {
 			continue
@@ -134,6 +167,14 @@ func applyCacheMarks(req *Request) {
 		marked++
 	}
 }
+
+// ReasoningEffort has no Anthropic equivalent on this client: the Messages API
+// expresses reasoning as extended thinking with an explicit token budget
+// (thinking.budget_tokens), not as an effort level, and that budget interacts
+// with max_tokens and temperature. Inventing an effort -> budget mapping here
+// would be model policy in the Go kernel, so a declared effort is accepted and
+// ignored on the anthropic protocol until the budget itself is authored in
+// YAML.
 
 // Send sends a streaming request to the Anthropic API.
 func (c *AnthropicClient) Send(ctx context.Context, req *Request) (<-chan *StreamEvent, <-chan error) {

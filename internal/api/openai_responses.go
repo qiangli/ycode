@@ -63,7 +63,7 @@ func (c *OpenAICompatClient) buildResponsesRequest(req *Request) *responsesReque
 	rr := &responsesRequest{
 		Model:           req.Model,
 		Input:           buildResponsesInput(req),
-		Instructions:    req.System,
+		Instructions:    req.systemText(),
 		MaxOutputTokens: req.MaxTokens,
 		Stream:          req.Stream,
 		Store:           false,

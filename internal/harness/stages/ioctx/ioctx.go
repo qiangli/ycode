@@ -243,6 +243,10 @@ type PromptMessage struct {
 	Ring       string   `json:"ring,omitempty"`
 	Form       string   `json:"form,omitempty"`
 	Ref        string   `json:"ref,omitempty"`
+	// CacheBreak carries a context fragment's declared cache.breakAfter into
+	// the assembled prompt, so the provider-visible prompt records where the
+	// author placed a cache boundary.
+	CacheBreak bool `json:"cache_break,omitempty"`
 }
 
 type PromptRequest struct {
@@ -303,7 +307,7 @@ func (e *Engine) Assemble(_ context.Context, meta Meta, request PromptRequest) (
 		switch port {
 		case PortContext:
 			for _, fragment := range request.Context.Fragments {
-				result.Messages = append(result.Messages, PromptMessage{Port: port, Role: fragment.Role, Content: fragment.Content, PayloadRef: fragment.PayloadRef})
+				result.Messages = append(result.Messages, PromptMessage{Port: port, Role: fragment.Role, Content: fragment.Content, PayloadRef: fragment.PayloadRef, CacheBreak: fragment.BreakAfter})
 			}
 		case PortKnowledge:
 			for _, message := range request.Knowledge {

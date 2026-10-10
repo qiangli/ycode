@@ -139,8 +139,13 @@ type ProviderTransport struct {
 	MaxResponseBytes int `yaml:"maxResponseBytes" json:"maxResponseBytes"`
 }
 type Model struct {
-	ProviderRef  string            `yaml:"providerRef" json:"providerRef"`
-	ID           string            `yaml:"id" json:"id"`
+	ProviderRef string `yaml:"providerRef" json:"providerRef"`
+	ID          string `yaml:"id" json:"id"`
+	// Effort is the declared reasoning effort for this model resource, one of
+	// ModelEfforts. Empty leaves the provider's own default in place. How much
+	// a model thinks is model policy, so it is authored here and carried to
+	// the request unchanged; the Go kernel never picks a value.
+	Effort       string            `yaml:"effort,omitempty" json:"effort,omitempty"`
 	Limits       ModelLimits       `yaml:"limits" json:"limits"`
 	Capabilities ModelCapabilities `yaml:"capabilities" json:"capabilities"`
 }

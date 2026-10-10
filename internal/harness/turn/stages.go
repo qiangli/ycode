@@ -143,7 +143,7 @@ func (r *Runtime) assemble(ctx context.Context, in pipeline.Invocation) pipeline
 		switch port {
 		case ioctx.PortContext:
 			for _, fragment := range contextValue.Fragments {
-				messages = append(messages, message.Message{Role: message.Role(fragment.Role), Content: []message.ContentBlock{{Type: message.ContentTypeText, Text: fragment.Content}}})
+				messages = append(messages, message.Message{Role: message.Role(fragment.Role), Content: []message.ContentBlock{{Type: message.ContentTypeText, Text: fragment.Content, CacheBreak: fragment.BreakAfter}}})
 			}
 		case ioctx.PortKnowledge:
 			for _, item := range knowledgeValue {
@@ -313,7 +313,9 @@ func (r *Runtime) callModel(ctx context.Context, in pipeline.Invocation) pipelin
 		if run.aside {
 			instruction = controls.BtwPrompt
 		}
-		system += "\n\n" + instruction
+		// A mode instruction is per-turn, so it is appended after every
+		// declared segment: nothing unstable may precede a cached prefix.
+		system = append(system, api.SystemBlock{Type: "text", Text: instruction})
 	}
 	response, outcome := r.routeProvider(ctx, in.StageID, routeRef, system, messages, in.Inputs["providerSession"])
 	if outcome.Class == provider.OutcomeCompleted || outcome.Class == provider.OutcomeToolCall || outcome.Class == provider.OutcomeLimit {
@@ -789,14 +791,37 @@ func messageText(item message.Message) string {
 	return strings.Join(parts, " ")
 }
 
-func providerMessages(messages []message.Message) ([]api.Message, string) {
+// providerMessages splits the neutral message list into the provider's
+// conversation messages and its system prompt. The system prompt is segmented:
+// a text block that ends a declared cache segment (a context fragment with
+// cache.breakAfter) closes the current block, so a protocol that places cache
+// breakpoints can mark exactly the prefixes the author declared. Declared
+// order is preserved, which keeps the stable segments first and per-turn text
+// last; systemText flattens the same segments back to one string.
+func providerMessages(messages []message.Message) ([]api.Message, []api.SystemBlock) {
+	var systemBlocks []api.SystemBlock
 	var systemParts []string
+	flushSystem := func(cacheBreak bool) {
+		// An empty segment is not a cache boundary and must not become a
+		// block: Anthropic rejects an empty system block outright.
+		if len(systemParts) == 0 {
+			return
+		}
+		systemBlocks = append(systemBlocks, api.SystemBlock{Type: "text", Text: strings.Join(systemParts, "\n\n"), CacheBreak: cacheBreak})
+		systemParts = nil
+	}
 	var out []api.Message
 	for _, item := range messages {
 		if item.Role == message.RoleSystem {
 			for _, block := range item.Content {
-				if block.Type == message.ContentTypeText {
+				if block.Type != message.ContentTypeText {
+					continue
+				}
+				if block.Text != "" {
 					systemParts = append(systemParts, block.Text)
+				}
+				if block.CacheBreak {
+					flushSystem(true)
 				}
 			}
 			continue
@@ -807,7 +832,20 @@ func providerMessages(messages []message.Message) ([]api.Message, string) {
 		}
 		out = append(out, converted)
 	}
-	return out, strings.Join(systemParts, "\n\n")
+	flushSystem(false)
+	return out, systemBlocks
+}
+
+// systemText flattens segmented system blocks to the single-string form,
+// reproducing the text exactly as it read before segmentation.
+func systemText(blocks []api.SystemBlock) string {
+	parts := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		if block.Text != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // deltaFlushBytes bounds how much provider text a delta event carries before

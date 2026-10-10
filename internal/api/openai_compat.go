@@ -266,17 +266,19 @@ func (c *OpenAICompatClient) buildRequest(req *Request) *openaiRequest {
 		}
 	}
 
-	// Map reasoning effort to provider-specific fields.
+	// Map reasoning effort to provider-specific fields, for any model that
+	// declares one.
 	//
-	// The gpt-5 family REJECTS reasoning_effort alongside function tools in
-	// /v1/chat/completions ("Function tools with reasoning_effort are not supported
-	// ... use /v1/responses or set reasoning_effort to none/minimal"). ycode is
-	// chat/completions-only, so for a gpt-5 model that carries tools we DROP
-	// reasoning_effort and let the model's own default apply (the terra/sol/luna
-	// variant's baked reasoning), rather than 400 into a doomed retry loop. o-series
-	// (o1/o3/o4) is unaffected — it takes reasoning_effort with tools normally.
-	gpt5WithTools := isGPT5Family(req.Model) && len(req.Tools) > 0
-	if req.ReasoningEffort != "" && !gpt5WithTools {
+	// OpenAI's gpt-5 family does reject reasoning_effort alongside function
+	// tools in /v1/chat/completions ("Function tools with reasoning_effort are
+	// not supported ... use /v1/responses or set reasoning_effort to
+	// none/minimal") — which is exactly why useResponsesAPI routes those
+	// requests to /v1/responses before buildRequest ever sees them. Dropping
+	// effort here therefore never protected a real gpt-5 call; it only silenced
+	// reasoning for an OpenAI-compatible endpoint that happens to serve a
+	// gpt-5-named model, which takes the field normally. o-series (o1/o3/o4)
+	// takes reasoning_effort with tools too.
+	if req.ReasoningEffort != "" {
 		switch req.ReasoningEffort {
 		case "none":
 			// Disable thinking entirely (Kimi K2.5 format).
@@ -287,11 +289,15 @@ func (c *OpenAICompatClient) buildRequest(req *Request) *openaiRequest {
 		}
 	}
 
-	// Add system message if present.
-	if req.System != "" {
+	// Add system message if present. The declared cache segments are flattened
+	// into this one message in order: chat/completions has no per-block cache
+	// control, and its automatic prefix caching only needs the stable segments
+	// to come first — which the declared order guarantees, with per-turn text
+	// authored last.
+	if system := req.systemText(); system != "" {
 		oReq.Messages = append(oReq.Messages, openaiMessage{
 			Role:    "system",
-			Content: req.System,
+			Content: system,
 		})
 	}
 

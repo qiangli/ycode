@@ -101,7 +101,7 @@ func TestRouteProviderOffersTheToolOutsideCompaction(t *testing.T) {
 	runtime := newRouteTextRuntime(t, backend)
 	ctx := bashyRunContext()
 	messages := []message.Message{{Role: message.RoleUser, Content: []message.ContentBlock{{Type: message.ContentTypeText, Text: "hi"}}}}
-	_, outcome := runtime.routeProvider(ctx, "model", "main", "", messages, nil)
+	_, outcome := runtime.routeProvider(ctx, "model", "main", nil, messages, nil)
 	if outcome.Error != "" {
 		t.Fatalf("routeProvider: %v", outcome.Error)
 	}

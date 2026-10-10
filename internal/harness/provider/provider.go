@@ -43,6 +43,10 @@ type Request struct {
 	Temperature     *float64
 	TopP            *float64
 	ReasoningEffort string
+	// SystemBlocks is the segmented system prompt: one block per declared
+	// cache segment, stable prefix first. System stays the flattened form of
+	// the same text for protocols that take a single string.
+	SystemBlocks []api.SystemBlock
 }
 
 type EventType string
@@ -168,6 +172,7 @@ func (a *Adapter) send(ctx context.Context, request Request, out chan<- Event) {
 		Temperature:     request.Temperature,
 		TopP:            request.TopP,
 		ReasoningEffort: request.ReasoningEffort,
+		SystemBlocks:    append([]api.SystemBlock(nil), request.SystemBlocks...),
 		Tools:           tools,
 	}
 	events, errs := a.backend.Send(ctx, wire)

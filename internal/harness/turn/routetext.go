@@ -7,13 +7,18 @@ import (
 	"strings"
 	"time"
 
+	api "github.com/qiangli/ycode/internal/api"
 	"github.com/qiangli/ycode/internal/harness/message"
 	"github.com/qiangli/ycode/internal/harness/provider"
 	"github.com/qiangli/ycode/internal/harness/spec"
 )
 
 func (r *Runtime) RouteText(ctx context.Context, routeRef, system string, messages []message.Message) (string, error) {
-	response, outcome := r.routeProvider(ctx, "memory.compact", routeRef, system, messages, nil)
+	var blocks []api.SystemBlock
+	if system != "" {
+		blocks = []api.SystemBlock{{Type: "text", Text: system}}
+	}
+	response, outcome := r.routeProvider(ctx, "memory.compact", routeRef, blocks, messages, nil)
 	if outcome.Class == provider.OutcomeCompleted || outcome.Class == provider.OutcomeLimit {
 		if text(response["text"]) == "" {
 			return "", errors.New("route text: provider returned empty text")
@@ -26,7 +31,10 @@ func (r *Runtime) RouteText(ctx context.Context, routeRef, system string, messag
 	return "", errors.New(outcome.Error)
 }
 
-func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system string, messages []message.Message, providerSession any) (map[string]any, provider.Outcome) {
+// routeProvider sends one inference attempt. system is the segmented system
+// prompt (one block per declared cache segment); empty means the one extracted
+// from messages.
+func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef string, system []api.SystemBlock, messages []message.Message, providerSession any) (map[string]any, provider.Outcome) {
 	route, ok := r.doc.Spec.Routes[routeRef]
 	if !ok || len(route.Attempts) == 0 {
 		return nil, provider.Outcome{Class: provider.OutcomeProtocolError, Error: fmt.Sprintf("invalid route %q", routeRef)}
@@ -48,7 +56,7 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 			return nil, provider.Outcome{Class: provider.OutcomeProtocolError, Error: "session model is not in the declared route"}
 		}
 	}
-	if system == "" {
+	if len(system) == 0 {
 		system = extractedSystem
 	}
 	var last provider.Outcome
@@ -70,7 +78,9 @@ func (r *Runtime) routeProvider(ctx context.Context, stageID, routeRef, system s
 			if maxTokens > model.Limits.MaxOutputTokens {
 				maxTokens = model.Limits.MaxOutputTokens
 			}
-			request := provider.Request{Model: model.ID, System: system, Messages: requestMessages, MaxTokens: maxTokens, Stream: model.Capabilities.Streaming, BashyTool: model.Capabilities.ToolCalls}
+			// The declared effort travels verbatim: each protocol adapter maps
+			// it onto its own reasoning field (or documents that it has none).
+			request := provider.Request{Model: model.ID, System: systemText(system), SystemBlocks: system, Messages: requestMessages, MaxTokens: maxTokens, Stream: model.Capabilities.Streaming, BashyTool: model.Capabilities.ToolCalls, ReasoningEffort: model.Effort}
 			// A plan turn and a memory.compact summarization both ask the model
 			// for plain text, never a command: offering the tool lets a
 			// tool-capable model answer with a bashy call instead of text, which
