@@ -334,13 +334,15 @@ func (r *Runtime) normalize(ctx context.Context, in pipeline.Invocation) pipelin
 		return fail(err)
 	}
 	structured := len(anyList(response["toolCalls"])) != 0
+	repaired := false
 	if !structured {
 		// A reply with no structured tool calls may still carry
 		// model-written ones as text (Sprint 412 story #1819). Recovering
 		// them before normalization routes the turn to execute-tool-calls
 		// exactly like a structured call — hasToolCalls set, finished
 		// cleared — under the same deterministic-id and dedupe policy.
-		if calls, ok := recoverTextToolCalls(text(response["text"])); ok {
+		if calls, fixed, ok := recoverTextToolCallsDetail(text(response["text"])); ok {
+			repaired = fixed
 			response["toolCalls"] = calls
 			response["hasToolCalls"] = true
 			response["finished"] = false
@@ -351,7 +353,11 @@ func (r *Runtime) normalize(ctx context.Context, in pipeline.Invocation) pipelin
 		return fail(err)
 	}
 	if !structured && len(anyList(response["toolCalls"])) != 0 {
-		_ = r.append(ctx, in.StageID, textToolCallRecoveredEvent, map[string]any{"call_count": len(anyList(response["toolCalls"]))})
+		data := map[string]any{"call_count": len(anyList(response["toolCalls"]))}
+		if repaired {
+			data["repaired_closers"] = true
+		}
+		_ = r.append(ctx, in.StageID, textToolCallRecoveredEvent, data)
 	}
 	state["response"] = response
 	return pipeline.Success(map[string]any{"state": state})
