@@ -269,7 +269,9 @@ function bench_arm() { # $1 agent, $2 model, $3 context, $4 mini-swe-agent venv
       ;;
     *) printf 'unknown agent %s\n' "$1" > /out/agent.log; status=2 ;;
   esac
-  git -C /testbed add -A && git -C /testbed diff --cached --binary HEAD > /out/model.patch
+  # --external: bashy's native git engine has no diff --cached (todo filed in
+  # Sprint 412); the task image carries a real git.
+  git --external=true -C /testbed add -A >/dev/null && git --external=true -C /testbed diff --cached --binary HEAD > /out/model.patch
   return "$status"
 }
 
