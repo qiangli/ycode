@@ -440,13 +440,17 @@ func (r *Runtime) appendAssistant(_ context.Context, in pipeline.Invocation) pip
 // a bounded nudge instead — an interactive finish-step that declares neither
 // is unaffected.
 //
-// with.onTextOnly names a second source for the same budget (Sprint 412
-// story 7dcd4d1c): a headless one-shot turn that already executed at least
-// one tool call but whose final reply carries no tool call is a format
-// error, mini-swe-agent style — the turn appends that source's text and
-// continues instead of ending with nothing done. A reply that declares
-// completion (contains DONE, which the nudge text itself instructs) still
-// finishes, as does a text-only reply before any tool call ran.
+// with.onTextOnly names a second source on its own bound (Sprint 412 story
+// 7dcd4d1c follow-up): a headless one-shot turn that already executed at
+// least one tool call but whose final reply carries no tool call is a format
+// error — the turn appends that source's text and continues instead of
+// ending with nothing done. The text-only nudge must not burn the
+// question/menu budget on a finished run (a summary without DONE re-verifying
+// until maxContinuations ran out), so with.maxTextOnlyContinuations (default
+// 1) bounds it via its own state counter, textOnlyContinuations, and a
+// second text-only reply after the nudge finishes the turn. A reply that
+// declares completion (contains DONE, which the nudge text itself instructs)
+// still finishes, as does a text-only reply before any tool call ran.
 func (r *Runtime) finish(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
 	state, err := object(in.Inputs["state"])
 	if err != nil {
@@ -455,14 +459,21 @@ func (r *Runtime) finish(ctx context.Context, in pipeline.Invocation) pipeline.O
 	maxContinuations, _ := number(in.With["maxContinuations"])
 	sourceRef := text(in.With["sourceRef"])
 	onTextOnly := text(in.With["onTextOnly"])
-	if maxContinuations > 0 && (sourceRef != "" || onTextOnly != "") {
-		count, _ := number(state["continuations"])
-		if count < maxContinuations {
-			if sourceRef != "" && r.wantsHeadlessContinuation(ctx, state) {
-				return r.continueLoop(ctx, in.StageID, state, sourceRef, count, maxContinuations)
+	maxTextOnly, ok := number(in.With["maxTextOnlyContinuations"])
+	if !ok {
+		maxTextOnly = 1
+	}
+	if maxContinuations > 0 && sourceRef != "" {
+		if count, _ := number(state["continuations"]); count < maxContinuations {
+			if r.wantsHeadlessContinuation(ctx, state) {
+				return r.continueLoop(ctx, in.StageID, state, sourceRef, "continuations", count, maxContinuations)
 			}
-			if onTextOnly != "" && r.wantsTextOnlyContinuation(ctx, state) {
-				return r.continueLoop(ctx, in.StageID, state, onTextOnly, count, maxContinuations)
+		}
+	}
+	if maxTextOnly > 0 && onTextOnly != "" {
+		if count, _ := number(state["textOnlyContinuations"]); count < maxTextOnly {
+			if r.wantsTextOnlyContinuation(ctx, state) {
+				return r.continueLoop(ctx, in.StageID, state, onTextOnly, "textOnlyContinuations", count, maxTextOnly)
 			}
 		}
 	}
@@ -471,8 +482,9 @@ func (r *Runtime) finish(ctx context.Context, in pipeline.Invocation) pipeline.O
 }
 
 // continueLoop appends a continuation source as a user message and returns
-// the unfinished state, spending one continuation of the shared budget.
-func (r *Runtime) continueLoop(ctx context.Context, stageID string, state map[string]any, sourceRef string, count, max int) pipeline.Outcome {
+// the unfinished state, spending one continuation of the named counter's
+// budget.
+func (r *Runtime) continueLoop(ctx context.Context, stageID string, state map[string]any, sourceRef, counterKey string, count, max int) pipeline.Outcome {
 	source, ok := r.doc.Spec.Sources[sourceRef]
 	if !ok {
 		return fail(fmt.Errorf("loop.finish: undeclared source %q", sourceRef))
@@ -482,7 +494,7 @@ func (r *Runtime) continueLoop(ctx context.Context, stageID string, state map[st
 		return fail(err)
 	}
 	state["messages"] = append(messages, textMessage(message.RoleUser, source.Resolved))
-	state["continuations"] = count + 1
+	state[counterKey] = count + 1
 	if err := r.append(ctx, stageID, "loop.continued", map[string]any{"count": count + 1, "max": max}); err != nil {
 		return fail(err)
 	}
@@ -550,8 +562,9 @@ func readsAsQuestionOrMenu(value string) bool {
 // silently drops the work (Sprint 322 django-15280 ended with no diff).
 // A reply that declares completion still finishes — the rule is a simple
 // case-sensitive DONE substring, which the format-error nudge text itself
-// instructs; casual lowercase "done" does not finish. A text-only reply
-// before any tool call ran also finishes, so pure Q&A turns never loop.
+// instructs, so DONE as a standalone word on any line (including a bare
+// "DONE" reply) finishes; casual lowercase "done" does not. A text-only
+// reply before any tool call ran also finishes, so pure Q&A turns never loop.
 func (r *Runtime) wantsTextOnlyContinuation(ctx context.Context, state map[string]any) bool {
 	if !r.headlessOneShot(ctx) {
 		return false

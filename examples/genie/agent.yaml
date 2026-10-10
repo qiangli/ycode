@@ -345,7 +345,7 @@ spec:
     # source is only named by the free-form with.onTextOnly key, which the
     # reachability check does not trace, so it is exported.
     format-error:
-      text: Your last reply contained no tool call, so nothing was executed and the task is not finished. Continue the task with a bashy tool call. If the task is truly complete, say DONE and summarize what changed.
+      text: Your last reply contained no tool call, so nothing was executed. If the task is complete, reply with exactly DONE and nothing else. Otherwise continue with a bashy tool call.
       limits: {maxBytes: 4096}
       exported: true
     compaction-checkpoint:
@@ -708,10 +708,12 @@ spec:
           needs: []
           run:
             stage: loop.finish
-            # S412 7dcd4d1c: onTextOnly shares the maxContinuations budget
-            # with the question/menu nudge; the budget grows 2 -> 3 now that
-            # two nudge kinds draw on it.
-            with: {maxContinuations: 3, sourceRef: headless-continuation, onTextOnly: format-error}
+            # S412 7dcd4d1c follow-up: the text-only nudge has its own bound
+            # (maxTextOnlyContinuations, default 1) on its own counter, so a
+            # finished run that summarizes without DONE gets one cheap nudge
+            # instead of burning the question/menu budget; maxContinuations
+            # is back to 2 for the question/menu path alone.
+            with: {maxContinuations: 2, sourceRef: headless-continuation, onTextOnly: format-error, maxTextOnlyContinuations: 1}
             in: {state: state}
             out: {state: state}
 

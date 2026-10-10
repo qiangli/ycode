@@ -375,7 +375,8 @@ func TestInteractiveFrontendNeverGetsTheHeadlessNudge(t *testing.T) {
 // examples/genie/agent.yaml declares it (with.onTextOnly naming the
 // format-error source). The fixture itself stays untouched: the YAML change
 // is scoped to the genie agent, so the injection mirrors that declaration
-// one-for-one for behavior tests.
+// for behavior tests — except with.maxTextOnlyContinuations, which is left
+// unset here so the tests exercise the default of 1.
 func compileWithFormatErrorNudge(t *testing.T, root string) (*spec.Document, string) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "examples", "agent.yaml"))
@@ -386,7 +387,7 @@ func compileWithFormatErrorNudge(t *testing.T, root string) (*spec.Document, str
 	if err != nil {
 		t.Fatal(err)
 	}
-	const formatError = "Your last reply contained no tool call, so nothing was executed and the task is not finished. Continue the task with a bashy tool call. If the task is truly complete, say DONE and summarize what changed."
+	const formatError = "Your last reply contained no tool call, so nothing was executed. If the task is complete, reply with exactly DONE and nothing else. Otherwise continue with a bashy tool call."
 	doc.Spec.Sources["format-error"] = spec.Source{Text: formatError, Resolved: formatError, Limits: spec.SourceLimits{MaxBytes: 4096}}
 	finish, ok := doc.Spec.Pipelines["finish-step"]
 	if !ok {
@@ -567,10 +568,13 @@ func TestHeadlessDoneAfterToolsFinishes(t *testing.T) {
 	}
 }
 
-// TestHeadlessTextOnlyNudgeIsBounded proves the format-error nudge shares
-// the existing continuations budget: a model that keeps stalling text-only
-// gets exactly maxContinuations nudges, then the turn ends.
-func TestHeadlessTextOnlyNudgeIsBounded(t *testing.T) {
+// TestHeadlessTextOnlyNudgeFiresOnceThenFinishes proves the format-error
+// nudge has its own bound (Sprint 412 story 7dcd4d1c follow-up): a model
+// that answers text-only after the nudge — the finished-run summary without
+// DONE — ends the turn instead of re-verifying until the question/menu
+// budget runs out. One tool call, one stalled reply, one nudge, then the
+// second identical reply finishes with no second loop.continued.
+func TestHeadlessTextOnlyNudgeFiresOnceThenFinishes(t *testing.T) {
 	scratchStores(t)
 	root, err := os.MkdirTemp(".", ".turn-test-")
 	if err != nil {
@@ -584,23 +588,84 @@ func TestHeadlessTextOnlyNudgeIsBounded(t *testing.T) {
 		toolCallEvents("call-1", "printf one > change.txt"),
 		completedText(stalled),
 	})
-	// One tool call, then the clamped text-only reply: two nudges (the
-	// fixture's maxContinuations), then the fourth identical reply ends the
-	// turn for good instead of nudging a third time.
-	if got := fake.callCount(); got != 4 {
-		t.Fatalf("model calls = %d, want exactly maxContinuations+2", got)
+	if got := fake.callCount(); got != 3 {
+		t.Fatalf("model calls = %d, want tool, stalled reply, nudge, stalled reply", got)
 	}
 	if delivery.last != stalled {
-		t.Fatalf("delivered %q, want the model's last (unresolved) answer", delivery.last)
+		t.Fatalf("delivered %q, want the model's last answer ending the turn", delivery.last)
 	}
-	if got := countContinued(t, eventPath); got != 2 {
-		t.Fatalf("loop.continued events = %d, want exactly the compiled maxContinuations", got)
+	if got := countContinued(t, eventPath); got != 1 {
+		t.Fatalf("loop.continued events = %d, want exactly one text-only nudge", got)
+	}
+}
+
+// TestHeadlessQuestionAndTextOnlyBudgetsAreSeparate proves the two nudges
+// draw on their own counters: a turn that burns the whole question/menu
+// budget (the fixture's maxContinuations of 2) still gets its one text-only
+// nudge afterwards, which a shared budget would have denied.
+func TestHeadlessQuestionAndTextOnlyBudgetsAreSeparate(t *testing.T) {
+	scratchStores(t)
+	root, err := os.MkdirTemp(".", ".turn-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	doc, _ := compileWithFormatErrorNudge(t, root)
+
+	question := "Which approach do you want?"
+	stalled := "Still working on it, no tool call in this reply."
+	fake, delivery, eventPath := runScriptedHeadlessTurn(t, doc, root, "separate-budgets", [][]provider.Event{
+		toolCallEvents("call-1", "printf one > change.txt"),
+		completedText(question),
+		completedText(question),
+		completedText(stalled),
+	})
+	// Tool, two questions (two question nudges, exhausting that budget),
+	// then the stalled reply (one text-only nudge on its own counter),
+	// then the second stalled reply ends the turn.
+	if got := fake.callCount(); got != 5 {
+		t.Fatalf("model calls = %d, want tool, question, question, stalled, stalled", got)
+	}
+	if delivery.last != stalled {
+		t.Fatalf("delivered %q, want the model's last answer ending the turn", delivery.last)
+	}
+	if got := countContinued(t, eventPath); got != 3 {
+		t.Fatalf("loop.continued events = %d, want two question nudges plus one text-only nudge", got)
+	}
+}
+
+// TestHeadlessBareDoneAfterToolsFinishes proves a reply that is just DONE
+// finishes: the completion marker works as a standalone word on its own
+// line, with no summary text around it.
+func TestHeadlessBareDoneAfterToolsFinishes(t *testing.T) {
+	scratchStores(t)
+	root, err := os.MkdirTemp(".", ".turn-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	doc, _ := compileWithFormatErrorNudge(t, root)
+
+	fake, delivery, eventPath := runScriptedHeadlessTurn(t, doc, root, "text-only-bare-done", [][]provider.Event{
+		toolCallEvents("call-1", "printf done > change.txt"),
+		completedText("DONE"),
+	})
+	if got := fake.callCount(); got != 2 {
+		t.Fatalf("model calls = %d, want tool then bare DONE", got)
+	}
+	if delivery.last != "DONE" {
+		t.Fatalf("delivered %q, want the bare DONE completion", delivery.last)
+	}
+	if got := countContinued(t, eventPath); got != 0 {
+		t.Fatalf("loop.continued events = %d, want none: bare DONE finishes", got)
 	}
 }
 
 // TestGenieDeclaresFormatErrorNudge pins the YAML half of the story: the
 // genie agent wires with.onTextOnly to the format-error source on
-// finish-step, keeping the question/menu path, on the shared budget.
+// finish-step, keeping the question/menu path, with each nudge on its own
+// budget (maxContinuations 2 for questions/menus, maxTextOnlyContinuations
+// 1 for text-only).
 func TestGenieDeclaresFormatErrorNudge(t *testing.T) {
 	scratchStores(t)
 	geniePath := filepath.Join("..", "..", "..", "examples", "genie", "agent.yaml")
@@ -614,7 +679,7 @@ func TestGenieDeclaresFormatErrorNudge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "Your last reply contained no tool call, so nothing was executed and the task is not finished. Continue the task with a bashy tool call. If the task is truly complete, say DONE and summarize what changed."
+	const want = "Your last reply contained no tool call, so nothing was executed. If the task is complete, reply with exactly DONE and nothing else. Otherwise continue with a bashy tool call."
 	source, ok := doc.Spec.Sources["format-error"]
 	if !ok {
 		t.Fatal("genie agent has no format-error source")
@@ -633,16 +698,22 @@ func TestGenieDeclaresFormatErrorNudge(t *testing.T) {
 	if with["sourceRef"] != "headless-continuation" {
 		t.Fatalf("finish-step with.sourceRef = %#v, want the question/menu path kept", with["sourceRef"])
 	}
-	var max float64
-	switch value := with["maxContinuations"].(type) {
-	case int:
-		max = float64(value)
-	case float64:
-		max = value
-	default:
-		t.Fatalf("finish-step with.maxContinuations = %#v, want the shared budget", with["maxContinuations"])
+	asNumber := func(key string) float64 {
+		t.Helper()
+		switch value := with[key].(type) {
+		case int:
+			return float64(value)
+		case float64:
+			return value
+		default:
+			t.Fatalf("finish-step with.%s = %#v, want a number", key, with[key])
+			return 0
+		}
 	}
-	if max != 3 {
-		t.Fatalf("finish-step with.maxContinuations = %v, want 3 (shared question + text-only budget)", max)
+	if max := asNumber("maxContinuations"); max != 2 {
+		t.Fatalf("finish-step with.maxContinuations = %v, want 2 (question/menu path alone)", max)
+	}
+	if max := asNumber("maxTextOnlyContinuations"); max != 1 {
+		t.Fatalf("finish-step with.maxTextOnlyContinuations = %v, want 1 (text-only path alone)", max)
 	}
 }
