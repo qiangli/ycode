@@ -2,7 +2,7 @@ apiVersion: ycode.dev/v1alpha1
 kind: Harness
 
 metadata:
-  name: ycode
+  name: genie-yolo
   version: 1
   annotations:
     dhnt.io/purpose: canonical-self-hosting-harness
@@ -10,7 +10,7 @@ metadata:
 spec:
   interfaces:
     cli:
-      identity: {name: ycode, version: build, compatibility: "Native YAML harness CLI; provider execution follows the compiled graph. Foreign CLI profiles are outside this POC."}
+      identity: {name: genie, version: build, compatibility: "Native YAML harness CLI; provider execution follows the compiled graph. Foreign CLI profiles are outside this POC."}
       bootstrap: {configFlags: [--file, -f, --config], profileFlags: {--yolo: agent-yolo.yaml}, defaultFile: agent.yaml, env: YCODE_CONFIG}
       presentation:
         formats: [text, json, table]
@@ -45,9 +45,9 @@ spec:
         errors: {prefix: "error: ", usage: false}
       exitCodes: {success: 0, usage: 2, configuration: 3, runtime: 1, unsupported: 4, interrupted: 130}
       root:
-        name: ycode
-        usage: ycode [prompt]
-        short: Run the YAML-native ycode agent harness
+        name: genie
+        usage: genie [prompt]
+        short: Run the YAML-native genie harness
         args: {min: 0, max: -1}
         flags:
           - {name: file, shorthand: f, type: string, default: agent.yaml, usage: Strict harness configuration, scope: inherited, env: YCODE_CONFIG}
@@ -166,6 +166,11 @@ spec:
               - {name: search, usage: "search QUERY...", short: Find transcript text across sessions, args: {min: 1, max: -1}, dispatch: {operation: session, action: search}}
               - {name: rename, usage: "rename SESSION TITLE...", short: Record a session title, args: {min: 2, max: -1}, dispatch: {operation: session, action: rename}}
               - {name: fork, usage: "fork [SESSION]", short: Start a child session from the latest committed turn and print its id, args: {min: 0, max: 1}, dispatch: {operation: session, action: fork}}
+          - name: init
+            short: Create this repository's GENIE.md instructions, or use the existing file unchanged
+            long: "GENIE.md in the workspace is genie's own instruction file, loaded into every turn's context. init never overwrites it and never reads or changes other agents' files (AGENTS.md, CLAUDE.md, ...)."
+            args: {min: 0, max: 0}
+            dispatch: {operation: init, sourceRef: repository-instructions, templateRef: repository-instructions-template}
           - {name: version, short: Print version information, args: {min: 0, max: 0}, dispatch: {operation: version}}
           - {name: doctor, short: Compile the harness and report provider readiness, args: {min: 0, max: 0}, dispatch: {operation: readiness, agentRef: coder}}
           - {name: validate, short: Validate and compile an agent.yaml harness, args: {min: 0, max: 0}, dispatch: {operation: validate}}
@@ -260,6 +265,10 @@ spec:
             short: Serve the network frontends declared by agent.yaml
             args: {min: 0, max: 0}
             dispatch: {operation: serve, frontendRef: http, triggerRef: interactive-input, agentRef: coder}
+          - name: web
+            short: Serve the browser chat page on loopback and print the URL to open
+            args: {min: 0, max: 0}
+            dispatch: {operation: serve, scope: frontend, frontendRef: web, triggerRef: interactive-input, agentRef: coder}
           - name: acp
             short: Serve the configured ACP frontend over stdio
             args: {min: 0, max: 0}
@@ -288,14 +297,40 @@ spec:
 
   sources:
     identity:
-      text: You are a software-engineering agent. Use Bashy for every action.
+      file: {path: prompts/system-yolo.md, required: true}
       limits: {maxBytes: 4096}
     # The umbrella convention: AGENTS.md first, CLAUDE.md as the fallback
-    # name, both read from the workspace this agent is operating in.
+    # name, both read from the workspace genie is operating in.
     project-instructions:
       file: {paths: [AGENTS.md, CLAUDE.md], base: workspace, required: false}
       limits: {maxBytes: 65536}
       snapshot: before-run
+    # GENIE.md is genie's own repository instruction file, read from the
+    # workspace (not this file's directory); `init` seeds it from the
+    # template below and never overwrites an existing one.
+    repository-instructions:
+      file: {path: GENIE.md, base: workspace, required: false}
+      limits: {maxBytes: 65536}
+      snapshot: before-run
+    repository-instructions-template:
+      text: |
+        # GENIE.md
+
+        Instructions for genie in this repository. genie reads this file into
+        every turn; edit it freely — `init` never overwrites it.
+
+        ## Project
+
+        - What this repository is and how it is laid out.
+
+        ## Build and test
+
+        - The commands that build and test it.
+
+        ## Conventions
+
+        - Style, review and commit rules genie must follow.
+      limits: {maxBytes: 4096}
     final-step:
       text: This is the final permitted model step. Return the best complete answer now.
       limits: {maxBytes: 4096}
@@ -304,6 +339,16 @@ spec:
     headless-continuation:
       text: No human is available. Proceed with the approach the request names, or the first option you listed; make the change, verify it, and report.
       limits: {maxBytes: 4096}
+    # S412 7dcd4d1c: a headless one-shot turn that already ran tools but
+    # whose final reply carries no tool call is a format error
+    # (mini-swe-agent style), so the turn is nudged to continue instead of
+    # ending with nothing done. A reply saying DONE still finishes. This
+    # source is only named by the free-form with.onTextOnly key, which the
+    # reachability check does not trace, so it is exported.
+    format-error:
+      text: Your last reply contained no tool call, so nothing was executed. If the task is complete, reply with exactly DONE and nothing else. Otherwise continue with a bashy tool call.
+      limits: {maxBytes: 4096}
+      exported: true
     compaction-checkpoint:
       file: {path: prompts/compaction-checkpoint.md, required: false}
       limits: {maxBytes: 8192}
@@ -319,7 +364,7 @@ spec:
       endpoint:
         valueFrom:
           env: OPENAI_BASE_URL
-          default: https://api.openai.com/v1
+          default: ""
       credentials:
         apiKey:
           secretRef: {provider: env, name: OPENAI_API_KEY}
@@ -332,6 +377,11 @@ spec:
     primary:
       providerRef: openai
       id: gpt-5.6
+      # Reasoning effort is not declared by default: the provider (or the
+      # door's CLI worker) keeps its own default, which is what parity with a
+      # vendor CLI on the same model requires (Sprint 325). A profile build
+      # sets it with GENIE_EFFORT, which replaces the placeholder below.
+      # effort: provider-default
       limits:
         contextTokens: 128000
         maxOutputTokens: 16384
@@ -346,16 +396,18 @@ spec:
       attempts:
         - modelRef: primary
           transportRetry:
-            maxAttempts: 2
+            # A small local model now and then answers with nothing usable
+            # (a malformed tool call the server drops): ask again.
+            maxAttempts: 3
             backoff: {initialMs: 250, multiplier: 2, maxMs: 2000, jitter: full}
-            retryOn: [transport, rate-limit, server, stream-before-first-event]
+            retryOn: [transport, rate-limit, server, stream-before-first-event, empty-response]
           timeoutMs: 120000
       fallbackOn: [transport-exhausted, rate-limit-exhausted, server-exhausted]
       providerSession: turn
       budget:
         maxInputTokens: 500000
         maxOutputTokens: 100000
-        maxCostUSD: 25
+        maxCostUSD: 3
       quotaPool: {strategy: least-used, onExhausted: fail}
 
   bashy:
@@ -367,15 +419,31 @@ spec:
       cwdRoot: workspace
       environment:
         inherit: allowlist
-        names: [PATH, LANG, LC_ALL, TERM]
+        # BASHY_HINTS/ADVISOR/TELEMETRY_QUIET keep bashy's advisory lines out of
+        # the model's observations (G0.4); the adapter sets them.
+        # The Windows names are what native programs there need to start at all
+        # (git.exe, bashy's podman, python); absent on Linux/macOS, so skipped.
+        # VIRTUAL_ENV / CONDA_PREFIX / CONDA_DEFAULT_ENV carry an ACTIVATED Python
+        # environment (a SWE-bench image activates `testbed`): bashy's agent-mode
+        # python/pip use it only when they can see it, else they fetch bashy's own.
+        names: [PATH, LANG, LC_ALL, TERM, HOME, BASHY_KB_DIR, BASHY_HOME, YCODE_DATA_DIR, BASHY_HINTS, BASHY_ADVISOR, BASHY_TELEMETRY_QUIET,
+          VIRTUAL_ENV, CONDA_PREFIX, CONDA_DEFAULT_ENV,
+          SYSTEMROOT, WINDIR, COMSPEC, PATHEXT, TEMP, TMP, USERPROFILE, HOMEDRIVE, HOMEPATH, LOCALAPPDATA, APPDATA, PROGRAMDATA]
       commandResolution: embedded-and-pinned-only
+      # Per-command wall time, the ceiling for a model's timeout_ms and the
+      # default when it gives none. 60 s is mini-swe-agent's
+      # environment.timeout, the baseline genie is measured against: long
+      # enough for a focused test run, short enough that a command which
+      # never exits (Django runserver in a repro, Sprint 322) costs one
+      # minute rather than the episode. bashy stops the command's whole
+      # process tree at this bound.
       timeoutMs: 60000
       jobLifetimeMs: 900000
       maxOutputChars: 32768
       maxSpillBytes: 16777216
       maxParallel: 2
-      permissionCeiling: workspace-write
-      effectsCeiling: [read, write, exec, net]
+      permissionCeiling: danger-full-access
+      effectsCeiling: [read, write, exec, net, destroy, priv, persist, cred, remote, spend]
       preflight: required
       incompletePreflight: deny
       hostFallback: deny
@@ -391,7 +459,11 @@ spec:
           sourceRef: project-instructions
           role: system
           cache: {scope: workspace, breakAfter: true}
-      budget: {maxTokens: 16000, overflow: fail}
+        - id: repository
+          sourceRef: repository-instructions
+          role: system
+          cache: {scope: workspace, breakAfter: true}
+      budget: {maxTokens: 100000, overflow: fail}
 
   # Memory is pure policy over the bashy-kb front door: recall and persist
   # run as harness-authored bashy.run nodes whose scripts are compiled from
@@ -401,7 +473,10 @@ spec:
     main:
       provider: bashy-kb
       recall:
-        rings: [agent, repo, host]
+        # kb context fails a requested ring that does not exist; a benchmark
+        # repository has no docs/kb and genie must not write one into the
+        # workspace, so genie reads its own run's agent and host rings.
+        rings: [agent, host]
         forms: [note, page, relation]
         maxItems: 8
         maxTokens: 3000
@@ -473,21 +548,50 @@ spec:
       unavailableHuman: deny
       incompletePreflight: deny
       rules:
-        - id: unsupported
+        # Explicit opt-in: authorize every complete, scoped preflight.
+        # Mandatory preflight and private control-root checks still apply.
+        - id: yolo-allow-all
+          match: {always: true}
+          decision: allow
+        # Rule ids reach the model in denial observations: they say why.
+        - id: not-checkable-wrap-it-in-an-effects-envelope
           match: {preflightComplete: false}
           decision: deny
-        - id: destructive
-          match: {effectsAny: [destroy, priv, persist, cred]}
+        # The instance builder changes only this decision for
+        # GENIE_APPROVAL=auto. The path and effect bounds stay in YAML.
+        - id: unattended-workspace-destruction
+          match:
+            effectsAny: [destroy]
+            effectsAllWithin: [read, write, exec, destroy]
+            pathsAllWithin: [workspace]
           decision: ask
-        - id: network-or-remote
-          match: {effectsAny: [net, remote, spend]}
+        - id: destructive-needs-a-human
+          match:
+            effectsAny: [destroy, priv, persist, cred]
+            pathsAllWithin: [workspace, declared]
+          decision: ask
+        - id: network-or-remote-not-allowed
+          match:
+            effectsAny: [net, remote, spend]
+            pathsAllWithin: [workspace, declared]
           decision: ask
         - id: workspace-work
           match:
             effectsAllWithin: [read, write, exec]
             pathsAllWithin: [workspace]
           decision: allow
-        - id: default
+        # Bash# effect envelopes: a function whose body cannot be proven
+        # command by command (python, pytest, pip) is bounded by its own
+        # @effects declaration, and @contain(net: "deny") takes net out of it.
+        # bashy's preflight records those effects with scope "declared"; an
+        # uncontained declaration keeps a possible net effect and so falls
+        # through to the network rule above.
+        - id: declared-envelope
+          match:
+            effectsAllWithin: [read, write, exec]
+            pathsAllWithin: [workspace, declared]
+          decision: allow
+        - id: outside-the-workspace
           match: {always: true}
           decision: deny
       resume: [approve, edit, reject]
@@ -521,7 +625,14 @@ spec:
       inputType: ycode.tool-audit/v1
       outputType: ycode.tool-audit/v1
       order: 10
-      maxInvocations: 25
+      # One invocation per tool execution: the agent loop runs up to 250
+      # steps of up to 16 parallel calls each (see the turn repeat and the
+      # execute-tool-calls forEach), so the cap must cover 250*16. A lower
+      # cap aborts long runs that are still within budget (Sprint 316: four
+      # episodes died on `exceeded maxInvocations 25` with failure: fail).
+      # The runner has no unlimited setting (<= 0 also fails), so this is a
+      # raised bound, not a removal.
+      maxInvocations: 4000
       reentrant: false
       failure: fail
 
@@ -615,7 +726,12 @@ spec:
           needs: []
           run:
             stage: loop.finish
-            with: {maxContinuations: 2, sourceRef: headless-continuation}
+            # S412 7dcd4d1c follow-up: the text-only nudge has its own bound
+            # (maxTextOnlyContinuations, default 1) on its own counter, so a
+            # finished run that summarizes without DONE gets one cheap nudge
+            # instead of burning the question/menu budget; maxContinuations
+            # is back to 2 for the question/menu path alone.
+            with: {maxContinuations: 2, sourceRef: headless-continuation, onTextOnly: format-error, maxTextOnlyContinuations: 1}
             in: {state: state}
             out: {state: state}
 
@@ -682,7 +798,27 @@ spec:
           needs: []
           run:
             stage: bashy.deny
-            in: {intent: state.intent, decision: state.policy}
+            # G0.4: the denial names the policy rule, so the model sees why.
+            # #1168: an unprovable command (bare python, awk) comes back
+            # already wrapped in the effects envelope the prompt describes, so
+            # the next call is that form instead of a probe and a rewrite.
+            # Preflight is not loosened: the wrapped form is checked like any
+            # call and allowed by declared-envelope, never by this remedy.
+            with:
+              reason: true
+              remedy:
+                rules: [incomplete-preflight]
+                kinds: [command, effectRefinement, dynamicCommand, dynamicRedirection, redirection]
+                unlessScriptMatches: '^\s*@(effects|guard|contain)\('
+                text: |-
+                  To run it, send this instead (the same command in an effects envelope):
+                  @effects("read,write,exec")
+                  @contain(net: "deny")
+                  function run_checked() {
+                  {{command}}
+                  }
+                  run_checked
+            in: {intent: state.intent, decision: state.policy, preflight: state.preflight}
             out: {result: state.result, terminal: state.terminal}
 
     approve-command:
@@ -882,6 +1018,26 @@ spec:
           needs: [execute]
           run:
             stage: messages.append-tool-results
+            # G0.4: the model reads exit status + decoded stdout/stderr, not
+            # the execution record (which stays in the event store).
+            # A command stopped at bashy.execution.timeoutMs comes back as
+            # "exit N (timedOut)" with the output it printed; the note says
+            # what that means so the model moves on instead of retrying.
+            # maxChars bounds each observation as mini-swe-agent does (10000:
+            # head and tail halves + "[output truncated: N lines (B bytes)
+            # omitted]"); one sed/test-log dump no longer rides every later
+            # request and the committed session (Sprint 322, 15280).
+            with:
+              format: observation
+              maxChars: 10000
+              outcomeNotes:
+                timedOut: >-
+                  The command reached its time limit and was stopped, together
+                  with every process it started; the output it printed before
+                  that is shown below. Do not rerun it unchanged: avoid or mock
+                  anything that never finishes on its own (a server, a watcher,
+                  a prompt waiting for input), and narrow a long test run to
+                  the relevant tests.
             in: {state: state, results: results}
             out: {state: state}
         - id: drain-after-tool
@@ -1080,28 +1236,9 @@ spec:
               effects: [read]
             out: {knowledge: knowledge}
 
-    # Persist once per turn (memories.main.write.everyTurns: 1): a candidate
-    # agent-ring note keyed to this session as the episode; the transcript
-    # arrives on the composed command's stdin as one JSON object.
-    persist-knowledge:
-      inputs: {transcript: ycode.messages/v1}
-      state: {}
-      outputs: {noted: string}
-      concurrency: 1
-      failFast: true
-      nodes:
-        - id: kb-note-add
-          needs: []
-          run:
-            stage: bashy.run
-            with:
-              memoryRef: main
-              script: "bashy kb note add --candidate --ring agent --episode {{session}} --json"
-              timeoutMs: 10000
-              effects: [read, write]
-            in: {transcript: transcript}
-            out: {noted: noted}
-
+    # persist-knowledge (a candidate agent-ring note per turn from the
+    # transcript) is removed until the kb rod can write one (todo d2cb2137,
+    # Sprint 284); agent-mini's agent.yaml keeps the original definition.
     skip-persist:
       inputs: {}
       state: {}
@@ -1203,7 +1340,7 @@ spec:
           run:
             repeat:
               pipelineRef: agent-step
-              maxIterations: 25
+              maxIterations: 250
               carry: {state: loop}
               until: {eq: [{field: loop.finished}, {literal: true}]}
               out: {state: loop}
@@ -1214,15 +1351,16 @@ spec:
             with: {sessionRef: durable}
             in: {state: loop}
             out: {messagesRef: messagesRef}
+        # Persisting a note from the turn transcript needs a kb capability
+        # that does not exist yet (kb note add has no transcript mode and no
+        # --json; Sprint 284 memory front door). Until then genie skips the
+        # write instead of failing a kb call every turn (todo d2cb2137).
         - id: remember
           needs: [commit]
           run:
             fallback:
-              maxAttempts: 2
+              maxAttempts: 1
               attempts:
-                - pipelineRef: persist-knowledge
-                  on: [bashy.run-denied, bashy.run-failed]
-                  in: {transcript: loop.messages}
                 - pipelineRef: skip-persist
                   on: [bashy.run-failed]
               noMatch: fail
@@ -1297,7 +1435,7 @@ spec:
           run:
             repeat:
               pipelineRef: agent-step
-              maxIterations: 25
+              maxIterations: 250
               carry: {state: loop}
               until: {eq: [{field: loop.finished}, {literal: true}]}
               out: {state: loop}
@@ -1308,6 +1446,10 @@ spec:
             with: {sessionRef: durable}
             in: {state: loop}
             out: {messagesRef: messagesRef}
+        # Persisting a note from the turn transcript needs a kb capability
+        # that does not exist yet (kb note add has no transcript mode and no
+        # --json; Sprint 284 memory front door). Until then genie skips the
+        # write instead of failing a kb call every turn (todo d2cb2137).
         - id: output
           needs: [commit]
           run:
@@ -1328,7 +1470,7 @@ spec:
         planPrompt: "Produce a plan for the request. Do not execute tools or claim to have changed files."
         btwPrompt: "Answer this side question from the available conversation context. Do not execute tools or claim changes."
       displayName: Ycode Coder
-      description: General software-engineering agent using one governed Bashy tool.
+      description: SWE-bench software-engineering agent using one governed Bashy tool.
       inputSchema:
         type: object
         additionalProperties: false
@@ -1351,8 +1493,8 @@ spec:
       placementRef: local-workspace
       lifecycleRef: turn
       hookRefs: [after-tool-audit]
-      permissionCeiling: workspace-write
-      effectsCeiling: [read, write, exec, net]
+      permissionCeiling: danger-full-access
+      effectsCeiling: [read, write, exec, net, destroy, priv, persist, cred, remote, spend]
       delegations:
         - agentRef: reviewer
           modelRouteRef: main
@@ -1361,7 +1503,7 @@ spec:
           timeoutMs: 120000
           permissionCeiling: read-only
           effectsCeiling: [read]
-          budget: {maxInputTokens: 100000, maxOutputTokens: 20000, maxCostUSD: 5}
+          budget: {maxInputTokens: 100000, maxOutputTokens: 20000, maxCostUSD: 3}
           session: {branch: child, join: handoff, cancel: with-parent}
       presentation: {icon: code, category: engineering}
     reviewer:
@@ -1415,6 +1557,13 @@ spec:
       tls: {mode: disabled-loopback-only}
       auth: {mode: bearer, secretRef: {provider: env, name: YCODE_HTTP_TOKEN}}
       limits: {maxInputBytes: 1048576, maxConcurrent: 32}
+    web:
+      kind: http
+      ui: chat
+      listen: {network: tcp, address: "127.0.0.1:0"}
+      tls: {mode: disabled-loopback-only}
+      auth: {mode: bearer, secretRef: {provider: env, name: GENIE_WEB_TOKEN}}
+      limits: {maxInputBytes: 1048576, maxConcurrent: 4}
     websocket:
       kind: websocket
       listen: {network: tcp, address: "127.0.0.1:31416"}
@@ -1443,7 +1592,7 @@ spec:
   triggers:
     interactive-input:
       kind: frontend
-      frontendRefs: [one-shot, repl, tui, http, websocket, nats, acp, embed]
+      frontendRefs: [one-shot, repl, tui, http, web, websocket, nats, acp, embed]
       route:
         agentRef: coder
         queueRef: interactive
@@ -1454,7 +1603,7 @@ spec:
   sinks:
     primary-output:
       kind: frontend-response
-      frontendRefs: [one-shot, repl, tui, http, websocket, nats, acp, embed]
+      frontendRefs: [one-shot, repl, tui, http, web, websocket, nats, acp, embed]
       destinationAllowlist: [originating-frontend]
       redact: secrets-and-control-paths
       delivery:
@@ -1474,3 +1623,4 @@ spec:
     attributes: {service.name: ycode}
 
   extensions: {}
+

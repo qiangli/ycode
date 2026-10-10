@@ -34,6 +34,11 @@ Generates: dist/profiles/$GENIE_PROFILE/agent.yaml
 
 ```bsh
 name=${GENIE_PROFILE:-} model=${GENIE_MODEL_ID:-}
+source_config=${GENIE_HARNESS_CONFIG:-agent.yaml}
+case $source_config in
+  agent.yaml | agent-yolo.yaml) ;;
+  *) printf '%s\n' 'GENIE_HARNESS_CONFIG must be agent.yaml or agent-yolo.yaml' >&2; exit 1 ;;
+esac
 case $name in
   '' | *[!A-Za-z0-9_-]*) name= ;;
 esac
@@ -58,11 +63,11 @@ case ${GENIE_EFFORT:-} in
     exit 1
     ;;
 esac
-if [ "$(grep -c '^      id: gpt-5\.6$' agent.yaml)" != 1 ]; then
+if [ "$(grep -c '^      id: gpt-5\.6$' "$source_config")" != 1 ]; then
   printf '%s\n' 'expected exactly one default model id in agent.yaml' >&2
   exit 1
 fi
-if [ -n "${GENIE_EFFORT:-}" ] && [ "$(grep -c '^      # effort: provider-default$' agent.yaml)" != 1 ]; then
+if [ -n "${GENIE_EFFORT:-}" ] && [ "$(grep -c '^      # effort: provider-default$' "$source_config")" != 1 ]; then
   printf '%s\n' 'expected exactly one model effort placeholder in agent.yaml' >&2
   exit 1
 fi
@@ -103,7 +108,7 @@ if [ -n "${GENIE_REQUEST_TIMEOUT_MS:-}" ]; then
 fi
 target=dist/profiles/$name
 mkdir -p "$target/prompts"
-sed "${edits[@]}" agent.yaml > "$target/agent.yaml"
+sed "${edits[@]}" "$source_config" > "$target/agent.yaml"
 cp prompts/* "$target/prompts/"
 prompt_profile=${GENIE_PROMPT_PROFILE:-general}
 case $prompt_profile in
@@ -122,7 +127,7 @@ printf 'Configured model profile: %s\n' "$PWD/$target/agent.yaml"
 ```
 
 ### package
-Sources: agent.yaml genie.bsh lib/model-server.bsh lib/toolchains.bsh prompts/system.md prompts/system-general.md prompts/system-swe.md prompts/system-terminal.md cmd/genie/main.go go.mod README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md dag.md models.json fixture/task.json fixture/repo/
+Sources: agent.yaml agent-yolo.yaml genie.bsh lib/model-server.bsh lib/toolchains.bsh prompts/system.md prompts/system-general.md prompts/system-swe.md prompts/system-terminal.md prompts/system-yolo.md cmd/genie/main.go go.mod README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md dag.md models.json fixture/task.json fixture/repo/
 Effects: read, write, destroy
 Generates: dist/genie.bar
 
@@ -139,7 +144,7 @@ esac
 rm -rf dist/package
 mkdir -p dist/package
 cp -R lib dist/package/
-cp agent.yaml genie.bsh README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md go.mod dag.md models.json dist/package/
+cp agent.yaml agent-yolo.yaml genie.bsh README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md go.mod dag.md models.json dist/package/
 mkdir -p dist/package/cmd/genie
 cp cmd/genie/main.go dist/package/cmd/genie/main.go
 cp -R prompts dist/package/
@@ -288,6 +293,7 @@ fi
 genie_toolchains "$repo"
 
 profile=$(printf '%s' "$model" | tr ':/.' '___')
+if [ "${GENIE_HARNESS_CONFIG:-agent.yaml}" = agent-yolo.yaml ]; then profile=$profile-yolo; fi
 GENIE_PROFILE=$profile GENIE_MODEL_ID=$model GENIE_CONTEXT_TOKENS=$context \
   GENIE_REQUEST_TIMEOUT_MS=${GENIE_REQUEST_TIMEOUT_MS:-600000} \
   GENIE_PROMPT_PROFILE=${GENIE_PROMPT_PROFILE:-swe} "$BASHY" dag -f dag.md profile-model > /dev/null

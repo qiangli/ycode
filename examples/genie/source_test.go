@@ -10,6 +10,7 @@ func TestSourceEmbedsAllPromptProfiles(t *testing.T) {
 		"prompts/system-general.md",
 		"prompts/system-swe.md",
 		"prompts/system-terminal.md",
+		"prompts/system-yolo.md",
 	} {
 		data, err := Source.ReadFile(name)
 		if err != nil {

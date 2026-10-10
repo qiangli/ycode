@@ -29,9 +29,10 @@ type CLIIdentity struct {
 	Compatibility string `yaml:"compatibility" json:"compatibility"`
 }
 type CLIBootstrap struct {
-	ConfigFlags []string `yaml:"configFlags" json:"configFlags"`
-	DefaultFile string   `yaml:"defaultFile" json:"defaultFile"`
-	Env         string   `yaml:"env,omitempty" json:"env,omitempty"`
+	ConfigFlags  []string          `yaml:"configFlags" json:"configFlags"`
+	ProfileFlags map[string]string `yaml:"profileFlags,omitempty" json:"profileFlags,omitempty"`
+	DefaultFile  string            `yaml:"defaultFile" json:"defaultFile"`
+	Env          string            `yaml:"env,omitempty" json:"env,omitempty"`
 }
 type CLICommand struct {
 	Name       string       `yaml:"name" json:"name"`
@@ -237,6 +238,12 @@ func ValidateCLI(d *Document) error {
 		flags := configDefinitions[name]
 		if len(flags) != 1 || flags[0].Type != "string" || flags[0].Default != c.Bootstrap.DefaultFile {
 			return fail("bootstrap config spelling " + name + " must identify one string flag with defaultFile as its default")
+		}
+	}
+	for name, path := range c.Bootstrap.ProfileFlags {
+		flags := configDefinitions[name]
+		if seenConfig[name] || !strings.HasPrefix(name, "--") || len(flags) != 1 || flags[0].Type != "bool" || flags[0].Default != "false" || flags[0].Scope != "inherited" || path == "" {
+			return fail("bootstrap profile spelling " + name + " must identify one false boolean flag and a configuration path")
 		}
 	}
 	return nil

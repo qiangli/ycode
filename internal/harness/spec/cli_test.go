@@ -76,6 +76,8 @@ func TestCLIContractRejectsInvalidPolicy(t *testing.T) {
 		{"identity", func(c *CLI) { c.Identity.Name = "bad name" }, "identity"},
 		{"root identity", func(c *CLI) { c.Root.Name = "different" }, "root.name"},
 		{"bootstrap", func(c *CLI) { c.Bootstrap.ConfigFlags = []string{"--absent"} }, "config spelling"},
+		{"missing profile flag", func(c *CLI) { c.Bootstrap.ProfileFlags = map[string]string{"--absent": "agent-yolo.yaml"} }, "profile spelling"},
+		{"nonboolean profile flag", func(c *CLI) { c.Bootstrap.ProfileFlags = map[string]string{"--file": "agent-yolo.yaml"} }, "profile spelling"},
 		{"exit code", func(c *CLI) { c.ExitCodes.Usage = 0 }, "1..255"},
 		{"help policy", func(c *CLI) { c.Presentation.Help.Template = "" }, "presentation"},
 		{"format policy", func(c *CLI) { c.Presentation.Formats = []string{"xml"} }, "formats"},

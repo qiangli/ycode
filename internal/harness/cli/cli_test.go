@@ -209,6 +209,20 @@ func TestNormalizedDispatchTypesPrecedenceAndRepeatedFlags(t *testing.T) {
 	}
 }
 
+func TestBootstrapProfileOrigin(t *testing.T) {
+	doc := fixtureDocument(t)
+	doc.Spec.Interfaces.CLI.Bootstrap.ProfileFlags = map[string]string{"--unattended": "unattended.yaml"}
+	doc.Spec.Interfaces.CLI.Root.Flags = append(doc.Spec.Interfaces.CLI.Root.Flags, spec.CLIFlag{Name: "unattended", Type: "bool", Default: "false", Usage: "Select unattended profile", Scope: "inherited"})
+	cmd, recorded := makeCommand(t, doc, Options{})
+	cmd.SetArgs([]string{"ask", "--unattended", "hello"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorded.invocations) != 1 || recorded.invocations[0].ConfigOrigin != "profile --unattended" {
+		t.Fatalf("profile origin = %#v", recorded.invocations)
+	}
+}
+
 func TestEnvironmentDefaultsAndInheritedScopes(t *testing.T) {
 	doc := fixtureDocument(t)
 	lookup := func(name string) (string, bool) {

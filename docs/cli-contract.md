@@ -32,6 +32,15 @@ Values belonging to another flag and arguments after `--` cannot select a
 configuration file. Bootstrap selects the compiled document before parsing
 its command tree; the invocation records that document's source path.
 
+Optional `bootstrap.profileFlags` maps a long boolean flag to a whole
+configuration file, for example `{--yolo: agent-yolo.yaml}`. Each selector
+must reference a declared boolean flag whose default is `"false"`. A true
+selector chooses that file before compilation; false leaves normal discovery
+in place. Profile selection conflicts with `--file`/`YCODE_CONFIG` and with
+another selected profile. A missing file fails explicitly. Profile selectors
+do not merge settings or bypass compiler checks. Bashy's builtin Genie wrapper
+materializes and prepares the corresponding embedded profile for `--yolo`.
+
 ## Input and dispatch
 
 `input` dispatch declares typed frontend, trigger and agent references, a

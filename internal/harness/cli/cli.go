@@ -297,6 +297,12 @@ func (b *builder) configOrigin(command *cobra.Command) string {
 	if b.options.ConfigOrigin != "" {
 		return b.options.ConfigOrigin
 	}
+	for spelling := range b.contract.Bootstrap.ProfileFlags {
+		flag := command.Flags().Lookup(strings.TrimPrefix(spelling, "--"))
+		if flag != nil && flag.Changed && flag.Value.String() == "true" {
+			return "profile " + spelling
+		}
+	}
 	for _, spelling := range b.contract.Bootstrap.ConfigFlags {
 		var flag *pflag.Flag
 		if name, ok := strings.CutPrefix(spelling, "--"); ok {

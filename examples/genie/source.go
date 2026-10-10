@@ -10,5 +10,5 @@ import "embed"
 // The directories use all: — plain //go:embed silently drops files named
 // _* or .* (the fixture's tests/__init__.py went missing that way).
 //
-//go:embed agent.yaml genie.bsh go.mod dag.md models.json README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md all:lib all:prompts all:cmd all:fixture
+//go:embed agent.yaml agent-yolo.yaml genie.bsh go.mod dag.md models.json README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md all:lib all:prompts all:cmd all:fixture
 var Source embed.FS

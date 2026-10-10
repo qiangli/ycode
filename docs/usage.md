@@ -10,6 +10,14 @@ bootstrap discovery and the bounded POC compatibility statement. Offline
 help uses the embedded canonical YAML when no default project file exists;
 an explicitly selected missing or invalid file fails.
 
+`bashy ycode --yolo` selects Genie's shipped
+[agent-yolo.yaml](../examples/genie/agent-yolo.yaml), including model preparation.
+It enables all declared effects and auto-approval, while retaining complete
+preflight and private control storage. Filesystem roots and OS permissions
+still apply. For standalone `ycode --yolo`, place an authored `agent-yolo.yaml`
+in the working directory. Use `--file` directly for a custom profile; combining
+it with `--yolo` is rejected.
+
 ## Prepare and validate a harness
 
 ```bash

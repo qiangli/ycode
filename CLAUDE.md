@@ -95,7 +95,10 @@ Declared pause, btw, retry, revert, compact and plan commands use the same
 public engine APIs as frontends. Plan is tool-free; revert reports filesystem
 restoration as unsupported when the execution boundary has no undo capability.
 There is no `config set/unset`, wildcard tool selection, mutable settings
-merge, `yc` built-in registry, or permission-bypass flag. `ycode --help`
+merge or `yc` built-in registry. YAML may declare bootstrap profile flags;
+`--yolo` selects the authored `agent-yolo.yaml` whole and conflicts with an
+explicit file or configuration environment variable. It does not bypass
+compiler invariants or merge permissions into another configuration. `ycode --help`
 is authoritative.
 
 The terminal frontend (`internal/harness/frontend/tui`, hosted by

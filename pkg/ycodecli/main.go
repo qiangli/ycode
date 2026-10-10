@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -123,6 +124,7 @@ func HasExplicitConfig(args []string) bool {
 func selectedConfig(seed harnessspec.Document, args []string) (string, bool, error) {
 	bootstrap := seed.Spec.Interfaces.CLI.Bootstrap
 	path, explicit := bootstrap.DefaultFile, false
+	profile := ""
 	if bootstrap.Env != "" {
 		if value, ok := os.LookupEnv(bootstrap.Env); ok && value != "" {
 			path, explicit = value, true
@@ -131,6 +133,26 @@ func selectedConfig(seed harnessspec.Document, args []string) (string, bool, err
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--" {
 			break
+		}
+		name, value, hasValue := strings.Cut(args[i], "=")
+		if candidate, ok := bootstrap.ProfileFlags[name]; ok {
+			enabled := true
+			if hasValue {
+				var err error
+				enabled, err = strconv.ParseBool(value)
+				if err != nil {
+					return "", true, fmt.Errorf("%s requires a boolean value", name)
+				}
+			}
+			if enabled {
+				if profile != "" && profile != candidate {
+					return "", true, errors.New("configuration profile flags conflict")
+				}
+				profile = candidate
+			} else if profile == candidate {
+				profile = ""
+			}
+			continue
 		}
 		selected := false
 		for _, flag := range bootstrap.ConfigFlags {
@@ -159,6 +181,12 @@ func selectedConfig(seed harnessspec.Document, args []string) (string, bool, err
 		if consumesCLIValue(seed.Spec.Interfaces.CLI.Root, args[i]) && i+1 < len(args) {
 			i++
 		}
+	}
+	if profile != "" {
+		if explicit {
+			return "", true, errors.New("configuration profile flag cannot be combined with --file or the configuration environment variable")
+		}
+		return profile, true, nil
 	}
 	return path, explicit, nil
 }

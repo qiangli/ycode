@@ -11,7 +11,7 @@ spec:
   interfaces:
     cli:
       identity: {name: genie, version: build, compatibility: "Native YAML harness CLI; provider execution follows the compiled graph. Foreign CLI profiles are outside this POC."}
-      bootstrap: {configFlags: [--file, -f, --config], defaultFile: agent.yaml, env: YCODE_CONFIG}
+      bootstrap: {configFlags: [--file, -f, --config], profileFlags: {--yolo: agent-yolo.yaml}, defaultFile: agent.yaml, env: YCODE_CONFIG}
       presentation:
         formats: [text, json, table]
         defaultFormat: text
@@ -51,6 +51,7 @@ spec:
         args: {min: 0, max: -1}
         flags:
           - {name: file, shorthand: f, type: string, default: agent.yaml, usage: Strict harness configuration, scope: inherited, env: YCODE_CONFIG}
+          - {name: yolo, type: bool, default: "false", usage: Select the authored agent-yolo.yaml profile, scope: inherited}
           - {name: session, type: string, default: "", usage: Continue a durable session id, scope: inherited}
         dispatch:
           operation: input

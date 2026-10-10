@@ -130,6 +130,25 @@ unset (or `GENIE_APPROVAL=prompt`), workspace destruction still asks for
 approval. Unknown values fail config generation.
 The engine is bashy's own `bashy ycode`; `YCODE_BIN` names another.
 
+For the explicit YOLO profile, run `bashy ycode --yolo` (also
+`bashy ycode --yolo -m MODEL` or `bashy ycode web --yolo`). This selects the
+shipped `agent-yolo.yaml` before model preparation. Its coder and Bashy
+execution ceilings are `danger-full-access`, every declared effect is enabled,
+and its policy allows complete, scoped preflights without approval prompts.
+Ordinary `agent.yaml` keeps its existing approval policy. Workspace roots,
+the read-only reviewer, private control storage, complete preflight, digest
+bindings and OS permissions remain in force; this does not disable every
+harness boundary. The configuration digest keeps YOLO session history separate
+from ordinary history.
+
+`--yolo` refuses an explicit `--file`, `YCODE_CONFIG`, or a local `agent.yaml`.
+To customize the profile, copy `agent-yolo.yaml` and its `prompts/` directory,
+set `spec.runtime.workspace`, `readableRoots`, and `writableRoots` to your
+chosen paths, then use `bashy ycode --file /absolute/path/agent-yolo.yaml`.
+Standalone `ycode --yolo` selects a local `agent-yolo.yaml`; a missing profile
+fails instead of falling back to the ordinary profile. Bootstrap profile
+selection is declared in YAML through `interfaces.cli.bootstrap.profileFlags`.
+
 ## Host-aware model pick
 
 `bashy dag -f dag.md pick-model` chooses a local Ollama model for this host.
