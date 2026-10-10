@@ -265,6 +265,20 @@ func instanceConfig(config, repo, dir, defaultProfile string) (string, error) {
 		}
 		text = strings.Replace(text, edit[0], edit[1], 1)
 	}
+	// Keep the unattended choice in the generated YAML so its digest binds the
+	// session and its policy decisions. Only the authored, workspace-bounded
+	// destruction rule changes; all other approval and denial rules stay put.
+	switch os.Getenv("GENIE_APPROVAL") {
+	case "", "prompt":
+	case "auto":
+		const promptRule = "        - id: unattended-workspace-destruction\n          match:\n            effectsAny: [destroy]\n            effectsAllWithin: [read, write, exec, destroy]\n            pathsAllWithin: [workspace]\n          decision: ask\n"
+		if strings.Count(text, promptRule) != 1 {
+			return "", errors.New("GENIE_APPROVAL=auto requires the authored workspace destruction rule")
+		}
+		text = strings.Replace(text, promptRule, strings.Replace(promptRule, "decision: ask", "decision: allow", 1), 1)
+	default:
+		return "", fmt.Errorf("invalid GENIE_APPROVAL %q (expected auto or prompt)", os.Getenv("GENIE_APPROVAL"))
+	}
 	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o700); err != nil {
 		return "", err
 	}

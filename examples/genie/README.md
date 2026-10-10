@@ -120,6 +120,14 @@ server, and every API call needs it. The server stops when genie exits.
 same model server, a clean git tree (refused when dirty unless
 `GENIE_ALLOW_DIRTY=1`), the change left in the working tree, and the
 prediction and run record in `~/.bashy/genie/runs` (`GENIE_ARTIFACT_DIR`).
+
+For unattended chat runs, set `GENIE_APPROVAL=auto` in the genie process
+environment. The generated instance config then allows Bashy preflighted
+destruction confined to the workspace without a HITL prompt. Network,
+credential, privilege, persistence, incomplete preflight, and paths outside
+the workspace keep their existing review or denial rules. With the variable
+unset (or `GENIE_APPROVAL=prompt`), workspace destruction still asks for
+approval. Unknown values fail config generation.
 The engine is bashy's own `bashy ycode`; `YCODE_BIN` names another.
 
 ## Host-aware model pick

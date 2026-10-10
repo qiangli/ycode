@@ -332,6 +332,12 @@ func decide(policy spec.Policy, report Preflight) (string, string, error) {
 		}
 		return "incomplete-preflight", "deny", nil
 	}
+	// A destructive action with no path scope cannot establish that it stays
+	// within any permitted root, even though an empty set is vacuously within
+	// the rule's pathsAllWithin list.
+	if intersects(report.Effects, []string{"destroy"}) && len(report.Paths) == 0 {
+		return "unscoped-destructive-effect", "deny", nil
+	}
 	for _, rule := range policy.Rules {
 		if !match(rule.Match, report) {
 			continue

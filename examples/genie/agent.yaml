@@ -442,7 +442,7 @@ spec:
       maxSpillBytes: 16777216
       maxParallel: 2
       permissionCeiling: workspace-write
-      effectsCeiling: [read, write, exec, net]
+      effectsCeiling: [read, write, exec, net, destroy]
       preflight: required
       incompletePreflight: deny
       hostFallback: deny
@@ -551,11 +551,23 @@ spec:
         - id: not-checkable-wrap-it-in-an-effects-envelope
           match: {preflightComplete: false}
           decision: deny
+        # The instance builder changes only this decision for
+        # GENIE_APPROVAL=auto. The path and effect bounds stay in YAML.
+        - id: unattended-workspace-destruction
+          match:
+            effectsAny: [destroy]
+            effectsAllWithin: [read, write, exec, destroy]
+            pathsAllWithin: [workspace]
+          decision: ask
         - id: destructive-needs-a-human
-          match: {effectsAny: [destroy, priv, persist, cred]}
+          match:
+            effectsAny: [destroy, priv, persist, cred]
+            pathsAllWithin: [workspace, declared]
           decision: ask
         - id: network-or-remote-not-allowed
-          match: {effectsAny: [net, remote, spend]}
+          match:
+            effectsAny: [net, remote, spend]
+            pathsAllWithin: [workspace, declared]
           decision: ask
         - id: workspace-work
           match:
@@ -1476,7 +1488,7 @@ spec:
       lifecycleRef: turn
       hookRefs: [after-tool-audit]
       permissionCeiling: workspace-write
-      effectsCeiling: [read, write, exec, net]
+      effectsCeiling: [read, write, exec, net, destroy]
       delegations:
         - agentRef: reviewer
           modelRouteRef: main
