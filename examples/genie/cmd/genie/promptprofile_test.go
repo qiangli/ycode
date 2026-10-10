@@ -160,4 +160,3 @@ func TestSolvePathUnknownProfileFailsClosed(t *testing.T) {
 		t.Fatalf("expected unknown GENIE_PROMPT_PROFILE error, got: %v", err)
 	}
 }
-
