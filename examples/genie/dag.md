@@ -62,8 +62,8 @@ if [ "$(grep -c '^      id: gpt-5\.6$' agent.yaml)" != 1 ]; then
   printf '%s\n' 'expected exactly one default model id in agent.yaml' >&2
   exit 1
 fi
-if [ -n "${GENIE_EFFORT:-}" ] && [ "$(grep -c '^      effort: high$' agent.yaml)" != 1 ]; then
-  printf '%s\n' 'expected exactly one declared model effort in agent.yaml' >&2
+if [ -n "${GENIE_EFFORT:-}" ] && [ "$(grep -c '^      # effort: provider-default$' agent.yaml)" != 1 ]; then
+  printf '%s\n' 'expected exactly one model effort placeholder in agent.yaml' >&2
   exit 1
 fi
 # The model id goes in as a JSON string (valid YAML); escape it for sed.
@@ -95,7 +95,7 @@ if [ -n "${GENIE_CONTEXT_TOKENS:-}" ]; then
   fi
 fi
 if [ -n "${GENIE_EFFORT:-}" ]; then
-  edits+=(-e "s|^\( *effort:\) high\$|\1 $GENIE_EFFORT|")
+  edits+=(-e "s|^\( *\)# effort: provider-default\$|\1effort: $GENIE_EFFORT|")
 fi
 if [ -n "${GENIE_REQUEST_TIMEOUT_MS:-}" ]; then
   edits+=(-e "s|^\( *requestTimeoutMs:\) 120000\$|\1 $GENIE_REQUEST_TIMEOUT_MS|")

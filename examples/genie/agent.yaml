@@ -376,10 +376,11 @@ spec:
     primary:
       providerRef: openai
       id: gpt-5.6
-      # How hard the model thinks is model policy. A SWE turn is worth deep
-      # reasoning, so the bundle declares it rather than leaving a provider
-      # default in charge; a profile build overrides it with GENIE_EFFORT.
-      effort: high
+      # Reasoning effort is not declared by default: the provider (or the
+      # door's CLI worker) keeps its own default, which is what parity with a
+      # vendor CLI on the same model requires (Sprint 325). A profile build
+      # sets it with GENIE_EFFORT, which replaces the placeholder below.
+      # effort: provider-default
       limits:
         contextTokens: 128000
         maxOutputTokens: 16384

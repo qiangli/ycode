@@ -74,15 +74,15 @@ func yamlStrings(t *testing.T, doc, key string) []string {
 	return out
 }
 
-// The bundle declares an effort, so every profile has one even when the build
-// says nothing about it.
-func TestProfileKeepsDeclaredEffortByDefault(t *testing.T) {
+// The bundle declares no effort, so a profile built without GENIE_EFFORT
+// leaves the provider's default in charge (parity with the vendor CLI).
+func TestProfileDeclaresNoEffortByDefault(t *testing.T) {
 	doc, err := runProfileModel(t)
 	if err != nil {
 		t.Fatalf("profile-model: %v\n%s", err, doc)
 	}
-	if got := yamlStrings(t, doc, "effort"); len(got) != 1 || got[0] != "high" {
-		t.Fatalf("effort = %v, want one high", got)
+	if got := yamlStrings(t, doc, "effort"); len(got) != 0 {
+		t.Fatalf("effort = %v, want none declared", got)
 	}
 }
 
