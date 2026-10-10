@@ -88,17 +88,38 @@ fi
 target=dist/profiles/$name
 mkdir -p "$target/prompts"
 sed "${edits[@]}" agent.yaml > "$target/agent.yaml"
-cp prompts/system.md "$target/prompts/system.md"
+cp prompts/* "$target/prompts/"
+prompt_profile=${GENIE_PROMPT_PROFILE:-general}
+case $prompt_profile in
+  general|swe|terminal) ;;
+  *)
+    printf 'genie: unknown GENIE_PROMPT_PROFILE %q (expected general, swe, or terminal)\n' "$prompt_profile" >&2
+    exit 1
+    ;;
+esac
+if [ -f "prompts/system-$prompt_profile.md" ]; then
+  cp "prompts/system-$prompt_profile.md" "$target/prompts/system.md"
+elif [ -f "prompts/system.md" ]; then
+  cp prompts/system.md "$target/prompts/system.md"
+fi
 printf 'Configured model profile: %s\n' "$PWD/$target/agent.yaml"
 ```
 
 ### package
-Sources: agent.yaml genie.bsh lib/model-server.bsh lib/toolchains.bsh prompts/system.md cmd/genie/main.go go.mod README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md dag.md models.json fixture/task.json fixture/repo/
+Sources: agent.yaml genie.bsh lib/model-server.bsh lib/toolchains.bsh prompts/system.md prompts/system-general.md prompts/system-swe.md prompts/system-terminal.md cmd/genie/main.go go.mod README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md dag.md models.json fixture/task.json fixture/repo/
 Effects: read, write
 Generates: dist/genie.bar
 
 ```bsh
 set -e
+prompt_profile=${GENIE_PROMPT_PROFILE:-general}
+case $prompt_profile in
+  general|swe|terminal) ;;
+  *)
+    printf 'genie: unknown GENIE_PROMPT_PROFILE %q (expected general, swe, or terminal)\n' "$prompt_profile" >&2
+    exit 1
+    ;;
+esac
 rm -rf dist/package
 mkdir -p dist/package
 cp -R lib dist/package/
@@ -106,6 +127,9 @@ cp agent.yaml genie.bsh README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-age
 mkdir -p dist/package/cmd/genie
 cp cmd/genie/main.go dist/package/cmd/genie/main.go
 cp -R prompts dist/package/
+if [ -f "dist/package/prompts/system-$prompt_profile.md" ]; then
+  cp "dist/package/prompts/system-$prompt_profile.md" dist/package/prompts/system.md
+fi
 cp -R fixture dist/package/
 tar -czf dist/genie.bar -C dist/package .
 ```
@@ -249,13 +273,15 @@ genie_toolchains "$repo"
 
 profile=$(printf '%s' "$model" | tr ':/.' '___')
 GENIE_PROFILE=$profile GENIE_MODEL_ID=$model GENIE_CONTEXT_TOKENS=$context \
-  GENIE_REQUEST_TIMEOUT_MS=${GENIE_REQUEST_TIMEOUT_MS:-600000} "$BASHY" dag -f dag.md profile-model > /dev/null
+  GENIE_REQUEST_TIMEOUT_MS=${GENIE_REQUEST_TIMEOUT_MS:-600000} \
+  GENIE_PROMPT_PROFILE=${GENIE_PROMPT_PROFILE:-swe} "$BASHY" dag -f dag.md profile-model > /dev/null
 task_file=$PWD/dist/servers/$run_id.task.json
 T_ID="$(basename "$repo")-$run_id" T_TASK=$task T_REPO=$repo jq -cn \
   '{instance_id: env.T_ID, problem_statement: env.T_TASK, repo_path: env.T_REPO}' > "$task_file"
 GENIE_TASK_JSON=$task_file GENIE_RUN_ID=$run_id GENIE_MODEL_NAME=$model \
   GENIE_CONFIG=$PWD/dist/profiles/$profile/agent.yaml GENIE_MODEL_CHOICE=$PWD/dist/model-choice.json \
   GENIE_ARTIFACT_DIR=$artifacts OPENAI_BASE_URL=$OPENAI_BASE_URL OPENAI_API_KEY=$OPENAI_API_KEY \
+  GENIE_PROMPT_PROFILE=${GENIE_PROMPT_PROFILE:-swe} \
   "$BASHY" dag -f dag.md main
 printf 'genie: done; the change is in %s (git diff), the run record in %s\n' "$repo" "$artifacts" >&2
 ```
@@ -300,7 +326,8 @@ model=$(jq -r .model dist/model-choice.json)
 context=$(jq -r '.context // 32768' dist/model-choice.json)
 profile=$(printf '%s' "$model" | tr ':/.' '___')
 GENIE_PROFILE=$profile GENIE_MODEL_ID=$model GENIE_CONTEXT_TOKENS=$context \
-  GENIE_REQUEST_TIMEOUT_MS=${GENIE_REQUEST_TIMEOUT_MS:-600000} "$BASHY" dag -f dag.md profile-model > /dev/null
+  GENIE_REQUEST_TIMEOUT_MS=${GENIE_REQUEST_TIMEOUT_MS:-600000} \
+  GENIE_PROMPT_PROFILE=${GENIE_PROMPT_PROFILE:-general} "$BASHY" dag -f dag.md profile-model > /dev/null
 config=$("$BASHY" cmd/genie/main.go -config "$PWD/dist/profiles/$profile/agent.yaml" -workspace "$caller")
 session_args=()
 if [ -n "${GENIE_YCODE_SESSION:-}" ]; then session_args=(--session "$GENIE_YCODE_SESSION"); fi

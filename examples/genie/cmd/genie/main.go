@@ -133,7 +133,7 @@ func run(input io.Reader, output, diagnostic io.Writer, config string) (retErr e
 	defer cancel()
 	startedAt := time.Now().UTC()
 	prompt := taskPrompt(req.InstanceID, req.ProblemStatement)
-	taskConfig, err := instanceConfig(config, repo, filepath.Join(instanceArtifacts, "config"))
+	taskConfig, err := instanceConfig(config, repo, filepath.Join(instanceArtifacts, "config"), PromptProfileSWE)
 	if err != nil {
 		return fmt.Errorf("write instance config: %w", err)
 	}
@@ -215,12 +215,41 @@ func run(input io.Reader, output, diagnostic io.Writer, config string) (retErr e
 	return enc.Encode(pred)
 }
 
+const (
+	PromptProfileGeneral  = "general"
+	PromptProfileSWE      = "swe"
+	PromptProfileTerminal = "terminal"
+)
+
+// promptProfile resolves the prompt profile name from GENIE_PROMPT_PROFILE,
+// falling back to defaultProfile. It returns an error if the value is not in
+// {general, swe, terminal}.
+func promptProfile(defaultProfile string) (string, error) {
+	val := strings.TrimSpace(os.Getenv("GENIE_PROMPT_PROFILE"))
+	if val == "" {
+		val = defaultProfile
+	}
+	if val == "" {
+		val = PromptProfileGeneral
+	}
+	switch val {
+	case PromptProfileGeneral, PromptProfileSWE, PromptProfileTerminal:
+		return val, nil
+	default:
+		return "", fmt.Errorf("unknown GENIE_PROMPT_PROFILE %q (expected general, swe, or terminal)", val)
+	}
+}
+
 // instanceConfig writes a copy of config whose workspace is the task
 // checkout. ycode resolves runtime.workspace and the roots against the config
 // file's directory, so the shared config alone would put the agent in the
 // config directory instead of the repository. The copy lives in dir with the
 // prompts beside it, and dir is a readable root so the prompts load.
-func instanceConfig(config, repo, dir string) (string, error) {
+func instanceConfig(config, repo, dir, defaultProfile string) (string, error) {
+	profile, err := promptProfile(defaultProfile)
+	if err != nil {
+		return "", err
+	}
 	source, err := os.ReadFile(config)
 	if err != nil {
 		return "", err
@@ -239,7 +268,8 @@ func instanceConfig(config, repo, dir string) (string, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o700); err != nil {
 		return "", err
 	}
-	prompts, err := filepath.Glob(filepath.Join(filepath.Dir(config), "prompts", "*"))
+	promptsDir := filepath.Join(filepath.Dir(config), "prompts")
+	prompts, err := filepath.Glob(filepath.Join(promptsDir, "*"))
 	if err != nil {
 		return "", err
 	}
@@ -251,6 +281,27 @@ func instanceConfig(config, repo, dir string) (string, error) {
 		if err := os.WriteFile(filepath.Join(dir, "prompts", filepath.Base(prompt)), data, 0o600); err != nil {
 			return "", err
 		}
+	}
+	// Copy system-PROFILE.md to system.md.
+	profileFile := "system-" + profile + ".md"
+	var profileData []byte
+	if data, err := os.ReadFile(filepath.Join(dir, "prompts", profileFile)); err == nil {
+		profileData = data
+	} else if data, err := os.ReadFile(filepath.Join(promptsDir, profileFile)); err == nil {
+		profileData = data
+	} else if data, err := os.ReadFile(filepath.Join(filepath.Dir(config), "..", "prompts", profileFile)); err == nil {
+		profileData = data
+	} else if data, err := os.ReadFile(filepath.Join(filepath.Dir(config), "..", "..", "prompts", profileFile)); err == nil {
+		profileData = data
+	}
+	if len(profileData) > 0 {
+		if err := os.WriteFile(filepath.Join(dir, "prompts", "system.md"), profileData, 0o600); err != nil {
+			return "", err
+		}
+	} else if os.Getenv("GENIE_PROMPT_PROFILE") != "" {
+		return "", fmt.Errorf("system prompt for profile %q not found", profile)
+	} else if _, statErr := os.Stat(filepath.Join(dir, "prompts", "system.md")); statErr != nil {
+		return "", fmt.Errorf("system prompt for profile %q not found (%v)", profile, statErr)
 	}
 	target := filepath.Join(dir, "agent.yaml")
 	return target, os.WriteFile(target, []byte(text), 0o600)
@@ -279,7 +330,7 @@ func chatConfig(config, workspace, dir string) (string, error) {
 		}
 		dir = filepath.Join(state, "genie", "chat", safePathComponent(filepath.Base(workspace)+"_"+workspace))
 	}
-	return instanceConfig(config, workspace, dir)
+	return instanceConfig(config, workspace, dir, PromptProfileGeneral)
 }
 
 func resolveConfig(config string) (string, error) {

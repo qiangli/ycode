@@ -40,7 +40,7 @@ func TestSWEBenchTaskIsSourceOnly(t *testing.T) {
 // for tests: it must not carry the benchmark's source-only rule, and it must
 // not send the model hunting for instructions or outside the workspace.
 func TestSystemPromptScopesOrientationAndLeavesTestsToTheTask(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "prompts", "system.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "prompts", "system-swe.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

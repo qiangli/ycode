@@ -25,12 +25,18 @@ func TestChatConfigPutsTheWorkspaceInTheCallersDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(profile, "agent.yaml"), []byte(configured), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	prompt, err := os.ReadFile(filepath.Join("..", "..", "prompts", "system.md"))
+	prompts, err := filepath.Glob(filepath.Join("..", "..", "prompts", "*.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(profile, "prompts", "system.md"), prompt, 0o600); err != nil {
-		t.Fatal(err)
+	for _, p := range prompts {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(profile, "prompts", filepath.Base(p)), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	path, err := chatConfig(filepath.Join(profile, "agent.yaml"), workspace, dir)
 	if err != nil {
