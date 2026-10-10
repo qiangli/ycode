@@ -202,6 +202,11 @@ func newModel(ctx context.Context, opts Options) *model {
 	in := textinput.New()
 	in.Prompt = "› "
 	in.Placeholder = "ask, run a command, or /help"
+	// The prompt stays focused between turns. A blinking virtual cursor
+	// schedules updates forever and keeps unattended terminal sessions busy.
+	styles := in.Styles()
+	styles.Cursor.Blink = false
+	in.SetStyles(styles)
 	in.Focus()
 	return &model{ctx: ctx, opts: opts, session: opts.Session, input: in, width: 80, status: opts.Host.Status(opts.Session)}
 }
