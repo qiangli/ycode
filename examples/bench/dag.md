@@ -171,7 +171,7 @@ printf 'registered bench-container (@contain provider: custom)\n'
 
 ### solve
 Requires: requests tools
-Effects: read, write, exec, net, spend, cred, destroy
+Effects: read, write, exec, net, spend, cred, destroy, persist
 
 Runs the agent on every request of the current run and appends
 `predictions.jsonl` and `records.jsonl`. Every model call goes through the
