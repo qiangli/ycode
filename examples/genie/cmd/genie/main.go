@@ -492,14 +492,14 @@ func gitCommand(ctx context.Context, args ...string) *exec.Cmd {
 // taskPrompt is the SWE-bench task template (mini-swe-agent's instance
 // template plays the same part): the task is source-only. The evaluation
 // replaces the test files with its own, so edited tests are never scored and
-// only cost calls; the check is a throwaway reproduction script plus the
+// only cost calls; the check is a reproduction inline from stdin plus the
 // tests already in the repository. The rules live here, not in
 // prompts/system.md, because chat shares that prompt and a user there may
 // well ask for tests.
 func taskPrompt(instanceID, issue string) string {
 	return "Solve this SWE-bench issue in the current repository. Inspect, implement, and verify the fix.\n\n" +
 		"Change non-test source files only. Do not add, edit, or delete test files or configuration: the evaluation runs its own tests. " +
-		"Verify the fix with a throwaway reproduction script and the existing tests for the code you changed, then delete the script so the diff holds only the fix. " +
+		"Verify the fix by running a reproduction inline from stdin (for example python - <<'EOF' ... EOF) so nothing is written into the repository, plus the existing tests for the code you changed; never create scratch files in the repository. " +
 		"Stay inside the repository.\n\n" +
 		"Instance: " + instanceID + "\n\nIssue:\n" + issue
 }

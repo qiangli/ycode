@@ -16,22 +16,32 @@ import (
 )
 
 // The SWE-bench task template, like mini-swe-agent's instance template, is
-// source-only: no test edits, verify with a throwaway script plus the
-// existing tests, and leave the script out of the diff.
+// source-only: no test edits, verify with an inline reproduction from stdin
+// plus the existing tests, and never create scratch files in the repository.
 func TestSWEBenchTaskIsSourceOnly(t *testing.T) {
 	prompt := taskPrompt("django__django-12774", "in_bulk() fails for UniqueConstraint fields")
 	for _, want := range []string{
 		"non-test source files only",
 		"Do not add, edit, or delete test files",
-		"throwaway reproduction script",
+		"reproduction inline from stdin",
+		"python - <<'EOF' ... EOF",
+		"nothing is written into the repository",
 		"existing tests",
-		"delete the script",
+		"never create scratch files in the repository",
 		"Stay inside the repository",
 		"Instance: django__django-12774",
 		"Issue:\nin_bulk() fails for UniqueConstraint fields",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("task prompt lacks %q:\n%s", want, prompt)
+		}
+	}
+	for _, banned := range []string{
+		"delete the script",
+		"throwaway reproduction script",
+	} {
+		if strings.Contains(prompt, banned) {
+			t.Errorf("task prompt still contains %q:\n%s", banned, prompt)
 		}
 	}
 }
@@ -51,14 +61,17 @@ func TestSystemPromptScopesOrientationAndLeavesTestsToTheTask(t *testing.T) {
 		"Stay inside the repository",
 		"tests unless the task asks for it",
 		"already wrapped: send that",
+		"the reproduction runs inline",
+		"no scratch files",
+		"never try to delete files",
 	} {
 		if !strings.Contains(text, want) {
-			t.Errorf("prompts/system.md lacks %q", want)
+			t.Errorf("prompts/system-swe.md lacks %q", want)
 		}
 	}
-	for _, banned := range []string{"repository instructions first", "non-test source files only"} {
+	for _, banned := range []string{"repository instructions first", "non-test source files only", "delete the script"} {
 		if strings.Contains(text, banned) {
-			t.Errorf("prompts/system.md still says %q", banned)
+			t.Errorf("prompts/system-swe.md still says %q", banned)
 		}
 	}
 }
