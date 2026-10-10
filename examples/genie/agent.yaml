@@ -338,6 +338,16 @@ spec:
     headless-continuation:
       text: No human is available. Proceed with the approach the request names, or the first option you listed; make the change, verify it, and report.
       limits: {maxBytes: 4096}
+    # S412 7dcd4d1c: a headless one-shot turn that already ran tools but
+    # whose final reply carries no tool call is a format error
+    # (mini-swe-agent style), so the turn is nudged to continue instead of
+    # ending with nothing done. A reply saying DONE still finishes. This
+    # source is only named by the free-form with.onTextOnly key, which the
+    # reachability check does not trace, so it is exported.
+    format-error:
+      text: Your last reply contained no tool call, so nothing was executed and the task is not finished. Continue the task with a bashy tool call. If the task is truly complete, say DONE and summarize what changed.
+      limits: {maxBytes: 4096}
+      exported: true
     compaction-checkpoint:
       file: {path: prompts/compaction-checkpoint.md, required: false}
       limits: {maxBytes: 8192}
@@ -693,7 +703,10 @@ spec:
           needs: []
           run:
             stage: loop.finish
-            with: {maxContinuations: 2, sourceRef: headless-continuation}
+            # S412 7dcd4d1c: onTextOnly shares the maxContinuations budget
+            # with the question/menu nudge; the budget grows 2 -> 3 now that
+            # two nudge kinds draw on it.
+            with: {maxContinuations: 3, sourceRef: headless-continuation, onTextOnly: format-error}
             in: {state: state}
             out: {state: state}
 

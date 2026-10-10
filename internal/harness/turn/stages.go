@@ -437,6 +437,14 @@ func (r *Runtime) appendAssistant(_ context.Context, in pipeline.Invocation) pip
 // 1d4096a6c973): with.maxContinuations and with.sourceRef opt a pipeline into
 // a bounded nudge instead — an interactive finish-step that declares neither
 // is unaffected.
+//
+// with.onTextOnly names a second source for the same budget (Sprint 412
+// story 7dcd4d1c): a headless one-shot turn that already executed at least
+// one tool call but whose final reply carries no tool call is a format
+// error, mini-swe-agent style — the turn appends that source's text and
+// continues instead of ending with nothing done. A reply that declares
+// completion (contains DONE, which the nudge text itself instructs) still
+// finishes, as does a text-only reply before any tool call ran.
 func (r *Runtime) finish(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
 	state, err := object(in.Inputs["state"])
 	if err != nil {
@@ -444,27 +452,50 @@ func (r *Runtime) finish(ctx context.Context, in pipeline.Invocation) pipeline.O
 	}
 	maxContinuations, _ := number(in.With["maxContinuations"])
 	sourceRef := text(in.With["sourceRef"])
-	if maxContinuations > 0 && sourceRef != "" {
+	onTextOnly := text(in.With["onTextOnly"])
+	if maxContinuations > 0 && (sourceRef != "" || onTextOnly != "") {
 		count, _ := number(state["continuations"])
-		if count < maxContinuations && r.wantsHeadlessContinuation(ctx, state) {
-			source, ok := r.doc.Spec.Sources[sourceRef]
-			if !ok {
-				return fail(fmt.Errorf("loop.finish: undeclared source %q", sourceRef))
+		if count < maxContinuations {
+			if sourceRef != "" && r.wantsHeadlessContinuation(ctx, state) {
+				return r.continueLoop(ctx, in.StageID, state, sourceRef, count, maxContinuations)
 			}
-			messages, err := messagesFrom(state["messages"])
-			if err != nil {
-				return fail(err)
+			if onTextOnly != "" && r.wantsTextOnlyContinuation(ctx, state) {
+				return r.continueLoop(ctx, in.StageID, state, onTextOnly, count, maxContinuations)
 			}
-			state["messages"] = append(messages, textMessage(message.RoleUser, source.Resolved))
-			state["continuations"] = count + 1
-			if err := r.append(ctx, in.StageID, "loop.continued", map[string]any{"count": count + 1, "max": maxContinuations}); err != nil {
-				return fail(err)
-			}
-			return pipeline.Success(map[string]any{"state": state})
 		}
 	}
 	state["finished"] = true
 	return pipeline.Success(map[string]any{"state": state})
+}
+
+// continueLoop appends a continuation source as a user message and returns
+// the unfinished state, spending one continuation of the shared budget.
+func (r *Runtime) continueLoop(ctx context.Context, stageID string, state map[string]any, sourceRef string, count, max int) pipeline.Outcome {
+	source, ok := r.doc.Spec.Sources[sourceRef]
+	if !ok {
+		return fail(fmt.Errorf("loop.finish: undeclared source %q", sourceRef))
+	}
+	messages, err := messagesFrom(state["messages"])
+	if err != nil {
+		return fail(err)
+	}
+	state["messages"] = append(messages, textMessage(message.RoleUser, source.Resolved))
+	state["continuations"] = count + 1
+	if err := r.append(ctx, stageID, "loop.continued", map[string]any{"count": count + 1, "max": max}); err != nil {
+		return fail(err)
+	}
+	return pipeline.Success(map[string]any{"state": state})
+}
+
+// headlessOneShot reports a turn with no human available to answer running
+// under a one-shot frontend: nudging is safe only there, never in an
+// interactive session where a text-only reply may be the real answer.
+func (r *Runtime) headlessOneShot(ctx context.Context) bool {
+	run, err := runFrom(ctx)
+	if err != nil || run.humanAvailable {
+		return false
+	}
+	return r.doc.Spec.Frontends[run.originFrontend].Kind == "one-shot"
 }
 
 // wantsHeadlessContinuation reports a turn with no human available to answer
@@ -473,11 +504,7 @@ func (r *Runtime) finish(ctx context.Context, in pipeline.Invocation) pipeline.O
 // this nudge exists for: the model analyzes correctly, then ends the turn
 // asking which option to take instead of taking one.
 func (r *Runtime) wantsHeadlessContinuation(ctx context.Context, state map[string]any) bool {
-	run, err := runFrom(ctx)
-	if err != nil || run.humanAvailable {
-		return false
-	}
-	if r.doc.Spec.Frontends[run.originFrontend].Kind != "one-shot" {
+	if !r.headlessOneShot(ctx) {
 		return false
 	}
 	messages, err := messagesFrom(state["messages"])
@@ -513,6 +540,55 @@ func readsAsQuestionOrMenu(value string) bool {
 		return true
 	}
 	return len(menuOptionLine.FindAllString(trimmed, 2)) >= 2
+}
+
+// wantsTextOnlyContinuation reports a headless one-shot turn that already
+// executed at least one tool call but whose last assistant message carries
+// no tool call: the task is mid-flight yet nothing will run, so ending here
+// silently drops the work (Sprint 322 django-15280 ended with no diff).
+// A reply that declares completion still finishes — the rule is a simple
+// case-sensitive DONE substring, which the format-error nudge text itself
+// instructs; casual lowercase "done" does not finish. A text-only reply
+// before any tool call ran also finishes, so pure Q&A turns never loop.
+func (r *Runtime) wantsTextOnlyContinuation(ctx context.Context, state map[string]any) bool {
+	if !r.headlessOneShot(ctx) {
+		return false
+	}
+	messages, err := messagesFrom(state["messages"])
+	if err != nil || len(messages) == 0 {
+		return false
+	}
+	last := messages[len(messages)-1]
+	if last.Role != message.RoleAssistant {
+		return false
+	}
+	var parts []string
+	for _, block := range last.Content {
+		if block.Type == message.ContentTypeToolUse {
+			return false
+		}
+		if block.Type == message.ContentTypeText && block.Text != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	trimmed := strings.TrimSpace(strings.Join(parts, ""))
+	if trimmed == "" || strings.Contains(trimmed, "DONE") {
+		return false
+	}
+	return turnExecutedToolCall(messages)
+}
+
+// turnExecutedToolCall reports whether any message in the turn executed a
+// tool call: an assistant tool_use block or its tool_result.
+func turnExecutedToolCall(messages []message.Message) bool {
+	for _, item := range messages {
+		for _, block := range item.Content {
+			if block.Type == message.ContentTypeToolUse || block.Type == message.ContentTypeToolResult {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r *Runtime) compact(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {

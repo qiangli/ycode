@@ -369,3 +369,280 @@ func TestInteractiveFrontendNeverGetsTheHeadlessNudge(t *testing.T) {
 		}
 	}
 }
+
+// compileWithFormatErrorNudge compiles the canonical fixture and opts its
+// finish-step into the text-only format-error nudge exactly the way
+// examples/genie/agent.yaml declares it (with.onTextOnly naming the
+// format-error source). The fixture itself stays untouched: the YAML change
+// is scoped to the genie agent, so the injection mirrors that declaration
+// one-for-one for behavior tests.
+func compileWithFormatErrorNudge(t *testing.T, root string) (*spec.Document, string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "examples", "agent.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := spec.Compile(filepath.Join(root, "agent.yaml"), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const formatError = "Your last reply contained no tool call, so nothing was executed and the task is not finished. Continue the task with a bashy tool call. If the task is truly complete, say DONE and summarize what changed."
+	doc.Spec.Sources["format-error"] = spec.Source{Text: formatError, Resolved: formatError, Limits: spec.SourceLimits{MaxBytes: 4096}}
+	finish, ok := doc.Spec.Pipelines["finish-step"]
+	if !ok {
+		t.Fatal("fixture has no finish-step pipeline")
+	}
+	if len(finish.Nodes) == 0 {
+		t.Fatal("finish-step has no nodes")
+	}
+	if finish.Nodes[0].Run.With == nil {
+		finish.Nodes[0].Run.With = map[string]any{}
+	}
+	finish.Nodes[0].Run.With["onTextOnly"] = "format-error"
+	doc.Spec.Pipelines["finish-step"] = finish
+	return doc, formatError
+}
+
+// runScriptedHeadlessTurn wires a turn runtime over doc with a scripted
+// provider and runs one headless one-shot turn to completion.
+func runScriptedHeadlessTurn(t *testing.T, doc *spec.Document, root, session string, script [][]provider.Event) (*scriptedProvider, *recordingDelivery, string) {
+	t.Helper()
+	fake := &scriptedProvider{script: script}
+	eventPath := filepath.Join(root, "events.jsonl")
+	events, err := event.Open(eventPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloads, err := event.OpenPayloadStore(filepath.Join(root, "payloads"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery := &recordingDelivery{}
+	ioEngine, err := ioctx.New(ioctx.Config{Document: doc, Events: events, Payloads: payloads, TokenCounter: wordCounter{}, Delivery: delivery, Redactor: identityRedactor{}, DeadLetter: rejectingDeadLetter{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	memoryEngine, err := memoryStage.New(memoryStage.Config{Document: doc, Events: events, Payloads: payloads, Tokens: messageCounter{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bashy := fakeBashy{}
+	hitlController, err := hitl.New(hitl.Config{Document: doc, Events: events, Payloads: payloads, CheckpointPath: filepath.Join(root, session+"-hitl.json"), Preflighter: bashy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := New(Config{Document: doc, Events: events, Payloads: payloads, IO: ioEngine, Memory: memoryEngine, HITL: hitlController, Bashy: bashy, Providers: map[string]Provider{"openai": fake}, Queue: emptyQueue{}, EventPath: eventPath, Tokens: messageCounter{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := []byte(`{"request":"do the thing"}`)
+	inputRef, err := payloads.Put(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := runtime.Run(context.Background(), Request{
+		SessionID: session, RunID: "run-1", OriginFrontend: "one-shot", HumanAvailable: false,
+		Input: ioctx.CanonicalInput{SchemaVersion: ioctx.SchemaVersion, TriggerRef: "interactive-input", FrontendRef: "one-shot", Principal: "test", IdempotencyKey: session + "-run-1", Data: input, PayloadRef: inputRef},
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(output.Deliveries) != 1 {
+		t.Fatalf("output = %#v", output)
+	}
+	return fake, delivery, eventPath
+}
+
+func countContinued(t *testing.T, eventPath string) int {
+	t.Helper()
+	replayed, err := event.Replay(eventPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	continued := 0
+	for _, item := range replayed {
+		if item.Type == "loop.continued" {
+			continued++
+		}
+	}
+	return continued
+}
+
+// TestHeadlessOneShotTreatsMidTaskTextOnlyAsFormatError reproduces Sprint
+// 412 story 7dcd4d1c (Sprint 322 django-15280): after tool calls the model
+// answered text-only ("I can't continue ...") and genie ended the turn with
+// no diff. With with.onTextOnly set, that declarative reply must not finish:
+// the loop appends the format-error source text and continues, and the turn
+// ends on the later DONE reply.
+func TestHeadlessOneShotTreatsMidTaskTextOnlyAsFormatError(t *testing.T) {
+	scratchStores(t)
+	root, err := os.MkdirTemp(".", ".turn-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	doc, formatError := compileWithFormatErrorNudge(t, root)
+
+	stalled := "I can't continue because the tool interface isn't available in this turn."
+	final := "DONE: applied the fix and verified it."
+	fake, delivery, eventPath := runScriptedHeadlessTurn(t, doc, root, "text-only", [][]provider.Event{
+		toolCallEvents("call-1", "printf one > change.txt"),
+		completedText(stalled),
+		toolCallEvents("call-2", "printf two >> change.txt"),
+		completedText(final),
+	})
+	if got := fake.callCount(); got != 4 {
+		t.Fatalf("model calls = %d, want tool, text-only, tool, DONE", got)
+	}
+	if delivery.last != final {
+		t.Fatalf("delivered %q, want the DONE completion, not the stalled text-only reply", delivery.last)
+	}
+	if got := countContinued(t, eventPath); got != 1 {
+		t.Fatalf("loop.continued events = %d, want exactly one format-error nudge", got)
+	}
+	// The leading tool call shifts indices by one versus the question test:
+	// the nudge follows the stalled reply, so it lands in the third request
+	// (after the tool result), as a user turn right after that reply.
+	third := fake.requestAt(2).Messages
+	if len(third) == 0 {
+		t.Fatal("third request carries no messages")
+	}
+	last := third[len(third)-1]
+	if last.Role != "user" || len(last.Content) != 1 || last.Content[0].Text != formatError {
+		t.Fatalf("third request's last message = %#v, want the format-error text", last)
+	}
+}
+
+// TestHeadlessTextOnlyWithNoPriorToolCallFinishes proves the nudge is
+// mid-task only: a text-only reply before any tool call ran ends the turn
+// as before, so pure Q&A turns never loop.
+func TestHeadlessTextOnlyWithNoPriorToolCallFinishes(t *testing.T) {
+	scratchStores(t)
+	root, err := os.MkdirTemp(".", ".turn-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	doc, _ := compileWithFormatErrorNudge(t, root)
+
+	answer := "The workspace already contains the fix; nothing to change."
+	fake, delivery, eventPath := runScriptedHeadlessTurn(t, doc, root, "text-only-fresh", [][]provider.Event{
+		completedText(answer),
+	})
+	if got := fake.callCount(); got != 1 {
+		t.Fatalf("model calls = %d, want exactly one: no tool ran, so there is nothing to continue", got)
+	}
+	if delivery.last != answer {
+		t.Fatalf("delivered %q", delivery.last)
+	}
+	if got := countContinued(t, eventPath); got != 0 {
+		t.Fatalf("loop.continued events = %d, want none", got)
+	}
+}
+
+// TestHeadlessDoneAfterToolsFinishes proves a reply that declares completion
+// still finishes: DONE after tool calls ends the turn with no nudge.
+func TestHeadlessDoneAfterToolsFinishes(t *testing.T) {
+	scratchStores(t)
+	root, err := os.MkdirTemp(".", ".turn-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	doc, _ := compileWithFormatErrorNudge(t, root)
+
+	final := "DONE: applied the fix and verified it."
+	fake, delivery, eventPath := runScriptedHeadlessTurn(t, doc, root, "text-only-done", [][]provider.Event{
+		toolCallEvents("call-1", "printf done > change.txt"),
+		completedText(final),
+	})
+	if got := fake.callCount(); got != 2 {
+		t.Fatalf("model calls = %d, want tool then DONE", got)
+	}
+	if delivery.last != final {
+		t.Fatalf("delivered %q", delivery.last)
+	}
+	if got := countContinued(t, eventPath); got != 0 {
+		t.Fatalf("loop.continued events = %d, want none: DONE finishes", got)
+	}
+}
+
+// TestHeadlessTextOnlyNudgeIsBounded proves the format-error nudge shares
+// the existing continuations budget: a model that keeps stalling text-only
+// gets exactly maxContinuations nudges, then the turn ends.
+func TestHeadlessTextOnlyNudgeIsBounded(t *testing.T) {
+	scratchStores(t)
+	root, err := os.MkdirTemp(".", ".turn-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	doc, _ := compileWithFormatErrorNudge(t, root)
+
+	stalled := "Still working on it, no tool call in this reply."
+	fake, delivery, eventPath := runScriptedHeadlessTurn(t, doc, root, "text-only-stuck", [][]provider.Event{
+		toolCallEvents("call-1", "printf one > change.txt"),
+		completedText(stalled),
+	})
+	// One tool call, then the clamped text-only reply: two nudges (the
+	// fixture's maxContinuations), then the fourth identical reply ends the
+	// turn for good instead of nudging a third time.
+	if got := fake.callCount(); got != 4 {
+		t.Fatalf("model calls = %d, want exactly maxContinuations+2", got)
+	}
+	if delivery.last != stalled {
+		t.Fatalf("delivered %q, want the model's last (unresolved) answer", delivery.last)
+	}
+	if got := countContinued(t, eventPath); got != 2 {
+		t.Fatalf("loop.continued events = %d, want exactly the compiled maxContinuations", got)
+	}
+}
+
+// TestGenieDeclaresFormatErrorNudge pins the YAML half of the story: the
+// genie agent wires with.onTextOnly to the format-error source on
+// finish-step, keeping the question/menu path, on the shared budget.
+func TestGenieDeclaresFormatErrorNudge(t *testing.T) {
+	scratchStores(t)
+	geniePath := filepath.Join("..", "..", "..", "examples", "genie", "agent.yaml")
+	raw, err := os.ReadFile(geniePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Compile at the real path so the agent's required file sources
+	// resolve; Compile itself writes nothing.
+	doc, err := spec.Compile(geniePath, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "Your last reply contained no tool call, so nothing was executed and the task is not finished. Continue the task with a bashy tool call. If the task is truly complete, say DONE and summarize what changed."
+	source, ok := doc.Spec.Sources["format-error"]
+	if !ok {
+		t.Fatal("genie agent has no format-error source")
+	}
+	if source.Resolved != want {
+		t.Fatalf("format-error source = %q, want the mini-swe-agent style text", source.Resolved)
+	}
+	finish, ok := doc.Spec.Pipelines["finish-step"]
+	if !ok || len(finish.Nodes) == 0 {
+		t.Fatal("genie agent has no finish-step pipeline")
+	}
+	with := finish.Nodes[0].Run.With
+	if with["onTextOnly"] != "format-error" {
+		t.Fatalf("finish-step with.onTextOnly = %#v, want %q", with["onTextOnly"], "format-error")
+	}
+	if with["sourceRef"] != "headless-continuation" {
+		t.Fatalf("finish-step with.sourceRef = %#v, want the question/menu path kept", with["sourceRef"])
+	}
+	var max float64
+	switch value := with["maxContinuations"].(type) {
+	case int:
+		max = float64(value)
+	case float64:
+		max = value
+	default:
+		t.Fatalf("finish-step with.maxContinuations = %#v, want the shared budget", with["maxContinuations"])
+	}
+	if max != 3 {
+		t.Fatalf("finish-step with.maxContinuations = %v, want 3 (shared question + text-only budget)", max)
+	}
+}
