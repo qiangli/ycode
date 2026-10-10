@@ -324,7 +324,7 @@ func (r *Runtime) callModel(ctx context.Context, in pipeline.Invocation) pipelin
 	return pipeline.Failure(string(outcome.Class), retryableProvider(outcome.Class, route.FallbackOn), errors.New(outcome.Error))
 }
 
-func (r *Runtime) normalize(_ context.Context, in pipeline.Invocation) pipeline.Outcome {
+func (r *Runtime) normalize(ctx context.Context, in pipeline.Invocation) pipeline.Outcome {
 	state, err := object(in.Inputs["state"])
 	if err != nil {
 		return fail(err)
@@ -333,9 +333,25 @@ func (r *Runtime) normalize(_ context.Context, in pipeline.Invocation) pipeline.
 	if err != nil {
 		return fail(err)
 	}
+	structured := len(anyList(response["toolCalls"])) != 0
+	if !structured {
+		// A reply with no structured tool calls may still carry
+		// model-written ones as text (Sprint 412 story #1819). Recovering
+		// them before normalization routes the turn to execute-tool-calls
+		// exactly like a structured call — hasToolCalls set, finished
+		// cleared — under the same deterministic-id and dedupe policy.
+		if calls, ok := recoverTextToolCalls(text(response["text"])); ok {
+			response["toolCalls"] = calls
+			response["hasToolCalls"] = true
+			response["finished"] = false
+		}
+	}
 	response, err = normalizeProviderResponse(response, in.With)
 	if err != nil {
 		return fail(err)
+	}
+	if !structured && len(anyList(response["toolCalls"])) != 0 {
+		_ = r.append(ctx, in.StageID, textToolCallRecoveredEvent, map[string]any{"call_count": len(anyList(response["toolCalls"]))})
 	}
 	state["response"] = response
 	return pipeline.Success(map[string]any{"state": state})

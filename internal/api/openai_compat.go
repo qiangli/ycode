@@ -175,11 +175,21 @@ type openaiStreamOptions struct {
 }
 
 type openaiMessage struct {
-	Role             string           `json:"role"`
-	Content          string           `json:"content,omitempty"`
-	ReasoningContent string           `json:"reasoning_content,omitempty"`
-	ToolCalls        []openaiToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string           `json:"tool_call_id,omitempty"`
+	Role             string              `json:"role"`
+	Content          string              `json:"content,omitempty"`
+	ReasoningContent string              `json:"reasoning_content,omitempty"`
+	ToolCalls        []openaiToolCall    `json:"tool_calls,omitempty"`
+	FunctionCall     *openaiFunctionCall `json:"function_call,omitempty"`
+	ToolCallID       string              `json:"tool_call_id,omitempty"`
+}
+
+// openaiFunctionCall is the legacy (pre-tool_calls) function-call wire
+// shape. Some OpenAI-compatible gateways still emit it instead of
+// tool_calls; it carries exactly one call and no id (the harness normalizer
+// assigns a deterministic one downstream).
+type openaiFunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type openaiToolCall struct {
@@ -377,8 +387,9 @@ func (c *OpenAICompatClient) buildRequest(req *Request) *openaiRequest {
 
 // openaiStreamDelta represents the delta in a streaming chunk.
 type openaiStreamDelta struct {
-	Content          string `json:"content"`
-	ReasoningContent string `json:"reasoning_content"`
+	Content          string              `json:"content"`
+	ReasoningContent string              `json:"reasoning_content"`
+	FunctionCall     *openaiFunctionCall `json:"function_call,omitempty"`
 	ToolCalls        []struct {
 		Index    int    `json:"index"`
 		ID       string `json:"id"`
@@ -400,6 +411,9 @@ func (c *OpenAICompatClient) readStream(body io.Reader, events chan<- *StreamEve
 		args strings.Builder
 	}
 	activeTools := make(map[int]*toolCallState)
+	// legacyTool accumulates one legacy delta.function_call across chunks;
+	// it has no index on the wire, so it flushes onto the next free one.
+	var legacyTool *toolCallState
 	var thinking strings.Builder
 
 	flushThinking := func() {
@@ -447,12 +461,44 @@ func (c *OpenAICompatClient) readStream(body io.Reader, events chan<- *StreamEve
 		return true
 	}
 
+	flushLegacy := func() bool {
+		if legacyTool == nil {
+			return false
+		}
+		call := legacyTool
+		legacyTool = nil
+		if call.name == "" && call.args.Len() == 0 {
+			return false
+		}
+		index := 0
+		for occupied := range activeTools {
+			if occupied >= index {
+				index = occupied + 1
+			}
+		}
+		events <- &StreamEvent{
+			Type:  "content_block_start",
+			Index: index,
+			ContentBlock: &ContentBlock{
+				Type:  ContentTypeToolUse,
+				Name:  call.name,
+				Input: json.RawMessage(call.args.String()),
+			},
+		}
+		events <- &StreamEvent{
+			Type:  "content_block_stop",
+			Index: index,
+		}
+		return true
+	}
+
 	for {
 		raw, err := parser.Next()
 		if err != nil {
 			if err == io.EOF {
 				flushThinking()
-				if flushTools() {
+				sawLegacy, sawTools := flushLegacy(), flushTools()
+				if sawLegacy || sawTools {
 					// Signal stop_reason = tool_use.
 					delta, _ := json.Marshal(map[string]string{"stop_reason": "tool_use"})
 					events <- &StreamEvent{Type: "message_delta", Delta: delta}
@@ -466,7 +512,8 @@ func (c *OpenAICompatClient) readStream(body io.Reader, events chan<- *StreamEve
 
 		if raw.Data == "[DONE]" {
 			flushThinking()
-			if flushTools() {
+			sawLegacy, sawTools := flushLegacy(), flushTools()
+			if sawLegacy || sawTools {
 				delta, _ := json.Marshal(map[string]string{"stop_reason": "tool_use"})
 				events <- &StreamEvent{Type: "message_delta", Delta: delta}
 			}
@@ -566,10 +613,25 @@ func (c *OpenAICompatClient) readStream(body io.Reader, events chan<- *StreamEve
 				}
 			}
 
+			// Handle the legacy single function call the same way.
+			if call := choice.Delta.FunctionCall; call != nil {
+				flushThinking()
+				if legacyTool == nil {
+					legacyTool = &toolCallState{}
+				}
+				if call.Name != "" {
+					legacyTool.name = call.Name
+				}
+				if call.Arguments != "" {
+					legacyTool.args.WriteString(call.Arguments)
+				}
+			}
+
 			// Handle finish_reason.
 			if choice.FinishReason != nil {
 				flushThinking()
 				reason := *choice.FinishReason
+				flushLegacy()
 				flushTools()
 
 				// Map OpenAI finish reasons to Anthropic stop reasons.
@@ -593,9 +655,10 @@ func (c *OpenAICompatClient) readNonStream(body io.Reader, events chan<- *Stream
 	var resp struct {
 		Choices []struct {
 			Message struct {
-				Content          string           `json:"content"`
-				ReasoningContent string           `json:"reasoning_content"`
-				ToolCalls        []openaiToolCall `json:"tool_calls"`
+				Content          string              `json:"content"`
+				ReasoningContent string              `json:"reasoning_content"`
+				ToolCalls        []openaiToolCall    `json:"tool_calls"`
+				FunctionCall     *openaiFunctionCall `json:"function_call,omitempty"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -647,6 +710,25 @@ func (c *OpenAICompatClient) readNonStream(body io.Reader, events chan<- *Stream
 			events <- &StreamEvent{
 				Type:  "content_block_stop",
 				Index: i,
+			}
+		}
+
+		// Emit the legacy single function call, if any, on the next free
+		// index. The harness normalizer assigns the missing id downstream.
+		if call := choice.Message.FunctionCall; call != nil && (call.Name != "" || call.Arguments != "") {
+			index := len(choice.Message.ToolCalls)
+			events <- &StreamEvent{
+				Type:  "content_block_start",
+				Index: index,
+				ContentBlock: &ContentBlock{
+					Type:  ContentTypeToolUse,
+					Name:  call.Name,
+					Input: json.RawMessage(call.Arguments),
+				},
+			}
+			events <- &StreamEvent{
+				Type:  "content_block_stop",
+				Index: index,
 			}
 		}
 
