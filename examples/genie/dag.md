@@ -123,7 +123,7 @@ printf 'Configured model profile: %s\n' "$PWD/$target/agent.yaml"
 
 ### package
 Sources: agent.yaml genie.bsh lib/model-server.bsh lib/toolchains.bsh prompts/system.md prompts/system-general.md prompts/system-swe.md prompts/system-terminal.md cmd/genie/main.go go.mod README.md ATTRIBUTION.md LICENSE.md LICENSE-live-swe-agent.md LICENSE-mini-swe-agent.md dag.md models.json fixture/task.json fixture/repo/
-Effects: read, write
+Effects: read, write, destroy
 Generates: dist/genie.bar
 
 ```bsh
