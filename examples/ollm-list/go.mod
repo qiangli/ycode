@@ -2,7 +2,7 @@ module example/ollm-list
 
 go 1.27
 
-toolchain go1.27.1
+toolchain go1.27.2
 
 require github.com/qiangli/coreutils v0.0.0
 

@@ -2,7 +2,7 @@ module github.com/qiangli/ycode
 
 go 1.27
 
-toolchain go1.27.1
+toolchain go1.27.2
 
 replace mvdan.cc/sh/v3 => github.com/qiangli/sh/v3 v3.0.0-20261010183127-da25e2efc36b
 
