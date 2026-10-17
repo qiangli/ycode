@@ -4,14 +4,14 @@ go 1.27
 
 toolchain go1.27.2
 
-replace mvdan.cc/sh/v3 => github.com/qiangli/sh/v3 v3.0.0-20261013004909-8f2dec0915fb
+replace mvdan.cc/sh/v3 => github.com/qiangli/sh/v3 v3.0.0-20261014083225-477b218e535d
 
 // Bashy's filebrowser replacement does not propagate to embedding modules.
 replace github.com/filebrowser/filebrowser/v2 => github.com/qiangli/filebrowser/v2 v2.0.0-20261013004903-9c7b5c8e3d09
 
 replace github.com/ergochat/readline => github.com/qiangli/readline v0.1.4-0.20261013004858-df59d4e258e4
 
-replace github.com/ollama/ollama => github.com/qiangli/ollama v0.0.0-20261013004936-43768325f25c
+replace github.com/ollama/ollama => github.com/qiangli/ollama v0.0.0-20261016181410-b0d0bbba93ab
 
 replace go.podman.io/podman/v6 => github.com/qiangli/podman/v6 v6.0.0-20261013004941-fa029d9c82fb
 
@@ -35,9 +35,9 @@ require (
 	github.com/philippgille/chromem-go v0.7.0
 	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
 	github.com/qiangli/bashy v0.32.1-0.20261009074133-de929cc9f182
-	github.com/qiangli/bonsai v0.0.0-20261013004920-c3f37fca0a20
-	github.com/qiangli/coreutils v0.0.0-20261013004930-226a73d9a214
-	github.com/qiangli/yoke v0.0.0-20261013004956-8d0c3c08a1c6
+	github.com/qiangli/bonsai v0.0.0-20261013041512-fbfc95fa4dda
+	github.com/qiangli/coreutils v0.0.0-20261017213852-cd33e2a2594a
+	github.com/qiangli/yoke v0.0.0-20261017214100-19415c55382f
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	go.etcd.io/bbolt v1.4.3
@@ -99,7 +99,7 @@ require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-pty v0.2.3 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/bashsharp/bashsharp v0.0.0-20261013005017-a85df1acfc75 // indirect
+	github.com/bashsharp/bashsharp v0.0.0-20261013041512-54c7b34bc4a4 // indirect
 	github.com/benhoyt/goawk v1.31.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.6 // indirect
@@ -237,10 +237,12 @@ require (
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/codesearch v1.2.0 // indirect
 	github.com/google/flatbuffers v25.12.19+incompatible // indirect
+	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-containerregistry v0.21.1 // indirect
 	github.com/google/go-intervals v0.0.2 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
+	github.com/google/nftables v0.3.0 // indirect
 	github.com/google/pprof v0.0.0-20260507013755-92041b743c96 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/gorilla/handlers v1.5.2 // indirect
@@ -275,6 +277,8 @@ require (
 	github.com/mattn/go-runewidth v0.0.27 // indirect
 	github.com/mattn/go-shellwords v1.0.13 // indirect
 	github.com/mattn/go-sqlite3 v1.14.42 // indirect
+	github.com/mdlayher/netlink v1.7.3-0.20250113171957-fbb4dce95f42 // indirect
+	github.com/mdlayher/socket v0.5.1 // indirect
 	github.com/mholt/archives v0.1.5 // indirect
 	github.com/miekg/pkcs11 v1.1.1 // indirect
 	github.com/mikelolasagasti/xz v1.0.1 // indirect
@@ -335,9 +339,9 @@ require (
 	github.com/prometheus/statsd_exporter v0.29.0 // indirect
 	github.com/qiangli/gfy v0.0.0-20261013004914-30d38f086034 // indirect
 	github.com/qiangli/ycode/examples/genie v0.0.0 // indirect
-	github.com/qiangli/yoke/external/otel v0.0.0-20261013004956-8d0c3c08a1c6 // indirect
-	github.com/qiangli/yoke/pkg/llmgw v0.0.0-20261013004956-8d0c3c08a1c6 // indirect
-	github.com/qiangli/yoke/pkg/oci v0.0.0-20261013004956-8d0c3c08a1c6 // indirect
+	github.com/qiangli/yoke/external/otel v0.0.0-20261017214100-19415c55382f // indirect
+	github.com/qiangli/yoke/pkg/llmgw v0.0.0-20261017214100-19415c55382f // indirect
+	github.com/qiangli/yoke/pkg/oci v0.0.0-20261017214100-19415c55382f // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/redis/go-redis/v9 v9.20.1 // indirect
@@ -452,7 +456,7 @@ require (
 
 // coreutils' own goawk replace does not propagate across modules, and
 // upstream goawk v1.31.0 has no `regex` package — cmds/awk needs the fork.
-replace github.com/benhoyt/goawk => github.com/qiangli/coreutils/third_party/goawk v0.0.0-20261013004930-226a73d9a214
+replace github.com/benhoyt/goawk => github.com/qiangli/coreutils/third_party/goawk v0.0.0-20261017213852-cd33e2a2594a
 
 exclude (
 	google.golang.org/genproto v0.0.0-20200804131852-c06518451d9c
