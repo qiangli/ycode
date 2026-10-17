@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -108,13 +109,49 @@ func assertLiveEntrypoint(t *testing.T, root, capability, entrypoint string) {
 	if len(parts) != 2 {
 		t.Fatalf("capability %q invalid entrypoint %q", capability, entrypoint)
 	}
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(parts[0])))
+	data, err := os.ReadFile(resolveEntrypointFile(t, root, parts[0]))
 	if err != nil {
 		t.Fatalf("capability %q entrypoint %q: %v", capability, entrypoint, err)
 	}
 	if !bytes.Contains(data, []byte(parts[1])) {
 		t.Fatalf("capability %q entrypoint %q is stale", capability, entrypoint)
 	}
+}
+
+// resolveEntrypointFile maps a sibling-relative entrypoint ("../bashy/...")
+// to the sibling checkout when present (umbrella layout) and otherwise to the
+// module go.mod pins for that sibling (standalone clone).
+func resolveEntrypointFile(t *testing.T, root, rel string) string {
+	t.Helper()
+	direct := filepath.Join(root, filepath.FromSlash(rel))
+	if _, err := os.Stat(direct); err == nil || !strings.HasPrefix(rel, "../") {
+		return direct
+	}
+	parts := strings.SplitN(strings.TrimPrefix(rel, "../"), "/", 2)
+	if len(parts) != 2 {
+		return direct
+	}
+	cmd := exec.Command("go", "list", "-m", "-f", "{{.Path}}\t{{.Dir}}", "all")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("resolve sibling %q: go list -m: %v", parts[0], err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		path, dir, ok := strings.Cut(line, "\t")
+		if !ok || dir == "" {
+			continue
+		}
+		base := filepath.Base(path)
+		if strings.HasPrefix(base, "v") && len(base) > 1 && base[1] >= '0' && base[1] <= '9' {
+			base = filepath.Base(filepath.Dir(path))
+		}
+		if base == parts[0] {
+			return filepath.Join(dir, filepath.FromSlash(parts[1]))
+		}
+	}
+	t.Fatalf("sibling %q is neither checked out nor a dependency", parts[0])
+	return direct
 }
 
 func assertNoForbiddenKernelReferences(t *testing.T, root string, forbidden []string) {
