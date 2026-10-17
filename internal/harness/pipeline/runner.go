@@ -100,10 +100,14 @@ func (r *Runner) runPipeline(ctx context.Context, name string, state *State) (re
 	if concurrency < 1 {
 		concurrency = 1
 	}
-	_, err = (&dag.Engine{Graph: graph, Concurrency: concurrency, FailFast: false, Executor: ex}).Run(ctx)
-	if err != nil {
-		result = Failure("scheduler", false, err)
-		return
+	// The scheduler never returns for a context cancelled before it starts
+	// (it waits for a completion nothing dispatches), so a pre-cancelled
+	// pipeline goes straight to the drain.
+	if ctx.Err() == nil {
+		if _, err = (&dag.Engine{Graph: graph, Concurrency: concurrency, FailFast: false, Executor: ex}).Run(ctx); err != nil {
+			result = Failure("scheduler", false, err)
+			return
+		}
 	}
 	if ctx.Err() != nil {
 		ex.drain(ctx)
@@ -168,6 +172,7 @@ func (x *graphExecutor) Execute(ctx context.Context, t *dag.Task, _ dag.TaskIO) 
 	x.put(n.ID, out)
 	return dag.TaskResult{Name: t.Name, Status: dag.StatusDone}
 }
+
 // drain runs the nodes the scheduler left unstarted after a cancellation, in
 // dependency order, so each is recorded as cancelled or, when it declares
 // runOn: cancelled, still runs.

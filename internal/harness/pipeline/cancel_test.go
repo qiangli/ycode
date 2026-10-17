@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/qiangli/ycode/internal/harness/spec"
 )
@@ -51,5 +52,35 @@ func TestCancelledRunStartsNoFurtherStage(t *testing.T) {
 	}
 	if cleanup != 1 {
 		t.Fatalf("cleanup=%d: a runOn: cancelled node still runs", cleanup)
+	}
+}
+
+// A run whose context is already cancelled when its graph starts must return
+// a cancelled outcome, not wait on a scheduler that dispatches nothing.
+func TestPreCancelledRunReturnsCancelled(t *testing.T) {
+	reg := NewRegistry()
+	var ran, cleanup int
+	_ = reg.Register(Definition{Name: "work", Handler: func(context.Context, Invocation) Outcome { ran++; return Success(nil) }})
+	_ = reg.Register(Definition{Name: "cleanup", Handler: func(context.Context, Invocation) Outcome { cleanup++; return Success(nil) }})
+	main := spec.Pipeline{Concurrency: 2, Nodes: []spec.Stage{
+		{ID: "work", Run: spec.Run{Stage: "work"}},
+		{ID: "cleanup", Needs: []string{"work"}, RunOn: []string{OutcomeCancelled}, Run: spec.Run{Stage: "cleanup"}},
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan Outcome, 1)
+	go func() {
+		done <- NewRunner(reg).WithPipelines(map[string]spec.Pipeline{"main": main}).RunPipelineOutcome(ctx, "main", NewState())
+	}()
+	select {
+	case out := <-done:
+		if out.Class != OutcomeCancelled || !errors.Is(out.Err, context.Canceled) {
+			t.Fatalf("outcome = %#v, want cancelled", out)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("pre-cancelled run never returned")
+	}
+	if ran != 0 || cleanup != 1 {
+		t.Fatalf("work=%d cleanup=%d, want 0 and 1", ran, cleanup)
 	}
 }
