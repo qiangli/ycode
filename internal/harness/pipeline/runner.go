@@ -105,6 +105,9 @@ func (r *Runner) runPipeline(ctx context.Context, name string, state *State) (re
 		result = Failure("scheduler", false, err)
 		return
 	}
+	if ctx.Err() != nil {
+		ex.drain(ctx)
+	}
 	for _, node := range p.Nodes {
 		out := ex.get(node.ID)
 		if out.Class == OutcomeFailed || out.Class == OutcomeCancelled {
@@ -165,6 +168,43 @@ func (x *graphExecutor) Execute(ctx context.Context, t *dag.Task, _ dag.TaskIO) 
 	x.put(n.ID, out)
 	return dag.TaskResult{Name: t.Name, Status: dag.StatusDone}
 }
+// drain runs the nodes the scheduler left unstarted after a cancellation, in
+// dependency order, so each is recorded as cancelled or, when it declares
+// runOn: cancelled, still runs.
+func (x *graphExecutor) drain(ctx context.Context) {
+	for pending := true; pending; {
+		pending = false
+		progressed := false
+		for _, n := range x.nodes {
+			if _, done := x.lookup(n.ID); done {
+				continue
+			}
+			pending = true
+			ready := true
+			for _, dep := range n.Needs {
+				if _, ok := x.lookup(dep); !ok {
+					ready = false
+					break
+				}
+			}
+			if ready {
+				x.Execute(ctx, &dag.Task{Name: n.ID}, dag.TaskIO{})
+				progressed = true
+			}
+		}
+		if !progressed {
+			return
+		}
+	}
+}
+
+func (x *graphExecutor) lookup(id string) (Outcome, bool) {
+	x.mu.RLock()
+	defer x.mu.RUnlock()
+	o, ok := x.outcomes[id]
+	return o, ok
+}
+
 func (x *graphExecutor) hasTerminalFailure() bool {
 	x.mu.RLock()
 	defer x.mu.RUnlock()
