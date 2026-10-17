@@ -97,7 +97,7 @@ func TestTUIClearOverPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	run.expectCount("rejected turn end", "turn ended in", 2)
-	if _, err := os.Stat(filepath.Join(workdir, "hitl.txt")); err == nil {
+	if _, err := os.Stat(filepath.Join(filepath.Dir(workdir), "hitl.txt")); err == nil {
 		t.Fatal("rejected write ran")
 	}
 

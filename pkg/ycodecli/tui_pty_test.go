@@ -87,10 +87,13 @@ func (p *tuiProvider) Send(ctx context.Context, request *api.Request) (<-chan *a
 			return
 		}
 		if bytes.Contains(last, []byte("approve-me")) {
-			// An exact workspace overwrite matches the compiled destructive
-			// rule: the engine suspends on hitl.waiting until the human answers.
+			// A truncating redirect outside the workspace (the workdir's
+			// parent) keeps the destroy effect and matches the compiled
+			// destructive rule; a workspace overwrite is only a write and is
+			// allowed. The engine suspends on hitl.waiting until the human
+			// answers.
 			toolStop, _ := json.Marshal(map[string]string{"stop_reason": api.StopReasonToolUse})
-			events <- &api.StreamEvent{Type: "content_block_start", ContentBlock: &api.ContentBlock{Type: api.ContentTypeToolUse, ID: "hitl-call", Name: "bashy", Input: json.RawMessage(`{"script":"printf approved-write > hitl.txt"}`)}}
+			events <- &api.StreamEvent{Type: "content_block_start", ContentBlock: &api.ContentBlock{Type: api.ContentTypeToolUse, ID: "hitl-call", Name: "bashy", Input: json.RawMessage(`{"script":"printf approved-write > ../hitl.txt"}`)}}
 			events <- &api.StreamEvent{Type: "content_block_stop"}
 			events <- &api.StreamEvent{Type: "message_delta", Delta: toolStop}
 			return
@@ -190,7 +193,7 @@ func TestTUIOverPTY(t *testing.T) {
 	typeLine("approve-me please")
 	expect("hitl prompt", "approval needed (")
 	expect("hitl status", "approve? y/n")
-	if _, err := os.Stat(filepath.Join(workdir, "hitl.txt")); err == nil {
+	if _, err := os.Stat(filepath.Join(filepath.Dir(workdir), "hitl.txt")); err == nil {
 		t.Fatalf("destructive write ran before approval")
 	}
 	if _, err := io.WriteString(terminal, "y"); err != nil {
@@ -199,7 +202,7 @@ func TestTUIOverPTY(t *testing.T) {
 	if !screen.waitCount("turn ended in", 3, 15*time.Second) {
 		t.Fatalf("the approved turn never ended:\n%s", screen.text())
 	}
-	if got, err := os.ReadFile(filepath.Join(workdir, "hitl.txt")); err != nil || string(got) != "approved-write" {
+	if got, err := os.ReadFile(filepath.Join(filepath.Dir(workdir), "hitl.txt")); err != nil || string(got) != "approved-write" {
 		t.Fatalf("approved write = %q, %v; screen:\n%s", got, err, screen.text())
 	}
 
@@ -342,14 +345,14 @@ func TestTUILiteralHandoffOverPTY(t *testing.T) {
 	send("approve-me please")
 	expect("approval needed (", 1)
 	expect("approve? y/n", 1)
-	if _, err := os.Stat(filepath.Join(workdir, "hitl.txt")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(filepath.Dir(workdir), "hitl.txt")); !os.IsNotExist(err) {
 		t.Fatalf("write before approval: %v", err)
 	}
 	if _, err := io.WriteString(terminal, "y"); err != nil {
 		t.Fatal(err)
 	}
 	expect("turn ended in", 1)
-	if got, err := os.ReadFile(filepath.Join(workdir, "hitl.txt")); err != nil || string(got) != "approved-write" {
+	if got, err := os.ReadFile(filepath.Join(filepath.Dir(workdir), "hitl.txt")); err != nil || string(got) != "approved-write" {
 		t.Fatalf("approved write = %q, %v", got, err)
 	}
 	if n := strings.Count(screen.text(), "/help. Ctrl-D leaves."); n != 1 {
