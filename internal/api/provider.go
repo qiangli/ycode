@@ -2,11 +2,15 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/qiangli/ycode/internal/runtime/oauth"
+	"github.com/qiangli/yoke/pkg/broker/door"
 )
 
 // ModelAliases maps short names to full model IDs.
@@ -38,6 +42,8 @@ type ProviderConfig struct {
 // An empty result means ycode does not know a safe replacement for that endpoint.
 func DefaultModelForProvider(cfg ProviderConfig) string {
 	switch strings.ToLower(cfg.DisplayName) {
+	case "bashy":
+		return ""
 	case "deepseek":
 		return "deepseek-chat"
 	case "zai":
@@ -125,7 +131,8 @@ func ResolveModelWithAliases(model string, configAliases map[string]string) stri
 //  6. Available API keys: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY,
 //     DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, DEEPSEEK_API_KEY,
 //     GOOGLE_API_KEY, GEMINI_API_KEY
-//  7. OAuth token → Anthropic
+//  7. Healthy local model door → its OpenAI or Anthropic endpoint
+//  8. OAuth token → Anthropic
 //
 // The DHNT_* pair follows the existing per-provider convention
 // (<PROVIDER>_BASE_URL + <PROVIDER>_API_KEY, same as OPENAI_*,
@@ -156,17 +163,22 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 	// key is set, route directly — the user's explicit per-provider key
 	// beats the cloudbox override for commercial cloud model IDs.
 	cfg, modelMatched := detectFromModel(resolved)
-	if modelMatched && cfg != nil && (cfg.APIKey != "" || cfg.BearerToken != "") {
+	if modelMatched && cfg != nil && cfg.APIKey != "" {
 		return cfg, nil
 	}
 
-	// 2b. Model matched a commercial provider prefix (deepseek-*, gpt-*,
-	// claude-*, …) but its API key is not set. Do NOT fall through to the
-	// DHNT cloudbox pool — commercial cloud model IDs would 404 with a cryptic
-	// "no reachable backend has model <name>". Report a clear, actionable
-	// error naming the key to set. A nil cfg here means "matched but no
-	// creds".
-	if modelMatched && cfg == nil {
+	// 2b. For a recognized model without an explicit key, try the local door
+	// before reporting the provider credential that would otherwise be needed.
+	// A saved OAuth token remains the fallback when the door is unavailable.
+	if modelMatched && envNonEmpty("OPENAI_BASE_URL") == "" {
+		if doorCfg, err := detectModelDoor(resolved); err != nil {
+			return nil, err
+		} else if doorCfg != nil {
+			return doorCfg, nil
+		}
+		if cfg != nil && cfg.BearerToken != "" {
+			return cfg, nil
+		}
 		if envKey := providerEnvKey(DetectProviderFromModel(resolved)); envKey != "" {
 			return nil, fmt.Errorf("model %q requires %s; set it or pick a model your configured provider serves", model, envKey)
 		}
@@ -280,6 +292,12 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 		}, nil
 	}
 
+	if doorCfg, err := detectModelDoor(resolved); err != nil {
+		return nil, err
+	} else if doorCfg != nil {
+		return doorCfg, nil
+	}
+
 	// Fall back to saved OAuth credentials for Anthropic.
 	if token, err := resolveOAuthToken(); err == nil && token != "" {
 		return &ProviderConfig{
@@ -290,6 +308,59 @@ func DetectProvider(model string) (*ProviderConfig, error) {
 	}
 
 	return nil, fmt.Errorf("no API key found; set one of: DHNT_BASE_URL (+ DHNT_API_KEY), ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY, XAI_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, DEEPSEEK_API_KEY, ZAI_API_KEY")
+}
+
+// detectModelDoor uses yoke's canonical door address and owner token. The
+// authenticated health response must identify the broker before credentials
+// are sent to its inference endpoint.
+func detectModelDoor(model string) (*ProviderConfig, error) {
+	base := door.BaseURL()
+	token, err := door.Token()
+	if err != nil {
+		if doorModel(model) {
+			return nil, fmt.Errorf("model door is not running; start it with: bashy llm up: %w", err)
+		}
+		return nil, nil
+	}
+	req, err := http.NewRequest(http.MethodGet, base+"/health", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{Timeout: 300 * time.Millisecond, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
+	resp, err := client.Do(req)
+	if err == nil {
+		defer resp.Body.Close()
+		var health struct {
+			SchemaVersion string `json:"schema_version"`
+		}
+		if resp.StatusCode == http.StatusOK && json.NewDecoder(resp.Body).Decode(&health) == nil && health.SchemaVersion == "bashy-broker-health-v1" {
+			if strings.HasPrefix(strings.ToLower(model), "claude-") {
+				return &ProviderConfig{Kind: ProviderAnthropic, DisplayName: "bashy", APIKey: token, BaseURL: base + "/anthropic"}, nil
+			}
+			return &ProviderConfig{Kind: ProviderOpenAI, DisplayName: "bashy", APIKey: token, BaseURL: base + "/v1"}, nil
+		}
+	}
+	if doorModel(model) {
+		return nil, fmt.Errorf("model door is not running; start it with: bashy llm up")
+	}
+	return nil, nil
+}
+
+func doorModel(model string) bool {
+	lower := strings.ToLower(model)
+	if strings.HasPrefix(lower, "door-") || strings.HasPrefix(lower, "bashy/") {
+		return true
+	}
+	if len(lower) >= 2 && lower[0] == 'l' {
+		for _, c := range lower[1:] {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return DetectProviderFromModel(model) == "unknown"
 }
 
 // NewProvider creates a Provider from a ProviderConfig.

@@ -8,6 +8,8 @@ import (
 
 func clearEnv(t *testing.T) {
 	t.Helper()
+	// Keep provider tests independent of a developer's running model door.
+	t.Setenv("BASHY_LLM_PORT", "1")
 	for _, key := range []string{
 		"DHNT_BASE_URL", "DHNT_API_KEY",
 		"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL",
