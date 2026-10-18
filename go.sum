@@ -1783,6 +1783,8 @@ github.com/qiangli/readline v0.1.4-0.20261013004858-df59d4e258e4 h1:jFEDhq2xCnc7
 github.com/qiangli/readline v0.1.4-0.20261013004858-df59d4e258e4/go.mod h1:a0jdwCqW+MTJWBjQRHa9kRNipGLv1Y8Ep26hoLGNTQ8=
 github.com/qiangli/sh/v3 v3.0.0-20261014083225-477b218e535d h1:WeYsXOry8H3Bhhz0FqHjKvrTOHGmp0YiDcZsSm0+7BM=
 github.com/qiangli/sh/v3 v3.0.0-20261014083225-477b218e535d/go.mod h1:tyFtJgC2PikzHoF5joV+bRq5JdGSisHLNPZNsh9nxgI=
+github.com/qiangli/sqlite v1.50.2-0.20261018085128-5fb52bf328cb h1:LLfdQXY/uXHpJm9eYP0sdcFg4IHQHzIOUwslX9TpqxI=
+github.com/qiangli/sqlite v1.50.2-0.20261018085128-5fb52bf328cb/go.mod h1:tcNzv5p84E0skkmJn038y+hWJbLQXQqEnQfeh5r2JLM=
 github.com/qiangli/yoke v0.0.0-20261017214100-19415c55382f h1:AS42Mc2ZzgsruNQFEvjQcskACmK9Lj+rPzUfXdMHTuI=
 github.com/qiangli/yoke v0.0.0-20261017214100-19415c55382f/go.mod h1:OGVY7dS1gyRXFCwIKX3NZggF7G1ZQkuVTdzabEa/EHY=
 github.com/qiangli/yoke/external/otel v0.0.0-20261017214100-19415c55382f h1:RzD7uB+1eQmnImyKiGMYTdWZRdVWwqExGlhAnYqx7c0=
