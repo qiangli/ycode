@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 )
 
@@ -41,7 +42,7 @@ func TestProvider_FileOnlyLogsExporter(t *testing.T) {
 	logger := p.LoggerProvider.Logger("phase-2-3-test")
 	var rec log.Record
 	rec.SetTimestamp(time.Now())
-	rec.SetBody(log.StringValue("hello-from-file-only-mode"))
+	rec.SetBody(attribute.StringValue("hello-from-file-only-mode"))
 	rec.SetSeverity(log.SeverityInfo)
 	logger.Emit(ctx, rec)
 

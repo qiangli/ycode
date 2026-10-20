@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
@@ -42,30 +43,30 @@ func (cl *ConversationLogger) LogConversation(record *ConversationRecord) {
 	rec.SetTimestamp(record.Timestamp)
 	rec.SetSeverityText("INFO")
 	rec.SetSeverity(log.SeverityInfo)
-	rec.SetBody(log.StringValue(body))
+	rec.SetBody(attribute.StringValue(body))
 	rec.AddAttributes(
-		log.String("log.type", "conversation"),
-		log.String("session.id", record.SessionID),
-		log.String("instance.id", cl.instanceID),
-		log.Int("turn.index", record.TurnIndex),
-		log.String("llm.model", record.Model),
-		log.String("llm.provider", record.Provider),
-		log.String("llm.stop_reason", record.StopReason),
-		log.Int("llm.tokens.input", record.TokensIn),
-		log.Int("llm.tokens.output", record.TokensOut),
-		log.Int("llm.tokens.cache_creation", record.CacheCreation),
-		log.Int("llm.tokens.cache_read", record.CacheRead),
-		log.Float64("llm.cost.dollars", record.EstimatedCostUSD),
-		log.Int64("duration_ms", record.DurationMs),
-		log.Bool("success", record.Success),
-		log.Int("tool_defs", record.ToolDefs),
-		log.Int("tool_calls", len(record.ToolCalls)),
+		attribute.String("log.type", "conversation"),
+		attribute.String("session.id", record.SessionID),
+		attribute.String("instance.id", cl.instanceID),
+		attribute.Int("turn.index", record.TurnIndex),
+		attribute.String("llm.model", record.Model),
+		attribute.String("llm.provider", record.Provider),
+		attribute.String("llm.stop_reason", record.StopReason),
+		attribute.Int("llm.tokens.input", record.TokensIn),
+		attribute.Int("llm.tokens.output", record.TokensOut),
+		attribute.Int("llm.tokens.cache_creation", record.CacheCreation),
+		attribute.Int("llm.tokens.cache_read", record.CacheRead),
+		attribute.Float64("llm.cost.dollars", record.EstimatedCostUSD),
+		attribute.Int64("duration_ms", record.DurationMs),
+		attribute.Bool("success", record.Success),
+		attribute.Int("tool_defs", record.ToolDefs),
+		attribute.Int("tool_calls", len(record.ToolCalls)),
 	)
 	if record.Error != "" {
-		rec.AddAttributes(log.String("error", record.Error))
+		rec.AddAttributes(attribute.String("error", record.Error))
 	}
 	if record.SystemPrompt != "" {
-		rec.AddAttributes(log.String("system_prompt", truncate(record.SystemPrompt, 4096)))
+		rec.AddAttributes(attribute.String("system_prompt", truncate(record.SystemPrompt, 4096)))
 	}
 
 	cl.logger.Emit(context.Background(), rec)
@@ -86,30 +87,30 @@ func (cl *ConversationLogger) LogToolCall(sessionID string, turnIndex int, tc To
 			body += "\n---\n" + tc.Output
 		}
 	}
-	rec.SetBody(log.StringValue(body))
+	rec.SetBody(attribute.StringValue(body))
 
 	rec.AddAttributes(
-		log.String("log.type", "tool_call"),
-		log.String("session.id", sessionID),
-		log.String("instance.id", cl.instanceID),
-		log.Int("turn.index", turnIndex),
-		log.String("tool.name", tc.Name),
-		log.Bool("tool.success", tc.Success),
-		log.Int64("tool.duration_ms", tc.DurationMs),
+		attribute.String("log.type", "tool_call"),
+		attribute.String("session.id", sessionID),
+		attribute.String("instance.id", cl.instanceID),
+		attribute.Int("turn.index", turnIndex),
+		attribute.String("tool.name", tc.Name),
+		attribute.Bool("tool.success", tc.Success),
+		attribute.Int64("tool.duration_ms", tc.DurationMs),
 	)
 	if tc.Source != "" {
-		rec.AddAttributes(log.String("tool.source", tc.Source))
+		rec.AddAttributes(attribute.String("tool.source", tc.Source))
 	}
 	if tc.Error != "" {
-		rec.AddAttributes(log.String("error", tc.Error))
+		rec.AddAttributes(attribute.String("error", tc.Error))
 	}
 
 	// Include full input/output as separate attributes for structured querying.
 	if len(tc.Input) > 0 {
-		rec.AddAttributes(log.String("tool.input", string(tc.Input)))
+		rec.AddAttributes(attribute.String("tool.input", string(tc.Input)))
 	}
 	if tc.Output != "" {
-		rec.AddAttributes(log.String("tool.output", tc.Output))
+		rec.AddAttributes(attribute.String("tool.output", tc.Output))
 	}
 
 	cl.logger.Emit(context.Background(), rec)
@@ -125,21 +126,21 @@ func (cl *ConversationLogger) LogAPIError(sessionID string, turnIndex int,
 	rec.SetTimestamp(time.Now())
 	rec.SetSeverityText("ERROR")
 	rec.SetSeverity(log.SeverityError)
-	rec.SetBody(log.StringValue(detail))
+	rec.SetBody(attribute.StringValue(detail))
 	rec.AddAttributes(
-		log.String("log.type", "api_error"),
-		log.String("session.id", sessionID),
-		log.String("instance.id", cl.instanceID),
-		log.Int("turn.index", turnIndex),
-		log.String("error.type", errorType),
-		log.String("error.status_code", statusCode),
-		log.String("error.detail", detail),
-		log.String("message.role_sequence", roleSequence),
-		log.Int("message.tool_use_count", toolUseCount),
-		log.Int("message.tool_result_count", toolResultCount),
+		attribute.String("log.type", "api_error"),
+		attribute.String("session.id", sessionID),
+		attribute.String("instance.id", cl.instanceID),
+		attribute.Int("turn.index", turnIndex),
+		attribute.String("error.type", errorType),
+		attribute.String("error.status_code", statusCode),
+		attribute.String("error.detail", detail),
+		attribute.String("message.role_sequence", roleSequence),
+		attribute.Int("message.tool_use_count", toolUseCount),
+		attribute.Int("message.tool_result_count", toolResultCount),
 	)
 	if len(orphanUseIDs) > 0 {
-		rec.AddAttributes(log.String("message.orphan_tool_use_ids", strings.Join(orphanUseIDs, ",")))
+		rec.AddAttributes(attribute.String("message.orphan_tool_use_ids", strings.Join(orphanUseIDs, ",")))
 	}
 
 	cl.logger.Emit(context.Background(), rec)
@@ -148,21 +149,21 @@ func (cl *ConversationLogger) LogAPIError(sessionID string, turnIndex int,
 // LogError emits a general error as a structured OTEL log record.
 // Use this for any error surface — tool execution, session I/O, commands,
 // subagent failures, TUI errors. The component field identifies the origin.
-func (cl *ConversationLogger) LogError(component, errorType, detail, sessionID string, extra ...log.KeyValue) {
+func (cl *ConversationLogger) LogError(component, errorType, detail, sessionID string, extra ...attribute.KeyValue) {
 	var rec log.Record
 	rec.SetTimestamp(time.Now())
 	rec.SetSeverityText("ERROR")
 	rec.SetSeverity(log.SeverityError)
-	rec.SetBody(log.StringValue(detail))
+	rec.SetBody(attribute.StringValue(detail))
 	rec.AddAttributes(
-		log.String("log.type", "error"),
-		log.String("error.component", component),
-		log.String("error.type", errorType),
-		log.String("error.detail", detail),
-		log.String("instance.id", cl.instanceID),
+		attribute.String("log.type", "error"),
+		attribute.String("error.component", component),
+		attribute.String("error.type", errorType),
+		attribute.String("error.detail", detail),
+		attribute.String("instance.id", cl.instanceID),
 	)
 	if sessionID != "" {
-		rec.AddAttributes(log.String("session.id", sessionID))
+		rec.AddAttributes(attribute.String("session.id", sessionID))
 	}
 	rec.AddAttributes(extra...)
 
@@ -195,28 +196,28 @@ func (cl *ConversationLogger) LogSessionSummary(summary *SessionSummary) {
 	rec.SetTimestamp(time.Now())
 	rec.SetSeverityText("INFO")
 	rec.SetSeverity(log.SeverityInfo)
-	rec.SetBody(log.StringValue("session_summary"))
+	rec.SetBody(attribute.StringValue("session_summary"))
 	rec.AddAttributes(
-		log.String("log.type", "session_summary"),
-		log.String("session.id", summary.SessionID),
-		log.String("instance.id", cl.instanceID),
-		log.Int("session.turns", summary.TurnsCount),
-		log.Int("session.tokens.input", summary.TokensIn),
-		log.Int("session.tokens.output", summary.TokensOut),
-		log.Float64("session.cost_usd", summary.TotalCostUSD),
-		log.Int64("session.duration_ms", summary.DurationMs),
-		log.Int("session.files_changed", summary.FilesChanged),
-		log.Bool("success", summary.Success),
+		attribute.String("log.type", "session_summary"),
+		attribute.String("session.id", summary.SessionID),
+		attribute.String("instance.id", cl.instanceID),
+		attribute.Int("session.turns", summary.TurnsCount),
+		attribute.Int("session.tokens.input", summary.TokensIn),
+		attribute.Int("session.tokens.output", summary.TokensOut),
+		attribute.Float64("session.cost_usd", summary.TotalCostUSD),
+		attribute.Int64("session.duration_ms", summary.DurationMs),
+		attribute.Int("session.files_changed", summary.FilesChanged),
+		attribute.Bool("success", summary.Success),
 	)
 	if summary.Title != "" {
-		rec.AddAttributes(log.String("session.title", summary.Title))
+		rec.AddAttributes(attribute.String("session.title", summary.Title))
 	}
 	if summary.Error != "" {
-		rec.AddAttributes(log.String("error", summary.Error))
+		rec.AddAttributes(attribute.String("error", summary.Error))
 	}
 	if len(summary.ToolsUsed) > 0 {
 		toolsJSON, _ := json.Marshal(summary.ToolsUsed)
-		rec.AddAttributes(log.String("session.tools_used", string(toolsJSON)))
+		rec.AddAttributes(attribute.String("session.tools_used", string(toolsJSON)))
 	}
 
 	cl.logger.Emit(context.Background(), rec)
@@ -228,13 +229,13 @@ func (cl *ConversationLogger) LogChatMessage(sessionID string, turnIndex int, ro
 	rec.SetTimestamp(time.Now())
 	rec.SetSeverityText("INFO")
 	rec.SetSeverity(log.SeverityInfo)
-	rec.SetBody(log.StringValue(string(content)))
+	rec.SetBody(attribute.StringValue(string(content)))
 	rec.AddAttributes(
-		log.String("log.type", "chat_message"),
-		log.String("session.id", sessionID),
-		log.String("instance.id", cl.instanceID),
-		log.Int("turn.index", turnIndex),
-		log.String("message.role", role),
+		attribute.String("log.type", "chat_message"),
+		attribute.String("session.id", sessionID),
+		attribute.String("instance.id", cl.instanceID),
+		attribute.Int("turn.index", turnIndex),
+		attribute.String("message.role", role),
 	)
 
 	cl.logger.Emit(context.Background(), rec)

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
@@ -39,7 +39,7 @@ func (p *testProcessor) getRecords() []sdklog.Record {
 func TestConversationLoggerLogConversation(t *testing.T) {
 	proc := &testProcessor{}
 	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(proc))
-	t.Cleanup(func() { provider.Shutdown(nil) })
+	t.Cleanup(func() { provider.Shutdown(context.Background()) })
 
 	cl := NewConversationLogger(provider, "instance-1")
 
@@ -70,7 +70,7 @@ func TestConversationLoggerLogConversation(t *testing.T) {
 
 	found := false
 	for _, rec := range recs {
-		rec.WalkAttributes(func(kv log.KeyValue) bool {
+		rec.WalkAttributes(func(kv attribute.KeyValue) bool {
 			if kv.Key == "log.type" && kv.Value.AsString() == "conversation" {
 				found = true
 				return false
@@ -86,7 +86,7 @@ func TestConversationLoggerLogConversation(t *testing.T) {
 func TestConversationLoggerLogToolCall(t *testing.T) {
 	proc := &testProcessor{}
 	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(proc))
-	t.Cleanup(func() { provider.Shutdown(nil) })
+	t.Cleanup(func() { provider.Shutdown(context.Background()) })
 
 	cl := NewConversationLogger(provider, "instance-2")
 
@@ -107,7 +107,7 @@ func TestConversationLoggerLogToolCall(t *testing.T) {
 
 	found := false
 	for _, rec := range recs {
-		rec.WalkAttributes(func(kv log.KeyValue) bool {
+		rec.WalkAttributes(func(kv attribute.KeyValue) bool {
 			if kv.Key == "log.type" && kv.Value.AsString() == "tool_call" {
 				found = true
 				return false
@@ -123,7 +123,7 @@ func TestConversationLoggerLogToolCall(t *testing.T) {
 func TestConversationLoggerNilRecord(t *testing.T) {
 	proc := &testProcessor{}
 	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(proc))
-	t.Cleanup(func() { provider.Shutdown(nil) })
+	t.Cleanup(func() { provider.Shutdown(context.Background()) })
 
 	cl := NewConversationLogger(provider, "instance-3")
 	cl.LogConversation(nil) // should not panic
