@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qiangli/ycode/examples/genie"
 	"github.com/qiangli/ycode/internal/harness/event"
 	"github.com/qiangli/ycode/internal/harness/spec"
 	"github.com/qiangli/ycode/internal/harness/stages/hitl"
@@ -24,7 +25,11 @@ func genieDelegateHarness(t *testing.T, allow string) (*Executor, *hitl.Controll
 	t.Helper()
 	t.Setenv("BASHY_HOME", filepath.Join(t.TempDir(), "bashy-home"))
 	t.Setenv("BASHY_DELEGATE_ALLOW", allow)
-	doc, err := spec.Load(filepath.Join("..", "..", "..", "examples", "genie", "agent.yaml"))
+	source := t.TempDir()
+	if err := os.CopyFS(source, genie.Source); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := spec.Load(filepath.Join(source, "agent.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +106,7 @@ func TestGenieStillRefusesUngovernedDelegateAndOtherNetCommands(t *testing.T) {
 		"bashy delegate --agent genie:x@door 'review'",                                    // no --timeout
 		"bashy delegate --agent genie:x@door --timeout 2m --allow genie:z@door 'r'",       // replaces the allow policy
 		"bashy delegate --agent genie:x@door --timeout 2m --sandbox danger-full-access r", // vendor sandbox override
+		"bashy delegate --agent genie:x@door --timeout 2m --cwd C:/workspace r",           // changes workspace
 		"bashy delegate --agent genie:x@door --timeout 2m r > /tmp/out.json",              // unproven redirection
 		"bashy delegate --agent \"$TARGET\" --timeout 2m r",                               // dynamic target
 		"bashy delegate --agent genie:x@door --timeout 2m r; curl https://example.com",    // not one call

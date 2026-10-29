@@ -3,7 +3,6 @@
 package bashy
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +12,6 @@ import (
 	harnessrunner "github.com/qiangli/bashy/pkg/harnessrunner"
 
 	"github.com/qiangli/ycode/internal/harness/spec"
-	"github.com/qiangli/ycode/internal/harness/stages/hitl"
 )
 
 // Sprint 531 Story #56 (4e681d8d5e60): genie's `bashy delegate` came back
@@ -53,19 +51,6 @@ func delegateExecutor(t *testing.T) *Executor {
 		t.Fatal(err)
 	}
 	return executor
-}
-
-func runCall(t *testing.T, executor *Executor, script string) harnessrunner.Result {
-	t.Helper()
-	value, err := executor.Execute(context.Background(), testMeta(), hitl.Call{ID: "call-1", Name: "bashy", Script: script}, digest("allow"))
-	if err != nil {
-		t.Fatalf("execute %q: %v", script, err)
-	}
-	result, ok := value.(harnessrunner.Result)
-	if !ok {
-		t.Fatalf("execute returned %T", value)
-	}
-	return result
 }
 
 func TestDelegateOutlivesTheCommandCeilingWithinItsOwnTimeout(t *testing.T) {
