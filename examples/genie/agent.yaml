@@ -446,7 +446,10 @@ spec:
       maxSpillBytes: 16777216
       maxParallel: 2
       permissionCeiling: workspace-write
-      effectsCeiling: [read, write, exec, net, destroy]
+      # spend is here for `bashy delegate` only (its atlas maximum is exec, net,
+      # spend): the executor governs a delegate call only within this ceiling,
+      # and policy still asks for spend from any other command.
+      effectsCeiling: [read, write, exec, net, destroy, spend]
       preflight: required
       incompletePreflight: deny
       hostFallback: deny
@@ -555,6 +558,17 @@ spec:
         - id: not-checkable-wrap-it-in-an-effects-envelope
           match: {preflightComplete: false}
           decision: deny
+        # S531 D3: `bashy delegate` is the declared delegation mechanism,
+        # governed on every OS by its own guards, never by a network sandbox.
+        # The executor scopes its atlas effects "delegate" only for one plain
+        # call whose literal target is in a nonempty BASHY_DELEGATE_ALLOW,
+        # with a literal --timeout, within effectsCeiling; bashy never emits
+        # that scope, so any other net or spend command still asks.
+        - id: governed-delegate
+          match:
+            effectsAllWithin: [exec, net, spend]
+            pathsAllWithin: [delegate]
+          decision: allow
         # The instance builder changes only this decision for
         # GENIE_APPROVAL=auto. The path and effect bounds stay in YAML.
         - id: unattended-workspace-destruction
@@ -807,7 +821,9 @@ spec:
               remedy:
                 rules: [incomplete-preflight]
                 kinds: [command, effectRefinement, dynamicCommand, dynamicRedirection, redirection]
-                unlessScriptMatches: '^\s*@(effects|guard|contain)\('
+                # A bashy delegate call is never steered into @contain: delegate's
+                # own guards govern it, and the denial names the one it missed.
+                unlessScriptMatches: '^\s*(@(effects|guard|contain)\(|bashy\s+delegate(\s|$))'
                 text: |-
                   To run it, send this instead (the same command in an effects envelope):
                   @effects("read,write,exec")

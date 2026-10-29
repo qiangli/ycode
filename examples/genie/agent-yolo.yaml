@@ -812,7 +812,9 @@ spec:
               remedy:
                 rules: [incomplete-preflight]
                 kinds: [command, effectRefinement, dynamicCommand, dynamicRedirection, redirection]
-                unlessScriptMatches: '^\s*@(effects|guard|contain)\('
+                # A bashy delegate call is never steered into @contain: delegate's
+                # own guards govern it, and the denial names the one it missed.
+                unlessScriptMatches: '^\s*(@(effects|guard|contain)\(|bashy\s+delegate(\s|$))'
                 text: |-
                   To run it, send this instead (the same command in an effects envelope):
                   @effects("read,write,exec")

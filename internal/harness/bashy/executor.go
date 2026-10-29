@@ -138,6 +138,7 @@ func (e *Executor) Preflight(_ context.Context, meta Meta, call hitl.Call) (hitl
 	}
 	result := e.manager.Preflight(req)
 	report := reportFor(call, result)
+	e.governDelegateReport(&report)
 	if err := e.finished(meta, req, result); err != nil {
 		return hitl.Preflight{}, err
 	}
@@ -301,7 +302,7 @@ func (e *Executor) request(meta Meta, call hitl.Call, operation harnessrunner.Op
 		SchemaVersion: harnessrunner.RequestSchemaVersion,
 		RequestID:     stableID(string(operation), meta.SessionID, meta.RunID, call.ID, fmt.Sprint(meta.LifecycleGeneration)),
 		Operation:     operation, Binding: binding,
-		Command:   harnessrunner.Command{Script: call.Script, Cwd: e.dir, Environment: e.environment()},
+		Command:   harnessrunner.Command{Script: e.delegateRequest(call.Script), Cwd: e.dir, Environment: e.environment()},
 		Limits:    harnessrunner.Limits{WallTimeMs: int64(timeoutMS), StdoutBytes: int64(maxBytes), StderrBytes: int64(maxBytes), StdinBytes: e.stdinBytes},
 		Placement: harnessrunner.Placement{ID: placementID(meta, e.placement), Generation: meta.PlacementGeneration},
 	}, nil

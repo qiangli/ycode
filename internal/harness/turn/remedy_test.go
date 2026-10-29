@@ -175,3 +175,31 @@ func TestGenieRemedyFormPassesPreflightAndPolicy(t *testing.T) {
 		}
 	}
 }
+
+// Sprint: #531; Story: #57; Story-ID: f7ce5d2016a9
+// genie's own remedy never steers a refused `bashy delegate` into
+// @contain(net: deny): delegate's guards govern it, and the denial carries
+// the guard it missed. Other unprovable commands still get the envelope.
+func TestGenieRemedySkipsDelegate(t *testing.T) {
+	for _, file := range []string{"agent.yaml", "agent-yolo.yaml"} {
+		doc, err := spec.Load(filepath.Join("..", "..", "..", "examples", "genie", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		remedy := doc.Spec.Pipelines["deny-command"].Nodes[0].Run.With["remedy"]
+		decision := hitl.Decision{PolicyRef: "workspace", RuleID: "incomplete-preflight", Decision: "deny"}
+		for _, script := range []string{
+			"bashy delegate --json --agent genie:z@door --timeout 8m 'review'",
+			"cd sub\nbashy delegate --agent genie:z@door 'review'",
+		} {
+			got, err := denialRemedy(remedy, decision, incomplete("effectRefinement"), hitl.Call{Script: script})
+			if err != nil || got != "" {
+				t.Errorf("%s: remedy for %q = %q (%v), want none", file, script, got, err)
+			}
+		}
+		got, err := denialRemedy(remedy, decision, incomplete("command"), hitl.Call{Script: "python x.py"})
+		if err != nil || !strings.Contains(got, "@contain") {
+			t.Errorf("%s: remedy for python = %q (%v), want the envelope", file, got, err)
+		}
+	}
+}
