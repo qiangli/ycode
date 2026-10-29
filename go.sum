@@ -729,6 +729,7 @@ github.com/clbanning/x2j v0.0.0-20191024224557-825249438eec/go.mod h1:jMjuTZXRI4
 github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=
 github.com/clipperhouse/displaywidth v0.11.0 h1:lBc6kY44VFw+TDx4I8opi/EtL9m20WSEFgwIwO+UVM8=
 github.com/clipperhouse/displaywidth v0.11.0/go.mod h1:bkrFNkf81G8HyVqmKGxsPufD3JhNl3dSqnGhOoSD/o0=
+github.com/clipperhouse/uax29/v2 v2.2.0/go.mod h1:EFJ2TJMRUaplDxHKj1qAEhCtQPW2tJSwu5BF98AuoVM=
 github.com/clipperhouse/uax29/v2 v2.7.0 h1:+gs4oBZ2gPfVrKPthwbMzWZDaAFPGYK72F0NJv2v7Vk=
 github.com/clipperhouse/uax29/v2 v2.7.0/go.mod h1:EFJ2TJMRUaplDxHKj1qAEhCtQPW2tJSwu5BF98AuoVM=
 github.com/cloudflare/circl v1.6.3 h1:9GPOhQGF9MCYUeXyMYlqTR6a5gTrgR/fBLXvUgtVcg8=
@@ -1773,6 +1774,8 @@ github.com/qiangli/yoke v0.0.0-20261027145640-03fe40ca29a6 h1:E8/sC1phBGQMCLZdKg
 github.com/qiangli/yoke v0.0.0-20261027145640-03fe40ca29a6/go.mod h1:1iYVqkJaq5rxfhGPrDJUtYWNj+jvrq+jdu3sT+jjA2k=
 github.com/qiangli/yoke/external/otel v0.0.0-20261027145640-03fe40ca29a6 h1:Xb3t4SkmaZ5hOYttIBbIu9vDkisjPFjNar4d2SrBJQE=
 github.com/qiangli/yoke/external/otel v0.0.0-20261027145640-03fe40ca29a6/go.mod h1:W+8BtxOjeBNx+k6QB1T18VPsyss6FRoKRHublpQWJHk=
+github.com/qiangli/yoke/external/runewidth v0.0.0-20261025041311-99ef13338402 h1:GaFTBFLiK9HEK4DBrKzVmc61k4MhJE8q9sQws9r1h3o=
+github.com/qiangli/yoke/external/runewidth v0.0.0-20261025041311-99ef13338402/go.mod h1:tARgoBZEIZ6C6/dzI4z9VZDCJgeKklZbjfHXG9bGt5o=
 github.com/qiangli/yoke/pkg/llmgw v0.0.0-20261027145640-03fe40ca29a6 h1:Dr4/S21lFyzCmIrRdDW55vuLS+C+1aOvC6FNDaaXxrc=
 github.com/qiangli/yoke/pkg/llmgw v0.0.0-20261027145640-03fe40ca29a6/go.mod h1:UnJ5Aw/zCOdFgHdziuLv9sU0t/KT8dcOrGfmwcm6X4E=
 github.com/qiangli/yoke/pkg/oci v0.0.0-20261027145640-03fe40ca29a6 h1:1wfeByfVuHoRAi8ar4eAwS+pHoTppG0OBvZIrefnDo0=

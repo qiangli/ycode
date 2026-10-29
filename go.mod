@@ -458,3 +458,7 @@ exclude (
 replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20260622175928-b703f567277d
 
 replace github.com/qiangli/ycode/examples/genie v0.0.0 => ./examples/genie
+
+// S407.6: preserve v0.0.27 TUI widths without constructing Unicode LUTs at
+// process startup (the same fork pinned by Bashy's one-file shell).
+replace github.com/mattn/go-runewidth => github.com/qiangli/yoke/external/runewidth v0.0.0-20261025041311-99ef13338402
