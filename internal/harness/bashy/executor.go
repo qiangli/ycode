@@ -139,6 +139,7 @@ func (e *Executor) Preflight(_ context.Context, meta Meta, call hitl.Call) (hitl
 	result := e.manager.Preflight(req)
 	report := reportFor(call, result)
 	e.governDelegateReport(&report)
+	governGuardedReport(&report)
 	if err := e.finished(meta, req, result); err != nil {
 		return hitl.Preflight{}, err
 	}

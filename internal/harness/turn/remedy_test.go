@@ -198,7 +198,7 @@ func TestGenieRemedySkipsDelegate(t *testing.T) {
 			}
 		}
 		got, err := denialRemedy(remedy, decision, incomplete("command"), hitl.Call{Script: "python x.py"})
-		if err != nil || !strings.Contains(got, "@contain") {
+		if err != nil || !strings.Contains(got, "@guard(") || strings.Contains(got, "@contain") {
 			t.Errorf("%s: remedy for python = %q (%v), want the envelope", file, got, err)
 		}
 	}

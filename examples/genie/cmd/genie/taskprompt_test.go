@@ -96,7 +96,7 @@ func TestDenialCarriesTheWrappedForm(t *testing.T) {
 		"remedy:",
 		"rules: [incomplete-preflight]",
 		`@effects("read,write,exec")`,
-		`@contain(net: "deny")`,
+		`@guard("read,write,exec")`,
 		"{{command}}",
 	} {
 		if !strings.Contains(section, want) {

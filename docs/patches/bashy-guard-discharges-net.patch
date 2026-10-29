@@ -1,0 +1,97 @@
+bashy half of Sprint 531 D3 (Story #59, Story-ID 09ca87a77ca4): a @guard cap
+that leaves out net discharges net the way @contain(net: "deny") does.
+
+Apply in the bashy repository (from its root):  git apply PATH/TO/this.patch
+Base: bashy 93d5b509ad3c (the ycode go.mod pin). Verified on a copy of that
+module: go test -short ./pkg/harnessrunner -run
+'TestDecoratedEnvelopeBoundsInterpreters|TestFunctions' passes.
+
+Why: genie's deny remedy now teaches @effects("read,write,exec") +
+@guard("read,write,exec") instead of @contain(net: "deny") (no sandbox, no
+podman, same on every OS). The harnessrunner compiler still added a possible
+net effect (source "uncontained") to any declared envelope without @contain,
+so policy asked instead of allowing. With this patch a net-free guard
+suppresses that fact. ycode carries the same rule at its executor boundary
+(internal/harness/bashy/guard.go) until the bashy pin includes this; it is a
+no-op afterwards and can be removed then.
+
+Known limit (recorded for the operator): the
+guard is an in-interpreter, atlas-level cap. It denies commands the Command
+Atlas classifies with net (fetch, sntp: 126 "denied by the effect cap"). It
+does not cross an execve, and under @effects a command the atlas does not
+know takes the declared classification: scp and rsync to 127.0.0.1 ran inside
+@effects("read,write,exec") + @guard("read,write,exec"), and a child shell
+(`sh t.sh` re-entering bashy; observed with bashy c768073) ran curl inside
+the guard: the cap is not inherited. This is weaker than
+@contain's OS-enforced net deny.
+diff -ru a/pkg/harnessrunner/refine_files_test.go b/pkg/harnessrunner/refine_files_test.go
+--- a/pkg/harnessrunner/refine_files_test.go	2026-10-29 14:13:34.833955059 -0700
++++ b/pkg/harnessrunner/refine_files_test.go	2026-10-29 14:13:44.434653149 -0700
+@@ -175,6 +175,25 @@
+ 	if _, net := effectKinds(open)[atlas.EffNet]; !net {
+ 		t.Fatalf("an uncontained declaration without net must keep a possible net effect: %+v", open.Effects)
+ 	}
++	// S531 D3: a guard that leaves out net discharges it like contain does —
++	// the in-interpreter cap denies net commands, with no sandbox.
++	guarded := compileIn(t, dir, `@effects("read,write,exec")
++@guard("read,write,exec")
++function tests() { sh test_slug.sh; }
++tests`)
++	if !guarded.Complete {
++		t.Fatalf("declared, guarded envelope incomplete: %+v", guarded.Unsupported)
++	}
++	if _, net := effectKinds(guarded)[atlas.EffNet]; net {
++		t.Fatalf("a net-free guard must discharge net: %+v", guarded.Effects)
++	}
++	netGuard := compileIn(t, dir, `@effects("read,write,exec")
++@guard("read,write,exec,net")
++function tests() { sh test_slug.sh; }
++tests`)
++	if _, net := effectKinds(netGuard)[atlas.EffNet]; !net {
++		t.Fatalf("a guard admitting net must keep the possible net effect: %+v", netGuard.Effects)
++	}
+ 	exceeds := compileIn(t, dir, `@guard("read")
+ @effects("read,write")
+ function tests() { python3 -m pytest; }
+diff -ru a/pkg/harnessrunner/refine_funcs.go b/pkg/harnessrunner/refine_funcs.go
+--- a/pkg/harnessrunner/refine_funcs.go	2026-10-29 14:13:34.813737256 -0700
++++ b/pkg/harnessrunner/refine_funcs.go	2026-10-29 14:13:44.433996762 -0700
+@@ -21,7 +21,10 @@
+ // A declared envelope is recorded with scope "declared" and certainty
+ // "declared": the policy decides whether declared effects are acceptable.
+ // A declaration that leaves out `net` is only believed when the function is
+-// contained; otherwise the call keeps a possible net effect.
++// contained or guarded by a cap that leaves out `net` (the guard denies, in
++// the interpreter, every dispatched command whose atlas effects include net —
++// no sandbox, the same on every OS); otherwise the call keeps a possible net
++// effect.
+ 
+ // ScopeDeclared labels effects that come from a Bash# declaration rather than
+ // from proven targets.
+@@ -38,6 +41,7 @@
+ 	body      *syntax.Stmt
+ 	declared  []string // @effects, else @guard
+ 	guard     []string
++	netGuard  bool // some @guard cap leaves out net; nested guards only narrow
+ 	contained bool
+ 	decorated bool
+ 	compiled  *Intent
+@@ -64,6 +68,9 @@
+ 			case "guard":
+ 				summary.guard = splitEffects(value)
+ 				summary.decorated = true
++				if value != "" && !subset([]string{atlas.EffNet}, summary.guard) {
++					summary.netGuard = true
++				}
+ 			case "contain":
+ 				if (argName == "" || argName == "net") && value == "deny" {
+ 					summary.contained = true
+@@ -166,7 +173,7 @@
+ 		}
+ 		intent.Effects = append(intent.Effects, Effect{Kind: kind, Scope: ScopeDeclared, Target: target, Source: "decorator:effects", Certainty: "declared"})
+ 	}
+-	if !summary.contained && !subset([]string{atlas.EffNet}, summary.declared) {
++	if !summary.contained && !summary.netGuard && !subset([]string{atlas.EffNet}, summary.declared) {
+ 		intent.Effects = append(intent.Effects, Effect{Kind: atlas.EffNet, Scope: ScopeDeclared, Target: target, Source: "uncontained", Certainty: "possible"})
+ 	}
+ 	_ = argv

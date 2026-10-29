@@ -585,10 +585,14 @@ spec:
           decision: allow
         # Bash# effect envelopes: a function whose body cannot be proven
         # command by command (python, pytest, pip) is bounded by its own
-        # @effects declaration, and @contain(net: "deny") takes net out of it.
-        # bashy's preflight records those effects with scope "declared"; an
-        # uncontained declaration keeps a possible net effect and so falls
-        # through to the network rule above.
+        # @effects declaration, and @guard("read,write,exec") takes net out of
+        # it: the guard is bashy's in-interpreter effect cap, so any command the
+        # body dispatches whose atlas effects include net is denied before it
+        # runs, on every OS with no sandbox (S531 D3). bashy's preflight records
+        # the declared effects with scope "declared"; a declaration with no
+        # net-free guard (or @contain(net: "deny"), only when a task asks for a
+        # sandbox) keeps a possible net effect and so falls through to the
+        # network rule above.
         - id: declared-envelope
           match:
             effectsAllWithin: [read, write, exec]
@@ -814,11 +818,13 @@ spec:
                 kinds: [command, effectRefinement, dynamicCommand, dynamicRedirection, redirection]
                 # A bashy delegate call is never steered into @contain: delegate's
                 # own guards govern it, and the denial names the one it missed.
+                # S531 D3: the envelope caps net with @guard, never @contain: no
+                # sandbox, no podman, the same on every OS.
                 unlessScriptMatches: '^\s*(@(effects|guard|contain)\(|bashy\s+delegate(\s|$))'
                 text: |-
                   To run it, send this instead (the same command in an effects envelope):
                   @effects("read,write,exec")
-                  @contain(net: "deny")
+                  @guard("read,write,exec")
                   function run_checked() {
                   {{command}}
                   }

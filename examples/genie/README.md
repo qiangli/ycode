@@ -17,11 +17,11 @@ perform comparably with local models: no external LLM vendor is required.
 - **Bash# effect envelopes.** An interpreter or test runner cannot be proven
   safe command by command, so bashy's preflight denies a bare `python -m
   pytest`. genie's prompt teaches the model to wrap such runs in a function
-  that declares its effects and denies the network:
+  that declares its effects and guards them without the network:
 
   ```bsh
   @effects("read,write,exec")
-  @contain(net: "deny")
+  @guard("read,write,exec")
   function run_tests() {
     python3 -m unittest discover -s tests -t .
   }
@@ -30,8 +30,12 @@ perform comparably with local models: no external LLM vendor is required.
 
   The preflight records the declared effects with scope `declared`, and the
   `declared-envelope` rule in `agent.yaml` allows them when they stay within
-  read, write and exec. A declaration without `@contain(net: "deny")` keeps a
-  possible network effect and falls through to the network rule.
+  read, write and exec. `@guard` is bashy's in-interpreter effect cap: a
+  command the body dispatches whose atlas effects include net is denied before
+  it runs, on every OS, with no sandbox or setup. A declaration without a
+  net-free guard keeps a possible network effect and falls through to the
+  network rule. `@contain` (an OS sandbox) is used only when a task explicitly
+  asks for one.
 - **A fixture task** (`fixture/`): a one-file Python bug with failing unit
   tests, the smallest end-to-end check of the loop.
 - Environment variables use the `GENIE_` prefix (`GENIE_TASK_JSON`,
