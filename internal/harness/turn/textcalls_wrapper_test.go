@@ -38,11 +38,11 @@ func TestRecoverTextToolCallsS329UnclosedEntry(t *testing.T) {
 	if err := json.Unmarshal([]byte(s329WrapperText), &strict); err == nil {
 		t.Fatal("sample parses strictly; it must reproduce the unclosed-entry defect")
 	}
-	calls, repaired, ok := recoverTextToolCallsDetail(s329WrapperText)
+	calls, repairs, ok := recoverTextToolCallsDetail(s329WrapperText)
 	if !ok || len(calls) != 1 {
 		t.Fatalf("calls = %#v, ok = %v, want the one bashy call", calls, ok)
 	}
-	if !repaired {
+	if !repairs.Closers {
 		t.Fatal("repaired = false, want the closer repair reported")
 	}
 	call := calls[0].(map[string]any)

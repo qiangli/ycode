@@ -1,0 +1,1 @@
+{"tool_calls":[{"name":"bashy","arguments":{"script":"@effects(\"read,write,exec\")\n@contain(net: \"deny\")\nfunction run_checked() {\ncat >> inv.py <<'EOF'\n\n\ndef report():\n    \"\"\"Return \\\"name: qty\\\" strings sorted by name.\"\"\"\n    return [f\"{name}: {qty}\" for name, qty in sorted(_items.items())]\nEOF\ntail -6 inv.py\n}\nrun_checked"}]}

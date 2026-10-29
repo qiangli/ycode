@@ -2,7 +2,9 @@ package turn
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/qiangli/ycode/internal/harness/provider"
 )
@@ -22,7 +24,9 @@ const textToolCallRecoveredEvent = "llm.text_tool_call_recovered"
 //     non-empty script string;
 //   - a single {"name":"bashy","arguments":{...}} object of the same form;
 //   - either of the above as the single fenced code block in an otherwise
-//     prose reply.
+//     prose reply;
+//   - either of the above starting a line after prose and ending the reply;
+//   - one bashy({...}) call line (see textToolCallFromMarkup).
 //
 // An entry may also use the canonical nested OpenAI form
 // {"type":"function","function":{"name":"bashy","arguments":...}}, and
@@ -38,9 +42,15 @@ func recoverTextToolCalls(body string) ([]any, bool) {
 	return calls, ok
 }
 
+// textCallRepairs reports which bounded repairs a recovered document needed
+// to parse, so the recovery event can journal them.
+type textCallRepairs struct {
+	Closers bool
+	Quotes  bool
+}
+
 // recoverTextToolCallsDetail is recoverTextToolCalls that also reports
-// whether the document needed the bounded closer repair below to parse, so
-// the recovery event can journal it.
+// which bounded repair, if any, the document needed to parse.
 //
 // Sprint 413 story #1846 (S329 steer/t1-pivot): the model wrote
 // {"tool_calls":[{"name":"bashy","arguments":{"script":"..."}]} — the call
@@ -50,26 +60,31 @@ func recoverTextToolCalls(body string) ([]any, bool) {
 // open is repaired by closing the inner one first; the result must then
 // pass the same strict parse and schema validation. Truncated documents
 // (unclosed string or container at end of input) are never repaired.
-func recoverTextToolCallsDetail(body string) ([]any, bool, bool) {
-	candidate, ok := textToolCallCandidate(body)
+//
+// Sprint 531 story #60: claude through the model door wrote the call after
+// a sentence of prose, left raw double quotes unescaped inside the script
+// (a heredoc commit message), or wrote it as a bashy({...}) call line
+// followed by a result it made up; the turn ended with nothing run. Those
+// shapes recover here under the same validation.
+func recoverTextToolCallsDetail(body string) ([]any, textCallRepairs, bool) {
+	for _, candidate := range textToolCallCandidates(body) {
+		if calls, repairs, ok := recoverTextToolCallDocument(candidate); ok {
+			return calls, repairs, true
+		}
+	}
+	if call, ok := textToolCallFromMarkup(body); ok {
+		return []any{call}, textCallRepairs{}, true
+	}
+	return nil, textCallRepairs{}, false
+}
+
+// recoverTextToolCallDocument parses one candidate document, strictly first
+// and then with the bounded repairs, and validates the calls it carries. A
+// document that parses but does not validate refuses without repair.
+func recoverTextToolCallDocument(candidate string) ([]any, textCallRepairs, bool) {
+	doc, repairs, ok := parseTextToolCallDocument(candidate)
 	if !ok {
-		return nil, false, false
-	}
-	repaired := false
-	var doc map[string]any
-	if err := json.Unmarshal([]byte(candidate), &doc); err != nil {
-		fixed, changed := repairMismatchedClosers(candidate)
-		if !changed {
-			return nil, false, false
-		}
-		doc = nil
-		if err := json.Unmarshal([]byte(fixed), &doc); err != nil {
-			return nil, false, false
-		}
-		repaired = true
-	}
-	if doc == nil {
-		return nil, false, false
+		return nil, textCallRepairs{}, false
 	}
 	var calls []any
 	if _, present := doc["tool_calls"]; present {
@@ -82,9 +97,40 @@ func recoverTextToolCallsDetail(body string) ([]any, bool, bool) {
 		calls = []any{call}
 	}
 	if !ok {
-		return nil, false, false
+		return nil, textCallRepairs{}, false
 	}
-	return calls, repaired, true
+	return calls, repairs, true
+}
+
+// parseTextToolCallDocument tries the strict parse, then each bounded repair
+// alone, then both (quotes first: the closer scan needs correct strings).
+func parseTextToolCallDocument(candidate string) (map[string]any, textCallRepairs, bool) {
+	attempts := []struct {
+		repairs textCallRepairs
+		fix     func(string) (string, bool)
+	}{
+		{textCallRepairs{}, func(doc string) (string, bool) { return doc, true }},
+		{textCallRepairs{Closers: true}, repairMismatchedClosers},
+		{textCallRepairs{Quotes: true}, repairUnescapedQuotes},
+		{textCallRepairs{Closers: true, Quotes: true}, func(doc string) (string, bool) {
+			quoted, ok := repairUnescapedQuotes(doc)
+			if !ok {
+				return "", false
+			}
+			return repairMismatchedClosers(quoted)
+		}},
+	}
+	for _, attempt := range attempts {
+		fixed, ok := attempt.fix(candidate)
+		if !ok {
+			continue
+		}
+		var doc map[string]any
+		if json.Unmarshal([]byte(fixed), &doc) == nil && doc != nil {
+			return doc, attempt.repairs, true
+		}
+	}
+	return nil, textCallRepairs{}, false
 }
 
 // maxCloserRepairs bounds how many missing closers one document may have
@@ -155,23 +201,146 @@ func repairMismatchedClosers(doc string) (string, bool) {
 	return out.String(), true
 }
 
-// textToolCallCandidate extracts the one JSON document a reply may carry:
-// the whole trimmed text when it opens with an object (a trailing prose tail
-// then fails the strict parse below), or the single fenced block in a reply
-// that has exactly one.
-func textToolCallCandidate(body string) (string, bool) {
+// maxQuoteRepairs bounds how many raw quotes one document may have escaped.
+const maxQuoteRepairs = 32
+
+// repairUnescapedQuotes escapes each raw double quote inside a JSON string
+// that cannot be the string's end, because what follows it (after blanks) is
+// not ",", ":", "}", "]" or the end of the document. Models writing a script
+// as JSON text leave quotes in heredoc bodies unescaped. It reports false —
+// refuse — when nothing needed escaping, more than maxQuoteRepairs did, or
+// the document ends inside a string. The result still has to pass the
+// strict parse and validation.
+func repairUnescapedQuotes(doc string) (string, bool) {
+	var out strings.Builder
+	inString, escaped := false, false
+	inserted := 0
+	for index := 0; index < len(doc); index++ {
+		ch := doc[index]
+		if !inString {
+			inString = ch == '"'
+			out.WriteByte(ch)
+			continue
+		}
+		switch {
+		case escaped:
+			escaped = false
+		case ch == '\\':
+			escaped = true
+		case ch == '"':
+			if rest := strings.TrimLeft(doc[index+1:], " \t\r\n"); rest != "" && !strings.ContainsRune(",:}]", rune(rest[0])) {
+				out.WriteString(`\"`)
+				inserted++
+				continue
+			}
+			inString = false
+		}
+		out.WriteByte(ch)
+	}
+	if inString || inserted == 0 || inserted > maxQuoteRepairs {
+		return "", false
+	}
+	return out.String(), true
+}
+
+// textToolCallCandidates returns the JSON documents a reply may carry, in
+// the order to try them: the whole trimmed text when it opens with an object
+// (a trailing prose tail then fails the strict parse), or the single fenced
+// block in a reply that has exactly one; then, for a reply that opens with
+// prose, the text from its first line that opens with an object to the end
+// (prose after that document fails the strict parse).
+func textToolCallCandidates(body string) []string {
 	trimmed := strings.TrimSpace(body)
 	if trimmed == "" {
-		return "", false
+		return nil
 	}
 	if strings.HasPrefix(trimmed, "{") {
-		return trimmed, true
+		return []string{trimmed}
 	}
-	blocks := fencedBlocks(trimmed)
-	if len(blocks) != 1 {
-		return "", false
+	var out []string
+	if blocks := fencedBlocks(trimmed); len(blocks) == 1 {
+		out = append(out, strings.TrimSpace(stripFenceTag(blocks[0])))
 	}
-	return strings.TrimSpace(stripFenceTag(blocks[0])), true
+	if at := firstLineOpeningObject(trimmed); at >= 0 {
+		out = append(out, strings.TrimSpace(trimmed[at:]))
+	}
+	return out
+}
+
+// firstLineOpeningObject is the offset of the first "{" that opens a line
+// (after optional blanks), or -1.
+func firstLineOpeningObject(body string) int {
+	for offset := 0; offset < len(body); {
+		line := body[offset:]
+		if end := strings.IndexByte(line, '\n'); end >= 0 {
+			line = line[:end]
+		}
+		if trimmed := strings.TrimLeft(line, " \t\r"); strings.HasPrefix(trimmed, "{") {
+			return offset + len(line) - len(trimmed)
+		}
+		offset += len(line) + 1
+	}
+	return -1
+}
+
+// textToolCallMarkup finds a call line: an optional short lead with no ASCII
+// letter or digit (a list dash, an emoji, or its mojibake), then bashy( and
+// the arguments object.
+var textToolCallMarkup = regexp.MustCompile(`(?m)^([^\n]*?)` + regexp.QuoteMeta(provider.ToolName) + `\(\s*\{`)
+
+// maxMarkupLeadRunes bounds the lead before a call line's tool name.
+const maxMarkupLeadRunes = 8
+
+// textToolCallFromMarkup recovers the one transcript-style call line a reply
+// may carry, bashy({"script":"..."}), wherever it sits in the reply: the
+// arguments object must close with ")" and carry only the bashy tool's own
+// argument keys. Text after the call line is ignored: a result written there
+// is the model's invention, and running the call replaces it with the real
+// one. A call named inside a sentence, two call lines, or anything that is
+// not exactly one strict JSON object refuses.
+func textToolCallFromMarkup(body string) (map[string]any, bool) {
+	matches := textToolCallMarkup.FindAllStringSubmatchIndex(body, -1)
+	if len(matches) != 1 {
+		return nil, false
+	}
+	match := matches[0]
+	lead := body[match[2]:match[3]]
+	if utf8.RuneCountInString(lead) > maxMarkupLeadRunes || strings.IndexFunc(lead, isASCIIAlphanumeric) >= 0 {
+		return nil, false
+	}
+	open := match[1] - 1
+	dec := json.NewDecoder(strings.NewReader(body[open:]))
+	var args map[string]any
+	if dec.Decode(&args) != nil || args == nil {
+		return nil, false
+	}
+	rest := strings.TrimLeft(body[open+int(dec.InputOffset()):], " \t\r\n")
+	if !strings.HasPrefix(rest, ")") || !bashyArgumentKeys(args) {
+		return nil, false
+	}
+	return textToolCallFrom(map[string]any{"name": provider.ToolName, "arguments": args})
+}
+
+func isASCIIAlphanumeric(r rune) bool {
+	return r < utf8.RuneSelf && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9')
+}
+
+// bashyArgumentKeys reports whether every key is a property of the bashy
+// tool's input schema: a call line names no tool beyond its prefix, so its
+// arguments must be unmistakably bashy's.
+func bashyArgumentKeys(args map[string]any) bool {
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if json.Unmarshal(provider.BashyTool().InputSchema, &schema) != nil {
+		return false
+	}
+	for key := range args {
+		if _, ok := schema.Properties[key]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // fencedBlocks returns the bodies of every ``` ... ``` span in order; an

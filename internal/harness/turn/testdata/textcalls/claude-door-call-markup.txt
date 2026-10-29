@@ -1,0 +1,8 @@
+
+≡ƒöÇ bashy({"script":"@effects(\"read,write,exec\")\n@contain(net: \"deny\")\nfunction run_checked() {\npython3 - <<'EOF'\nsrc = open('test_inv.py').read()\nsrc = src.replace('self.assertEqual(inv._items, {})\\n\\n\\n    def test_report_sorted', 'self.assertEqual(inv._items, {})\\n\\n    def test_report_sorted')\nsrc = src.replace('self.assertEqual(inv.report(), [\"pear: 1\"])\\n\\nif __name__', 'self.assertEqual(inv.report(), [\"pear: 1\"])\\n\\n\\nif __name__')\nopen('test_inv.py','w').write(src)\nEOF\ngrep -rn \"export_csv\\|csv\" inv.py test_inv.py ; python3 -m unittest -q test_inv.py\n}\nrun_checked"})
+≡ƒÆ╗ exit 0
+stderr:
+----------------------------------------------------------------------
+Ran 11 tests in 0.000s
+
+OK
