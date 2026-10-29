@@ -426,7 +426,10 @@ spec:
         # VIRTUAL_ENV / CONDA_PREFIX / CONDA_DEFAULT_ENV carry an ACTIVATED Python
         # environment (a SWE-bench image activates `testbed`): bashy's agent-mode
         # python/pip use it only when they can see it, else they fetch bashy's own.
+        # BASHY_DELEGATE_CALLER is forced to "genie" by the executor; BASHY_DELEGATE_ALLOW
+        # passes through from the host only (unset => delegation denied from genie).
         names: [PATH, LANG, LC_ALL, TERM, HOME, BASHY_KB_DIR, BASHY_HOME, YCODE_DATA_DIR, BASHY_HINTS, BASHY_ADVISOR, BASHY_TELEMETRY_QUIET,
+          BASHY_DELEGATE_CALLER, BASHY_DELEGATE_ALLOW,
           VIRTUAL_ENV, CONDA_PREFIX, CONDA_DEFAULT_ENV,
           SYSTEMROOT, WINDIR, COMSPEC, PATHEXT, TEMP, TMP, USERPROFILE, HOMEDRIVE, HOMEPATH, LOCALAPPDATA, APPDATA, PROGRAMDATA]
       commandResolution: embedded-and-pinned-only

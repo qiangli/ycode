@@ -345,6 +345,13 @@ func placementID(meta Meta, fallback string) string {
 // (examples/genie/cmd/genie/main.go's isolatedEnvironment), now applied by
 // the harness itself so it holds for every caller of this executor, not only
 // one that happened to set it before launching ycode.
+// delegateCallerEnv, when declared, is always set to delegateCaller so a host
+// environment cannot clear or change the identity bashy delegate scores.
+const (
+	delegateCallerEnv = "BASHY_DELEGATE_CALLER"
+	delegateCaller    = "genie"
+)
+
 var quietDefaults = map[string]string{"BASHY_HINTS": "off", "BASHY_ADVISOR": "off", "BASHY_TELEMETRY_QUIET": "1"}
 
 func (e *Executor) environment() []harnessrunner.EnvironmentVariable {
@@ -357,6 +364,10 @@ func (e *Executor) environment() []harnessrunner.EnvironmentVariable {
 			continue
 		}
 		seen[name] = true
+		if name == delegateCallerEnv {
+			result = append(result, harnessrunner.EnvironmentVariable{Name: name, ValueRef: "harness://delegate-caller", Value: delegateCaller})
+			continue
+		}
 		if value, ok := os.LookupEnv(name); ok {
 			result = append(result, harnessrunner.EnvironmentVariable{Name: name, ValueRef: "environment://" + name, Value: value})
 		} else if quiet, ok := quietDefaults[name]; ok {

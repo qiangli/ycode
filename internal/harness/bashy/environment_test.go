@@ -94,3 +94,39 @@ func TestEnvironmentNeverForwardsAnUndeclaredQuietDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestEnvironmentForcesDeclaredDelegateCallerToGenie(t *testing.T) {
+	for _, host := range []string{"other", ""} {
+		t.Setenv("BASHY_DELEGATE_CALLER", host)
+		executor := testExecutorWithNames(t, []string{"BASHY_DELEGATE_CALLER"})
+		got, ok := envValue(executor.environment(), "BASHY_DELEGATE_CALLER")
+		if !ok || got != "genie" {
+			t.Fatalf("host %q: BASHY_DELEGATE_CALLER = %q, %v; want genie", host, got, ok)
+		}
+	}
+	_ = os.Unsetenv("BASHY_DELEGATE_CALLER")
+	executor := testExecutorWithNames(t, []string{"BASHY_DELEGATE_CALLER"})
+	if got, ok := envValue(executor.environment(), "BASHY_DELEGATE_CALLER"); !ok || got != "genie" {
+		t.Fatalf("unset host: BASHY_DELEGATE_CALLER = %q, %v; want genie", got, ok)
+	}
+}
+
+func TestEnvironmentDoesNotForwardUndeclaredDelegateCaller(t *testing.T) {
+	t.Setenv("BASHY_DELEGATE_CALLER", "other")
+	executor := testExecutorWithNames(t, nil)
+	if _, ok := envValue(executor.environment(), "BASHY_DELEGATE_CALLER"); ok {
+		t.Fatal("BASHY_DELEGATE_CALLER forwarded without being declared")
+	}
+}
+
+func TestEnvironmentDelegateAllowPassesThroughOnly(t *testing.T) {
+	t.Setenv("BASHY_DELEGATE_ALLOW", "claude")
+	executor := testExecutorWithNames(t, []string{"BASHY_DELEGATE_ALLOW"})
+	if got, ok := envValue(executor.environment(), "BASHY_DELEGATE_ALLOW"); !ok || got != "claude" {
+		t.Fatalf("BASHY_DELEGATE_ALLOW = %q, %v; want claude", got, ok)
+	}
+	_ = os.Unsetenv("BASHY_DELEGATE_ALLOW")
+	if _, ok := envValue(executor.environment(), "BASHY_DELEGATE_ALLOW"); ok {
+		t.Fatal("unset BASHY_DELEGATE_ALLOW must stay absent")
+	}
+}
