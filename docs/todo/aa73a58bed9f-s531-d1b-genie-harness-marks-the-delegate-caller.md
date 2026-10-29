@@ -3,14 +3,19 @@ id: aa73a58bed9f
 kind: feature
 title: S531.D1b genie harness marks the delegate caller
 seq: 55
-status: todo
+status: done
 priority: p0
 labels:
     - genie
 created: 2026-10-29T07:45:09.149635Z
+weave: 20
+assignee: claude-sonnet5.5
 sprint: 531
 sprint_id: f7bc2570-ca8e-59b0-8163-c3c51ba23610
 sprint_title: 'Genie core harness: drive vendor agent CLIs as tools'
+closed: 2026-10-29T07:53:12.99339Z
+resolution: fixed
+closed_by: claude-sonnet5.5-t
 ---
 
 Part of S531 D1 (delegate guards landed in yoke cf06659d). Problem: genie's executor passes an allowlisted environment to every bashy command (examples/genie/agent.yaml bashy.execution.environment.names), so BASHY_DELEGATE_CALLER / BASHY_DELEGATE_ALLOW never reach `bashy delegate` run from genie: delegation from genie is then unrestricted and unscored.
