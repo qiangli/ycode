@@ -292,10 +292,7 @@ func (e *Executor) request(meta Meta, call hitl.Call, operation harnessrunner.Op
 	if err != nil {
 		return harnessrunner.Request{}, err
 	}
-	timeoutMS := e.config.TimeoutMS
-	if call.TimeoutMS > 0 && call.TimeoutMS < timeoutMS {
-		timeoutMS = call.TimeoutMS
-	}
+	timeoutMS := e.wallTimeMS(call)
 	maxBytes := e.config.MaxSpillBytes
 	if maxBytes < e.config.MaxOutputChars {
 		maxBytes = e.config.MaxOutputChars
