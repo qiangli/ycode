@@ -12,7 +12,8 @@ import (
 
 func TestDeclaredSessionControlsExecuteAndDryRun(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("BASHY_HOME", "")
+	// ControlBase uses USERPROFILE on Windows; HOME alone does not isolate storage.
+	t.Setenv("BASHY_HOME", t.TempDir())
 	provider := &applicationProvider{}
 	app, err := openHarnessApplication(harnessFixture(t), public.WithHarnessProvider("openai", provider))
 	if err != nil {
@@ -79,7 +80,8 @@ func TestDeclaredSessionControlsExecuteAndDryRun(t *testing.T) {
 // just that the dry run prints a plausible envelope.
 func TestSessionSayAdmitsTextToTheCompiledSteeringQueue(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("BASHY_HOME", "")
+	// ControlBase uses USERPROFILE on Windows; HOME alone does not isolate storage.
+	t.Setenv("BASHY_HOME", t.TempDir())
 	provider := &applicationProvider{}
 	app, err := openHarnessApplication(harnessFixture(t), public.WithHarnessProvider("openai", provider))
 	if err != nil {

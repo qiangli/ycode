@@ -122,8 +122,11 @@ func (s *Store) Load(path string) (*Memory, error) {
 
 	// Fall back to file mtime when frontmatter did not carry a timestamp
 	// (legacy files written before Phase 2 wired CreatedAt/UpdatedAt).
-	info, err := os.Stat(path)
-	if err == nil {
+	if mem.UpdatedAt.IsZero() || mem.CreatedAt.IsZero() {
+		info, err := os.Stat(path)
+		if err != nil {
+			return mem, nil
+		}
 		if mem.UpdatedAt.IsZero() {
 			mem.UpdatedAt = info.ModTime()
 		}
