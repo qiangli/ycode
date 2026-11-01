@@ -16,7 +16,7 @@ const (
 )
 
 // Index manages the MEMORY.md file. Every update is a read-modify-replace
-// of the whole file, so mu serializes writers (concurrent saves must not lose
+// of the whole file, so mu serializes writers through this Index (concurrent saves must not lose
 // each other's entries) and keeps readers from holding the file open while it
 // is replaced: Windows refuses to rename over a file that is open or that a
 // concurrent rename is replacing.

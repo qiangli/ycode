@@ -260,6 +260,10 @@ func fileURI(path string) string {
 		abs = path
 	}
 	p := filepath.ToSlash(abs)
+	if runtime.GOOS == "windows" && strings.HasPrefix(p, "//") {
+		host, rest, _ := strings.Cut(strings.TrimPrefix(p, "//"), "/")
+		return (&url.URL{Scheme: "file", Host: host, Path: "/" + rest}).String()
+	}
 	if !strings.HasPrefix(p, "/") {
 		p = "/" + p
 	}
@@ -279,7 +283,7 @@ func uriToPath(uri string) string {
 		if len(p) >= 3 && p[0] == '/' && p[2] == ':' {
 			p = p[1:]
 		}
-		if u.Host != "" && u.Host != "localhost" {
+		if u.Host != "" && !strings.EqualFold(u.Host, "localhost") {
 			p = "//" + u.Host + p
 		}
 	}

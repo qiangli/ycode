@@ -77,12 +77,16 @@ func TestFileURI_Variations(t *testing.T) {
 			{`C:\tmp\test.go`, "file:///C:/tmp/test.go"},
 			{`D:\home\user\project\main.go`, "file:///D:/home/user/project/main.go"},
 			{`C:\Users\me\my project\a#b.go`, "file:///C:/Users/me/my%20project/a%23b.go"},
+			{`\\server\share\my project\a#b.go`, "file://server/share/my%20project/a%23b.go"},
 		}
 	}
 	for _, tt := range tests {
 		got := fileURI(tt.path)
 		if got != tt.want {
 			t.Errorf("fileURI(%q) = %q, want %q", tt.path, got, tt.want)
+		}
+		if back := uriToPath(got); back != tt.path {
+			t.Errorf("URI round trip = %q, want %q", back, tt.path)
 		}
 	}
 }
