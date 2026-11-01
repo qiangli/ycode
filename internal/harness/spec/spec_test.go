@@ -319,7 +319,17 @@ func TestControlRootRejectsOverlapSymlinkAndPublicPermissions(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			runtime, documentDir, platformDir := setup(t)
-			if err := validateControlRootAt(runtime, nil, documentDir, platformDir); err == nil {
+			err := validateControlRootAt(runtime, nil, documentDir, platformDir)
+			if name == "permissions" && !unixModeBits {
+				// Windows has no Unix mode bits (every directory reports
+				// 0777); privacy there comes from the profile ACL, so the
+				// mode check must not reject an otherwise safe root.
+				if err != nil {
+					t.Fatalf("mode bits rejected a control root on a platform without them: %v", err)
+				}
+				return
+			}
+			if err == nil {
 				t.Fatal("unsafe control root accepted")
 			}
 		})

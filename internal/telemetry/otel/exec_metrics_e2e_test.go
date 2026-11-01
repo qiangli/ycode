@@ -147,9 +147,9 @@ func TestE2E_MultipleScopes(t *testing.T) {
 func TestE2E_FailureClassification(t *testing.T) {
 	rm := withMeter(t, func() {
 		// real failing process → ExitError with exit code 2
-		cmd := exec.Command("/bin/sh", "-c", "exit 2")
+		cmd := exitCommand(2)
 		runErr := cmd.Run()
-		_, finish := StartExecSpan(context.Background(), ExecScopeBash, "/bin/sh", nil)
+		_, finish := StartExecSpan(context.Background(), ExecScopeBash, cmd.Path, nil)
 		finish(cmd.ProcessState.ExitCode(), runErr)
 
 		// synthetic "not found"

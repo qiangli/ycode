@@ -257,7 +257,8 @@ func TestReadMultipleFiles_Empty(t *testing.T) {
 func TestListRoots(t *testing.T) {
 	v, _ := New([]string{"/tmp", "/home/user"}, nil)
 	out := v.ListRoots()
-	if !strings.Contains(out, "/tmp") || !strings.Contains(out, "/home/user") {
+	// Roots are listed in native form (D:\tmp\ on Windows).
+	if !strings.Contains(out, filepath.FromSlash("/tmp")) || !strings.Contains(out, filepath.FromSlash("/home/user")) {
 		t.Fatalf("expected both dirs: %s", out)
 	}
 }

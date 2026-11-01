@@ -1320,6 +1320,17 @@ func TestManager_ConcurrentSave(t *testing.T) {
 	if len(all) != n {
 		t.Errorf("expected %d memories, got %d", n, len(all))
 	}
+
+	// Each save replaces MEMORY.md whole; none may drop another's entry.
+	index, err := mgr.ReadIndex()
+	if err != nil {
+		t.Fatalf("read index after concurrent saves: %v", err)
+	}
+	for i := 0; i < n; i++ {
+		if entry := fmt.Sprintf("[concurrent-%d]", i); !strings.Contains(index, entry) {
+			t.Errorf("index lost entry %s:\n%s", entry, index)
+		}
+	}
 }
 
 func TestManager_ConcurrentRecall(t *testing.T) {

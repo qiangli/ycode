@@ -266,7 +266,7 @@ func BashyPath() (string, error) {
 		if dir == "" {
 			continue
 		}
-		cand := filepath.Join(dir, "bashy")
+		cand := filepath.Join(dir, bashyExe())
 		if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
 			return cand, nil
 		}
@@ -274,6 +274,14 @@ func BashyPath() (string, error) {
 	return "", fmt.Errorf("bashy not found on PATH.\n"+
 		"      Switching agents runs them through bashy, which owns agent resolution and sandboxing.\n"+
 		"      Install it (dhnt: script/install-user-bins.sh) or set %s to its path", BinEnv)
+}
+
+// bashyExe is the installed bashy file name; Windows binaries carry .exe.
+func bashyExe() string {
+	if runtime.GOOS == "windows" {
+		return "bashy.exe"
+	}
+	return "bashy"
 }
 
 func defaultBinDir() string {

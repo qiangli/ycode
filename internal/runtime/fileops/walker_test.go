@@ -72,7 +72,7 @@ func TestWalkSourceFiles(t *testing.T) {
 	var visited []string
 	err := WalkSourceFiles(dir, nil, func(path string, d fs.DirEntry) error {
 		rel, _ := filepath.Rel(dir, path)
-		visited = append(visited, rel)
+		visited = append(visited, filepath.ToSlash(rel))
 		return nil
 	})
 	if err != nil {

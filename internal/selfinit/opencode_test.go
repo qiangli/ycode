@@ -8,13 +8,15 @@ import (
 	"testing"
 )
 
-// withFakeXDG sets XDG_CONFIG_HOME and HOME so OpenCode paths resolve
+// withFakeXDG sets XDG_CONFIG_HOME and the home directory (HOME, and
+// USERPROFILE on Windows) so OpenCode paths resolve
 // inside a tempdir. Returns the XDG dir.
 func withFakeXDG(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	xdg := filepath.Join(dir, "xdg")
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	scratchStores(t)
 	return xdg

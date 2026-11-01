@@ -8,12 +8,14 @@ import (
 	"testing"
 )
 
-// withFakeHome redirects HOME so the writer's UserHomeDir() resolves
-// inside a tempdir. Restores HOME on cleanup.
+// withFakeHome redirects the home directory so the writer's UserHomeDir()
+// resolves inside a tempdir: HOME on Unix, USERPROFILE on Windows. Restores
+// both on cleanup.
 func withFakeHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	scratchStores(t)
 	return dir
 }
