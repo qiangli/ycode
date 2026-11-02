@@ -3,13 +3,15 @@ id: d1d40dbae2ff
 kind: bug
 title: S557 preserve pending steering input when ESC interrupts the PTY turn
 seq: 66
-status: assigned
+status: done
 priority: p1
 created: 2026-11-02T02:19:31.73807Z
 assignee: s557-test-readiness
 sprint: 557
 sprint_id: f5ccf563-f5d1-5b94-8be4-9388e51ef86d
 sprint_title: 'Bashy v1.0.0 preparation: split private/public development and retire qiangli/dhnt'
+closed: 2026-11-02T03:37:24.585431Z
+closed_by: s557-manager
 ---
 
 Frozen native41370643706 macOS workspace job125040178374 atYcode5518a65 failed TestTUIOverPTY (17.08s): line187 expected interrupted; running what was typed during it after slowturn+steering+ESC; marker never appeared. Preserve all PTY interactions, pending input semantics, followup execution, deadlines and assertions. Diagnose source and bounded focused authored test; no timeout widening or full local suite. Existing63/64 are Windows file/session/latency scopes and do not cover this macOS interactive cancellation failure. Parent owns integration and hosted verification.
@@ -35,3 +37,12 @@ passes three repetitions under the race detector (25.455s):
 `GOWORK=off GOMAXPROCS=2 GOFLAGS=-p=2 go test -race ./pkg/ycodecli
 -run '^TestTUIOverPTY$' -count=3 -timeout=90s`.
 No full suite or product build was run. Hosted macOS validation remains required.
+
+## Scoped acceptance
+
+Hosted native run https://github.com/dhnt/umbrella/actions/runs/41381899440
+verified the unchanged published fixture repair f6825c41 on Linux and macOS.
+TestTUIOverPTY passed three repetitions with the race detector (21.364s and
+27.833s), retaining all ESC and pending-steering assertions. Independent manager
+review and focused local verification passed. Full product validation remains
+a separate release requirement.
