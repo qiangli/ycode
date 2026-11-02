@@ -3,13 +3,16 @@ id: 8ca06fe246d8
 kind: bug
 title: S557 restore portable file and process contracts in native Windows tests
 seq: 63
-status: assigned
+status: wontfix
 priority: p1
+labels:
+    - superseded
 created: 2026-11-01T17:08:42.435405Z
 assignee: s557-manager
 sprint: 557
 sprint_id: f5ccf563-f5d1-5b94-8be4-9388e51ef86d
 sprint_title: 'Bashy v1.0.0 preparation: split private/public development and retire qiangli/dhnt'
+closed: 2026-11-02T05:32:10.855876Z
 ---
 
 Diagnose and fix remaining native Windows Ycode failures from the hosted native Windows standalone lane after CRLF orchestration fix, CI isolation a765709 and portable provider6aebcd4. Product bugs include LSP file URIs and concurrent atomic memory index replacement; fixture bugs include slash assumptions, HOME versus USERPROFILE, Unix bash process fixtures, mode expectations. Preserve test coverage, security intent and product contracts; no skips or broad normalizations. Work in isolated weave; parent owns main workspace, all pushes/integration. Use bounded local focused tests/crosscompile only; no full build/suites on dev host. Commit source/story with Sprint557 trailers; do not change go.mod pins unless essential. Do not publish private paths/log details in public docs. Read CLAUDE. Ask manager for hosted test execution; report precise remaining platform risks.
@@ -49,3 +52,7 @@ Remaining platform risks:
   file loads with empty metadata.
 - `ci-run.sh` mount specs use `src:dst`, which is ambiguous with Windows drive
   letters; the podman runner is not a native Windows path.
+
+## Superseded by consolidation — 2026-11-02
+
+Operator requested consolidation of implementation repairs into acceptance owners. Scope, original acceptance, unresolved work and evidence transfer to public umbrella #6, story `bf7624a5c2f2`. This record is closed by decision with label `superseded`; it is NOT a delivery acceptance, test pass, waiver or feature retirement. The parent remains open. Continue corrections under that parent rather than creating another repair story. Original content above is retained unchanged.

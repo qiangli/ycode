@@ -3,13 +3,16 @@ id: a724a4808b5f
 kind: bug
 title: S557 isolate native session controls and diagnose Windows latency gate
 seq: 64
-status: assigned
+status: wontfix
 priority: p1
+labels:
+    - superseded
 created: 2026-11-01T18:18:58.015758Z
 assignee: s557-test-readiness
 sprint: 557
 sprint_id: f5ccf563-f5d1-5b94-8be4-9388e51ef86d
 sprint_title: 'Bashy v1.0.0 preparation: split private/public development and retire qiangli/dhnt'
+closed: 2026-11-02T05:32:10.939094Z
 ---
 
 Full native41332670393 Windows workspace atYcode9411250 passes24otherchecks but ycode-unit fails: Competitive_LatencyComparison P99 20.0589ms vs10ms, YAMLCLISessionGroupAndResume emptylog succeeds unexpectedly, DeclaredSessionControlsExecuteAndDryRun sees priorpersistedsessions. Diagnose exactmechanisms, fix isolation/productdefects, retain sessioncontrols andlatencythreshold contracts unless a separatelyreviewed measurementcorrection proveswrongboundary. No skips or looseningthresholds. Boundedfocusedtests/crosscompile local; nativeWindows hosted. Existingstory63 metadata belongsmanager, do notstageit. Root reviews/pushes/pins.
@@ -47,3 +50,7 @@ suites remain hosted; no tests or thresholds were removed or weakened.
 
 The same four session tests plus TestStoreLoadTimestampFallback also passed a
 focused local race run. Native Windows validation remains pending.
+
+## Superseded by consolidation — 2026-11-02
+
+Operator requested consolidation of implementation repairs into acceptance owners. Scope, original acceptance, unresolved work and evidence transfer to public umbrella #6, story `bf7624a5c2f2`. This record is closed by decision with label `superseded`; it is NOT a delivery acceptance, test pass, waiver or feature retirement. The parent remains open. Continue corrections under that parent rather than creating another repair story. Original content above is retained unchanged.
