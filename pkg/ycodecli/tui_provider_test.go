@@ -30,6 +30,13 @@ func (p *tuiProvider) Send(ctx context.Context, request *api.Request) (<-chan *a
 		defer close(events)
 		defer close(errs)
 		if bytes.Contains(raw, []byte("slow")) && !bytes.Contains(raw, []byte("steer me")) {
+			// A PTY driver must wait for this request to reach the provider,
+			// not for a generic busy indicator left by an earlier turn. Only
+			// then is subsequent steering guaranteed to be mid-turn input.
+			if marker := os.Getenv("YCODE_TUI_SLOW_READY_MARKER"); marker != "" {
+				ready, _ := json.Marshal(map[string]string{"type": "text_delta", "text": marker + "\n"})
+				events <- &api.StreamEvent{Type: "content_block_delta", Delta: ready}
+			}
 			<-ctx.Done()
 			errs <- ctx.Err()
 			return

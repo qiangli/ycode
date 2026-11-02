@@ -33,6 +33,7 @@ func TestTUIOverPTY(t *testing.T) {
 	home := t.TempDir()
 	workdir := t.TempDir()
 	gate := filepath.Join(t.TempDir(), "release")
+	const slowReady = "TUI-SLOW-PROVIDER-READY"
 	command := exec.Command(os.Args[0], "-test.run=^TestTUIOverPTY$")
 	command.Dir = workdir
 	// The workspace is the agent file's directory: a copy in a temp dir keeps
@@ -45,7 +46,7 @@ func TestTUIOverPTY(t *testing.T) {
 	if err := os.WriteFile(fixture, canonical, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	command.Env = append(os.Environ(), "YCODE_TUI_PTY_HELPER=1", "YCODE_TUI_FIXTURE="+fixture, "YCODE_TUI_STREAM_GATE="+gate, "HOME="+home, "BASHY_HOME=", "OPENAI_API_KEY=test-secret", "TERM=xterm-256color", SessionFileEnv+"=")
+	command.Env = append(os.Environ(), "YCODE_TUI_PTY_HELPER=1", "YCODE_TUI_FIXTURE="+fixture, "YCODE_TUI_STREAM_GATE="+gate, "YCODE_TUI_SLOW_READY_MARKER="+slowReady, "HOME="+home, "BASHY_HOME=", "OPENAI_API_KEY=test-secret", "TERM=xterm-256color", SessionFileEnv+"=")
 	terminal, err := pty.StartWithSize(command, &pty.Winsize{Rows: 40, Cols: 140})
 	if err != nil {
 		t.Fatal(err)
@@ -179,6 +180,7 @@ func TestTUIOverPTY(t *testing.T) {
 	// what was typed runs next.
 	typeLine("please be slow")
 	expect("slow turn running", "esc stops")
+	expect("slow provider received this turn", slowReady)
 	typeLine("steer me")
 	expect("steer", "↳ steer: steer me")
 	if _, err := io.WriteString(terminal, "\x1b"); err != nil {
