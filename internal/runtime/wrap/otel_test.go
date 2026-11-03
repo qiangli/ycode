@@ -3,7 +3,6 @@ package wrap
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -51,20 +50,19 @@ func TestSetupOTel_OffIsNoop(t *testing.T) {
 }
 
 func TestSetupOTel_FileWritesUnderTempHome(t *testing.T) {
-	// Redirect the home directory (HOME on Unix, USERPROFILE on Windows)
-	// so the wrap's per-instance data dir lands inside t.TempDir(). The test doesn't inspect the file contents — the
+	// Redirect HOME so the wrap's per-instance data dir lands inside
+	// t.TempDir(). The test doesn't inspect the file contents — the
 	// SDK's batch span processor flushes asynchronously — it only
 	// asserts that the instance dir was created and shutdown is
 	// callable without error.
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
-	t.Setenv("USERPROFILE", tmpHome)
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 
 	shutdown := setupOTel(context.Background(), ExportFile, "claude", "claude")
 	defer shutdown()
 
-	dir := filepath.Join(tmpHome, ".agents", "ycode", "otel", "instances")
+	dir := tmpHome + "/.agents/ycode/otel/instances"
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read instances dir: %v", err)

@@ -5,38 +5,12 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
 	"os/exec"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
-
-// exitHelperEnv makes TestExitHelperProcess exit with the given status, so
-// the classifier sees a real *exec.ExitError on every platform without
-// depending on a Unix shell.
-const exitHelperEnv = "YCODE_OTEL_TEST_EXIT_STATUS"
-
-// exitCommand re-executes the test binary as a child that exits with code.
-func exitCommand(code int) *exec.Cmd {
-	cmd := exec.Command(os.Args[0], "-test.run=^TestExitHelperProcess$")
-	cmd.Env = append(os.Environ(), exitHelperEnv+"="+strconv.Itoa(code))
-	return cmd
-}
-
-func TestExitHelperProcess(t *testing.T) {
-	status := os.Getenv(exitHelperEnv)
-	if status == "" {
-		return
-	}
-	code, err := strconv.Atoi(status)
-	if err != nil {
-		os.Exit(125)
-	}
-	os.Exit(code)
-}
 
 func TestClassifyExit_Zero(t *testing.T) {
 	class, code, sig := ClassifyExit(context.Background(), 0, nil)
@@ -81,7 +55,7 @@ func TestClassifyExit_NotFound(t *testing.T) {
 }
 
 func TestClassifyExit_NonZeroExit(t *testing.T) {
-	cmd := exitCommand(3)
+	cmd := exec.Command("/bin/sh", "-c", "exit 3")
 	err := cmd.Run()
 	class, code, sig := ClassifyExit(context.Background(), cmd.ProcessState.ExitCode(), err)
 	if class != ExitClassError {
@@ -144,12 +118,9 @@ func TestStartExecSpan_RoundTripDoesNotPanic(t *testing.T) {
 func TestStartExecSpan_FailureBranch(t *testing.T) {
 	// Run a real failing command so the ExitError has a valid
 	// ProcessState (a bare &exec.ExitError{} crashes Sys()).
-	cmd := exitCommand(2)
+	cmd := exec.Command("/bin/sh", "-c", "exit 2")
 	runErr := cmd.Run()
-	if cmd.ProcessState == nil {
-		t.Fatalf("helper process did not run: %v", runErr)
-	}
-	ctx, finish := StartExecSpan(context.Background(), ExecScopeBash, cmd.Path, cmd.Args)
+	ctx, finish := StartExecSpan(context.Background(), ExecScopeBash, "/bin/sh", []string{"/bin/sh", "-c", "exit 2"})
 	finish(cmd.ProcessState.ExitCode(), runErr)
 	_ = ctx
 }

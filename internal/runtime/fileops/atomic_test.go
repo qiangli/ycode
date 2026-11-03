@@ -3,7 +3,6 @@ package fileops
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -89,14 +88,8 @@ func TestAtomicWriteFile_PermissionPreservation(t *testing.T) {
 	}
 
 	// Check permission bits (mask with 0o777 to ignore OS-specific bits).
-	// Windows models only the read-only attribute: a writable file reports
-	// 0666 whatever owner/group/other bits were requested.
-	want := os.FileMode(0o600)
-	if runtime.GOOS == "windows" {
-		want = 0o666
-	}
 	got := info.Mode().Perm()
-	if got != want {
-		t.Errorf("permission = %o, want %o", got, want)
+	if got != 0o600 {
+		t.Errorf("permission = %o, want %o", got, 0o600)
 	}
 }

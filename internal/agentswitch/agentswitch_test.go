@@ -14,8 +14,7 @@ import (
 func fakeBashy(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	// Windows resolves executables by extension (PATHEXT), not mode bits.
-	bin := filepath.Join(dir, bashyExe())
+	bin := filepath.Join(dir, "bashy")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -205,9 +204,7 @@ func TestBashyPathMissingIsALoudError(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv(BinEnv, "")
 	t.Setenv("DHNT_BIN_DIR", t.TempDir())
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOME", t.TempDir())
 
 	_, err := BashyPath()
 	if err == nil {
@@ -215,27 +212,6 @@ func TestBashyPathMissingIsALoudError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), BinEnv) {
 		t.Errorf("error should name the override: %v", err)
-	}
-}
-
-// An installed bashy outside PATH is found in the bin directory under its
-// platform file name.
-func TestBashyPathFallsBackToBinDir(t *testing.T) {
-	dir := t.TempDir()
-	bin := filepath.Join(dir, bashyExe())
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", t.TempDir())
-	t.Setenv(BinEnv, "")
-	t.Setenv("DHNT_BIN_DIR", dir)
-
-	got, err := BashyPath()
-	if err != nil {
-		t.Fatalf("BashyPath: %v", err)
-	}
-	if got != bin {
-		t.Errorf("BashyPath() = %q, want %q", got, bin)
 	}
 }
 

@@ -14,8 +14,7 @@ import (
 func TestYAMLCLISessionGroupAndResume(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	// ControlBase uses USERPROFILE on Windows; HOME alone does not isolate storage.
-	t.Setenv("BASHY_HOME", t.TempDir())
+	t.Setenv("BASHY_HOME", "")
 	provider := &applicationProvider{}
 	app, err := openHarnessApplication(harnessFixture(t), public.WithHarnessProvider("openai", provider))
 	if err != nil {
@@ -106,8 +105,7 @@ func TestYAMLCLISessionGroupAndResume(t *testing.T) {
 func TestYAMLCLITerminalSessionPointer(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	// ControlBase uses USERPROFILE on Windows; HOME alone does not isolate storage.
-	t.Setenv("BASHY_HOME", t.TempDir())
+	t.Setenv("BASHY_HOME", "")
 	pointer := home + "/terminal.session"
 	if err := os.WriteFile(pointer, []byte("sess-a\n"), 0o600); err != nil {
 		t.Fatal(err)

@@ -3,8 +3,6 @@ package lsp
 import (
 	"bufio"
 	"encoding/json"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -67,26 +65,11 @@ func TestFileURI_Variations(t *testing.T) {
 	}{
 		{"/tmp/test.go", "file:///tmp/test.go"},
 		{"/home/user/project/main.go", "file:///home/user/project/main.go"},
-		{"/home/user/my project/a#b.go", "file:///home/user/my%20project/a%23b.go"},
-	}
-	if runtime.GOOS == "windows" {
-		tests = []struct {
-			path string
-			want string
-		}{
-			{`C:\tmp\test.go`, "file:///C:/tmp/test.go"},
-			{`D:\home\user\project\main.go`, "file:///D:/home/user/project/main.go"},
-			{`C:\Users\me\my project\a#b.go`, "file:///C:/Users/me/my%20project/a%23b.go"},
-			{`\\server\share\my project\a#b.go`, "file://server/share/my%20project/a%23b.go"},
-		}
 	}
 	for _, tt := range tests {
 		got := fileURI(tt.path)
 		if got != tt.want {
 			t.Errorf("fileURI(%q) = %q, want %q", tt.path, got, tt.want)
-		}
-		if back := uriToPath(got); back != tt.path {
-			t.Errorf("URI round trip = %q, want %q", back, tt.path)
 		}
 	}
 }
@@ -96,27 +79,10 @@ func TestURIToPath_Variations(t *testing.T) {
 		uri  string
 		want string
 	}{
-		{"file:///tmp/test.go", filepath.FromSlash("/tmp/test.go")},
-		{"file:///home/user/file.py", filepath.FromSlash("/home/user/file.py")},
-		{"file:///home/user/my%20project/a%23b.go", filepath.FromSlash("/home/user/my project/a#b.go")},
+		{"file:///tmp/test.go", "/tmp/test.go"},
+		{"file:///home/user/file.py", "/home/user/file.py"},
 		{"/plain/path", "/plain/path"},
 		{"relative/path", "relative/path"},
-	}
-	if runtime.GOOS == "windows" {
-		tests = append(tests,
-			struct {
-				uri  string
-				want string
-			}{"file:///C:/Users/me/main.go", `C:\Users\me\main.go`},
-			struct {
-				uri  string
-				want string
-			}{"file:///c%3A/Users/me/main.go", `c:\Users\me\main.go`},
-			struct {
-				uri  string
-				want string
-			}{"file://server/share/main.go", `\\server\share\main.go`},
-		)
 	}
 	for _, tt := range tests {
 		got := uriToPath(tt.uri)

@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/qiangli/ycode/pkg/memex/store/fileatomic"
 )
@@ -15,13 +14,8 @@ const (
 	MaxIndexLines = 200
 )
 
-// Index manages the MEMORY.md file. Every update is a read-modify-replace
-// of the whole file, so mu serializes writers through this Index (concurrent saves must not lose
-// each other's entries) and keeps readers from holding the file open while it
-// is replaced: Windows refuses to rename over a file that is open or that a
-// concurrent rename is replacing.
+// Index manages the MEMORY.md file.
 type Index struct {
-	mu   sync.RWMutex
 	path string
 }
 
@@ -32,8 +26,6 @@ func NewIndex(dir string) *Index {
 
 // AddEntry adds a pointer to a memory file in MEMORY.md.
 func (idx *Index) AddEntry(title, filename, description string) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
 	existing, _ := os.ReadFile(idx.path)
 
 	// Check for existing entry.
@@ -71,8 +63,6 @@ func (idx *Index) AddEntry(title, filename, description string) error {
 
 // RemoveEntry removes an entry from MEMORY.md.
 func (idx *Index) RemoveEntry(filename string) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
 	data, err := os.ReadFile(idx.path)
 	if err != nil {
 		return nil // nothing to remove
@@ -91,8 +81,6 @@ func (idx *Index) RemoveEntry(filename string) error {
 
 // Read returns the content of MEMORY.md.
 func (idx *Index) Read() (string, error) {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
 	data, err := os.ReadFile(idx.path)
 	if err != nil {
 		if os.IsNotExist(err) {

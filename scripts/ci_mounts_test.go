@@ -82,10 +82,6 @@ func canonical(t *testing.T, path string) string {
 	return resolved
 }
 
-// gitPath renders a host path the way git's absolute path-format prints it:
-// forward slashes on every platform (C:/Users/... under Git for Windows).
-func gitPath(path string) string { return filepath.ToSlash(path) }
-
 // Standalone clone: the git dir is worktree/.git, inside the tree, so the plan
 // needs no separate git mount.
 func TestCIMountsStandaloneClone(t *testing.T) {
@@ -93,7 +89,7 @@ func TestCIMountsStandaloneClone(t *testing.T) {
 	repo := canonical(t, t.TempDir())
 	hermeticGit(t, repo, "init", "-q")
 	mounts := printMounts(t, repo)
-	want := []string{gitPath(repo) + ":" + gitPath(repo)}
+	want := []string{repo + ":" + repo}
 	if strings.Join(mounts, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("standalone clone: got mounts %q, want %q", mounts, want)
 	}
@@ -136,12 +132,12 @@ func TestCIMountsUmbrellaSubmodule(t *testing.T) {
 
 	mounts := printMounts(t, worktree)
 	want := []string{
-		gitPath(worktree) + ":" + gitPath(worktree),
-		gitPath(gitCommonDir) + ":" + gitPath(gitCommonDir),
+		worktree + ":" + worktree,
+		gitCommonDir + ":" + gitCommonDir,
 		// go's VCS root walks up past the .git file to the umbrella's .git
 		// directory and stamps THAT repo — it must be mounted, or the gate
 		// dies in-container on "error obtaining VCS status".
-		gitPath(umbrella) + "/.git:" + gitPath(umbrella) + "/.git",
+		umbrella + "/.git:" + umbrella + "/.git",
 	}
 	if strings.Join(mounts, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("umbrella submodule: got mounts %q, want %q", mounts, want)

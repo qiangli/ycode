@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -251,41 +250,19 @@ func (c *conn) notify(method string, params any) error {
 	return err
 }
 
-// fileURI converts a file path to a file:// URI (RFC 8089). Separators are
-// forward slashes, a Windows drive path gains the leading slash
-// (file:///C:/dir/f.go) and reserved characters are percent-encoded.
+// fileURI converts a file path to a file:// URI.
 func fileURI(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = path
 	}
-	p := filepath.ToSlash(abs)
-	if runtime.GOOS == "windows" && strings.HasPrefix(p, "//") {
-		host, rest, _ := strings.Cut(strings.TrimPrefix(p, "//"), "/")
-		return (&url.URL{Scheme: "file", Host: host, Path: "/" + rest}).String()
-	}
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p
-	}
-	return (&url.URL{Scheme: "file", Path: p}).String()
+	return "file://" + abs
 }
 
-// uriToPath converts a file:// URI back to a native file path. On Windows
-// the drive form /C:/dir/f.go loses its leading slash and a host names a UNC
-// share (file://server/share/f.go -> \\server\share\f.go).
+// uriToPath converts a file:// URI back to a file path.
 func uriToPath(uri string) string {
-	u, err := url.Parse(uri)
-	if err != nil || u.Scheme != "file" {
-		return uri
+	if u, err := url.Parse(uri); err == nil && u.Scheme == "file" {
+		return u.Path
 	}
-	p := u.Path
-	if runtime.GOOS == "windows" {
-		if len(p) >= 3 && p[0] == '/' && p[2] == ':' {
-			p = p[1:]
-		}
-		if u.Host != "" && !strings.EqualFold(u.Host, "localhost") {
-			p = "//" + u.Host + p
-		}
-	}
-	return filepath.FromSlash(p)
+	return uri
 }

@@ -9,7 +9,6 @@ func TestIsUnattended_Context(t *testing.T) {
 	t.Setenv("YCODE_UNATTENDED", "")
 	t.Setenv("WEAVE_ID", "")
 	t.Setenv("WEAVE_WORKSPACE", "")
-	t.Setenv("CI", "")
 	ctx := context.Background()
 	if IsUnattended(ctx) {
 		t.Error("expected not unattended by default")
@@ -45,7 +44,6 @@ func TestIsUnattended_Env(t *testing.T) {
 			t.Setenv("YCODE_UNATTENDED", "")
 			t.Setenv("WEAVE_ID", "")
 			t.Setenv("WEAVE_WORKSPACE", "")
-			t.Setenv("CI", "")
 			t.Setenv(tt.env, tt.val)
 			ctx := context.Background()
 			if got := IsUnattended(ctx); got != tt.want {
@@ -59,7 +57,6 @@ func TestIsUnattended_EnvCleared(t *testing.T) {
 	t.Setenv("YCODE_UNATTENDED", "")
 	t.Setenv("WEAVE_ID", "")
 	t.Setenv("WEAVE_WORKSPACE", "")
-	t.Setenv("CI", "")
 	if IsUnattended(context.Background()) {
 		t.Error("expected not unattended when no env or context value set")
 	}
