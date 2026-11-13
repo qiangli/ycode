@@ -9,6 +9,12 @@ replace mvdan.cc/sh/v3 => github.com/qiangli/sh/v3 v3.0.0-20261025021234-6663c93
 // Bashy's filebrowser replacement does not propagate to embedding modules.
 replace github.com/filebrowser/filebrowser/v2 => github.com/qiangli/filebrowser/v2 v2.0.0-20261113114342-c7e10f7adc61
 
+// yoke's files panel moved to the maintained File Browser (module
+// github.com/gtsteffaniak/filebrowser/backend, qiangli/filebrowser-quantum fork,
+// fbembed branch). Inert until the bashy/yoke pins bring that module in; the
+// old replace stays for the pinned versions until then.
+replace github.com/gtsteffaniak/filebrowser/backend => github.com/qiangli/filebrowser-quantum/backend v0.0.0-20261113140828-88b90a50350d
+
 replace github.com/ergochat/readline => github.com/qiangli/readline v0.1.4-0.20261013004858-df59d4e258e4
 
 replace github.com/ollama/ollama => github.com/qiangli/ollama v0.0.0-20261016181410-b0d0bbba93ab
