@@ -7,7 +7,7 @@ toolchain go1.27.2
 replace mvdan.cc/sh/v3 => github.com/qiangli/sh/v3 v3.0.0-20261025021234-6663c93a2d3c
 
 // Bashy's filebrowser replacement does not propagate to embedding modules.
-replace github.com/filebrowser/filebrowser/v2 => github.com/qiangli/filebrowser/v2 v2.0.0-20261113114342-c7e10f7adc61
+replace github.com/filebrowser/filebrowser/v2 => github.com/qiangli/filebrowser/v2 v2.0.0-20261113181544-c796ddbc1a08
 
 // yoke's files panel moved to the maintained File Browser (module
 // github.com/gtsteffaniak/filebrowser/backend, qiangli/filebrowser-quantum fork,
