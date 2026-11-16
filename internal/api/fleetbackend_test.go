@@ -15,7 +15,9 @@ func TestFleetBackendSelectors(t *testing.T) {
 		t.Run(tool, func(t *testing.T) {
 			root := t.TempDir()
 			t.Setenv("BASHY_FLEET_DIR", root)
-			t.Setenv("BASHY_FLEET_SEEDS", "off")
+			// roster, not off: since yoke d7c171c7, off also drops the
+			// third-party tool contracts (codex) this fixture's L4 agent uses.
+			t.Setenv("BASHY_FLEET_SEEDS", "roster")
 			for _, noun := range []string{"TOOLS", "MODELS", "AGENTS"} {
 				t.Setenv("BASHY_"+noun+"_PATH", "")
 				t.Setenv("BASHY_"+noun+"_DIR", filepath.Join(root, noun))
