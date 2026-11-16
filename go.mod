@@ -13,7 +13,7 @@ replace github.com/filebrowser/filebrowser/v2 => github.com/qiangli/filebrowser/
 // github.com/gtsteffaniak/filebrowser/backend, qiangli/filebrowser-quantum fork,
 // fbembed branch). Inert until the bashy/yoke pins bring that module in; the
 // old replace stays for the pinned versions until then.
-replace github.com/gtsteffaniak/filebrowser/backend => github.com/qiangli/filebrowser-quantum/backend v0.0.0-20261113140828-88b90a50350d
+replace github.com/gtsteffaniak/filebrowser/backend => github.com/qiangli/filebrowser-quantum/backend v0.0.0-20261115042727-40f3c84d55a9
 
 replace github.com/ergochat/readline => github.com/qiangli/readline v0.1.4-0.20261013004858-df59d4e258e4
 
