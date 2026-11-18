@@ -7,7 +7,7 @@ import (
 
 	harnessrunner "github.com/qiangli/bashy/pkg/harnessrunner"
 	"github.com/qiangli/yoke/pkg/atlas"
-	"mvdan.cc/sh/v3/syntax"
+	"github.com/qiangli/bash/syntax"
 
 	"github.com/qiangli/ycode/internal/harness/stages/hitl"
 )

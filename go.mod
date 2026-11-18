@@ -4,7 +4,6 @@ go 1.27.0
 
 toolchain go1.27.2
 
-replace mvdan.cc/sh/v3 => github.com/qiangli/sh/v3 v3.0.0-20261112194059-a4141771a3dc
 
 // yoke's files panel uses the maintained File Browser (module
 // github.com/gtsteffaniak/filebrowser/backend, qiangli/filebrowser-quantum fork,
@@ -40,9 +39,9 @@ require (
 	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
 	github.com/qiangli/bashy v1.0.0-rc.9-dev.0.20261116114634-c5da50430b05
 	github.com/qiangli/bonsai v0.0.0-20261103194740-24dd0f47247e
-	github.com/qiangli/coreutils v0.0.0-20261112194059-6dd7a3ee1858
+	github.com/qiangli/coreutils v0.0.0-20261118041055-ababb9f1c79a
 	github.com/qiangli/ycode/examples/genie v0.0.0
-	github.com/qiangli/yoke v0.0.0-20261116114346-8ee6c331358a
+	github.com/qiangli/yoke v0.0.0-20261118041247-79fe8f90bb05
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	go.etcd.io/bbolt v1.5.0
@@ -70,7 +69,6 @@ require (
 	google.golang.org/grpc v1.83.1
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.59.0
-	mvdan.cc/sh/v3 v3.13.1
 )
 
 require (
@@ -101,7 +99,7 @@ require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-pty v0.2.3 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/bashsharp/bashsharp v0.0.0-20261112194148-386a8685bd7d // indirect
+	github.com/bashsharp/bashsharp v0.0.0-20261118040926-59ce327a5e01 // indirect
 	github.com/benhoyt/goawk v1.31.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.6 // indirect
@@ -511,3 +509,5 @@ replace github.com/hashicorp/go-multierror => github.com/qiangli/yoke/external/m
 replace github.com/hashicorp/errwrap => github.com/qiangli/yoke/external/errwrap v0.0.0-20261021020216-636e2fd289e9
 
 replace github.com/cyphar/filepath-securejoin => github.com/qiangli/yoke/external/securejoin v0.0.0-20261021020216-636e2fd289e9
+
+require github.com/qiangli/bash v0.0.0-20261117235306-adb3b4e0c28d

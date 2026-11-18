@@ -32,8 +32,8 @@ import (
 	"github.com/qiangli/ycode/internal/harness/frontend/tui"
 	harnessspec "github.com/qiangli/ycode/internal/harness/spec"
 	public "github.com/qiangli/ycode/pkg/ycode"
-	"mvdan.cc/sh/v3/interp"
-	"mvdan.cc/sh/v3/syntax"
+	"github.com/qiangli/bash/interp"
+	"github.com/qiangli/bash/syntax"
 )
 
 // LiteralShell, when set, runs a literal command line typed in the TUI (the
