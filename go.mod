@@ -37,7 +37,7 @@ require (
 	github.com/nats-io/nats.go v1.50.0
 	github.com/philippgille/chromem-go v0.7.0
 	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
-	github.com/qiangli/bashy v1.0.0-rc.9-dev.0.20261116114634-c5da50430b05
+	github.com/qiangli/bashy v1.0.0-rc.9-dev.0.20261118042223-9a6d5824cf95
 	github.com/qiangli/bonsai v0.0.0-20261103194740-24dd0f47247e
 	github.com/qiangli/coreutils v0.0.0-20261118041055-ababb9f1c79a
 	github.com/qiangli/ycode/examples/genie v0.0.0
