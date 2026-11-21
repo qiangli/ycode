@@ -26,7 +26,8 @@ const textToolCallRecoveredEvent = "llm.text_tool_call_recovered"
 //   - either of the above as the single fenced code block in an otherwise
 //     prose reply;
 //   - either of the above starting a line after prose and ending the reply;
-//   - one bashy({...}) call line (see textToolCallFromMarkup).
+//   - one bashy({...}) call line (see textToolCallFromMarkup);
+//   - a reply containing only Claude-door invoke frames for the bashy script tool.
 //
 // An entry may also use the canonical nested OpenAI form
 // {"type":"function","function":{"name":"bashy","arguments":...}}, and
@@ -67,6 +68,10 @@ type textCallRepairs struct {
 // followed by a result it made up; the turn ended with nothing run. Those
 // shapes recover here under the same validation.
 func recoverTextToolCallsDetail(body string) ([]any, textCallRepairs, bool) {
+	if strings.HasPrefix(strings.TrimSpace(body), "<invoke ") {
+		calls, ok := recoverClaudeDoorInvokes(body)
+		return calls, textCallRepairs{}, ok
+	}
 	for _, candidate := range textToolCallCandidates(body) {
 		if calls, repairs, ok := recoverTextToolCallDocument(candidate); ok {
 			return calls, repairs, true
