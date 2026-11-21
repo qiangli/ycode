@@ -146,6 +146,7 @@ func TestTextToolCallRecoveryExecutesClaudeDoorReplies(t *testing.T) {
 	}{
 		{"claude-door-prose-envelope-unescaped-quote.txt", `the name "localedef" is still`, true},
 		{"claude-door-call-markup.txt", "python3 - <<'EOF'", false},
+		{"claude-door-invoke-frame.txt", "s682-synthetic-fixture", false},
 	} {
 		t.Run(tc.fixture, func(t *testing.T) {
 			scratchStores(t)
@@ -155,8 +156,13 @@ func TestTextToolCallRecoveryExecutesClaudeDoorReplies(t *testing.T) {
 			}
 			defer os.RemoveAll(root)
 			final := "DONE: ran it."
+			body := readTextCallFixture(t, tc.fixture)
+			wantScript, _ := recoveredScript(t, body)
+			if !strings.Contains(wantScript, tc.want) {
+				t.Fatalf("recovered script lacks %q", tc.want)
+			}
 			fake, bashy, delivery, eventPath := runScriptedRecoveryTurn(t, root, "claude-door", [][]provider.Event{
-				completedText(readTextCallFixture(t, tc.fixture)),
+				completedText(body),
 				completedText(final),
 			})
 			if got := fake.callCount(); got != 2 {
@@ -164,7 +170,7 @@ func TestTextToolCallRecoveryExecutesClaudeDoorReplies(t *testing.T) {
 			}
 			matched := 0
 			for _, script := range bashy.executed() {
-				if strings.Contains(script, tc.want) {
+				if script == wantScript {
 					matched++
 				}
 			}

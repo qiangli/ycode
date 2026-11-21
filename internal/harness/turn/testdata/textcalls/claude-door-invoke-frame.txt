@@ -1,0 +1,3 @@
+<invoke name="bashy">
+<parameter name="script">printf '%s\n' 's682-synthetic-fixture'</parameter>
+</invoke>
