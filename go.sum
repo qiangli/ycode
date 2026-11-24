@@ -1807,8 +1807,8 @@ github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c h1:0i8kMRJRlyFkFfHW
 github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c/go.mod h1:BSEpPui6tXCLsLoEoSCqCKodQvXkGkEMQDUc+JqAGfU=
 github.com/qiangli/bash v0.0.0-20261122134408-5c52281f7136 h1:OmS3HLyxj5ogVLPJAxgS8cQ9dlx4xkBrHXV0sozcMC4=
 github.com/qiangli/bash v0.0.0-20261122134408-5c52281f7136/go.mod h1:ym1L5z/YyX0/X22h8TjjRIU2+qJyHwWHlBcKR/+CX2w=
-github.com/qiangli/bashy v1.0.0-rc.9-dev.0.20261124122801-3bd5388222ca h1:wSQ8PfbwRuf1yGAIF4UfsO7NodpS9N/4oORnIETzOs0=
-github.com/qiangli/bashy v1.0.0-rc.9-dev.0.20261124122801-3bd5388222ca/go.mod h1:reKyvjdHqFkyq23dnNI4lo1XhKndKRXhWcGPEIRu8IU=
+github.com/qiangli/bashy v1.0.0-rc.9-dev.0.20261124125854-532a316aaa88 h1:5t5lp2BnJ22zZkA2Dz18KwqQ+8C5P1kDdXSwGlBqYXU=
+github.com/qiangli/bashy v1.0.0-rc.9-dev.0.20261124125854-532a316aaa88/go.mod h1:HBFf5ZaJstaepWebcqFiaZ8z3oQj1xTht2mIEWaVSHI=
 github.com/qiangli/bonsai v0.0.0-20261123172747-32d78887eb27 h1:4UJW3ptFwsnBqdW3HMLPwlAoufVUeAQafb326olDXt4=
 github.com/qiangli/bonsai v0.0.0-20261123172747-32d78887eb27/go.mod h1:2j+PlaUVQ2sMH7s+RrtS3M/0Sq1nnV0qLk6QuEPgoFg=
 github.com/qiangli/coreutils v0.0.0-20261124121700-f9833f726fac h1:AVcTk6Qnq1Tw7uN+9hKlw2sjBF+iSrT9+uDd9sxPodw=
