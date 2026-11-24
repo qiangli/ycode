@@ -603,8 +603,8 @@ github.com/aymanbagabas/go-udiff v0.4.1 h1:OEIrQ8maEeDBXQDoGCbbTTXYJMYRCRO1fnodZ
 github.com/aymanbagabas/go-udiff v0.4.1/go.mod h1:0L9PGwj20lrtmEMeyw4WKJ/TMyDtvAoK9bf2u/mNo3w=
 github.com/bahlo/generic-list-go v0.2.0 h1:5sz/EEAK+ls5wF+NeqDpk5+iNdMDXrh3z3nPnH1Wvgk=
 github.com/bahlo/generic-list-go v0.2.0/go.mod h1:2KvAjgMlE5NNynlg/5iLrrCCZ2+5xWbdbCW3pNTGyYg=
-github.com/bashsharp/bashsharp v0.0.0-20261123174704-5e16f23b9707 h1:wdl6JfZg/NMHN8oYdOLIQtKVYeD3qXt7COcTNy49nG0=
-github.com/bashsharp/bashsharp v0.0.0-20261123174704-5e16f23b9707/go.mod h1:zbszZZ7nHCphg6s/15YjCCSN1AUKo4wk/UHSiKaW8Qk=
+github.com/bashsharp/bashsharp v0.0.0-20261124073304-fe4d68ad36d8 h1:NFIFnMzQDs12cpqr9okYIyyvhHEWPf6Y+qOwRPQK3ug=
+github.com/bashsharp/bashsharp v0.0.0-20261124073304-fe4d68ad36d8/go.mod h1:akeOyWDyh8dLfAobGRJuxcXLx5w+y6SZVGVy07sb3cM=
 github.com/bazelbuild/rules_go v0.49.0/go.mod h1:Dhcz716Kqg1RHNWos+N6MlXNkjNP2EwZQ0LukRKJfMs=
 github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973/go.mod h1:Dwedo/Wpr24TaqPxmxbtue+5NUziq4I4S80YR8gNf3Q=
 github.com/beorn7/perks v1.0.0/go.mod h1:KWe93zE9D1o94FZ5RNwFwVgaQK1VOXiVxmqh+CedLV8=

@@ -49,7 +49,7 @@ require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-pty v0.2.3 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/bashsharp/bashsharp v0.0.0-20261123174704-5e16f23b9707 // indirect
+	github.com/bashsharp/bashsharp v0.0.0-20261124073304-fe4d68ad36d8 // indirect
 	github.com/benhoyt/goawk v1.31.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.6 // indirect
