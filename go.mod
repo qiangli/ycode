@@ -37,7 +37,6 @@ require (
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.16.0 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
-	github.com/a2aproject/a2a-go/v2 v2.3.1 // indirect
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
 	github.com/aead/serpent v0.0.0-20160714141033-fba169763ea6 // indirect
 	github.com/agnivade/levenshtein v1.2.1 // indirect
@@ -312,7 +311,7 @@ require (
 	github.com/qiangli/yoke/pkg/oci v0.0.0-20261124003742-dcccc0fa4004 // indirect
 	github.com/qiangli/yoke/pkg/provider v0.0.0-20261124003742-dcccc0fa4004 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.59.1 // indirect
+	github.com/quic-go/quic-go v0.60.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/richardlehane/mscfb v1.0.8 // indirect
 	github.com/richardlehane/msoleps v1.0.6 // indirect
@@ -478,7 +477,7 @@ require (
 	github.com/philippgille/chromem-go v0.7.0
 	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
 	github.com/qiangli/bash v0.0.0-20261122134408-5c52281f7136
-	github.com/qiangli/bashy v1.0.0-rc.9-dev.0.20261118042223-9a6d5824cf95
+	github.com/qiangli/bashy v1.0.0-rc.9-dev.0.20261124074313-7a203c1b384f
 	github.com/qiangli/bonsai v0.0.0-20261123172747-32d78887eb27
 	github.com/qiangli/coreutils v0.0.0-20261123172741-e0184192020b
 	github.com/qiangli/ycode/examples/genie v0.0.0
