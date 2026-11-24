@@ -307,10 +307,10 @@ require (
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/prometheus/statsd_exporter v0.29.0 // indirect
 	github.com/qiangli/gfy v0.0.0-20261121101804-aab4f6fad5be // indirect
-	github.com/qiangli/yoke/external/otel v0.0.0-20261123174545-4bafb600b776 // indirect
-	github.com/qiangli/yoke/pkg/llmgw v0.0.0-20261123174545-4bafb600b776 // indirect
-	github.com/qiangli/yoke/pkg/oci v0.0.0-20261123174545-4bafb600b776 // indirect
-	github.com/qiangli/yoke/pkg/provider v0.0.0-20261123174545-4bafb600b776 // indirect
+	github.com/qiangli/yoke/external/otel v0.0.0-20261124003742-dcccc0fa4004 // indirect
+	github.com/qiangli/yoke/pkg/llmgw v0.0.0-20261124003742-dcccc0fa4004 // indirect
+	github.com/qiangli/yoke/pkg/oci v0.0.0-20261124003742-dcccc0fa4004 // indirect
+	github.com/qiangli/yoke/pkg/provider v0.0.0-20261124003742-dcccc0fa4004 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
@@ -482,7 +482,7 @@ require (
 	github.com/qiangli/bonsai v0.0.0-20261123172747-32d78887eb27
 	github.com/qiangli/coreutils v0.0.0-20261123172741-e0184192020b
 	github.com/qiangli/ycode/examples/genie v0.0.0
-	github.com/qiangli/yoke v0.0.0-20261123174545-4bafb600b776
+	github.com/qiangli/yoke v0.0.0-20261124003742-dcccc0fa4004
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	go.etcd.io/bbolt v1.5.0
