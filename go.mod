@@ -477,7 +477,7 @@ require (
 	github.com/philippgille/chromem-go v0.7.0
 	github.com/qiangli/aperio v0.0.0-20260506091308-bb748c16502c
 	github.com/qiangli/bash v0.0.0-20261122134408-5c52281f7136
-	github.com/qiangli/bashy v1.0.0-rc.9-dev.0.20261125101809-7efa8d16ac0a
+	github.com/qiangli/bashy v1.0.0-rc.9-dev.0.20261125102114-0b5b87f22f1f
 	github.com/qiangli/bonsai v0.0.0-20261123172747-32d78887eb27
 	github.com/qiangli/coreutils v0.0.0-20261124121700-f9833f726fac
 	github.com/qiangli/ycode/examples/genie v0.0.0
