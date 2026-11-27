@@ -145,3 +145,40 @@ func TestGenieRefusesDelegateWithAnEmptyAllow(t *testing.T) {
 		t.Fatalf("decision = %s/%s complete=%v, want refused with an empty allow", decision.RuleID, decision.Decision, report.Complete)
 	}
 }
+
+func TestGenieForwardsDelegateDepthAllowlist(t *testing.T) {
+	source := t.TempDir()
+	if err := os.CopyFS(source, genie.Source); err != nil {
+		t.Fatal(err)
+	}
+	for _, profile := range []string{"agent.yaml", "agent-yolo.yaml"} {
+		t.Run(profile, func(t *testing.T) {
+			doc, err := spec.Load(filepath.Join(source, profile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			config := doc.Spec.Bashy.Execution
+			config.ToolName = "bashy"
+			root := t.TempDir()
+			cwd := filepath.Join(root, "workspace")
+			if err := os.Mkdir(cwd, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			executor, err := NewExecutor(config, cwd, RuntimeOptions{
+				ControlRoot:      filepath.Join(root, "control"),
+				AuthorizationKey: []byte("0123456789abcdef0123456789abcdef"),
+			}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("BASHY_DELEGATE_DEPTH", "1")
+			if got, ok := envValue(executor.environment(), "BASHY_DELEGATE_DEPTH"); !ok || got != "1" {
+				t.Fatalf("BASHY_DELEGATE_DEPTH = %q, %v; want 1", got, ok)
+			}
+			_ = os.Unsetenv("BASHY_DELEGATE_DEPTH")
+			if _, ok := envValue(executor.environment(), "BASHY_DELEGATE_DEPTH"); ok {
+				t.Fatal("unset BASHY_DELEGATE_DEPTH must stay absent")
+			}
+		})
+	}
+}
