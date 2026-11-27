@@ -43,12 +43,13 @@ require (
 	github.com/alecthomas/assert/v2 v2.11.0 // indirect
 	github.com/alecthomas/repr v0.5.2 // indirect
 	github.com/antithesishq/antithesis-sdk-go v0.6.0-default-no-op // indirect
+	github.com/aofei/backoff v1.2.0 // indirect
 	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40 // indirect
 	github.com/asdine/storm/v3 v3.2.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-pty v0.2.3 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/bashsharp/bashsharp v0.0.0-20261125101851-12523ff06abc // indirect
+	github.com/bashsharp/bashsharp v0.0.0-20261126221111-0ec897e5814a // indirect
 	github.com/benhoyt/goawk v1.31.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.6 // indirect
@@ -214,6 +215,7 @@ require (
 	github.com/google/nftables v0.3.0 // indirect
 	github.com/google/pprof v0.0.0-20260507013755-92041b743c96 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
+	github.com/goproxy/goproxy v0.27.0 // indirect
 	github.com/gorilla/handlers v1.5.2 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/gorilla/schema v1.4.1 // indirect
@@ -304,10 +306,10 @@ require (
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/prometheus/statsd_exporter v0.29.0 // indirect
 	github.com/qiangli/gfy v0.0.0-20261121101804-aab4f6fad5be // indirect
-	github.com/qiangli/yoke/external/otel v0.0.0-20261125101800-57ea4c79abad // indirect
-	github.com/qiangli/yoke/pkg/llmgw v0.0.0-20261125101800-57ea4c79abad // indirect
-	github.com/qiangli/yoke/pkg/oci v0.0.0-20261125101800-57ea4c79abad // indirect
-	github.com/qiangli/yoke/pkg/provider v0.0.0-20261125101800-57ea4c79abad // indirect
+	github.com/qiangli/yoke/external/otel v0.0.0-20261127112036-65f6149a4452 // indirect
+	github.com/qiangli/yoke/pkg/llmgw v0.0.0-20261127112036-65f6149a4452 // indirect
+	github.com/qiangli/yoke/pkg/oci v0.0.0-20261127112036-65f6149a4452 // indirect
+	github.com/qiangli/yoke/pkg/provider v0.0.0-20261127112036-65f6149a4452 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.60.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
@@ -423,6 +425,7 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 	mvdan.cc/sh/v3 v3.13.1 // indirect
+	oras.land/oras-go/v2 v2.7.0 // indirect
 	resty.dev/v3 v3.0.0-rc.2 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
@@ -434,7 +437,7 @@ require (
 
 // coreutils' own goawk replace does not propagate across modules, and
 // upstream goawk v1.31.0 has no `regex` package — cmds/awk needs the fork.
-replace github.com/benhoyt/goawk => github.com/qiangli/coreutils/third_party/goawk v0.0.0-20261124121700-f9833f726fac
+replace github.com/benhoyt/goawk => github.com/qiangli/coreutils/third_party/goawk v0.0.0-20261126163007-96e079612fa5
 
 exclude (
 	google.golang.org/genproto v0.0.0-20200804131852-c06518451d9c
@@ -477,9 +480,9 @@ require (
 	github.com/qiangli/bash v0.0.0-20261122134408-5c52281f7136
 	github.com/qiangli/bashy v1.0.0-rc.9-dev.0.20261125102114-0b5b87f22f1f
 	github.com/qiangli/bonsai v0.0.0-20261123172747-32d78887eb27
-	github.com/qiangli/coreutils v0.0.0-20261124121700-f9833f726fac
+	github.com/qiangli/coreutils v0.0.0-20261126163007-96e079612fa5
 	github.com/qiangli/ycode/examples/genie v0.0.0
-	github.com/qiangli/yoke v0.0.0-20261125125051-89fc8e423b54
+	github.com/qiangli/yoke v0.0.0-20261127112036-65f6149a4452
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	go.etcd.io/bbolt v1.5.0
